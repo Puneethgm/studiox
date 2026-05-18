@@ -18,6 +18,6 @@ export function FieldError({ message }: { message?: string }) {
   return <p className="mt-1.5 text-xs font-medium text-red-600 dark:text-red-400">{message}</p>;
 }
 
-export function FieldHint({ children }: { children: ReactNode }) {
-  return <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">{children}</p>;
+export function FieldHint({ children, id }: { children: ReactNode; id?: string }) {
+  return <p id={id} className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">{children}</p>;
 }

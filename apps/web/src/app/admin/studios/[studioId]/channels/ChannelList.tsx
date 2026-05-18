@@ -4,6 +4,7 @@
 const STATUS_DESCRIPTIONS: Record<ChannelStatus, string> = {
   active: '✓ Ready to send & receive messages',
   paused: '⏸ Paused — no messages in or out',
+  disconnected: '⊘ Disconnected — reconnect to resume',
   error: '⚠️ Needs attention — check error below',
 };
 
@@ -27,6 +28,7 @@ const KIND_LABELS: Record<ChannelKind, string> = {
 const STATUS_TONE: Record<ChannelStatus, 'success' | 'warning' | 'danger' | 'neutral'> = {
   active: 'success',
   paused: 'warning',
+  disconnected: 'neutral',
   error: 'danger',
 };
 

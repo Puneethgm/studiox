@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { Zap } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
