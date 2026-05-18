@@ -203,6 +203,6 @@ export default function NewStudioPage() {
           </Button>
         </div>
       </div>
-    </>
+    </div>
   );
 }
