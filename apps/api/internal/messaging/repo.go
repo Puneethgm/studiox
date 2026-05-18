@@ -31,13 +31,13 @@ func (r *Repo) Pool() *pgxpool.Pool { return r.pool }
 // ============================================================
 
 type CreateChannelInput struct {
-	StudioID      uuid.UUID
-	Kind          ChannelKind
-	BSP           string
-	ExternalID    string
-	ParentID      string
-	DisplayHandle string
-	AccessToken   string // plaintext; encrypted before write
+	StudioID       uuid.UUID
+	Kind           ChannelKind
+	BSP            string
+	ExternalID     string
+	ParentID       string
+	DisplayHandle  string
+	AccessToken    string // plaintext; encrypted before write
 	TokenExpiresAt *time.Time
 }
 
@@ -77,7 +77,7 @@ func (r *Repo) ListChannels(ctx context.Context, studioID uuid.UUID) ([]ChannelA
 		SELECT id, kind, bsp, external_id, parent_id, display_handle,
 		       status, last_error, connected_at, disconnected_at, created_at, updated_at
 		FROM channel_accounts
-		WHERE studio_id = $1
+		WHERE studio_id = $1 AND status != 'disconnected'
 		ORDER BY created_at DESC
 	`, studioID)
 	if err != nil {
@@ -117,8 +117,40 @@ func (r *Repo) GetChannelByExternalID(ctx context.Context, kind ChannelKind, ext
 		       access_token_enc, status, last_error, connected_at, disconnected_at,
 		       created_at, updated_at
 		FROM channel_accounts
-		WHERE kind = $1 AND external_id = $2
+		WHERE kind = $1 AND external_id = $2 AND status <> 'disconnected'
+		ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, connected_at DESC
+		LIMIT 1
 	`, kind, externalID)
+	return r.scanChannelWithToken(row)
+}
+
+// GetActiveChannelByStudio returns the most recently connected active channel
+// for a studio. The inbox uses this to start a new conversation from the UI.
+func (r *Repo) GetActiveChannelByStudio(ctx context.Context, studioID uuid.UUID) (*ChannelAccount, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT id, studio_id, kind, bsp, external_id, parent_id, display_handle,
+		       access_token_enc, status, last_error, connected_at, disconnected_at,
+		       created_at, updated_at
+		FROM channel_accounts
+		WHERE studio_id = $1 AND status = 'active'
+		ORDER BY connected_at DESC
+		LIMIT 1
+	`, studioID)
+	return r.scanChannelWithToken(row)
+}
+
+// GetActiveChannelByKind returns the most recently connected active channel
+// of a specific kind for a studio. Used by the outbound worker as a fallback.
+func (r *Repo) GetActiveChannelByKind(ctx context.Context, studioID uuid.UUID, kind ChannelKind) (*ChannelAccount, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT id, studio_id, kind, bsp, external_id, parent_id, display_handle,
+		       access_token_enc, status, last_error, connected_at, disconnected_at,
+		       created_at, updated_at
+		FROM channel_accounts
+		WHERE studio_id = $1 AND kind = $2 AND status = 'active'
+		ORDER BY connected_at DESC
+		LIMIT 1
+	`, studioID, kind)
 	return r.scanChannelWithToken(row)
 }
 
@@ -224,9 +256,10 @@ func (r *Repo) FindOrCreateConversation(ctx context.Context, tx pgx.Tx, studioID
 }
 
 type ListConversationsFilter struct {
-	Status *ConvStatus
-	Limit  int
-	Offset int
+	Status      *ConvStatus
+	ChannelKind *ChannelKind
+	Limit       int
+	Offset      int
 }
 
 func (r *Repo) ListConversations(ctx context.Context, studioID uuid.UUID, f ListConversationsFilter) ([]Conversation, int, error) {
@@ -239,9 +272,14 @@ func (r *Repo) ListConversations(ctx context.Context, studioID uuid.UUID, f List
 		args = append(args, *f.Status)
 		cond += fmt.Sprintf(" AND c.status = $%d", len(args))
 	}
+	if f.ChannelKind != nil {
+		args = append(args, *f.ChannelKind)
+		cond += fmt.Sprintf(" AND ch.kind = $%d", len(args))
+	}
 
 	var total int
-	if err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM conversations c WHERE `+cond, args...).Scan(&total); err != nil {
+	countQ := `SELECT COUNT(*) FROM conversations c JOIN channel_accounts ch ON ch.id = c.channel_account_id WHERE ` + cond
+	if err := r.pool.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count conversations: %w", err)
 	}
 

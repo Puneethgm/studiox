@@ -4,12 +4,12 @@ import { cn } from '@/lib/cn';
 export type BadgeTone = 'neutral' | 'brand' | 'success' | 'warning' | 'danger' | 'info';
 
 const tones: Record<BadgeTone, string> = {
-  neutral: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
-  brand:   'bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300',
-  success: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
-  warning: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
-  danger:  'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
-  info:    'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300',
+  neutral: 'bg-white/40 text-zinc-600 dark:bg-white/5 dark:text-zinc-400 border border-white/20 dark:border-white/5 backdrop-blur-md',
+  brand:   'bg-brand-500/10 text-brand-700 dark:text-brand-300 border border-brand-500/20 backdrop-blur-md',
+  success: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20 backdrop-blur-md',
+  warning: 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20 backdrop-blur-md',
+  danger:  'bg-red-500/10 text-red-700 dark:text-red-400 border border-red-500/20 backdrop-blur-md',
+  info:    'bg-sky-500/10 text-sky-700 dark:text-sky-400 border border-sky-500/20 backdrop-blur-md',
 };
 
 export interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {

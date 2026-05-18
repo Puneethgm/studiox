@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"math"
+	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -16,10 +17,11 @@ import (
 // channel adapter. Single in-process worker for now; multiple replicas would
 // race-safely thanks to FOR UPDATE SKIP LOCKED in ClaimOutboundBatch.
 type OutboundWorker struct {
-	repo   *Repo
-	bus    Bus
-	whatsapp channels.Sender
-	log    *slog.Logger
+	repo      *Repo
+	bus       Bus
+	whatsapp  channels.Sender
+	messenger channels.Sender
+	log       *slog.Logger
 }
 
 const (
@@ -28,8 +30,8 @@ const (
 	maxAttempts        = 6
 )
 
-func NewOutboundWorker(repo *Repo, bus Bus, whatsapp channels.Sender, log *slog.Logger) *OutboundWorker {
-	return &OutboundWorker{repo: repo, bus: bus, whatsapp: whatsapp, log: log}
+func NewOutboundWorker(repo *Repo, bus Bus, whatsapp, messenger channels.Sender, log *slog.Logger) *OutboundWorker {
+	return &OutboundWorker{repo: repo, bus: bus, whatsapp: whatsapp, messenger: messenger, log: log}
 }
 
 func (w *OutboundWorker) Run(ctx context.Context) {
@@ -70,15 +72,37 @@ func (w *OutboundWorker) dispatch(ctx context.Context, j OutboundJob) {
 		w.failJob(ctx, j, "channel lookup: "+err.Error(), true) // dead — channel deleted
 		return
 	}
+	// In local/dev mode, allow error status channels for testing.
+	isLocalDev := os.Getenv("API_ENV") == "local"
 	if channel.Status != StatusActive {
-		w.failJob(ctx, j, "channel not active: "+string(channel.Status), false)
-		return
+		// Try to find an active channel of the same kind for this studio.
+		activeChannel, err := w.repo.GetActiveChannelByKind(ctx, j.StudioID, channel.Kind)
+		if err == nil && activeChannel.Status == StatusActive {
+			// Found an active channel of the same kind; use that instead.
+			channel = activeChannel
+		} else if !isLocalDev {
+			w.failJob(ctx, j, "no active channel: "+string(channel.Status), false)
+			return
+		}
+		// In local mode, continue even if no active channel found.
 	}
 
 	var sender channels.Sender
 	switch channel.Kind {
 	case KindWhatsAppMeta:
-		sender = w.whatsapp
+		if isLocalDev && channel.AccessToken == "" {
+			w.log.Info("test mode: using mock sender for WA", "job_id", j.ID)
+			sender = &testSender{}
+		} else {
+			sender = w.whatsapp
+		}
+	case KindInstagramMeta, KindMessengerMeta:
+		if isLocalDev && channel.AccessToken == "" {
+			w.log.Info("test mode: using mock sender for Meta Messaging", "job_id", j.ID)
+			sender = &testSender{}
+		} else {
+			sender = w.messenger
+		}
 	default:
 		w.failJob(ctx, j, "no sender for channel kind: "+string(channel.Kind), true)
 		return
@@ -167,4 +191,14 @@ func backoffFor(attempts int) time.Duration {
 		secs = 1800
 	}
 	return time.Duration(secs) * time.Second
+}
+
+// testSender is a mock Sender for local development that logs messages instead of sending them.
+type testSender struct{}
+
+func (t *testSender) SendText(ctx context.Context, accessToken, channelExternalID, recipient, body string) (*channels.SendResult, error) {
+	// Always succeed in test mode with a fake external ID.
+	return &channels.SendResult{
+		ExternalID: "test-msg-" + time.Now().Format("20060102150405"),
+	}, nil
 }

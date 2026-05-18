@@ -102,7 +102,7 @@ func Load() (Config, error) {
 	}
 
 	cfg := Config{
-		HTTPAddr:    getEnv("API_HTTP_ADDR", ":8080"),
+		HTTPAddr:    getEnv("API_HTTP_ADDR", "localhost:8080"),
 		Env:         getEnv("API_ENV", "local"),
 		LogLevel:    getEnv("API_LOG_LEVEL", "info"),
 		CORSOrigins: splitCSV(getEnv("API_CORS_ORIGINS", "http://localhost:3000,http://localhost:3001")),

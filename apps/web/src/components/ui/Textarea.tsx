@@ -21,6 +21,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function 
     <textarea
       ref={ref}
       className={cn(fieldBase, 'min-h-24 px-3 py-2 text-sm', invalid && 'border-red-500 focus-visible:ring-red-500/30', className)}
+      suppressHydrationWarning
       {...rest}
     />
   );

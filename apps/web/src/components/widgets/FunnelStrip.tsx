@@ -27,48 +27,56 @@ const COLORS: Record<LeadStatus, string> = {
   dropped:      '#94a3b8', // slate
 };
 
+const BAR_GRADIENTS: Record<LeadStatus, string> = {
+  new:          'linear-gradient(90deg, #0ea5e9, #38bdf8)',
+  contacted:    'linear-gradient(90deg, var(--brand, #7c3aed), #a78bfa)',
+  trial_booked: 'linear-gradient(90deg, #f59e0b, #fbbf24)',
+  member:       'linear-gradient(90deg, #10b981, #34d399)',
+  dropped:      'linear-gradient(90deg, #94a3b8, #cbd5e1)',
+};
+
 export function FunnelStrip({ byStatus, total, studioId, className }: FunnelStripProps) {
   const max = Math.max(1, ...ORDER.map((s) => byStatus[s] ?? 0));
 
   return (
-    <div className={cn('rounded-2xl border border-slate-200 bg-white p-5 shadow-card dark:border-slate-800 dark:bg-slate-900', className)}>
-      <div className="mb-4 flex items-end justify-between gap-3">
+    <div className={cn('', className)}>
+      <div className="mb-6 flex items-end justify-between gap-3">
         <div>
-          <div className="text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">
+          <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">
             Pipeline at a glance
           </div>
-          <div className="mt-1 text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
-            {total} <span className="text-sm font-normal text-slate-500">leads total</span>
+          <div className="mt-2 text-3xl font-black tracking-tight text-zinc-900 dark:text-white">
+            {total} <span className="text-base font-semibold text-zinc-400">leads total</span>
           </div>
         </div>
         <Link
           href={`/admin/studios/${studioId}/pipeline`}
-          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-[color:var(--brand,#7c3aed)] hover:bg-[color:var(--brand-soft,rgba(124,58,237,0.08))]"
+          className="inline-flex items-center gap-1.5 rounded-2xl bg-white/50 px-4 py-2 text-xs font-bold text-brand-600 backdrop-blur-md transition-all hover:bg-brand-500 hover:text-white hover:shadow-lg hover:shadow-brand-500/20 dark:bg-white/5 dark:text-brand-400"
         >
           Open pipeline
-          <ArrowRight className="h-3 w-3" />
+          <ArrowRight className="h-3.5 w-3.5" />
         </Link>
       </div>
 
-      <ul className="space-y-2.5">
+      <ul className="space-y-4">
         {ORDER.map((status) => {
           const count = byStatus[status] ?? 0;
           const pct = (count / max) * 100;
           const sharePct = total === 0 ? 0 : Math.round((count / total) * 100);
           return (
-            <li key={status} className="grid grid-cols-[7rem,1fr,3.5rem] items-center gap-3 sm:grid-cols-[8rem,1fr,4.5rem]">
-              <span className="truncate text-xs font-medium text-slate-700 dark:text-slate-300">
+            <li key={status} className="grid grid-cols-[7rem,1fr,4rem] items-center gap-4 sm:grid-cols-[8rem,1fr,5rem]">
+              <span className="truncate text-xs font-bold text-zinc-600 dark:text-zinc-300">
                 {LEAD_STATUS_LABELS[status]}
               </span>
-              <div className="relative h-6 overflow-hidden rounded-md bg-slate-100 dark:bg-slate-800">
+              <div className="relative h-8 overflow-hidden rounded-2xl bg-white/40 backdrop-blur-sm dark:bg-white/5">
                 <div
-                  className="absolute inset-y-0 left-0 rounded-md transition-all"
-                  style={{ width: `${pct}%`, background: COLORS[status] }}
+                  className="absolute inset-y-0 left-0 rounded-2xl transition-all duration-700 ease-out"
+                  style={{ width: `${pct}%`, background: BAR_GRADIENTS[status], boxShadow: `0 4px 12px ${COLORS[status]}30` }}
                 />
               </div>
-              <span className="text-right text-xs tabular-nums text-slate-600 dark:text-slate-400">
-                <span className="font-semibold text-slate-900 dark:text-slate-100">{count}</span>
-                <span className="ml-1 text-slate-400">{sharePct}%</span>
+              <span className="text-right text-xs tabular-nums">
+                <span className="font-black text-zinc-900 dark:text-white">{count}</span>
+                <span className="ml-1 font-semibold text-zinc-400">{sharePct}%</span>
               </span>
             </li>
           );
@@ -77,3 +85,4 @@ export function FunnelStrip({ byStatus, total, studioId, className }: FunnelStri
     </div>
   );
 }
+

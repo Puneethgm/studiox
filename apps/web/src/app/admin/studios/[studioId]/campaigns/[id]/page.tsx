@@ -1,8 +1,7 @@
-import Link from 'next/link';
+import { Zap } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { serverFetch } from '@/lib/auth';
 import { formatDate, formatDateTime } from '@/lib/datetime';
 import type { Campaign, Lead } from '@/lib/types';
@@ -31,18 +30,37 @@ export default async function CampaignDetailPage({
   ]);
 
   return (
-    <>
-      <PageHeader
-        title={c.name}
-        description={
-          <>
-            <span className="font-mono text-xs text-slate-400">/{c.slug}</span>
-            <span className="mx-2 text-slate-300">·</span>
-            Created {formatDate(c.createdAt)}
-          </>
-        }
-        actions={<CampaignActions studioId={studioId} id={c.id} active={c.active} />}
-      />
+    <div className="space-y-6">
+      {/* Premium Glass Header */}
+      <div
+        className="relative overflow-hidden rounded-[26px] border border-white/30 p-6 backdrop-blur-2xl dark:border-white/5"
+        style={{
+          background: 'linear-gradient(135deg, rgba(255,255,255,0.30) 0%, rgba(237,233,254,0.22) 60%, rgba(219,234,254,0.20) 100%)',
+          boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.2), 0 8px 32px rgba(139,92,246,0.07)',
+        }}
+      >
+        <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-brand-500/10 blur-[70px]" />
+        
+        <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-4">
+            <div className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-brand-500 to-violet-600 text-white shadow-lg shadow-brand-500/25">
+              <Zap className="h-6 w-6" />
+            </div>
+            <div>
+              <div className="flex items-center gap-3">
+                <h1 className="text-2xl font-black tracking-tight text-zinc-900 dark:text-white">{c.name}</h1>
+                <Badge tone={c.active ? 'success' : 'neutral'} className="rounded-xl px-2.5 py-0.5 text-[10px] font-black uppercase tracking-widest shadow-sm">
+                  {c.active ? 'Active' : 'Inactive'}
+                </Badge>
+              </div>
+              <p className="mt-1 text-sm font-medium text-zinc-500 dark:text-zinc-400">
+                <span className="font-mono text-xs">/{c.slug}</span> · Created {formatDate(c.createdAt)}
+              </p>
+            </div>
+          </div>
+          <CampaignActions studioId={studioId} id={c.id} active={c.active} />
+        </div>
+      </div>
 
       <div className="space-y-6">
         <Card title="Share link" subtitle="Drop this URL in your Instagram bio, story, or ad.">
@@ -149,6 +167,6 @@ export default async function CampaignDetailPage({
           )}
         </Card>
       </div>
-    </>
+    </div>
   );
 }

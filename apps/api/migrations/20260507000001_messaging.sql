@@ -55,8 +55,9 @@ CREATE TABLE channel_accounts (
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-    -- The same channel resource can only be connected by one studio at a time.
-    UNIQUE (kind, external_id)
+    -- Only live channels are unique so a disconnected account can be reconnected
+    -- later as a fresh row without deleting history.
+    UNIQUE (kind, external_id) WHERE status <> 'disconnected'
 );
 CREATE INDEX idx_channel_accounts_studio ON channel_accounts(studio_id);
 CREATE INDEX idx_channel_accounts_kind_external ON channel_accounts(kind, external_id);

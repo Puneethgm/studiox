@@ -2,12 +2,11 @@
 
 import { useParams, useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { Plus } from 'lucide-react';
+import { Megaphone, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { FieldError, FieldHint, Label } from '@/components/ui/Label';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { Textarea } from '@/components/ui/Textarea';
 import { ApiError, api } from '@/lib/api';
 import type { Campaign } from '@/lib/types';
@@ -53,11 +52,31 @@ export default function NewCampaignPage() {
   }
 
   return (
-    <>
-      <PageHeader
-        title="New campaign"
-        description="A campaign defines the fitness plans the form offers and produces a unique shareable link."
-      />
+    <div className="space-y-8 pb-12">
+      {/* Premium Glass Header */}
+      <div
+        className="relative overflow-hidden rounded-[26px] border border-white/30 p-6 backdrop-blur-2xl dark:border-white/5"
+        style={{
+          background: 'linear-gradient(135deg, rgba(255,255,255,0.30) 0%, rgba(237,233,254,0.22) 60%, rgba(219,234,254,0.20) 100%)',
+          boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.2), 0 8px 32px rgba(139,92,246,0.07)',
+        }}
+      >
+        <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-brand-500/10 blur-[70px]" />
+        
+        <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-4">
+            <div className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-brand-500 to-violet-600 text-white shadow-lg shadow-brand-500/25">
+              <Megaphone className="h-6 w-6" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-black tracking-tight text-zinc-900 dark:text-white">Create Campaign</h1>
+              <p className="mt-0.5 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                Configure a new lead magnet and generate a high-converting landing page.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
       <div className="mx-auto max-w-2xl">
         <Card>
           <form onSubmit={onSubmit} className="space-y-5">
@@ -126,6 +145,6 @@ export default function NewCampaignPage() {
           </form>
         </Card>
       </div>
-    </>
+    </div>
   );
 }
