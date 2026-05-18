@@ -58,8 +58,9 @@ export function InboxLive({
   }, [mounted, initialConversations, activeChannel]);
 
   useEffect(() => {
-    if (mounted && !selectedId && conversations.length > 0) {
-      setSelectedId(conversations[0].id);
+    const first = conversations[0];
+    if (mounted && !selectedId && first) {
+      setSelectedId(first.id);
     }
   }, [mounted, conversations, selectedId]);
 
