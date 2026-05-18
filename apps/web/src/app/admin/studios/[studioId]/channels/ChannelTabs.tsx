@@ -3,10 +3,12 @@
 import { useState, type ReactNode } from 'react';
 import { Clock, Plug } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/cn';
 import type { ChannelAccount, ChannelKind } from '@/lib/types';
 import { ChannelList } from './ChannelList';
 import { ConnectWhatsApp } from './ConnectWhatsApp';
+import { ConnectMetaChannel } from './ConnectMetaChannel';
 
 interface TabDef {
   kind: ChannelKind;
@@ -27,31 +29,13 @@ const TABS: TabDef[] = [
     kind: 'instagram_meta',
     label: 'Instagram DMs',
     brand: '#E1306C',
-    status: 'coming_soon',
-    comingSoonNote: (
-      <>
-        Same Meta Graph API as WhatsApp — adapter is wired in the backend
-        (channel kind <code className="font-mono text-xs">instagram_meta</code> already in
-        the schema). Needs Meta App Review for{' '}
-        <code className="font-mono text-xs">instagram_basic</code> +{' '}
-        <code className="font-mono text-xs">instagram_manage_messages</code> scopes
-        before studios can connect a real IG Business account.
-      </>
-    ),
+    status: 'available',
   },
   {
     kind: 'messenger_meta',
     label: 'Facebook Messenger',
     brand: '#0084FF',
-    status: 'coming_soon',
-    comingSoonNote: (
-      <>
-        Connects a Facebook Page's Messenger inbox. Needs Meta App Review for{' '}
-        <code className="font-mono text-xs">pages_messaging</code> +{' '}
-        <code className="font-mono text-xs">pages_show_list</code>. Will land
-        right after Instagram since both share the Graph API plumbing.
-      </>
-    ),
+    status: 'available',
   },
   {
     kind: 'x_dm',
@@ -97,6 +81,7 @@ export function ChannelTabs({
                   ? 'text-slate-900 dark:text-slate-100'
                   : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200',
               )}
+              suppressHydrationWarning
             >
               <span
                 aria-hidden
@@ -151,22 +136,20 @@ function AvailablePanel({
   kind: ChannelKind;
   label: string;
 }) {
-  // For Phase A only WhatsApp is "available" — the form is WhatsApp-specific.
-  // When IG/Messenger ship, swap on `kind` to render the right Connect form.
   return (
     <div className="grid gap-6 lg:grid-cols-3">
       <div className="lg:col-span-2 space-y-6">
         {channels.length === 0 ? (
           <Card>
-            <div className="py-10 text-center">
-              <div className="mx-auto mb-3 grid h-10 w-10 place-items-center rounded-full bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                <Plug className="h-5 w-5" />
+            <div className="py-8 text-center">
+              <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-full bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                <Plug className="h-6 w-6" />
               </div>
-              <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
+              <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">
                 No {label} accounts connected yet
               </p>
-              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                Use the panel on the right to connect this studio&rsquo;s account.
+              <p className="mt-2 text-sm text-slate-500 dark:text-slate-400 max-w-xl mx-auto">
+                Connect your {label} account to start receiving messages and collect leads directly into this studio.
               </p>
             </div>
           </Card>
@@ -175,7 +158,11 @@ function AvailablePanel({
         )}
       </div>
       <div className="space-y-6">
-        {kind === 'whatsapp_meta' && <ConnectWhatsApp studioId={studioId} />}
+        {kind === 'whatsapp_meta' ? (
+          <ConnectWhatsApp studioId={studioId} />
+        ) : (
+          <ConnectMetaChannel studioId={studioId} kind={kind} />
+        )}
       </div>
     </div>
   );

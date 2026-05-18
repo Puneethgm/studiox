@@ -23,27 +23,27 @@ const COLORS: Record<LeadStatus, string> = {
 
 export function StatusDonut({ byStatus, total, className }: StatusDonutProps) {
   // SVG geometry
-  const size = 160;
+  const size = 180;
   const cx = size / 2;
   const cy = size / 2;
-  const r = 64;
-  const strokeWidth = 18;
+  const r = 72;
+  const strokeWidth = 20;
   const circumference = 2 * Math.PI * r;
 
   let cursor = 0;
 
   return (
-    <div className={cn('rounded-2xl border border-slate-200 bg-white p-5 shadow-card dark:border-slate-800 dark:bg-slate-900', className)}>
-      <div className="mb-4">
-        <div className="text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">
+    <div className={cn('', className)}>
+      <div className="mb-5">
+        <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">
           Status mix
         </div>
-        <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+        <div className="mt-1 text-sm font-semibold text-zinc-500 dark:text-zinc-400">
           Where every lead currently stands
         </div>
       </div>
 
-      <div className="grid items-center gap-5 sm:grid-cols-[auto,1fr]">
+      <div className="grid items-center gap-6 sm:grid-cols-[auto,1fr]">
         <div className="relative grid place-items-center">
           <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
             {/* Track */}
@@ -53,7 +53,7 @@ export function StatusDonut({ byStatus, total, className }: StatusDonutProps) {
               r={r}
               fill="none"
               strokeWidth={strokeWidth}
-              className="stroke-slate-100 dark:stroke-slate-800"
+              className="stroke-white/30 dark:stroke-white/5"
             />
             {total > 0 &&
               ORDER.map((status) => {
@@ -75,39 +75,40 @@ export function StatusDonut({ byStatus, total, className }: StatusDonutProps) {
                     strokeDasharray={dasharray}
                     strokeDashoffset={dashoffset}
                     strokeLinecap="butt"
+                    style={{ filter: `drop-shadow(0 2px 6px ${COLORS[status]}40)` }}
                   />
                 );
               })}
           </svg>
           <div className="pointer-events-none absolute inset-0 grid place-items-center">
             <div className="text-center">
-              <div className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+              <div className="text-4xl font-black tracking-tight text-zinc-900 dark:text-white">
                 {total}
               </div>
-              <div className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
+              <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">
                 Leads
               </div>
             </div>
           </div>
         </div>
 
-        <ul className="space-y-2 text-sm">
+        <ul className="space-y-3 text-sm">
           {ORDER.map((status) => {
             const count = byStatus[status] ?? 0;
             const sharePct = total === 0 ? 0 : Math.round((count / total) * 100);
             return (
-              <li key={status} className="flex items-center justify-between gap-3">
-                <span className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+              <li key={status} className="flex items-center justify-between gap-3 rounded-2xl bg-white/30 p-3 backdrop-blur-sm dark:bg-white/5">
+                <span className="flex items-center gap-2.5 text-zinc-600 dark:text-zinc-300">
                   <span
                     aria-hidden
-                    className="h-2.5 w-2.5 shrink-0 rounded-full"
-                    style={{ background: COLORS[status] }}
+                    className="h-3 w-3 shrink-0 rounded-full shadow-sm"
+                    style={{ background: COLORS[status], boxShadow: `0 2px 8px ${COLORS[status]}40` }}
                   />
-                  <span className="truncate">{LEAD_STATUS_LABELS[status]}</span>
+                  <span className="truncate font-semibold">{LEAD_STATUS_LABELS[status]}</span>
                 </span>
-                <span className="shrink-0 tabular-nums text-slate-500 dark:text-slate-400">
-                  <span className="font-medium text-slate-900 dark:text-slate-100">{count}</span>
-                  <span className="ml-1 text-xs text-slate-400">{sharePct}%</span>
+                <span className="shrink-0 tabular-nums">
+                  <span className="font-black text-zinc-900 dark:text-white">{count}</span>
+                  <span className="ml-1.5 text-xs font-semibold text-zinc-400">{sharePct}%</span>
                 </span>
               </li>
             );
@@ -117,3 +118,4 @@ export function StatusDonut({ byStatus, total, className }: StatusDonutProps) {
     </div>
   );
 }
+

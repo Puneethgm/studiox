@@ -1,4 +1,8 @@
+ifeq ($(OS),Windows_NT)
+SHELL := cmd.exe
+else
 SHELL := /bin/bash
+endif
 .DEFAULT_GOAL := help
 
 # Load .env if present so make targets can use the same vars as the apps.
@@ -53,12 +57,11 @@ api: ## Run the Go API
 	cd apps/api && go run ./cmd/server
 
 web: ## Run the Next.js web app (admin + public + auth, single app)
-	cd apps/web && pnpm dev
+	cd apps/web && corepack pnpm dev
 
 dev: ## Run API + web concurrently (requires `npx`)
-	@command -v npx >/dev/null || { echo "npx required"; exit 1; }
 	npx -y concurrently -k -n api,web -c blue,magenta \
-		"$(MAKE) api" "$(MAKE) web"
+		"\"$(MAKE)\" api" "\"$(MAKE)\" web"
 
 # ---------- quality ----------
 .PHONY: test lint fmt
@@ -75,4 +78,4 @@ fmt: ## Format Go code
 # ---------- bootstrap ----------
 .PHONY: install
 install: ## Install JS deps
-	pnpm install
+	corepack pnpm install

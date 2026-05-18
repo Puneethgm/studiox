@@ -1,8 +1,6 @@
 import Link from 'next/link';
-import { ArrowRight, Inbox, MessageSquareText } from 'lucide-react';
-import { Card } from '@/components/ui/Card';
+import { ArrowRight, Inbox, MessageSquareText, GitBranch } from 'lucide-react';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { serverFetch } from '@/lib/auth';
 import { brandInitials } from '@/lib/color';
 import { cn } from '@/lib/cn';
@@ -20,18 +18,65 @@ interface LeadStats {
   byStatus: Record<LeadStatus, number>;
 }
 
-const COLUMN_CAP = 50; // leads shown per column
+const COLUMN_CAP = 50;
 
-const COLUMN_COLORS: Record<LeadStatus, string> = {
-  new:          '#0ea5e9',
-  contacted:    '#7c3aed',
-  trial_booked: '#f59e0b',
-  member:       '#10b981',
-  dropped:      '#94a3b8',
+// Per-status visual config
+const COLUMN_CONFIG: Record<LeadStatus, {
+  color: string;
+  lightBg: string;
+  border: string;
+  glow: string;
+  pill: string;
+  pillText: string;
+  avatarRing: string;
+}> = {
+  new: {
+    color: '#0ea5e9',
+    lightBg: 'rgba(240,249,255,0.45)',
+    border: 'rgba(125,211,252,0.40)',
+    glow: 'rgba(14,165,233,0.12)',
+    pill: 'rgba(14,165,233,0.12)',
+    pillText: '#0284c7',
+    avatarRing: 'rgba(14,165,233,0.30)',
+  },
+  contacted: {
+    color: '#7c3aed',
+    lightBg: 'rgba(245,243,255,0.45)',
+    border: 'rgba(196,181,253,0.40)',
+    glow: 'rgba(124,58,237,0.12)',
+    pill: 'rgba(124,58,237,0.10)',
+    pillText: '#6d28d9',
+    avatarRing: 'rgba(124,58,237,0.25)',
+  },
+  trial_booked: {
+    color: '#f59e0b',
+    lightBg: 'rgba(255,251,235,0.45)',
+    border: 'rgba(252,211,77,0.40)',
+    glow: 'rgba(245,158,11,0.12)',
+    pill: 'rgba(245,158,11,0.10)',
+    pillText: '#d97706',
+    avatarRing: 'rgba(245,158,11,0.30)',
+  },
+  member: {
+    color: '#10b981',
+    lightBg: 'rgba(236,253,245,0.45)',
+    border: 'rgba(110,231,183,0.40)',
+    glow: 'rgba(16,185,129,0.12)',
+    pill: 'rgba(16,185,129,0.10)',
+    pillText: '#059669',
+    avatarRing: 'rgba(16,185,129,0.25)',
+  },
+  dropped: {
+    color: '#94a3b8',
+    lightBg: 'rgba(248,250,252,0.45)',
+    border: 'rgba(203,213,225,0.40)',
+    glow: 'rgba(148,163,184,0.10)',
+    pill: 'rgba(148,163,184,0.10)',
+    pillText: '#64748b',
+    avatarRing: 'rgba(148,163,184,0.25)',
+  },
 };
 
-// Avatar palette — picked deterministically from the lead's name so the
-// same person always gets the same color across visits.
 const AVATAR_PALETTE = [
   '#0ea5e9', '#6366f1', '#7c3aed', '#a855f7', '#ec4899',
   '#f43f5e', '#f97316', '#eab308', '#22c55e', '#14b8a6',
@@ -52,9 +97,6 @@ export default async function PipelinePage({
 }) {
   const { studioId } = await params;
 
-  // One stats call for column counts + one list call per status. Capped
-  // small enough that this is fast even with thousands of leads. Each
-  // column links to the full filtered list when it overflows.
   const [stats, ...buckets] = await Promise.all([
     serverFetch<LeadStats>(`/api/v1/studios/${studioId}/leads/stats`),
     ...LEAD_STATUSES.map((s) =>
@@ -81,39 +123,68 @@ export default async function PipelinePage({
     stats.total > 0 ? Math.round((memberCount / stats.total) * 100) : 0;
 
   return (
-    <>
-      <PageHeader
-        title="Pipeline"
-        description={
-          <>
-            <span className="font-medium text-slate-700 dark:text-slate-200">
-              {stats.total}
-            </span>{' '}
-            leads ·{' '}
-            <span className="font-medium text-slate-700 dark:text-slate-200">
-              {activeCount}
-            </span>{' '}
-            active ·{' '}
-            <span className="font-medium text-slate-700 dark:text-slate-200">
-              {conversionPct}%
-            </span>{' '}
-            converted to members
-          </>
-        }
-      />
+    <div className="flex h-[calc(100vh-8rem)] flex-col gap-5">
 
+      {/* ── Compact glass header ── */}
+      <div
+        className="relative shrink-0 overflow-hidden rounded-[22px] border border-white/30 px-5 py-4 backdrop-blur-2xl dark:border-white/5"
+        style={{
+          background: 'linear-gradient(135deg, rgba(255,255,255,0.30) 0%, rgba(237,233,254,0.20) 100%)',
+          boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.20), 0 4px 16px rgba(139,92,246,0.06)',
+        }}
+      >
+        <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-brand-500/10 blur-3xl" />
+        <div className="relative flex items-center justify-between gap-6">
+          <div className="flex items-center gap-3">
+            <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-brand-500 to-violet-600 text-white shadow-md shadow-brand-500/25">
+              <GitBranch className="h-4 w-4" />
+            </div>
+            <div>
+              <h1 className="text-lg font-black tracking-tight text-zinc-900 dark:text-white">Pipeline</h1>
+              <p className="text-[11px] font-semibold text-zinc-400">
+                {stats.total} leads · {activeCount} active · {conversionPct}% conversion
+              </p>
+            </div>
+          </div>
+          {/* Stage count pills */}
+          <div className="hidden items-center gap-2 sm:flex">
+            {LEAD_STATUSES.map((status) => {
+              const cfg = COLUMN_CONFIG[status];
+              const n = stats.byStatus[status] ?? 0;
+              if (!n) return null;
+              return (
+                <div
+                  key={status}
+                  className="flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider"
+                  style={{ background: cfg.pill, color: cfg.pillText }}
+                >
+                  <span
+                    className="h-1.5 w-1.5 rounded-full"
+                    style={{ background: cfg.color }}
+                  />
+                  {n}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Board ── */}
       {stats.total === 0 ? (
-        <Card noPadding>
+        <div
+          className="flex-1 overflow-hidden rounded-[22px] border border-white/30 backdrop-blur-2xl dark:border-white/5"
+          style={{ background: 'rgba(255,255,255,0.22)' }}
+        >
           <EmptyState
             icon={<Inbox className="h-5 w-5" />}
             title="No leads yet"
             description="Once people submit a campaign form, they'll show up here grouped by status."
           />
-        </Card>
+        </div>
       ) : (
-        // Horizontal scroll on small screens; 5-column grid on xl+.
-        <div className="-mx-4 overflow-x-auto px-4 pb-2 sm:-mx-6 sm:px-6 lg:-mx-10 lg:px-10">
-          <div className="grid min-w-[1180px] grid-cols-5 gap-4 xl:min-w-0">
+        <div className="flex-1 overflow-x-auto pb-2">
+          <div className="grid h-full min-w-[1100px] grid-cols-5 gap-4 xl:min-w-0">
             {LEAD_STATUSES.map((status) => (
               <PipelineColumn
                 key={status}
@@ -126,149 +197,167 @@ export default async function PipelinePage({
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }
 
+// ─────────────────────────────────────────────────────
+// Column
+// ─────────────────────────────────────────────────────
+
 function PipelineColumn({
-  status,
-  count,
-  leads,
-  studioId,
+  status, count, leads, studioId,
 }: {
   status: LeadStatus;
   count: number;
   leads: Lead[];
   studioId: string;
 }) {
+  const cfg = COLUMN_CONFIG[status];
   const overflow = count - leads.length;
-  const color = COLUMN_COLORS[status];
 
   return (
     <section
-      className="flex flex-col overflow-hidden rounded-2xl bg-white shadow-card ring-1 ring-slate-200 dark:bg-slate-950 dark:ring-slate-800"
+      className="flex h-full flex-col overflow-hidden rounded-[20px] backdrop-blur-2xl"
+      style={{
+        background: cfg.lightBg,
+        border: `1px solid ${cfg.border}`,
+        boxShadow: `inset 0 0 0 1px rgba(255,255,255,0.20), 0 4px 20px rgba(0,0,0,0.04)`,
+      }}
       aria-label={LEAD_STATUS_LABELS[status]}
     >
-      {/* Color bar across the top — gives each column an instant visual
-          identity even before you read the header. */}
-      <div className="h-1.5" style={{ background: color }} aria-hidden />
+      {/* Gradient top bar */}
+      <div
+        className="h-1 w-full shrink-0"
+        style={{ background: `linear-gradient(90deg, ${cfg.color} 0%, ${cfg.color}70 100%)` }}
+      />
 
-      {/* Header */}
-      <header className="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
+      {/* Column header */}
+      <header className="flex shrink-0 items-center justify-between gap-2 px-4 py-3">
         <div className="flex items-center gap-2">
           <span
-            aria-hidden
             className="h-2 w-2 rounded-full"
-            style={{ background: color, boxShadow: `0 0 0 3px ${color}1a` }}
+            style={{ background: cfg.color, boxShadow: `0 0 0 3px ${cfg.glow}` }}
           />
-          <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+          <h3 className="text-xs font-black uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-300">
             {LEAD_STATUS_LABELS[status]}
           </h3>
         </div>
         <span
-          className="rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums"
-          style={{ background: `${color}1a`, color }}
+          className="rounded-full px-2 py-0.5 text-[11px] font-black tabular-nums"
+          style={{ background: cfg.pill, color: cfg.pillText }}
         >
           {count}
         </span>
       </header>
 
-      {/* Card stack — subtle column tint differentiates from the white cards inside */}
-      <div className="flex flex-1 flex-col gap-2 bg-slate-50/60 p-3 dark:bg-slate-900/40">
+      {/* Cards scroll area */}
+      <div className="flex flex-1 flex-col gap-2 overflow-y-auto px-2.5 pb-3">
         {leads.length === 0 ? (
           <div
-            className="rounded-xl border border-dashed px-3 py-8 text-center text-xs"
-            style={{
-              borderColor: `${color}33`,
-              color: '#64748b',
-              background: `${color}05`,
-            }}
+            className="flex flex-1 items-center justify-center rounded-xl border-2 border-dashed py-8 text-center"
+            style={{ borderColor: `${cfg.color}30`, color: '#94a3b8' }}
           >
-            No leads in this stage
+            <div>
+              <div
+                className="mx-auto mb-2 grid h-8 w-8 place-items-center rounded-xl"
+                style={{ background: cfg.pill }}
+              >
+                <Inbox className="h-4 w-4" style={{ color: cfg.color }} />
+              </div>
+              <p className="text-[11px] font-semibold">No leads yet</p>
+            </div>
           </div>
         ) : (
-          leads.map((l) => (
-            <LeadCard key={l.id} lead={l} studioId={studioId} accent={color} />
-          ))
-        )}
-        {overflow > 0 && (
-          <Link
-            href={`/admin/studios/${studioId}/leads?status=${status}`}
-            className="mt-1 inline-flex items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 transition-colors hover:border-[color:var(--brand,#7c3aed)] hover:text-[color:var(--brand,#7c3aed)] dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300"
-          >
-            +{overflow} more
-            <ArrowRight className="h-3 w-3" />
-          </Link>
+          <>
+            {leads.map((l) => (
+              <LeadCard key={l.id} lead={l} studioId={studioId} cfg={cfg} />
+            ))}
+            {overflow > 0 && (
+              <Link
+                href={`/admin/studios/${studioId}/leads?status=${status}`}
+                className="mt-1 inline-flex items-center justify-center gap-1.5 rounded-2xl border border-white/40 bg-white/40 py-2.5 text-xs font-black backdrop-blur-sm transition-all hover:bg-white/60 dark:border-white/10 dark:bg-white/5"
+                style={{ color: cfg.pillText }}
+              >
+                +{overflow} more
+                <ArrowRight className="h-3 w-3" />
+              </Link>
+            )}
+          </>
         )}
       </div>
     </section>
   );
 }
 
+// ─────────────────────────────────────────────────────
+// Lead card
+// ─────────────────────────────────────────────────────
+
 function LeadCard({
-  lead,
-  studioId,
-  accent,
+  lead, studioId, cfg,
 }: {
   lead: Lead;
   studioId: string;
-  accent: string;
+  cfg: typeof COLUMN_CONFIG[LeadStatus];
 }) {
   const av = avatarColor(lead.name);
+
   return (
     <Link
       href={`/admin/studios/${studioId}/leads/${lead.id}`}
-      className={cn(
-        'group block rounded-xl bg-white p-3.5 shadow-sm ring-1 ring-slate-200 transition-all',
-        'hover:-translate-y-0.5 hover:shadow-card-hover',
-        'dark:bg-slate-950 dark:ring-slate-800',
-      )}
-      style={{ ['--card-accent' as string]: accent }}
+      className="group block rounded-[16px] p-3 backdrop-blur-xl transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md"
+      style={{
+        background: 'linear-gradient(145deg, rgba(255,255,255,0.70) 0%, rgba(255,255,255,0.55) 100%)',
+        border: '1px solid rgba(255,255,255,0.50)',
+        boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.30), 0 2px 8px rgba(0,0,0,0.04)',
+      }}
     >
-      {/* Top row: avatar + name + email */}
+      {/* Avatar + name row */}
       <div className="flex items-center gap-2.5">
         <span
-          className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-semibold text-white shadow-sm"
-          style={{ background: av }}
+          className="grid h-8 w-8 shrink-0 place-items-center rounded-xl text-[11px] font-black text-white shadow-sm ring-2"
+          style={{ background: av, ringColor: cfg.avatarRing }}
           aria-hidden
         >
           {brandInitials(lead.name)}
         </span>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-semibold leading-tight text-slate-900 dark:text-slate-100">
+          <div className="truncate text-[13px] font-bold leading-tight text-zinc-900 transition-colors group-hover:text-brand-600 dark:text-zinc-100">
             {lead.name}
           </div>
-          <div className="truncate text-[11px] leading-tight text-slate-500 dark:text-slate-400">
+          <div className="truncate text-[10px] font-semibold leading-tight text-zinc-400">
             {lead.email}
           </div>
         </div>
       </div>
 
-      {/* Middle row: plan chip + time */}
-      <div className="mt-3 flex items-center justify-between gap-2">
-        <span className="inline-flex items-center gap-1 truncate rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+      {/* Plan + time row */}
+      <div className="mt-2.5 flex items-center justify-between gap-2">
+        <span
+          className="inline-flex max-w-[70%] truncate rounded-full px-2 py-0.5 text-[10px] font-bold"
+          style={{ background: cfg.pill, color: cfg.pillText }}
+        >
           {lead.fitnessPlan}
         </span>
         <span
-          className="shrink-0 text-[10px] font-medium uppercase tracking-wider text-slate-400"
+          className="shrink-0 text-[10px] font-semibold uppercase tracking-wider text-zinc-400"
           suppressHydrationWarning
         >
           {relativeTime(lead.createdAt)}
         </span>
       </div>
 
-      {/* Notes preview — only when present */}
+      {/* Notes preview */}
       {lead.notes && (
-        <div className="mt-3 flex items-start gap-1.5 border-t border-slate-100 pt-2.5 text-[11px] leading-snug text-slate-500 dark:border-slate-800 dark:text-slate-400">
-          <MessageSquareText className="mt-px h-3 w-3 shrink-0 text-slate-400" />
-          <span className="line-clamp-2">{firstLines(lead.notes)}</span>
+        <div
+          className="mt-2.5 flex items-start gap-1.5 border-t pt-2 text-[10px] leading-snug text-zinc-500"
+          style={{ borderColor: 'rgba(0,0,0,0.06)' }}
+        >
+          <MessageSquareText className="mt-px h-3 w-3 shrink-0 text-zinc-300" />
+          <span className="line-clamp-2">{lead.notes.split('\n').filter(Boolean).slice(0, 2).join(' · ')}</span>
         </div>
       )}
     </Link>
   );
-}
-
-function firstLines(s: string): string {
-  const lines = s.split('\n').filter(Boolean).slice(0, 2);
-  return lines.join(' · ');
 }

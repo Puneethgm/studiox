@@ -27,6 +27,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
         invalid && 'border-red-500 focus-visible:ring-red-500/30',
         className,
       )}
+      suppressHydrationWarning
       {...rest}
     >
       {children}

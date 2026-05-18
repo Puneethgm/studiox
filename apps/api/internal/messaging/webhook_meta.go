@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -62,7 +63,8 @@ func (h *MetaWebhookHandler) Verify(w http.ResponseWriter, r *http.Request) {
 // We always 200 to Meta even on internal errors so they don't retry forever
 // (errors are logged on our side).
 func (h *MetaWebhookHandler) Receive(w http.ResponseWriter, r *http.Request) {
-	log := logger.FromCtx(r.Context(), h.log).With("webhook", "meta_whatsapp")
+	fmt.Printf("DEBUG: MetaWebhookHandler.Receive received POST request\n")
+	log := logger.FromCtx(r.Context(), h.log).With("webhook", "meta_messaging")
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, 5<<20)) // 5 MB cap
 	if err != nil {
@@ -77,44 +79,55 @@ func (h *MetaWebhookHandler) Receive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var payload channels.WhatsAppWebhookPayload
+	var payload channels.MetaWebhookPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
 		log.Error("decode payload", "err", err, "body", string(body))
-		// Still ack to avoid Meta retry storm.
 		httpx.JSON(w, http.StatusOK, map[string]string{"status": "ignored"})
 		return
 	}
 
-	if payload.Object != "whatsapp_business_account" {
-		// Could be IG / Messenger objects on the same webhook URL once we add them.
-		httpx.JSON(w, http.StatusOK, map[string]string{"status": "ignored_object"})
-		return
-	}
+	log.Info("received meta webhook", "object", payload.Object, "entries", len(payload.Entry))
 
 	for _, entry := range payload.Entry {
-		for _, change := range entry.Changes {
-			if change.Field != "messages" {
-				continue
+		// 1. Handle Instagram DMs and Facebook Messenger (messaging array)
+		if payload.Object == "instagram" || payload.Object == "page" {
+			kind := KindInstagramMeta
+			if payload.Object == "page" {
+				kind = KindMessengerMeta
 			}
-			value := change.Value
-
-			// Customer profiles arrive once per webhook batch — index by wa_id.
-			contactsByWAID := map[string]*channels.WhatsAppWebhookContact{}
-			for i := range value.Contacts {
-				c := value.Contacts[i]
-				contactsByWAID[c.WAID] = &c
-			}
-
-			for _, msg := range value.Messages {
-				if err := h.svc.HandleInboundWhatsAppMessage(r.Context(),
-					entry.ID, value.Metadata, contactsByWAID[msg.From], msg); err != nil {
-					log.Error("handle inbound", "err", err, "from", msg.From, "id", msg.ID)
+			for _, m := range entry.Messaging {
+				if err := h.svc.HandleInboundMessaging(r.Context(), kind, m); err != nil {
+					log.Error("handle inbound messaging", "err", err, "object", payload.Object)
 				}
 			}
+			continue
+		}
 
-			for _, st := range value.Statuses {
-				if err := h.svc.HandleStatus(r.Context(), st); err != nil {
-					log.Error("handle status", "err", err, "id", st.ID)
+		// 2. Handle WhatsApp (changes array)
+		if payload.Object == "whatsapp_business_account" {
+			for _, change := range entry.Changes {
+				if change.Field != "messages" {
+					continue
+				}
+				value := change.Value
+
+				contactsByWAID := map[string]*channels.WhatsAppWebhookContact{}
+				for i := range value.Contacts {
+					c := value.Contacts[i]
+					contactsByWAID[c.WAID] = &c
+				}
+
+				for _, msg := range value.Messages {
+					if err := h.svc.HandleInboundWhatsAppMessage(r.Context(),
+						entry.ID, value.Metadata, contactsByWAID[msg.From], msg); err != nil {
+						log.Error("handle inbound wa", "err", err, "from", msg.From, "id", msg.ID)
+					}
+				}
+
+				for _, st := range value.Statuses {
+					if err := h.svc.HandleStatus(r.Context(), st); err != nil {
+						log.Error("handle status", "err", err, "id", st.ID)
+					}
 				}
 			}
 		}

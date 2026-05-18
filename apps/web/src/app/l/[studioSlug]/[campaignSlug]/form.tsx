@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { FieldError, Label } from '@/components/ui/Label';
 import { Select } from '@/components/ui/Select';
@@ -79,6 +80,7 @@ export function LeadForm({
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Jane Doe"
+          suppressHydrationWarning
         />
         <FieldError message={errors.name} />
       </div>
@@ -93,6 +95,7 @@ export function LeadForm({
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="you@example.com"
+          suppressHydrationWarning
         />
         <FieldError message={errors.email} />
       </div>
@@ -107,6 +110,7 @@ export function LeadForm({
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
           placeholder="+1 555 123 4567"
+          suppressHydrationWarning
         />
         <FieldError message={errors.phone} />
       </div>
@@ -118,6 +122,7 @@ export function LeadForm({
           invalid={!!errors.fitnessPlan}
           value={fitnessPlan}
           onChange={(e) => setFitnessPlan(e.target.value)}
+          suppressHydrationWarning
         >
           {fitnessPlans.map((p) => (
             <option key={p} value={p}>
@@ -135,17 +140,19 @@ export function LeadForm({
           value={goals}
           onChange={(e) => setGoals(e.target.value)}
           placeholder="Goals, preferred timings, past experience…"
+          suppressHydrationWarning
         />
       </div>
       <FieldError message={errors._} />
-      <button
+      <Button
         type="submit"
-        disabled={submitting}
-        className="inline-flex w-full items-center justify-center rounded-xl px-6 py-3 text-base font-semibold text-white shadow-md transition-all hover:opacity-90 hover:shadow-lg disabled:opacity-60"
+        loading={submitting}
+        className="w-full h-12 shadow-lg"
         style={{ background: brandColor }}
+        suppressHydrationWarning
       >
-        {submitting ? 'Submitting…' : 'Get in touch'}
-      </button>
+        Get in touch
+      </Button>
     </form>
   );
 }
