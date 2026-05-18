@@ -53,14 +53,15 @@ CREATE TABLE channel_accounts (
     disconnected_at       TIMESTAMPTZ,
 
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-    -- Only live channels are unique so a disconnected account can be reconnected
-    -- later as a fresh row without deleting history.
-    UNIQUE (kind, external_id) WHERE status <> 'disconnected'
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_channel_accounts_studio ON channel_accounts(studio_id);
-CREATE INDEX idx_channel_accounts_kind_external ON channel_accounts(kind, external_id);
+-- Only live channels are unique so a disconnected account can be reconnected
+-- later as a fresh row without deleting history. Postgres requires partial
+-- uniqueness to be expressed as a unique index, not an inline constraint.
+CREATE UNIQUE INDEX idx_channel_accounts_kind_external
+    ON channel_accounts(kind, external_id)
+    WHERE status <> 'disconnected';
 
 -- ── 2. contact_identities ──────────────────────────────────────────────
 -- Identity stitching: same person across channels → one lead.
