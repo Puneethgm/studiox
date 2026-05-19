@@ -17,6 +17,7 @@ import (
 	"github.com/projectx/api/internal/integrations/sheets"
 	"github.com/projectx/api/internal/leads"
 	"github.com/projectx/api/internal/messaging"
+	"github.com/projectx/api/internal/integrations/claude"
 	"github.com/projectx/api/internal/messaging/channels"
 	"github.com/projectx/api/internal/platform/config"
 	"github.com/projectx/api/internal/platform/db"
@@ -97,6 +98,19 @@ func main() {
 	msgWorker := messaging.NewOutboundWorker(msgRepo, msgBus, whatsappClient, messengerClient,
 		log.With("component", "messaging_worker"))
 	go msgWorker.Run(rootCtx)
+
+	// Auto-contact worker: picks up lead_autocontact outbox items
+	autoWorker := messaging.NewAutoContactWorker(leadsRepo, msgRepo, msgSvc, log.With("component", "autocontact_worker"))
+	go autoWorker.Run(rootCtx)
+
+	// Claude AI worker
+	claudeClient, err := claude.New(cfg.Claude.APIURL, cfg.Claude.APIKey)
+	if err != nil {
+		log.Error("init claude client", "err", err)
+	}
+	log.Info("claude config", "enabled", claudeClient != nil)
+	aiWorker := messaging.NewAIWorker(msgBus, msgRepo, msgSvc, studiosRepo, leadsRepo, claudeClient, log.With("component", "ai_worker"))
+	go aiWorker.Run(rootCtx)
 
 	metaWebhook := messaging.NewMetaWebhookHandler(msgSvc,
 		cfg.Meta.WebhookVerifyToken, cfg.Meta.AppSecret,

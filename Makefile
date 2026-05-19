@@ -13,6 +13,7 @@ endif
 
 GOOSE := go run github.com/pressly/goose/v3/cmd/goose@v3.22.0
 PG_DSN := postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)?sslmode=$(POSTGRES_SSLMODE)
+PNPM := $(shell if command -v pnpm >/dev/null 2>&1; then printf 'pnpm'; elif command -v corepack >/dev/null 2>&1; then printf 'corepack pnpm'; else printf 'npx -y pnpm@9.10.0'; fi)
 
 .PHONY: help
 help: ## Show this help
@@ -33,7 +34,15 @@ db-logs: ## Tail Postgres logs
 	docker compose logs -f postgres
 
 # ---------- migrations ----------
-.PHONY: migrate-up migrate-down migrate-status migrate-new
+.PHONY: migrate up down status new migrate-up migrate-down migrate-status migrate-new
+migrate: ## Compatibility alias for `make migrate up/down/status/new`
+	@:
+
+up: migrate-up ## Compatibility alias for `make migrate up`
+down: migrate-down ## Compatibility alias for `make migrate down`
+status: migrate-status ## Compatibility alias for `make migrate status`
+new: migrate-new ## Compatibility alias for `make migrate new name=...`
+
 migrate-up: ## Apply all pending migrations
 	cd apps/api && $(GOOSE) -dir migrations postgres "$(PG_DSN)" up
 
@@ -57,7 +66,7 @@ api: ## Run the Go API
 	cd apps/api && go run ./cmd/server
 
 web: ## Run the Next.js web app (admin + public + auth, single app)
-	cd apps/web && corepack pnpm dev
+	cd apps/web && $(PNPM) dev
 
 dev: ## Run API + web concurrently (requires `npx`)
 	npx -y concurrently -k -n api,web -c blue,magenta \
@@ -78,4 +87,4 @@ fmt: ## Format Go code
 # ---------- bootstrap ----------
 .PHONY: install
 install: ## Install JS deps
-	corepack pnpm install
+	$(PNPM) install

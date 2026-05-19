@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { User, ArrowLeft } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';

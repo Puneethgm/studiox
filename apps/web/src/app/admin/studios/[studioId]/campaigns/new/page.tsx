@@ -103,7 +103,7 @@ export default function NewCampaignPage() {
                 onChange={(e) => setSlug(e.target.value)}
               />
               <FieldHint>
-                Public URL: <code className="font-mono">/l/&lt;studio&gt;/&lt;slug&gt;</code>
+                Public URL: <code className="font-mono">{'/l/<studio>/<slug>'}</code>
               </FieldHint>
               <FieldError message={errors.slug} />
             </div>

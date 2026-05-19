@@ -1,10 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Check, MessagesSquare, Send } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { brandInitials } from '@/lib/color';
-import { api } from '@/lib/api';
+import { ApiError, api } from '@/lib/api';
 import { formatTime, relativeTime } from '@/lib/datetime';
 import type {
   ChannelKind,
@@ -35,6 +36,7 @@ export function InboxLive({
   studioId: string;
   initialConversations: Conversation[];
 }) {
+  const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [activeChannel, setActiveChannel] = useState<ChannelKind>('whatsapp_meta');
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -45,7 +47,13 @@ export function InboxLive({
   const [sending, setSending] = useState(false);
   const [newReceiverValue, setNewReceiverValue] = useState('');
   const [creatingConversation, setCreatingConversation] = useState(false);
+  const [authError, setAuthError] = useState(false);
   const messagesEndRef = useRef<HTMLLIElement>(null);
+
+  const handleAuthError = useCallback(() => {
+    setAuthError(true);
+    router.replace('/login');
+  }, [router]);
 
   useEffect(() => {
     setMounted(true);
@@ -59,18 +67,26 @@ export function InboxLive({
 
   useEffect(() => {
     if (mounted && !selectedId && conversations.length > 0) {
-      setSelectedId(conversations[0].id);
+      setSelectedId(conversations[0]!.id);
     }
   }, [mounted, conversations, selectedId]);
 
   const selected = conversations.find((c) => c.id === selectedId);
 
   const refreshConversations = useCallback(async () => {
-    const res = await api<{ conversations: Conversation[] }>(
-      `/api/v1/studios/${studioId}/messaging/conversations?limit=50&channelKind=${activeChannel}`,
-    );
-    setConversations(res.conversations);
-  }, [studioId, activeChannel]);
+    try {
+      const res = await api<{ conversations: Conversation[] }>(
+        `/api/v1/studios/${studioId}/messaging/conversations?limit=50&channelKind=${activeChannel}`,
+      );
+      setConversations(res.conversations);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        handleAuthError();
+        return;
+      }
+      throw error;
+    }
+  }, [studioId, activeChannel, handleAuthError]);
 
   const refreshMessages = useCallback(
     async (convId: string) => {
@@ -80,11 +96,17 @@ export function InboxLive({
           `/api/v1/studios/${studioId}/messaging/conversations/${convId}/messages?limit=200`,
         );
         setMessages(res.messages);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 401) {
+          handleAuthError();
+          return;
+        }
+        throw error;
       } finally {
         setLoadingMessages(false);
       }
     },
-    [studioId],
+    [studioId, handleAuthError],
   );
 
   useEffect(() => {
@@ -92,11 +114,15 @@ export function InboxLive({
       refreshMessages(selectedId);
       api(`/api/v1/studios/${studioId}/messaging/conversations/${selectedId}/read`, {
         method: 'POST',
-      }).catch(() => {});
+      }).catch((error) => {
+        if (error instanceof ApiError && error.status === 401) {
+          handleAuthError();
+        }
+      });
     } else {
       setMessages([]);
     }
-  }, [selectedId, studioId, refreshMessages]);
+  }, [selectedId, studioId, refreshMessages, handleAuthError]);
 
   useEffect(() => {
     const url = `/api/v1/studios/${studioId}/messaging/stream`;
@@ -155,7 +181,11 @@ export function InboxLive({
         json: { body },
       });
       refreshConversations();
-    } catch {
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        handleAuthError();
+        return;
+      }
       setMessages((current) => current.filter((msg) => msg.id !== optimistic.id));
       setDraft(body);
     } finally {
@@ -181,6 +211,10 @@ export function InboxLive({
       setSelectedId(conv.id);
       await refreshConversations();
     } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        handleAuthError();
+        return;
+      }
       console.error('Failed to create conversation:', error);
     } finally {
       setCreatingConversation(false);
@@ -196,6 +230,10 @@ export function InboxLive({
   useEffect(() => {
     refreshConversations();
   }, [activeChannel, refreshConversations]);
+
+  if (authError) {
+    return null;
+  }
 
   return (
     <div

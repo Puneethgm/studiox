@@ -317,7 +317,7 @@ function LeadCard({
       <div className="flex items-center gap-2.5">
         <span
           className="grid h-8 w-8 shrink-0 place-items-center rounded-xl text-[11px] font-black text-white shadow-sm ring-2"
-          style={{ background: av, ringColor: cfg.avatarRing }}
+          style={{ background: av, '--ring-color': cfg.avatarRing } as React.CSSProperties}
           aria-hidden
         >
           {brandInitials(lead.name)}

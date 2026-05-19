@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -34,6 +35,7 @@ type Config struct {
 	// Meta App credentials (single platform-wide app; each studio brings its
 	// own WABA + access token via the Channels page).
 	Meta MetaConfig
+	Claude ClaudeConfig
 }
 
 type MetaConfig struct {
@@ -41,6 +43,11 @@ type MetaConfig struct {
 	AppSecret          string
 	WebhookVerifyToken string
 	GraphAPIVersion    string // e.g. "v21.0"
+}
+
+type ClaudeConfig struct {
+	APIURL string
+	APIKey string
 }
 
 func (m MetaConfig) Enabled() bool {
@@ -90,7 +97,9 @@ func (s SheetsConfig) Enabled() bool {
 // Load reads .env (if present) then merges OS env. Fails fast on missing
 // required values so misconfiguration is loud.
 func Load() (Config, error) {
-	_ = godotenv.Load(".env", "../../.env")
+	for _, path := range []string{".env", "../.env", "../../.env"} {
+		_ = godotenv.Load(path)
+	}
 
 	port, err := atoiDefault("POSTGRES_PORT", 5432)
 	if err != nil {
@@ -106,14 +115,6 @@ func Load() (Config, error) {
 		Env:         getEnv("API_ENV", "local"),
 		LogLevel:    getEnv("API_LOG_LEVEL", "info"),
 		CORSOrigins: splitCSV(getEnv("API_CORS_ORIGINS", "http://localhost:3000,http://localhost:3001")),
-		DB: DBConfig{
-			Host:     getEnv("POSTGRES_HOST", "localhost"),
-			Port:     port,
-			User:     getEnv("POSTGRES_USER", "projectx"),
-			Password: getEnv("POSTGRES_PASSWORD", ""),
-			Name:     getEnv("POSTGRES_DB", "projectx"),
-			SSLMode:  getEnv("POSTGRES_SSLMODE", "disable"),
-		},
 		JWT: JWTConfig{
 			Secret: getEnv("JWT_SECRET", ""),
 			TTL:    time.Duration(ttl) * time.Hour,
@@ -140,18 +141,60 @@ func Load() (Config, error) {
 			WebhookVerifyToken: getEnv("META_WEBHOOK_VERIFY_TOKEN", ""),
 			GraphAPIVersion:    getEnv("META_GRAPH_API_VERSION", "v21.0"),
 		},
+		Claude: ClaudeConfig{
+			APIURL: getEnv("CLAUDE_API_URL", "https://api.anthropic.com/v1/messages"),
+			APIKey: getEnv("CLAUDE_API_KEY", ""),
+		},
 	}
+
+	dbCfg, err := loadDBConfig(port)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.DB = dbCfg
 
 	if len(cfg.JWT.Secret) < 32 {
 		return cfg, errors.New("JWT_SECRET must be at least 32 characters")
-	}
-	if cfg.DB.Password == "" {
-		return cfg, errors.New("POSTGRES_PASSWORD is required")
 	}
 	if cfg.TokenEncryptionKey == "" {
 		return cfg, errors.New("TOKEN_ENCRYPTION_KEY is required (generate with `openssl rand -base64 32`)")
 	}
 	return cfg, nil
+}
+
+func loadDBConfig(defaultPort int) (DBConfig, error) {
+	if rawURL := os.Getenv("DATABASE_URL"); rawURL != "" {
+		parsed, err := url.Parse(rawURL)
+		if err != nil {
+			return DBConfig{}, fmt.Errorf("DATABASE_URL: %w", err)
+		}
+		password, _ := parsed.User.Password()
+		port, err := strconv.Atoi(parsed.Port())
+		if err != nil {
+			port = defaultPort
+		}
+		sslMode := parsed.Query().Get("sslmode")
+		if sslMode == "" {
+			sslMode = "disable"
+		}
+		return DBConfig{
+			Host:     parsed.Hostname(),
+			Port:     port,
+			User:     parsed.User.Username(),
+			Password: password,
+			Name:     strings.TrimPrefix(parsed.Path, "/"),
+			SSLMode:  sslMode,
+		}, nil
+	}
+
+	return DBConfig{
+		Host:     getEnv("POSTGRES_HOST", "localhost"),
+		Port:     defaultPort,
+		User:     getEnv("POSTGRES_USER", "projectx"),
+		Password: getEnv("POSTGRES_PASSWORD", ""),
+		Name:     getEnv("POSTGRES_DB", "projectx"),
+		SSLMode:  getEnv("POSTGRES_SSLMODE", "disable"),
+	}, nil
 }
 
 func getEnv(k, def string) string {

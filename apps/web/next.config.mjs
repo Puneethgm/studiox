@@ -1,4 +1,7 @@
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const configDir = path.dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -9,7 +12,7 @@ const nextConfig = {
   // not the whole monorepo. Keeps the prod image ~150MB instead of ~1GB.
   output: 'standalone',
   // Tell Next where the workspace root is so it traces deps correctly.
-  outputFileTracingRoot: path.join(import.meta.dirname, '../..'),
+  outputFileTracingRoot: path.join(configDir, '../..'),
 
   // Same-origin API: the browser always calls /api/* on whatever host it's
   // loaded from, and Next.js proxies it to the Go backend. In dev that's
