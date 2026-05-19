@@ -494,6 +494,37 @@ func (r *Repo) ListMessages(ctx context.Context, studioID, conversationID uuid.U
 	return out, rows.Err()
 }
 
+func (r *Repo) GetMessageByID(ctx context.Context, studioID, id uuid.UUID) (*Message, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT id, conversation_id, studio_id, direction, source_kind, source_user_id,
+			   source_ref, body, attachments, external_id, in_reply_to, status,
+			   failure_reason, sent_at, delivered_at, read_at, created_at
+		FROM messages
+		WHERE studio_id = $1 AND id = $2
+	`, studioID, id)
+	var m Message
+	var atts []byte
+	var srcRef, externalID, inReplyTo *string
+	if err := row.Scan(&m.ID, &m.ConversationID, &m.StudioID, &m.Direction, &m.SourceKind,
+		&m.SourceUserID, &srcRef, &m.Body, &atts, &externalID, &inReplyTo, &m.Status,
+		&m.FailureReason, &m.SentAt, &m.DeliveredAt, &m.ReadAt, &m.CreatedAt); err != nil {
+		return nil, fmt.Errorf("get message: %w", err)
+	}
+	if srcRef != nil {
+		m.SourceRef = *srcRef
+	}
+	if externalID != nil {
+		m.ExternalID = *externalID
+	}
+	if inReplyTo != nil {
+		m.InReplyTo = *inReplyTo
+	}
+	if len(atts) > 0 {
+		_ = json.Unmarshal(atts, &m.Attachments)
+	}
+	return &m, nil
+}
+
 // ============================================================
 // outbound_jobs
 // ============================================================

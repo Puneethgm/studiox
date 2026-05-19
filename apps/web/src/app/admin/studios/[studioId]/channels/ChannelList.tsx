@@ -6,6 +6,7 @@ const STATUS_DESCRIPTIONS: Record<ChannelStatus, string> = {
   paused: '⏸ Paused — no messages in or out',
   disconnected: '⊘ Disconnected — reconnect to resume',
   error: '⚠️ Needs attention — check error below',
+  disconnected: '✕ Disconnected — reconnect to resume messaging',
 };
 
 import { useRouter } from 'next/navigation';
@@ -30,6 +31,7 @@ const STATUS_TONE: Record<ChannelStatus, 'success' | 'warning' | 'danger' | 'neu
   paused: 'warning',
   disconnected: 'neutral',
   error: 'danger',
+  disconnected: 'neutral',
 };
 
 export function ChannelList({ studioId, channels }: { studioId: string; channels: ChannelAccount[] }) {

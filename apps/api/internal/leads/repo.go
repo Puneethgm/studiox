@@ -154,6 +154,14 @@ func (r *Repo) CreateLeadWithOutbox(ctx context.Context, l *Lead, destination st
 		return fmt.Errorf("insert outbox: %w", err)
 	}
 
+	// Also enqueue an autocontact job so the auto-contact worker can pick it up.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO outbox (aggregate_type, aggregate_id, event_type, destination, payload)
+		VALUES ('lead', $1, 'lead.created', 'lead_autocontact', $2)
+	`, l.ID, payload); err != nil {
+		return fmt.Errorf("insert autocontact outbox: %w", err)
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
@@ -286,6 +294,37 @@ func (r *Repo) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status Le
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrLeadNotFound
+	}
+	return nil
+}
+
+// UpdateStatus updates only the lead status (used by AI worker for auto-status updates)
+func (r *Repo) UpdateStatus(ctx context.Context, studioID, id uuid.UUID, status LeadStatus) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE leads SET status = $3, updated_at = now()
+		WHERE studio_id = $1 AND id = $2
+	`, studioID, id, string(status))
+	if err != nil {
+		return fmt.Errorf("update status: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrLeadNotFound
+	}
+	return nil
+}
+
+// MarkLeadContacted increments contact attempts, sets last_contacted_at, and marks status=contacted.
+func (r *Repo) MarkLeadContacted(ctx context.Context, id uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE leads
+		SET contact_attempts = contact_attempts + 1,
+			last_contacted_at = now(),
+			status = 'contacted',
+			updated_at = now()
+		WHERE id = $1
+	`, id)
+	if err != nil {
+		return fmt.Errorf("mark lead contacted: %w", err)
 	}
 	return nil
 }
