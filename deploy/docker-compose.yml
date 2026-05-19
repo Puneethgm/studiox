@@ -34,6 +34,7 @@ x-api-env: &api_env
   GOOGLE_CREDENTIALS_PATH: /secrets/google-credentials.json
   GOOGLE_SHEETS_ID: ${GOOGLE_SHEETS_ID:-}
   GOOGLE_SHEETS_TAB: ${GOOGLE_SHEETS_TAB:-Leads}
+  TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY}
 
 services:
   postgres:

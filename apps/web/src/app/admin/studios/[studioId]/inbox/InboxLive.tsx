@@ -67,7 +67,7 @@ export function InboxLive({
 
   useEffect(() => {
     if (mounted && !selectedId && conversations.length > 0) {
-      setSelectedId(conversations[0]!.id);
+      setSelectedId(conversations[0].id);
     }
   }, [mounted, conversations, selectedId]);
 
