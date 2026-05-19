@@ -101,7 +101,7 @@ export default function NewStudioPage() {
                 onChange={(e) => setSlug(e.target.value)}
               />
               <FieldHint>
-                Used in public URLs: <code className="font-mono">/l/&lt;slug&gt;/&lt;campaign&gt;</code>
+                Used in public URLs: <code className="font-mono">{'/l/<slug>/<campaign>'}</code>
               </FieldHint>
               <FieldError message={errors.slug} />
             </div>
