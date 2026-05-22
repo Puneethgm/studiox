@@ -37,3 +37,4 @@ coverage.txt
 .docker-data/
 *.json
 heroic-artifact-434914-d4-1b7152cf7bec.json
+apps/api/secrets/
