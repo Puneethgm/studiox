@@ -26,10 +26,10 @@ import (
 // connected studios). Studio-level routing happens via the phone_number_id in
 // the payload, which we look up against channel_accounts.
 type MetaWebhookHandler struct {
-	svc           *Service
-	verifyToken   string // arbitrary string we set in Meta App config + here
-	appSecret     string // Meta app secret — used to verify X-Hub-Signature-256
-	log           *slog.Logger
+	svc         *Service
+	verifyToken string // arbitrary string we set in Meta App config + here
+	appSecret   string // Meta app secret — used to verify X-Hub-Signature-256
+	log         *slog.Logger
 }
 
 func NewMetaWebhookHandler(svc *Service, verifyToken, appSecret string, log *slog.Logger) *MetaWebhookHandler {

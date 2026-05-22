@@ -142,7 +142,9 @@ type updateReq struct {
 	BrandColor   string `json:"brandColor"`
 	LogoURL      string `json:"logoUrl"`
 	ContactEmail string `json:"contactEmail"`
-	Active       bool   `json:"active"`
+	Active               bool                 `json:"active"`
+	AvailabilitySlots    []AvailabilitySlot   `json:"availabilitySlots"`
+	AvailabilityTimezone string               `json:"availabilityTimezone"`
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
@@ -160,7 +162,9 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		BrandColor:   req.BrandColor,
 		LogoURL:      req.LogoURL,
 		ContactEmail: req.ContactEmail,
-		Active:       req.Active,
+		Active:               req.Active,
+		AvailabilitySlots:    req.AvailabilitySlots,
+		AvailabilityTimezone: req.AvailabilityTimezone,
 	})
 	if errs != nil {
 		httpx.WriteValidationError(w, errs)
@@ -189,34 +193,84 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 // id doesn't match the caller's claim, return 403.
 
 func (h *Handler) getScoped(w http.ResponseWriter, r *http.Request) {
-	if !h.authorizeScope(w, r) {
+	c := identity.MustClaims(r.Context())
+	// Super admins use the URL param; studio_admins always get their own studio.
+	var studioID uuid.UUID
+	if c.IsSuper() {
+		id, err := uuid.Parse(chi.URLParam(r, "id"))
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+			return
+		}
+		studioID = id
+	} else {
+		if c.StudioID == nil {
+			httpx.WriteError(w, http.StatusForbidden, "forbidden", "no studio bound to this user")
+			return
+		}
+		studioID = *c.StudioID
+	}
+	s, err := h.svc.GetByID(r.Context(), studioID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "studio not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return
 	}
-	h.get(w, r)
+	httpx.JSON(w, http.StatusOK, s)
 }
 
 func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
-	if !h.authorizeScope(w, r) {
+	c := identity.MustClaims(r.Context())
+	// Super admins use the URL param; studio_admins always update their own studio.
+	var studioID uuid.UUID
+	if c.IsSuper() {
+		id, err := uuid.Parse(chi.URLParam(r, "id"))
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+			return
+		}
+		studioID = id
+	} else {
+		if c.StudioID == nil {
+			httpx.WriteError(w, http.StatusForbidden, "forbidden", "no studio bound to this user")
+			return
+		}
+		studioID = *c.StudioID
+	}
+	var req updateReq
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	h.update(w, r)
-}
-
-func (h *Handler) authorizeScope(w http.ResponseWriter, r *http.Request) bool {
-	c := identity.MustClaims(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	errs, err := h.svc.Update(r.Context(), studioID, UpdateStudioInput{
+		Name:                 req.Name,
+		BrandColor:           req.BrandColor,
+		LogoURL:              req.LogoURL,
+		ContactEmail:         req.ContactEmail,
+		Active:               req.Active,
+		AvailabilitySlots:    req.AvailabilitySlots,
+		AvailabilityTimezone: req.AvailabilityTimezone,
+	})
+	if errs != nil {
+		httpx.WriteValidationError(w, errs)
+		return
+	}
 	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
-		return false
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "studio not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
 	}
-	if c.IsSuper() {
-		return true
+	updated, err := h.svc.GetByID(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
 	}
-	if c.StudioID == nil || *c.StudioID != id {
-		httpx.WriteError(w, http.StatusForbidden, "forbidden", "cannot access another studio")
-		return false
-	}
-	return true
+	httpx.JSON(w, http.StatusOK, updated)
 }
 
 // ----- public -----

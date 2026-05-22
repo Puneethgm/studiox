@@ -36,8 +36,8 @@ type CreateStudioInput struct {
 }
 
 type CreateStudioResult struct {
-	Studio  *Studio        `json:"studio"`
-	AdminID uuid.UUID      `json:"adminId"`
+	Studio  *Studio   `json:"studio"`
+	AdminID uuid.UUID `json:"adminId"`
 }
 
 // CreateStudioWithAdmin creates the studio and its first studio_admin in a
@@ -141,11 +141,13 @@ func (s *Service) GetBySlug(ctx context.Context, slug string) (*Studio, error) {
 }
 
 type UpdateStudioInput struct {
-	Name         string
-	BrandColor   string
-	LogoURL      string
-	ContactEmail string
-	Active       bool
+	Name                 string
+	BrandColor           string
+	LogoURL              string
+	ContactEmail         string
+	Active               bool
+	AvailabilitySlots    []AvailabilitySlot `json:"availabilitySlots"`
+	AvailabilityTimezone string `json:"availabilityTimezone"`
 }
 
 func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput) (map[string]string, error) {
@@ -169,7 +171,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput
 	if len(errs) > 0 {
 		return errs, nil
 	}
-	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.Active); err != nil {
+	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.Active, in.AvailabilitySlots, in.AvailabilityTimezone); err != nil {
 		return nil, err
 	}
 	return nil, nil

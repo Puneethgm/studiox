@@ -14,10 +14,10 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/projectx/api/internal/identity"
+	"github.com/projectx/api/internal/integrations/claude"
 	"github.com/projectx/api/internal/integrations/sheets"
 	"github.com/projectx/api/internal/leads"
 	"github.com/projectx/api/internal/messaging"
-	"github.com/projectx/api/internal/integrations/claude"
 	"github.com/projectx/api/internal/messaging/channels"
 	"github.com/projectx/api/internal/platform/config"
 	"github.com/projectx/api/internal/platform/db"
@@ -75,7 +75,7 @@ func main() {
 	leadsSvc := leads.NewService(leadsRepo)
 	leadsHandler := leads.NewHandler(leadsSvc, cfg)
 
-	sheetsClient, err := sheets.NewClient(rootCtx, cfg.Sheets.CredentialsPath, cfg.Sheets.SpreadsheetID, cfg.Sheets.Tab)
+	sheetsClient, err := sheets.NewClient(rootCtx, cfg.Sheets.CredentialsPath)
 	if err != nil {
 		log.Error("sheets init failed — leads will queue in outbox until fixed", "err", err)
 	}
@@ -90,7 +90,7 @@ func main() {
 	}
 	msgRepo := messaging.NewRepo(pool, cipher)
 	msgBus := messaging.NewInProcBus()
-	msgSvc := messaging.NewService(msgRepo, msgBus)
+	msgSvc := messaging.NewService(msgRepo, msgBus, cfg.PublicFormBaseURL)
 	msgHandler := messaging.NewHandler(msgSvc, msgBus)
 
 	whatsappClient := channels.NewMetaWhatsApp(cfg.Meta.GraphAPIVersion)
@@ -133,12 +133,20 @@ func main() {
 		httpx.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
+	// Serve uploaded media files (created by the /messaging/upload endpoint)
+	uploadsDir := "./uploads"
+	if err := os.MkdirAll(uploadsDir, 0o755); err != nil {
+		log.Error("create uploads dir", "err", err)
+	}
+	r.Handle("/uploads/*", http.StripPrefix("/uploads/", http.FileServer(http.Dir(uploadsDir))))
+
 	r.Route("/api/v1", func(r chi.Router) {
 		identityHandler.Routes(r)
 
 		// Public, unauthenticated endpoints
 		studiosHandler.PublicRoutes(r)
 		leadsHandler.PublicRoutes(r)
+		msgHandler.PublicRoutes(r)
 
 		// Meta webhooks (WA, FB, IG)
 		// We provide separate URLs for clarity, though the handler logic handles all types.

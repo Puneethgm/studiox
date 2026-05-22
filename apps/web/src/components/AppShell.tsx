@@ -141,7 +141,7 @@ function Sidebar({
         'fixed inset-y-4 left-4 z-50 flex w-72 flex-col overflow-hidden rounded-[32px] border border-white/40 bg-white/40 px-4 py-6 backdrop-blur-3xl transition-all duration-500 ease-[cubic-bezier(0.34,1.56,0.64,1)]',
         'dark:border-white/10 dark:bg-neutral-900/40',
         // Desktop: sticky in flow, always visible
-        'lg:relative lg:inset-y-0 lg:left-0 lg:z-auto lg:h-full lg:w-20 lg:translate-x-0 lg:items-center lg:rounded-[40px] lg:px-2 lg:shadow-liquid lg:transition-all hover:lg:w-64 group/sidebar',
+        'lg:relative lg:inset-y-0 lg:left-0 lg:z-auto lg:h-full lg:w-20 lg:translate-x-0 lg:items-center lg:rounded-[40px] lg:px-2 lg:shadow-liquid lg:transition-[width,padding] lg:duration-300 lg:ease-out hover:lg:w-64 hover:lg:px-3 group/sidebar',
         mobileOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-[calc(100%+20px)]',
       )}
       aria-label="Primary navigation"
@@ -159,7 +159,7 @@ function Sidebar({
 
       {/* Brand block */}
       {isStudio ? (
-        <div className="mb-10 flex animate-in items-center gap-3 lg:flex-col lg:gap-1 group-hover/sidebar:lg:flex-row group-hover/sidebar:lg:gap-3" style={{ animationDelay: '100ms' }}>
+        <div className="mb-10 flex animate-in items-center gap-3 lg:flex-col lg:gap-1 lg:transition-all lg:duration-300 group-hover/sidebar:lg:flex-row group-hover/sidebar:lg:gap-3" style={{ animationDelay: '100ms' }}>
           <div
             className="grid h-12 w-12 shrink-0 animate-float place-items-center overflow-hidden rounded-2xl text-sm font-bold text-white shadow-lg shadow-brand-500/20 ring-4 ring-white/30"
             style={{ background: studio!.brandColor }}
@@ -171,7 +171,7 @@ function Sidebar({
               brandInitials(studio!.name)
             )}
           </div>
-          <div className="min-w-0 lg:hidden group-hover/sidebar:lg:block">
+          <div className="min-w-0 lg:block lg:max-w-0 lg:overflow-hidden lg:opacity-0 lg:transition-all lg:duration-300 group-hover/sidebar:lg:max-w-[11rem] group-hover/sidebar:lg:opacity-100">
             <div className="truncate text-sm font-bold text-zinc-900 dark:text-zinc-100">
               {studio!.name}
             </div>
@@ -181,11 +181,11 @@ function Sidebar({
           </div>
         </div>
       ) : (
-        <div className="mb-10 flex animate-in items-center gap-3 lg:flex-col lg:gap-1 group-hover/sidebar:lg:flex-row group-hover/sidebar:lg:gap-3" style={{ animationDelay: '100ms' }}>
+        <div className="mb-10 flex animate-in items-center gap-3 lg:flex-col lg:gap-1 lg:transition-all lg:duration-300 group-hover/sidebar:lg:flex-row group-hover/sidebar:lg:gap-3" style={{ animationDelay: '100ms' }}>
           <div className="grid h-12 w-12 shrink-0 animate-float place-items-center rounded-2xl bg-gradient-to-br from-brand-300 via-brand-primary to-brand-700 text-sm font-extrabold text-white shadow-lg shadow-brand-500/20 ring-4 ring-white/30">
             1H
           </div>
-          <div className="min-w-0 lg:hidden group-hover/sidebar:lg:block">
+          <div className="min-w-0 lg:block lg:max-w-0 lg:overflow-hidden lg:opacity-0 lg:transition-all lg:duration-300 group-hover/sidebar:lg:max-w-[11rem] group-hover/sidebar:lg:opacity-100">
             <div className="truncate text-sm font-bold text-zinc-900 dark:text-zinc-100">
               1herosocial.ai
             </div>
@@ -203,7 +203,7 @@ function Sidebar({
               key={item.href}
               href={item.href}
               className={cn(
-                'group flex animate-in items-center gap-3 rounded-[20px] px-3 py-3 text-sm font-semibold transition-all duration-300',
+                'group flex animate-in items-center gap-3 rounded-[20px] px-3 py-3 text-sm font-semibold transition-colors duration-300 lg:transition-[background-color,color,box-shadow,padding,transform] lg:duration-300',
                 active
                   ? 'text-white shadow-lg'
                   : 'text-zinc-500 hover:bg-white/50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-white/5 dark:hover:text-zinc-100',
@@ -214,17 +214,19 @@ function Sidebar({
                 ...(active ? { background: 'linear-gradient(135deg, var(--brand) 0%, #a78bfa 100%)', boxShadow: '0 8px 16px -4px rgba(124, 58, 237, 0.3)' } : {}),
               }}
             >
-              <span className={cn('shrink-0 transition-all duration-500 group-hover:scale-125', active && '[&>svg]:stroke-[2.5]')}>
+              <span className={cn('shrink-0 transition-transform duration-300 group-hover:scale-110', active && '[&>svg]:stroke-[2.5]')}>
                 {item.icon}
               </span>
-              <span className="truncate lg:hidden group-hover/sidebar:lg:block">{item.label}</span>
+              <span className="truncate lg:block lg:max-w-0 lg:overflow-hidden lg:opacity-0 lg:transition-all lg:duration-300 group-hover/sidebar:lg:max-w-[12rem] group-hover/sidebar:lg:opacity-100">
+                {item.label}
+              </span>
             </Link>
           );
         })}
       </nav>
 
       {/* Footer hint */}
-      <div className="mt-6 animate-in rounded-3xl border border-white/20 bg-white/20 p-4 text-xs text-zinc-500 backdrop-blur-md dark:border-white/5 dark:bg-black/20 lg:hidden group-hover/sidebar:lg:block" style={{ animationDelay: '500ms' }}>
+      <div className="mt-6 animate-in rounded-3xl border border-white/20 bg-white/20 p-4 text-xs text-zinc-500 backdrop-blur-md dark:border-white/5 dark:bg-black/20 lg:block lg:max-h-0 lg:overflow-hidden lg:p-0 lg:opacity-0 lg:transition-all lg:duration-300 group-hover/sidebar:lg:max-h-40 group-hover/sidebar:lg:p-4 group-hover/sidebar:lg:opacity-100" style={{ animationDelay: '500ms' }}>
         <div className="flex items-center gap-2 font-black text-zinc-800 dark:text-zinc-200">
           <Sparkles className="h-3.5 w-3.5 text-brand-500" />
           Tip

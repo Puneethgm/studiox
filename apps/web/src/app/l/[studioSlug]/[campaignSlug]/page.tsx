@@ -4,6 +4,9 @@ import { Card } from '@/components/ui/Card';
 import { fetchPublicCampaign, fetchPublicStudio } from '@/lib/public';
 import { LeadForm } from './form';
 
+const noiseSvgDataUri =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.38'/%3E%3C/svg%3E";
+
 export default async function CampaignFormPage({
   params,
 }: {
@@ -22,11 +25,26 @@ export default async function CampaignFormPage({
 
   return (
     <main
-      className="min-h-screen px-4 py-16 sm:px-6 lg:px-8"
+      className="relative min-h-screen overflow-hidden px-4 py-16 sm:px-6 lg:px-8"
       style={{
-        background: `radial-gradient(circle at 0% 0%, ${brand}15 0%, transparent 40%), radial-gradient(circle at 100% 100%, ${brand}15 0%, transparent 40%), #f8fafc`,
+        backgroundImage: `radial-gradient(circle at 0% 0%, ${brand}18 0%, transparent 40%), radial-gradient(circle at 100% 100%, ${brand}18 0%, transparent 40%), linear-gradient(rgba(238, 240, 245, 0.55), rgba(238, 240, 245, 0.55)), url('/admin-bg-light.png')`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center top',
+        backgroundAttachment: 'fixed',
       }}
     >
+      <div aria-hidden className="pointer-events-none absolute inset-0 opacity-60">
+        <div className="absolute -left-[10%] top-[18%] h-[42%] w-[42%] rounded-full bg-brand-500/10 blur-[120px]" />
+        <div className="absolute -right-[12%] bottom-[10%] h-[42%] w-[42%] rounded-full bg-sky-400/10 blur-[120px]" />
+        <div
+          className="absolute inset-0 opacity-[0.04]"
+          style={{
+            backgroundImage: `url("${noiseSvgDataUri}")`,
+            backgroundRepeat: 'repeat',
+            backgroundSize: '160px 160px',
+          }}
+        />
+      </div>
       <div className="mx-auto max-w-xl animate-slide-up">
         <div className="mb-12 text-center">
           <div

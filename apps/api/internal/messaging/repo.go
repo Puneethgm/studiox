@@ -173,18 +173,89 @@ func (r *Repo) scanChannelWithToken(row pgx.Row) (*ChannelAccount, error) {
 }
 
 func (r *Repo) DisconnectChannel(ctx context.Context, studioID, id uuid.UUID) error {
+	// First try to hard delete the channel (will succeed if no conversations exist)
 	tag, err := r.pool.Exec(ctx, `
-		UPDATE channel_accounts
-		SET status = 'disconnected', disconnected_at = now(), updated_at = now()
+		DELETE FROM channel_accounts
 		WHERE studio_id = $1 AND id = $2
 	`, studioID, id)
-	if err != nil {
-		return fmt.Errorf("disconnect: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
+	if err == nil {
+		if tag.RowsAffected() > 0 {
+			return nil
+		}
 		return ErrNotFound
 	}
-	return nil
+
+	// If it fails with a foreign key constraint violation (code 23503), fall back to soft-delete
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+		tag, err = r.pool.Exec(ctx, `
+			UPDATE channel_accounts
+			SET status = 'disconnected', disconnected_at = now(), updated_at = now()
+			WHERE studio_id = $1 AND id = $2
+		`, studioID, id)
+		if err != nil {
+			return fmt.Errorf("disconnect: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return nil
+	}
+
+	return fmt.Errorf("delete channel: %w", err)
+}
+
+type UpdateChannelInput struct {
+	ID            uuid.UUID
+	StudioID      uuid.UUID
+	ExternalID    string
+	ParentID      string
+	DisplayHandle string
+	AccessToken   string
+}
+
+func (r *Repo) UpdateChannel(ctx context.Context, in UpdateChannelInput) (*ChannelAccount, error) {
+	var enc string
+	var err error
+	if in.AccessToken != "" {
+		enc, err = r.cipher.Encrypt(in.AccessToken)
+		if err != nil {
+			return nil, fmt.Errorf("encrypt token: %w", err)
+		}
+	}
+
+	var row pgx.Row
+	if in.AccessToken != "" {
+		row = r.pool.QueryRow(ctx, `
+			UPDATE channel_accounts
+			SET external_id = $3, parent_id = $4, display_handle = $5,
+			    access_token_enc = $6, status = 'active', last_error = '', updated_at = now()
+			WHERE studio_id = $1 AND id = $2
+			RETURNING id, studio_id, kind, bsp, external_id, parent_id, display_handle, status, last_error, connected_at, disconnected_at, created_at, updated_at
+		`, in.StudioID, in.ID, in.ExternalID, in.ParentID, in.DisplayHandle, enc)
+	} else {
+		row = r.pool.QueryRow(ctx, `
+			UPDATE channel_accounts
+			SET external_id = $3, parent_id = $4, display_handle = $5,
+			    status = 'active', last_error = '', updated_at = now()
+			WHERE studio_id = $1 AND id = $2
+			RETURNING id, studio_id, kind, bsp, external_id, parent_id, display_handle, status, last_error, connected_at, disconnected_at, created_at, updated_at
+		`, in.StudioID, in.ID, in.ExternalID, in.ParentID, in.DisplayHandle)
+	}
+
+	out := &ChannelAccount{}
+	if err := row.Scan(&out.ID, &out.StudioID, &out.Kind, &out.BSP, &out.ExternalID, &out.ParentID, &out.DisplayHandle,
+		&out.Status, &out.LastError, &out.ConnectedAt, &out.DisconnectedAt, &out.CreatedAt, &out.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return nil, fmt.Errorf("this %s account is already connected to another studio", out.Kind)
+		}
+		return nil, fmt.Errorf("update channel: %w", err)
+	}
+	return out, nil
 }
 
 func (r *Repo) MarkChannelError(ctx context.Context, id uuid.UUID, msg string) error {
@@ -629,4 +700,277 @@ func nullIfEmpty(s string) any {
 		return nil
 	}
 	return s
+}
+
+// ============================================================
+// message_templates
+// ============================================================
+
+func (r *Repo) ListTemplates(ctx context.Context, studioID uuid.UUID) ([]MessageTemplate, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, studio_id, name, body, channel_kinds, attachments,
+		       whatsapp_template_name, whatsapp_template_lang, created_at, updated_at
+		FROM message_templates
+		WHERE studio_id = $1
+		ORDER BY name ASC
+	`, studioID)
+	if err != nil {
+		return nil, fmt.Errorf("list templates: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]MessageTemplate, 0)
+	for rows.Next() {
+		var mt MessageTemplate
+		var atts []byte
+		var waName, waLang *string
+		if err := rows.Scan(&mt.ID, &mt.StudioID, &mt.Name, &mt.Body, &mt.ChannelKinds, &atts,
+			&waName, &waLang, &mt.CreatedAt, &mt.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan template: %w", err)
+		}
+		if waName != nil {
+			mt.WhatsAppTemplateName = *waName
+		}
+		if waLang != nil {
+			mt.WhatsAppTemplateLang = *waLang
+		}
+		if len(atts) > 0 {
+			_ = json.Unmarshal(atts, &mt.Attachments)
+		}
+		out = append(out, mt)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repo) CreateTemplate(ctx context.Context, mt *MessageTemplate) error {
+	atts, _ := json.Marshal(mt.Attachments)
+	row := r.pool.QueryRow(ctx, `
+		INSERT INTO message_templates (studio_id, name, body, channel_kinds, attachments,
+		                               whatsapp_template_name, whatsapp_template_lang)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id, created_at, updated_at
+	`, mt.StudioID, mt.Name, mt.Body, mt.ChannelKinds, atts,
+		nullIfEmpty(mt.WhatsAppTemplateName), nullIfEmpty(mt.WhatsAppTemplateLang))
+	return row.Scan(&mt.ID, &mt.CreatedAt, &mt.UpdatedAt)
+}
+
+func (r *Repo) UpdateTemplate(ctx context.Context, mt *MessageTemplate) error {
+	atts, _ := json.Marshal(mt.Attachments)
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE message_templates
+		SET name = $3, body = $4, channel_kinds = $5, attachments = $6,
+		    whatsapp_template_name = $7, whatsapp_template_lang = $8, updated_at = now()
+		WHERE studio_id = $1 AND id = $2
+	`, mt.StudioID, mt.ID, mt.Name, mt.Body, mt.ChannelKinds, atts,
+		nullIfEmpty(mt.WhatsAppTemplateName), nullIfEmpty(mt.WhatsAppTemplateLang))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *Repo) DeleteTemplate(ctx context.Context, studioID, id uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx, `
+		DELETE FROM message_templates
+		WHERE studio_id = $1 AND id = $2
+	`, studioID, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ============================================================
+// trigger_links
+// ============================================================
+
+func (r *Repo) ListTriggerLinks(ctx context.Context, studioID uuid.UUID) ([]TriggerLink, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT tl.id, tl.studio_id, tl.name, tl.url, 
+		       COALESCE(COUNT(tlc.id), 0)::int AS clicks,
+		       tl.created_at, tl.updated_at
+		FROM trigger_links tl
+		LEFT JOIN trigger_link_clicks tlc ON tlc.link_id = tl.id
+		WHERE tl.studio_id = $1
+		GROUP BY tl.id
+		ORDER BY tl.name ASC
+	`, studioID)
+	if err != nil {
+		return nil, fmt.Errorf("list trigger links: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]TriggerLink, 0)
+	for rows.Next() {
+		var tl TriggerLink
+		if err := rows.Scan(&tl.ID, &tl.StudioID, &tl.Name, &tl.URL, &tl.Clicks, &tl.CreatedAt, &tl.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan trigger link: %w", err)
+		}
+		out = append(out, tl)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repo) CreateTriggerLink(ctx context.Context, tl *TriggerLink) error {
+	row := r.pool.QueryRow(ctx, `
+		INSERT INTO trigger_links (studio_id, name, url)
+		VALUES ($1, $2, $3)
+		RETURNING id, created_at, updated_at
+	`, tl.StudioID, tl.Name, tl.URL)
+	return row.Scan(&tl.ID, &tl.CreatedAt, &tl.UpdatedAt)
+}
+
+func (r *Repo) UpdateTriggerLink(ctx context.Context, tl *TriggerLink) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE trigger_links
+		SET name = $3, url = $4, updated_at = now()
+		WHERE studio_id = $1 AND id = $2
+	`, tl.StudioID, tl.ID, tl.Name, tl.URL)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *Repo) DeleteTriggerLink(ctx context.Context, studioID, id uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx, `
+		DELETE FROM trigger_links
+		WHERE studio_id = $1 AND id = $2
+	`, studioID, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *Repo) GetTriggerLinkByID(ctx context.Context, id uuid.UUID) (*TriggerLink, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT id, studio_id, name, url, created_at, updated_at
+		FROM trigger_links
+		WHERE id = $1
+	`, id)
+	var tl TriggerLink
+	if err := row.Scan(&tl.ID, &tl.StudioID, &tl.Name, &tl.URL, &tl.CreatedAt, &tl.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &tl, nil
+}
+
+func (r *Repo) RecordTriggerLinkClick(ctx context.Context, linkID uuid.UUID, leadID *uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO trigger_link_clicks (link_id, lead_id)
+		VALUES ($1, $2)
+	`, linkID, leadID)
+	return err
+}
+
+// ============================================================
+// outbound_jobs / pending automated actions
+// ============================================================
+
+type PendingJobInfo struct {
+	ID                 int64        `json:"id"`
+	StudioID           uuid.UUID    `json:"studioId"`
+	ConversationID     uuid.UUID    `json:"conversationId"`
+	ContactDisplayName string       `json:"contactDisplayName"`
+	ContactValue       string       `json:"contactValue"`
+	ChannelKind        string       `json:"channelKind"`
+	Body               string       `json:"body"`
+	Attachments        []Attachment `json:"attachments"`
+	ScheduledFor       time.Time    `json:"scheduledFor"`
+	Attempts           int          `json:"attempts"`
+	Status             string       `json:"status"`
+}
+
+func (r *Repo) ListPendingJobs(ctx context.Context, studioID uuid.UUID) ([]PendingJobInfo, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT o.id, o.studio_id, o.conversation_id, ci.display_name, ci.value, ch.kind,
+		       o.body, o.attachments, o.scheduled_for, o.attempts, o.status
+		FROM outbound_jobs o
+		JOIN conversations c ON c.id = o.conversation_id
+		JOIN channel_accounts ch ON ch.id = c.channel_account_id
+		JOIN contact_identities ci ON ci.id = c.contact_identity_id
+		WHERE o.studio_id = $1 AND o.status = 'pending'
+		ORDER BY o.scheduled_for ASC
+	`, studioID)
+	if err != nil {
+		return nil, fmt.Errorf("list pending jobs: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]PendingJobInfo, 0)
+	for rows.Next() {
+		var ji PendingJobInfo
+		var atts []byte
+		if err := rows.Scan(&ji.ID, &ji.StudioID, &ji.ConversationID, &ji.ContactDisplayName,
+			&ji.ContactValue, &ji.ChannelKind, &ji.Body, &atts, &ji.ScheduledFor,
+			&ji.Attempts, &ji.Status); err != nil {
+			return nil, fmt.Errorf("scan pending job: %w", err)
+		}
+		if len(atts) > 0 {
+			_ = json.Unmarshal(atts, &ji.Attachments)
+		}
+		out = append(out, ji)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repo) DeleteJob(ctx context.Context, studioID uuid.UUID, id int64) error {
+	tag, err := r.pool.Exec(ctx, `
+		DELETE FROM outbound_jobs
+		WHERE studio_id = $1 AND id = $2
+	`, studioID, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *Repo) UpdateJob(ctx context.Context, studioID uuid.UUID, id int64, body string, scheduledFor time.Time, attachments []Attachment) error {
+	atts, _ := json.Marshal(attachments)
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE outbound_jobs
+		SET body = $3, scheduled_for = $4, next_attempt_at = $4, attachments = $5
+		WHERE studio_id = $1 AND id = $2 AND status = 'pending'
+	`, studioID, id, body, scheduledFor, atts)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *Repo) SetJobScheduledForNow(ctx context.Context, studioID uuid.UUID, id int64) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE outbound_jobs
+		SET scheduled_for = now(), next_attempt_at = now()
+		WHERE studio_id = $1 AND id = $2 AND status = 'pending'
+	`, studioID, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

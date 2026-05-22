@@ -1,6 +1,6 @@
 import { Settings } from 'lucide-react';
 import { serverFetch } from '@/lib/auth';
-import type { Studio } from '@/lib/types';
+import type { Campaign, Studio } from '@/lib/types';
 import { SettingsForm } from './SettingsForm';
 
 export default async function SettingsPage({
@@ -11,6 +11,9 @@ export default async function SettingsPage({
   const { studioId } = await params;
   // Use the /me/studios/{id} endpoint so studio_admins can also load it.
   const studio = await serverFetch<Studio>(`/api/v1/me/studios/${studioId}`);
+  const campaignsResp = await serverFetch<{ campaigns: Campaign[] }>(`/api/v1/studios/${studioId}/campaigns`);
+  const previewCampaign = campaignsResp.campaigns.find((campaign) => campaign.active) ?? campaignsResp.campaigns[0] ?? null;
+  const previewHref = previewCampaign ? `/l/${studio.slug}/${previewCampaign.slug}` : null;
 
   return (
     <div className="space-y-6">
@@ -38,7 +41,7 @@ export default async function SettingsPage({
           </div>
         </div>
       </div>
-      <SettingsForm studio={studio} />
+      <SettingsForm studio={studio} previewHref={previewHref} />
     </div>
   );
 }

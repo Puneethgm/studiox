@@ -1,6 +1,9 @@
 import { Card } from '@/components/ui/Card';
 import { fetchPublicStudio } from '@/lib/public';
 
+const noiseSvgDataUri =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.38'/%3E%3C/svg%3E";
+
 export default async function ThankYouPage({
   params,
 }: {
@@ -12,11 +15,26 @@ export default async function ThankYouPage({
 
   return (
     <main
-      className="grid min-h-screen place-items-center px-4"
+      className="relative grid min-h-screen place-items-center overflow-hidden px-4"
       style={{
-        background: `linear-gradient(160deg, ${brand}10 0%, #ffffff 50%, ${brand}18 100%)`,
+        backgroundImage: `radial-gradient(circle at 0% 0%, ${brand}18 0%, transparent 40%), radial-gradient(circle at 100% 100%, ${brand}18 0%, transparent 40%), linear-gradient(rgba(238, 240, 245, 0.55), rgba(238, 240, 245, 0.55)), url('/admin-bg-light.png')`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center top',
+        backgroundAttachment: 'fixed',
       }}
     >
+      <div aria-hidden className="pointer-events-none absolute inset-0 opacity-60">
+        <div className="absolute -left-[12%] top-[22%] h-[46%] w-[46%] rounded-full bg-brand-500/10 blur-[120px]" />
+        <div className="absolute -right-[10%] bottom-[8%] h-[46%] w-[46%] rounded-full bg-sky-400/10 blur-[120px]" />
+        <div
+          className="absolute inset-0 opacity-[0.04]"
+          style={{
+            backgroundImage: `url("${noiseSvgDataUri}")`,
+            backgroundRepeat: 'repeat',
+            backgroundSize: '160px 160px',
+          }}
+        />
+      </div>
       <div className="w-full max-w-md">
         <Card elevated>
           <div className="py-8 text-center">

@@ -3,8 +3,13 @@ package messaging
 import (
 	"errors"
 	"fmt"
+	"io"
+	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -23,6 +28,10 @@ func NewHandler(svc *Service, bus Bus) *Handler {
 	return &Handler{svc: svc, bus: bus}
 }
 
+func (h *Handler) PublicRoutes(r chi.Router) {
+	r.Get("/links/{id}", h.redirectTriggerLink)
+}
+
 // AdminRoutes are mounted under /api/v1/studios/{studioId}/messaging.
 // Studio scoping comes from the surrounding middleware (resolveStudioID +
 // RequireActiveStudio); we just trust the path's studioId here.
@@ -32,6 +41,7 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Post("/channels/instagram", h.connectInstagram)
 	r.Post("/channels/messenger", h.connectMessenger)
 	r.Delete("/channels/{id}", h.disconnectChannel)
+	r.Put("/channels/{id}", h.updateChannel)
 
 	r.Get("/conversations", h.listConversations)
 	r.Post("/conversations", h.createConversation)
@@ -39,6 +49,31 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Get("/conversations/{id}/messages", h.listMessages)
 	r.Post("/conversations/{id}/messages", h.sendMessage)
 	r.Post("/conversations/{id}/read", h.markRead)
+
+	// Templates
+	r.Get("/templates", h.listTemplates)
+	r.Post("/templates", h.createTemplate)
+	r.Put("/templates/{id}", h.updateTemplate)
+	r.Delete("/templates/{id}", h.deleteTemplate)
+
+	// Trigger Links
+	r.Get("/trigger-links", h.listTriggerLinks)
+	r.Post("/trigger-links", h.createTriggerLink)
+	r.Put("/trigger-links/{id}", h.updateTriggerLink)
+	r.Delete("/trigger-links/{id}", h.deleteTriggerLink)
+
+	// Jobs (Automated / Manual Actions)
+	r.Get("/jobs", h.listPendingJobs)
+	r.Post("/jobs", h.createJob)
+	r.Put("/jobs/{id}", h.updateJob)
+	r.Post("/jobs/{id}/trigger", h.triggerJobNow)
+	r.Delete("/jobs/{id}", h.deleteJob)
+
+	// AI Assistant
+	r.Post("/ai/generate", h.aiGenerateTemplate)
+
+	// File Upload (images / videos / docs for compose area)
+	r.Post("/upload", h.uploadMedia)
 
 	r.Get("/stream", h.stream) // SSE — live updates for the inbox UI
 }
@@ -162,6 +197,37 @@ func (h *Handler) disconnectChannel(w http.ResponseWriter, r *http.Request) {
 	httpx.NoContent(w)
 }
 
+func (h *Handler) updateChannel(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	var req struct {
+		ExternalID    string `json:"externalId"`
+		ParentID      string `json:"parentId"`
+		DisplayHandle string `json:"displayHandle"`
+		AccessToken   string `json:"accessToken"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	ch, err := h.svc.UpdateChannel(r.Context(), studioID, id, req.ExternalID, req.ParentID, req.DisplayHandle, req.AccessToken)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "channel not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, ch)
+}
+
 // ============================================================
 // conversations + messages
 // ============================================================
@@ -278,10 +344,9 @@ func (h *Handler) listMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 type sendMessageReq struct {
-	Body string `json:"body"`
+	Body        string       `json:"body"`
+	Attachments []Attachment `json:"attachments"`
 }
-
-
 
 func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 	studioID, ok := studioIDFromPath(w, r)
@@ -303,6 +368,7 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 		ConversationID: id,
 		UserID:         c.UserID,
 		Body:           req.Body,
+		Attachments:    req.Attachments,
 	})
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
@@ -336,7 +402,6 @@ func (h *Handler) markRead(w http.ResponseWriter, r *http.Request) {
 // JSON-serialised messaging.Event. The browser EventSource API auto-reconnects
 // with `Last-Event-ID`, but we don't replay history server-side at L1 — clients
 // re-fetch on reconnect.
-
 
 func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 	studioID, ok := studioIDFromPath(w, r)
@@ -391,10 +456,453 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 // studioIDFromPath extracts the studioId path param. Always present because
 // the routes mount under /studios/{studioId}/messaging.
 func studioIDFromPath(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
-	id, err := uuid.Parse(chi.URLParam(r, "studioId"))
-	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "bad_studio_id", "invalid studio id")
+	c := identity.MustClaims(r.Context())
+	if c.IsSuper() {
+		id, err := uuid.Parse(chi.URLParam(r, "studioId"))
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "bad_studio_id", "invalid studio id")
+			return uuid.Nil, false
+		}
+		return id, true
+	}
+	if c.StudioID == nil {
+		httpx.WriteError(w, http.StatusForbidden, "forbidden", "no studio bound to this user")
 		return uuid.Nil, false
 	}
-	return id, true
+	return *c.StudioID, true
+}
+
+// ============================================================
+// templates handlers
+// ============================================================
+
+func (h *Handler) listTemplates(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	list, err := h.svc.ListTemplates(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"templates": list})
+}
+
+func (h *Handler) createTemplate(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Name         string       `json:"name"`
+		Body         string       `json:"body"`
+		ChannelKinds []string     `json:"channelKinds"`
+		Attachments  []Attachment `json:"attachments"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	mt, err := h.svc.CreateTemplate(r.Context(), studioID, req.Name, req.Body, req.ChannelKinds, req.Attachments)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, mt)
+}
+
+func (h *Handler) updateTemplate(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	var req struct {
+		Name         string       `json:"name"`
+		Body         string       `json:"body"`
+		ChannelKinds []string     `json:"channelKinds"`
+		Attachments  []Attachment `json:"attachments"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	mt, err := h.svc.UpdateTemplate(r.Context(), studioID, id, req.Name, req.Body, req.ChannelKinds, req.Attachments)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "template not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, mt)
+}
+
+func (h *Handler) deleteTemplate(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	if err := h.svc.DeleteTemplate(r.Context(), studioID, id); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "template not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	httpx.NoContent(w)
+}
+
+// ============================================================
+// trigger links handlers
+// ============================================================
+
+func (h *Handler) listTriggerLinks(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	list, err := h.svc.ListTriggerLinks(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"triggerLinks": list})
+}
+
+func (h *Handler) createTriggerLink(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+		URL  string `json:"url"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	tl, err := h.svc.CreateTriggerLink(r.Context(), studioID, req.Name, req.URL)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, tl)
+}
+
+func (h *Handler) updateTriggerLink(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+		URL  string `json:"url"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	tl, err := h.svc.UpdateTriggerLink(r.Context(), studioID, id, req.Name, req.URL)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "trigger link not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, tl)
+}
+
+func (h *Handler) deleteTriggerLink(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	if err := h.svc.DeleteTriggerLink(r.Context(), studioID, id); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "trigger link not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	httpx.NoContent(w)
+}
+
+func (h *Handler) redirectTriggerLink(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	tl, err := h.svc.GetTriggerLinkByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "link not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	var leadIDPtr *uuid.UUID
+	if qLeadID := r.URL.Query().Get("leadId"); qLeadID != "" {
+		if lid, err := uuid.Parse(qLeadID); err == nil {
+			leadIDPtr = &lid
+		}
+	}
+	_ = h.svc.RecordTriggerLinkClick(r.Context(), id, leadIDPtr)
+	http.Redirect(w, r, tl.URL, http.StatusFound)
+}
+
+// ============================================================
+// outbound jobs / manual actions handlers
+// ============================================================
+
+func (h *Handler) listPendingJobs(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	list, err := h.svc.ListPendingJobs(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"jobs": list})
+}
+
+func (h *Handler) triggerJobNow(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	if err := h.svc.TriggerJobNow(r.Context(), studioID, id); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "pending job not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	httpx.NoContent(w)
+}
+
+func (h *Handler) deleteJob(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	if err := h.svc.DeleteJob(r.Context(), studioID, id); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "pending job not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	httpx.NoContent(w)
+}
+
+func (h *Handler) createJob(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		ConversationID string       `json:"conversationId"`
+		Body           string       `json:"body"`
+		ScheduledFor   string       `json:"scheduledFor"`
+		Attachments    []Attachment `json:"attachments"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	convID, err := uuid.Parse(req.ConversationID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_conversation_id", "invalid conversation id")
+		return
+	}
+	var sched time.Time
+	if req.ScheduledFor != "" {
+		sched, err = time.Parse(time.RFC3339, req.ScheduledFor)
+		if err != nil {
+			sched, err = time.Parse("2006-01-02T15:04", req.ScheduledFor)
+			if err != nil {
+				httpx.WriteError(w, http.StatusBadRequest, "invalid_time", "invalid scheduled time format")
+				return
+			}
+		}
+	} else {
+		sched = time.Now().UTC()
+	}
+
+	id, err := h.svc.CreateJob(r.Context(), studioID, convID, req.Body, sched, req.Attachments)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, map[string]any{"id": id})
+}
+
+func (h *Handler) updateJob(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	var req struct {
+		Body         string       `json:"body"`
+		ScheduledFor string       `json:"scheduledFor"`
+		Attachments  []Attachment `json:"attachments"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	var sched time.Time
+	if req.ScheduledFor != "" {
+		sched, err = time.Parse(time.RFC3339, req.ScheduledFor)
+		if err != nil {
+			sched, err = time.Parse("2006-01-02T15:04", req.ScheduledFor)
+			if err != nil {
+				httpx.WriteError(w, http.StatusBadRequest, "invalid_time", "invalid scheduled time format")
+				return
+			}
+		}
+	} else {
+		sched = time.Now().UTC()
+	}
+
+	if err := h.svc.UpdateJob(r.Context(), studioID, id, req.Body, sched, req.Attachments); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "pending job not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
+		return
+	}
+	httpx.NoContent(w)
+}
+
+// ============================================================
+// AI assistant handlers
+// ============================================================
+
+func (h *Handler) aiGenerateTemplate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Prompt string `json:"prompt"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	prompt := strings.ToLower(req.Prompt)
+	body := "Hi {{contact.first_name}},\n\n"
+	if strings.Contains(prompt, "price") || strings.Contains(prompt, "rate") || strings.Contains(prompt, "cost") {
+		body += "Thanks for asking about our pricing plans! We have multiple packages tailored for you. Ready to get started?\n\nBest,\n{{studio.name}} Team"
+	} else if strings.Contains(prompt, "trial") || strings.Contains(prompt, "book") || strings.Contains(prompt, "schedule") {
+		body += "We'd love to invite you for a trial session at {{studio.name}}! When would be a good time for you to visit us?\n\nBest,\n{{studio.name}} Team"
+	} else if strings.Contains(prompt, "follow") || strings.Contains(prompt, "check") || strings.Contains(prompt, "remind") {
+		body += "Just checking in to see if you have any questions about {{campaign.name}}. We're here to help you on your fitness journey!\n\nBest,\n{{studio.name}} Team"
+	} else {
+		body += "Thanks for reaching out to us! We'd love to help you get started with your fitness goals. Let us know what you're interested in!\n\nBest,\n{{studio.name}} Team"
+	}
+	httpx.JSON(w, http.StatusOK, map[string]string{"body": body})
+}
+
+// uploadMedia accepts a multipart/form-data upload (field "file"), saves it
+// to apps/api/uploads/<uuid>.<ext>, and returns {"url":"/uploads/<file>"}.
+// The caller then includes that URL as an attachment when sending the message.
+func (h *Handler) uploadMedia(w http.ResponseWriter, r *http.Request) {
+	const maxSize = 20 << 20 // 20 MB
+	if err := r.ParseMultipartForm(maxSize); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "file too large or bad multipart form")
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "missing file field")
+		return
+	}
+	defer file.Close()
+
+	// Derive extension from Content-Type header or filename.
+	ext := filepath.Ext(header.Filename)
+	if ext == "" {
+		ct := header.Header.Get("Content-Type")
+		exts, _ := mime.ExtensionsByType(ct)
+		if len(exts) > 0 {
+			ext = exts[0]
+		}
+	}
+
+	// Only allow safe media types.
+	allowed := map[string]bool{
+		".jpg": true, ".jpeg": true, ".png": true, ".gif": true,
+		".webp": true, ".mp4": true, ".mov": true, ".pdf": true,
+		".doc": true, ".docx": true,
+	}
+	if !allowed[strings.ToLower(ext)] {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "unsupported file type")
+		return
+	}
+
+	// Ensure uploads directory exists (relative to server CWD = apps/api).
+	uploadDir := "uploads"
+	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not create uploads directory")
+		return
+	}
+
+	filename := uuid.New().String() + ext
+	dst, err := os.Create(filepath.Join(uploadDir, filename))
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not save file")
+		return
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, file); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not write file")
+		return
+	}
+
+	httpx.JSON(w, http.StatusOK, map[string]string{
+		"url":      "/uploads/" + filename,
+		"filename": header.Filename,
+	})
 }

@@ -2,6 +2,7 @@ package messaging
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -10,18 +11,20 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/projectx/api/internal/leads"
 	"github.com/projectx/api/internal/messaging/channels"
 )
 
 // Service is the messaging use-case layer. Webhooks call HandleInboundWhatsApp,
 // the UI calls SendOutbound, and the worker drains the outbound_jobs queue.
 type Service struct {
-	repo *Repo
-	bus  Bus
+	repo              *Repo
+	bus               Bus
+	publicFormBaseURL string
 }
 
-func NewService(repo *Repo, bus Bus) *Service {
-	return &Service{repo: repo, bus: bus}
+func NewService(repo *Repo, bus Bus, publicFormBaseURL string) *Service {
+	return &Service{repo: repo, bus: bus, publicFormBaseURL: publicFormBaseURL}
 }
 
 // ============================================================
@@ -64,10 +67,31 @@ func (s *Service) DisconnectChannel(ctx context.Context, studioID, id uuid.UUID)
 	return s.repo.DisconnectChannel(ctx, studioID, id)
 }
 
+func (s *Service) UpdateChannel(ctx context.Context, studioID, id uuid.UUID, externalID, parentID, displayHandle, accessToken string) (*ChannelAccount, error) {
+	externalID = strings.TrimSpace(externalID)
+	parentID = strings.TrimSpace(parentID)
+	displayHandle = strings.TrimSpace(displayHandle)
+	accessToken = strings.TrimSpace(accessToken)
+
+	if externalID == "" || displayHandle == "" {
+		return nil, errors.New("externalId and displayHandle are required")
+	}
+
+	return s.repo.UpdateChannel(ctx, UpdateChannelInput{
+		ID:            id,
+		StudioID:      studioID,
+		ExternalID:    externalID,
+		ParentID:      parentID,
+		DisplayHandle: displayHandle,
+		AccessToken:   accessToken,
+	})
+}
+
 type CreateConversationInput struct {
 	ChannelKind  ChannelKind
 	ContactValue string
 	DisplayName  string
+	LeadID       *uuid.UUID
 }
 
 // CreateConversation opens a thread for a contact on the newest active
@@ -106,9 +130,32 @@ func (s *Service) CreateConversation(ctx context.Context, studioID uuid.UUID, in
 		return nil, err
 	}
 
+	// Link identity to lead if provided
+	if in.LeadID != nil {
+		_, err = tx.Exec(ctx, `
+			UPDATE contact_identities SET lead_id = $2 WHERE id = $1
+		`, identity.ID, *in.LeadID)
+		if err != nil {
+			return nil, fmt.Errorf("link identity to lead: %w", err)
+		}
+		identity.LeadID = in.LeadID
+	}
+
 	conv, err := s.repo.FindOrCreateConversation(ctx, tx, studioID, channel.ID, identity.ID, in.ContactValue)
 	if err != nil {
 		return nil, err
+	}
+
+	// Link conversation to lead if provided
+	if in.LeadID != nil {
+		_, err = tx.Exec(ctx, `
+			UPDATE conversations SET lead_id = $2 WHERE id = $1
+		`, conv.ID, *in.LeadID)
+		if err != nil {
+			return nil, fmt.Errorf("link conversation to lead: %w", err)
+		}
+		leadIDStr := *in.LeadID
+		conv.LeadID = &leadIDStr
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -175,6 +222,16 @@ func (s *Service) HandleInboundWhatsAppMessage(ctx context.Context,
 	if msg.Text != nil {
 		body = msg.Text.Body
 	}
+	if msg.Interactive != nil {
+		if msg.Interactive.ButtonReply != nil {
+			body = msg.Interactive.ButtonReply.Title
+		} else if msg.Interactive.ListReply != nil {
+			body = msg.Interactive.ListReply.Title
+		}
+	}
+	if msg.Button != nil {
+		body = msg.Button.Text
+	}
 	if msg.Image != nil {
 		atts = append(atts, Attachment{Type: "image", Mime: msg.Image.MimeType})
 		if body == "" {
@@ -217,6 +274,182 @@ func (s *Service) HandleInboundWhatsAppMessage(ctx context.Context,
 	})
 	if err != nil {
 		return err
+	}
+
+	// Deterministically update lead status based on button clicks / option selections.
+	// This runs inside the transaction and works even if the AI (Claude) worker is disabled.
+	if conv.LeadID != nil && stored != nil {
+		var leadName, leadStatus, leadNotes, autoContactStage, studioSlug, campaignSlug string
+		err = tx.QueryRow(ctx, `
+			SELECT l.name, l.status, l.notes, l.auto_contact_stage, s.slug, c.slug
+			FROM leads l
+			JOIN studios s ON s.id = l.studio_id
+			JOIN campaigns c ON c.id = l.campaign_id
+			WHERE l.studio_id = $1 AND l.id = $2
+		`, channel.StudioID, *conv.LeadID).Scan(&leadName, &leadStatus, &leadNotes, &autoContactStage, &studioSlug, &campaignSlug)
+
+		if err == nil {
+			first := firstName(leadName)
+			text := strings.ToLower(strings.TrimSpace(body))
+			targetStage := autoContactStage
+			targetStatus := leadStatus
+			targetNotes := leadNotes
+			var outboundBody string
+
+			isInterested := text == "1" || text == "interested" || (strings.Contains(text, "interested") && !strings.Contains(text, "not interested"))
+			isNotInterested := text == "2" || text == "not interested" || strings.Contains(text, "not interested") || strings.Contains(text, "not_interested")
+			isTrial := text == "1" || strings.Contains(text, "book a trial") || strings.Contains(text, "book trial") || strings.Contains(text, "trial")
+			isMember := text == "2" || strings.Contains(text, "become a member") || strings.Contains(text, "become member") || strings.Contains(text, "member")
+
+			if autoContactStage == "awaiting_interest" {
+				if isInterested && !isNotInterested {
+					targetStage = "awaiting_options"
+					targetStatus = "contacted"
+					outboundBody = fmt.Sprintf("Hi %s, great! Please select an option:\n1. Book a Trial\n2. Become a Member", first)
+				} else if isNotInterested {
+					targetStage = "awaiting_reason"
+					targetStatus = "dropped"
+					outboundBody = "We would like to know why are u not interested."
+				}
+			} else if autoContactStage == "awaiting_options" || (leadStatus == "trial_booked" && autoContactStage != "awaiting_trial_date" && autoContactStage != "awaiting_trial_time" && (isTrial || isMember)) {
+				if isTrial && !isMember {
+					targetStage = "awaiting_trial_date"
+					targetStatus = "trial_booked"
+					var days []string
+					t := time.Now()
+					for len(days) < 3 {
+						if t.Weekday() != time.Sunday {
+							days = append(days, t.Format("Mon, Jan 02"))
+						}
+						t = t.Add(24 * time.Hour)
+					}
+					outboundBody = fmt.Sprintf("Please select a date for your trial:\n1. %s\n2. %s\n3. %s", days[0], days[1], days[2])
+				} else if isMember && !isTrial {
+					targetStage = "completed"
+					targetStatus = "member"
+					outboundBody = "Our team would reach u ASAP."
+				}
+			} else if autoContactStage == "awaiting_trial_date" {
+				var days []string
+				t := time.Now()
+				for len(days) < 3 {
+					if t.Weekday() != time.Sunday {
+						days = append(days, t.Format("Mon, Jan 02"))
+					}
+					t = t.Add(24 * time.Hour)
+				}
+				selectedDate := ""
+				isOption1 := text == "1" || strings.Contains(text, "choice_1") || strings.Contains(text, strings.ToLower(days[0]))
+				isOption2 := text == "2" || strings.Contains(text, "choice_2") || strings.Contains(text, strings.ToLower(days[1]))
+				isOption3 := text == "3" || strings.Contains(text, "choice_3") || strings.Contains(text, strings.ToLower(days[2]))
+
+				if isOption1 {
+					selectedDate = days[0]
+				} else if isOption2 {
+					selectedDate = days[1]
+				} else if isOption3 {
+					selectedDate = days[2]
+				} else {
+					selectedDate = days[0]
+				}
+
+				targetNotes = strings.TrimSpace(targetNotes + "\n[Selected Trial Date]: " + selectedDate)
+				targetStage = "awaiting_trial_time"
+				outboundBody = "Please select a time slot:\n1. 09:00 AM\n2. 12:00 PM\n3. 04:00 PM"
+			} else if autoContactStage == "awaiting_trial_time" {
+				selectedTime := ""
+				isOption1 := text == "1" || strings.Contains(text, "choice_1") || strings.Contains(text, "09:00") || strings.Contains(text, "9:00")
+				isOption2 := text == "2" || strings.Contains(text, "choice_2") || strings.Contains(text, "12:00")
+				isOption3 := text == "3" || strings.Contains(text, "choice_3") || strings.Contains(text, "04:00") || strings.Contains(text, "4:00")
+
+				if isOption1 {
+					selectedTime = "09:00 AM"
+				} else if isOption2 {
+					selectedTime = "12:00 PM"
+				} else if isOption3 {
+					selectedTime = "04:00 PM"
+				} else {
+					selectedTime = "12:00 PM"
+				}
+
+				dateStr := ""
+				idx := strings.Index(targetNotes, "[Selected Trial Date]: ")
+				if idx != -1 {
+					dateStr = targetNotes[idx+len("[Selected Trial Date]: "):]
+					if end := strings.Index(dateStr, "\n"); end != -1 {
+						dateStr = dateStr[:end]
+					}
+					dateStr = strings.TrimSpace(dateStr)
+				}
+				if dateStr == "" {
+					dateStr = time.Now().Format("Mon, Jan 02")
+				}
+
+				targetNotes = strings.ReplaceAll(targetNotes, "[Selected Trial Date]: "+dateStr, "")
+				targetNotes = strings.TrimSpace(targetNotes + "\n[Selected Trial Slot]: " + dateStr + " " + selectedTime)
+				targetStage = "completed"
+				outboundBody = "Tnak you our team will reach u out "
+			} else if autoContactStage == "awaiting_reason" {
+				targetNotes = strings.TrimSpace(targetNotes + "\n[Dropped Reason]: " + body)
+				targetStage = "completed"
+				outboundBody = "Thank you for your time we would get back to u."
+			}
+
+			// Update the lead if anything changed
+			if targetStage != autoContactStage || targetStatus != leadStatus || targetNotes != leadNotes {
+				_, err = tx.Exec(ctx, `
+					UPDATE leads 
+					SET status = $3, notes = $4, auto_contact_stage = $5, updated_at = now()
+					WHERE studio_id = $1 AND id = $2
+				`, channel.StudioID, *conv.LeadID, targetStatus, targetNotes, targetStage)
+
+				// If outbound message needs to be sent
+				if err == nil && outboundBody != "" {
+					_, _ = tx.Exec(ctx, `
+						INSERT INTO outbound_jobs (studio_id, conversation_id, body, attachments,
+						                           source_kind, source_ref, scheduled_for, next_attempt_at)
+						VALUES ($1, $2, $3, '[]'::jsonb, 'automation', $4, $5, $5)
+					`, channel.StudioID, conv.ID, outboundBody, fmt.Sprintf("lead:%s:auto_reply:%s", conv.LeadID.String(), targetStage), time.Now().UTC())
+				}
+
+				// If they just transitioned to trial_booked, schedule the 1-day check-in follow-up
+				if err == nil && targetStatus == "trial_booked" && leadStatus != "trial_booked" {
+					followupBody := fmt.Sprintf("Hi %s, we hope you're enjoying your trial! Are you ready to take the next step and become a member? Please select an option:\n1. Book a Trial\n2. Become a Member", first)
+					_, _ = tx.Exec(ctx, `
+						INSERT INTO outbound_jobs (studio_id, conversation_id, body, attachments,
+						                           source_kind, source_ref, scheduled_for, next_attempt_at)
+						VALUES ($1, $2, $3, '[]'::jsonb, 'automation', $4, $5, $5)
+					`, channel.StudioID, conv.ID, followupBody, fmt.Sprintf("lead:%s:trial_followup:1day", conv.LeadID.String()), time.Now().UTC().Add(24*time.Hour))
+				}
+
+				// Enqueue Google Sheets update if status or notes changed
+				if err == nil && (targetStatus != leadStatus || targetNotes != leadNotes) {
+					var l leads.Lead
+					var ipText *string
+					row := tx.QueryRow(ctx, `
+						SELECT l.id, l.studio_id, l.campaign_id, l.name, COALESCE(l.first_name, ''), COALESCE(l.last_name, ''), l.email, l.phone, l.fitness_plan, l.goals,
+						       l.source, l.status, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage, l.referrer, l.user_agent, l.ip_address, l.created_at, l.updated_at,
+						       s.name, s.slug, c.name, c.slug
+						FROM leads l
+						JOIN campaigns c ON c.id = l.campaign_id
+						JOIN studios s ON s.id = l.studio_id
+						WHERE l.id = $1
+					`, *conv.LeadID)
+					scanErr := row.Scan(&l.ID, &l.StudioID, &l.CampaignID, &l.Name, &l.FirstName, &l.LastName, &l.Email, &l.Phone, &l.FitnessPlan, &l.Goals,
+						&l.Source, &l.Status, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage, &l.Referrer, &l.UserAgent, &ipText, &l.CreatedAt, &l.UpdatedAt,
+						&l.StudioName, &l.StudioSlug, &l.CampaignName, &l.CampaignSlug)
+					if scanErr == nil {
+						payload, mErr := json.Marshal(l)
+						if mErr == nil {
+							_, _ = tx.Exec(ctx, `
+								INSERT INTO outbox (aggregate_type, aggregate_id, event_type, destination, payload)
+								VALUES ('lead', $1, 'lead.updated', 'google_sheets', $2)
+							`, l.ID, payload)
+						}
+					}
+				}
+			}
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -348,6 +581,7 @@ type SendInput struct {
 	ConversationID uuid.UUID
 	UserID         uuid.UUID // who in the studio is sending
 	Body           string
+	Attachments    []Attachment
 }
 
 // EnqueueReply queues a manual reply on an existing conversation. Worker
@@ -355,8 +589,8 @@ type SendInput struct {
 // optimistically render.
 func (s *Service) EnqueueReply(ctx context.Context, in SendInput) (int64, error) {
 	in.Body = strings.TrimSpace(in.Body)
-	if in.Body == "" {
-		return 0, errors.New("body is required")
+	if in.Body == "" && len(in.Attachments) == 0 {
+		return 0, errors.New("body or attachments are required")
 	}
 	conv, err := s.repo.GetConversation(ctx, in.StudioID, in.ConversationID)
 	if err != nil {
@@ -369,6 +603,7 @@ func (s *Service) EnqueueReply(ctx context.Context, in SendInput) (int64, error)
 		StudioID:       in.StudioID,
 		ConversationID: in.ConversationID,
 		Body:           in.Body,
+		Attachments:    in.Attachments,
 		SourceKind:     SourceStudioUser,
 		SourceUserID:   &in.UserID,
 		ScheduledFor:   time.Now().UTC(),
@@ -401,4 +636,165 @@ func (s *Service) MarkRead(ctx context.Context, studioID, conversationID uuid.UU
 		ConversationID: conversationID,
 	})
 	return nil
+}
+
+// ============================================================
+// message_templates
+// ============================================================
+
+func (s *Service) ListTemplates(ctx context.Context, studioID uuid.UUID) ([]MessageTemplate, error) {
+	return s.repo.ListTemplates(ctx, studioID)
+}
+
+func (s *Service) CreateTemplate(ctx context.Context, studioID uuid.UUID, name, body string, channelKinds []string, attachments []Attachment) (*MessageTemplate, error) {
+	name = strings.TrimSpace(name)
+	body = strings.TrimSpace(body)
+	if name == "" {
+		return nil, errors.New("template name is required")
+	}
+	if body == "" {
+		return nil, errors.New("template body is required")
+	}
+	mt := &MessageTemplate{
+		StudioID:     studioID,
+		Name:         name,
+		Body:         body,
+		ChannelKinds: channelKinds,
+		Attachments:  attachments,
+	}
+	if err := s.repo.CreateTemplate(ctx, mt); err != nil {
+		return nil, err
+	}
+	return mt, nil
+}
+
+func (s *Service) DeleteTemplate(ctx context.Context, studioID, id uuid.UUID) error {
+	return s.repo.DeleteTemplate(ctx, studioID, id)
+}
+
+func (s *Service) UpdateTemplate(ctx context.Context, studioID, id uuid.UUID, name, body string, channelKinds []string, attachments []Attachment) (*MessageTemplate, error) {
+	name = strings.TrimSpace(name)
+	body = strings.TrimSpace(body)
+	if name == "" {
+		return nil, errors.New("template name is required")
+	}
+	if body == "" {
+		return nil, errors.New("template body is required")
+	}
+	mt := &MessageTemplate{
+		ID:           id,
+		StudioID:     studioID,
+		Name:         name,
+		Body:         body,
+		ChannelKinds: channelKinds,
+		Attachments:  attachments,
+	}
+	if err := s.repo.UpdateTemplate(ctx, mt); err != nil {
+		return nil, err
+	}
+	return mt, nil
+}
+
+// ============================================================
+// trigger_links
+// ============================================================
+
+func (s *Service) ListTriggerLinks(ctx context.Context, studioID uuid.UUID) ([]TriggerLink, error) {
+	return s.repo.ListTriggerLinks(ctx, studioID)
+}
+
+func (s *Service) CreateTriggerLink(ctx context.Context, studioID uuid.UUID, name, url string) (*TriggerLink, error) {
+	name = strings.TrimSpace(name)
+	url = strings.TrimSpace(url)
+	if name == "" {
+		return nil, errors.New("trigger link name is required")
+	}
+	if url == "" {
+		return nil, errors.New("trigger link target url is required")
+	}
+	tl := &TriggerLink{
+		StudioID: studioID,
+		Name:     name,
+		URL:      url,
+	}
+	if err := s.repo.CreateTriggerLink(ctx, tl); err != nil {
+		return nil, err
+	}
+	return tl, nil
+}
+
+func (s *Service) DeleteTriggerLink(ctx context.Context, studioID, id uuid.UUID) error {
+	return s.repo.DeleteTriggerLink(ctx, studioID, id)
+}
+
+func (s *Service) UpdateTriggerLink(ctx context.Context, studioID, id uuid.UUID, name, url string) (*TriggerLink, error) {
+	name = strings.TrimSpace(name)
+	url = strings.TrimSpace(url)
+	if name == "" {
+		return nil, errors.New("trigger link name is required")
+	}
+	if url == "" {
+		return nil, errors.New("trigger link target url is required")
+	}
+	tl := &TriggerLink{
+		ID:       id,
+		StudioID: studioID,
+		Name:     name,
+		URL:      url,
+	}
+	if err := s.repo.UpdateTriggerLink(ctx, tl); err != nil {
+		return nil, err
+	}
+	return tl, nil
+}
+
+func (s *Service) GetTriggerLinkByID(ctx context.Context, id uuid.UUID) (*TriggerLink, error) {
+	return s.repo.GetTriggerLinkByID(ctx, id)
+}
+
+func (s *Service) RecordTriggerLinkClick(ctx context.Context, linkID uuid.UUID, leadID *uuid.UUID) error {
+	return s.repo.RecordTriggerLinkClick(ctx, linkID, leadID)
+}
+
+// ============================================================
+// outbound_jobs / automated messages log
+// ============================================================
+
+func (s *Service) ListPendingJobs(ctx context.Context, studioID uuid.UUID) ([]PendingJobInfo, error) {
+	return s.repo.ListPendingJobs(ctx, studioID)
+}
+
+func (s *Service) DeleteJob(ctx context.Context, studioID uuid.UUID, id int64) error {
+	return s.repo.DeleteJob(ctx, studioID, id)
+}
+
+func (s *Service) TriggerJobNow(ctx context.Context, studioID uuid.UUID, id int64) error {
+	return s.repo.SetJobScheduledForNow(ctx, studioID, id)
+}
+
+func (s *Service) CreateJob(ctx context.Context, studioID uuid.UUID, conversationID uuid.UUID, body string, scheduledFor time.Time, attachments []Attachment) (int64, error) {
+	body = strings.TrimSpace(body)
+	if body == "" && len(attachments) == 0 {
+		return 0, errors.New("message body or attachment is required")
+	}
+	if conversationID == uuid.Nil {
+		return 0, errors.New("recipient conversation is required")
+	}
+	job := OutboundJob{
+		StudioID:       studioID,
+		ConversationID: conversationID,
+		Body:           body,
+		Attachments:    attachments,
+		SourceKind:     SourceStudioUser,
+		ScheduledFor:   scheduledFor,
+	}
+	return s.repo.EnqueueOutbound(ctx, job)
+}
+
+func (s *Service) UpdateJob(ctx context.Context, studioID uuid.UUID, id int64, body string, scheduledFor time.Time, attachments []Attachment) error {
+	body = strings.TrimSpace(body)
+	if body == "" && len(attachments) == 0 {
+		return errors.New("message body or attachment is required")
+	}
+	return s.repo.UpdateJob(ctx, studioID, id, body, scheduledFor, attachments)
 }

@@ -7,9 +7,9 @@ type MetaWebhookPayload struct {
 }
 
 type MetaWebhookEntry struct {
-	ID      string                `json:"id"`
-	Time    int64                 `json:"time"`
-	Changes []MetaWebhookChange   `json:"changes,omitempty"`   // WhatsApp / some IG fields
+	ID        string                 `json:"id"`
+	Time      int64                  `json:"time"`
+	Changes   []MetaWebhookChange    `json:"changes,omitempty"`   // WhatsApp / some IG fields
 	Messaging []MetaWebhookMessaging `json:"messaging,omitempty"` // Instagram DMs / FB Messenger
 }
 
@@ -20,9 +20,9 @@ type MetaWebhookChange struct {
 
 // MetaWebhookMessaging is used by Instagram DMs and Facebook Messenger.
 type MetaWebhookMessaging struct {
-	Sender    MetaWebhookUser    `json:"sender"`
-	Recipient MetaWebhookUser    `json:"recipient"`
-	Timestamp int64              `json:"timestamp"`
+	Sender    MetaWebhookUser     `json:"sender"`
+	Recipient MetaWebhookUser     `json:"recipient"`
+	Timestamp int64               `json:"timestamp"`
 	Message   *MetaWebhookMessage `json:"message,omitempty"`
 }
 

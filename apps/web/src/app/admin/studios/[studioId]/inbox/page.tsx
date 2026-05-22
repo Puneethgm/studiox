@@ -1,5 +1,5 @@
 import { serverFetch } from '@/lib/auth';
-import type { Conversation } from '@/lib/types';
+import type { Conversation, Studio } from '@/lib/types';
 import { InboxLive } from './InboxLive';
 import { Inbox, Zap } from 'lucide-react';
 
@@ -18,6 +18,8 @@ export default async function InboxPage({
   const data = await serverFetch<ListResp>(
     `/api/v1/studios/${studioId}/messaging/conversations?limit=50`,
   );
+  
+  const studio = await serverFetch<Studio>(`/api/v1/me/studios/${studioId}`);
 
   return (
     <div className="space-y-4">
@@ -56,7 +58,7 @@ export default async function InboxPage({
         </div>
       </div>
 
-      <InboxLive studioId={studioId} initialConversations={data.conversations} />
+      <InboxLive studioId={studioId} initialConversations={data.conversations} studio={studio} />
     </div>
   );
 }

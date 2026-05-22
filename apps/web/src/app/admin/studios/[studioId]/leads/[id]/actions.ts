@@ -17,7 +17,15 @@ export type UpdateLeadResult =
 export async function updateLeadStatus(
   studioId: string,
   leadId: string,
-  data: { status: string; notes: string },
+  data: {
+    status: string;
+    notes: string;
+    firstName?: string;
+    lastName?: string;
+    contactMade?: boolean;
+    hotLead?: boolean;
+    trialPurchased?: boolean;
+  },
 ): Promise<UpdateLeadResult> {
   const cookieStore = await cookies();
   const cookieHeader = cookieStore

@@ -26,6 +26,13 @@ const statusTone = {
   dropped: 'neutral',
 } as const;
 
+function formatConversionHealth(totalLeads: number, trialBookedLeads: number) {
+  if (totalLeads <= 0) {
+    return '0%';
+  }
+  return `${Math.round((trialBookedLeads / totalLeads) * 100)}%`;
+}
+
 export default async function StudioOverviewPage({
   params,
 }: {
@@ -43,6 +50,9 @@ export default async function StudioOverviewPage({
   const activeCampaigns = campaigns.filter((c) => c.active).length;
   const totalLeads = stats.total;
   const newLeads = stats.byStatus.new ?? 0;
+  const trialBookedLeads = stats.byStatus.trial_booked ?? 0;
+  const memberLeads = stats.byStatus.member ?? 0;
+  const conversionHealth = formatConversionHealth(totalLeads, trialBookedLeads + memberLeads);
 
   return (
     <div className="space-y-8 pb-12">
@@ -189,7 +199,7 @@ export default async function StudioOverviewPage({
         />
         <StatCard
           label="Conversion Health"
-          value="84%"
+          value={conversionHealth}
           icon={<Activity className="h-5 w-5" />}
           hint="Based on trial booking rate"
           color="emerald"

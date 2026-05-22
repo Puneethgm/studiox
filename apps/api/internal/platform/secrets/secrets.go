@@ -2,7 +2,7 @@
 // (channel access tokens, etc.). The cipher key is held in env as
 // TOKEN_ENCRYPTION_KEY (base64 of 32 raw bytes). Generate one with:
 //
-//   openssl rand -base64 32
+//	openssl rand -base64 32
 //
 // Rotating the key requires re-encrypting every stored ciphertext. For L1 a
 // single key is fine; key rotation is a separate routine when we add it.

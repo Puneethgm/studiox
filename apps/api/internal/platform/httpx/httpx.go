@@ -1,11 +1,14 @@
 package httpx
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
@@ -144,9 +147,28 @@ func Recoverer(base *slog.Logger) func(http.Handler) http.Handler {
 
 // DecodeJSON decodes a request body, returning false (and writing a 400) on failure.
 func DecodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
-	dec := json.NewDecoder(r.Body)
+	// Read the body so we can log it if decoding fails.
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "bad_json", "invalid request body")
+		return false
+	}
+	// Log the incoming body (always) to help capture problematic payloads
+	// quickly during debugging. This is intentionally verbose but temporary.
+	logger.FromCtx(r.Context(), slog.Default()).Info("incoming_json_body",
+		"method", r.Method,
+		"path", r.URL.Path,
+		"content_type", r.Header.Get("Content-Type"),
+		"body", string(body),
+	)
+
+	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
+		// Log the raw body to help debug mismatched JSON shapes.
+		// Use the default logger as a safe non-nil base so we don't panic.
+		os.WriteFile("bad_json.log", []byte(err.Error() + "\n" + string(body)), 0644)
+		logger.FromCtx(r.Context(), slog.Default()).Info("bad_json_body", "error", err.Error(), "body", string(body))
 		WriteError(w, http.StatusBadRequest, "bad_json", "invalid request body")
 		return false
 	}

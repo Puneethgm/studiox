@@ -9,6 +9,12 @@ import (
 	"errors"
 )
 
+type Attachment struct {
+	Type string `json:"type"`
+	URL  string `json:"url"`
+	Name string `json:"name"` // original filename, required for WhatsApp document messages
+}
+
 // SendResult is what the dispatcher needs to update its outbound_jobs row.
 type SendResult struct {
 	// ExternalID is the channel-native message id (e.g. Meta wamid).
@@ -25,7 +31,7 @@ type Sender interface {
 	//   channelExternalID:  e.g. WhatsApp phone_number_id
 	//   recipient:          e.g. customer phone in international format (no '+')
 	//   body:               UTF-8 text
-	SendText(ctx context.Context, accessToken, channelExternalID, recipient, body string) (*SendResult, error)
+	SendText(ctx context.Context, accessToken, channelExternalID, recipient, body string, attachments []Attachment) (*SendResult, error)
 }
 
 // ErrInvalidCredentials is returned by adapters when the credentials are

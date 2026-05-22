@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/projectx/api/internal/integrations/claude"
 	"github.com/projectx/api/internal/leads"
 	"github.com/projectx/api/internal/studios"
-	"github.com/google/uuid"
 )
 
 const (
@@ -206,10 +206,10 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		return fmt.Errorf("enqueue ai outbound: %w", err)
 	}
 
-	// Update lead status based on sentiment
+	// Update lead status based on sentiment or explicit choices
 	// Update for ALL leads, not just new ones - helps track progression through pipeline
 	if lead != nil {
-		w.updateLeadStatus(ctx, studioID, lead, sentiment, confidence)
+		w.updateLeadStatus(ctx, studioID, lead, msg.Body, sentiment, confidence)
 	}
 
 	return nil
@@ -219,7 +219,10 @@ func (w *AIWorker) buildPrompt(msg *Message, conv *Conversation, lead *leads.Lea
 	context := "You are a helpful AI assistant for a fitness studio. "
 
 	if lead != nil {
-		context += fmt.Sprintf("Responding to %s about the %s plan. ", lead.Name, lead.FitnessPlan)
+		context += fmt.Sprintf("Responding to %s about the %s plan. The lead's current status is '%s'. ", lead.Name, lead.FitnessPlan, lead.Status)
+		if lead.Status == leads.StatusNew || lead.Status == leads.StatusContacted {
+			context += "When presenting next steps or asking the customer to decide between a trial and membership, always end your reply by offering these two clear options to choose from: '1. Book a Trial' and '2. Become a Member'. "
+		}
 	}
 
 	context += "Be friendly, professional, and helpful. Keep responses concise (1-3 sentences). "
@@ -236,8 +239,57 @@ func (w *AIWorker) buildPrompt(msg *Message, conv *Conversation, lead *leads.Lea
 	return fmt.Sprintf("%s\nCustomer message: %s\n\nRespond naturally and try to move the conversation toward booking a trial or getting commitment.", context, msg.Body)
 }
 
-func (w *AIWorker) updateLeadStatus(ctx context.Context, studioID uuid.UUID, lead *leads.Lead, sentiment int, confidence float64) {
-	// Only update if confidence is high enough
+func (w *AIWorker) detectOptionChoice(body string) (leads.LeadStatus, bool) {
+	text := strings.ToLower(strings.TrimSpace(body))
+
+	hasTrialKeywords := text == "1" ||
+		strings.Contains(text, "book a trial") ||
+		strings.Contains(text, "book trial") ||
+		strings.Contains(text, "take a trial") ||
+		strings.Contains(text, "take trial") ||
+		strings.Contains(text, "trial booked") ||
+		strings.Contains(text, "trial booking") ||
+		strings.Contains(text, "trial")
+
+	hasMemberKeywords := text == "2" ||
+		strings.Contains(text, "become a member") ||
+		strings.Contains(text, "become member") ||
+		strings.Contains(text, "becoming a member") ||
+		strings.Contains(text, "membership") ||
+		strings.Contains(text, "member")
+
+	// If both types of keywords are present (e.g. asking a question comparing them), it's ambiguous.
+	if hasTrialKeywords && hasMemberKeywords {
+		return "", false
+	}
+
+	if hasTrialKeywords {
+		return leads.StatusTrialBooked, true
+	}
+	if hasMemberKeywords {
+		return leads.StatusMember, true
+	}
+	return "", false
+}
+
+func (w *AIWorker) updateLeadStatus(ctx context.Context, studioID uuid.UUID, lead *leads.Lead, body string, sentiment int, confidence float64) {
+	// 1. Check for explicit option choices first
+	if targetStatus, ok := w.detectOptionChoice(body); ok {
+		if lead.Status != targetStatus {
+			err := w.leadsRepo.UpdateStatus(ctx, studioID, lead.ID, targetStatus)
+			if err != nil {
+				w.log.Error("update lead status via choice selection", "lead", lead.ID, "target", targetStatus, "err", err)
+			} else {
+				w.log.Info("lead status auto-updated (choice selection)", "lead", lead.ID, "from", lead.Status, "to", targetStatus)
+				if targetStatus == leads.StatusTrialBooked {
+					w.scheduleTrialFollowup(ctx, studioID, lead, lead.ID)
+				}
+			}
+		}
+		return
+	}
+
+	// 2. Only update if confidence is high enough
 	if confidence < 0.6 {
 		return
 	}
@@ -289,5 +341,36 @@ func (w *AIWorker) updateLeadStatus(ctx context.Context, studioID uuid.UUID, lea
 		w.log.Error("update lead status", "lead", lead.ID, "current", lead.Status, "new", newStatus, "err", err)
 	} else {
 		w.log.Info("lead status auto-updated", "lead", lead.ID, "from", lead.Status, "to", newStatus, "sentiment", sentiment, "confidence", confidence)
+		if newStatus == leads.StatusTrialBooked {
+			w.scheduleTrialFollowup(ctx, studioID, lead, lead.ID)
+		}
+	}
+}
+
+func (w *AIWorker) scheduleTrialFollowup(ctx context.Context, studioID uuid.UUID, lead *leads.Lead, fallbackConvID uuid.UUID) {
+	// Try to find the actual conversation ID for this lead to avoid any mismatch.
+	convID := fallbackConvID
+	err := w.msgRepo.Pool().QueryRow(ctx, `
+		SELECT id FROM conversations 
+		WHERE studio_id = $1 AND lead_id = $2
+		ORDER BY updated_at DESC
+		LIMIT 1
+	`, studioID, lead.ID).Scan(&convID)
+	if err != nil {
+		w.log.Warn("could not find conversation for lead to schedule followup", "lead", lead.ID, "err", err)
+	}
+
+	first := firstName(lead.Name)
+	body := fmt.Sprintf("Hi %s, we hope you're enjoying your trial! Are you ready to take the next step and become a member? Please select an option:\n1. Book a Trial\n2. Become a Member", first)
+
+	if _, err := w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
+		StudioID:       studioID,
+		ConversationID: convID,
+		Body:           body,
+		SourceKind:     SourceAutomation,
+		SourceRef:      fmt.Sprintf("lead:%s:trial_followup:1day", lead.ID.String()),
+		ScheduledFor:   time.Now().UTC().Add(24 * time.Hour),
+	}); err != nil {
+		w.log.Error("enqueue 1-day trial followup failed", "lead", lead.ID, "err", err)
 	}
 }

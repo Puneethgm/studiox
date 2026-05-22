@@ -1,12 +1,17 @@
 package leads
 
 import (
+	"encoding/csv"
 	"errors"
+	"fmt"
 	"net/http"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/xuri/excelize/v2"
 
 	"github.com/projectx/api/internal/identity"
 	"github.com/projectx/api/internal/platform/config"
@@ -33,35 +38,40 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 
 	r.Get("/leads", h.listLeads)
 	r.Get("/leads/stats", h.leadStats)
+	r.Get("/leads/sheets-settings", h.getSheetsSettings)
+	r.Post("/leads/sheets-settings", h.saveSheetsSettings)
+	r.Post("/leads/import", h.importLeads)
 	r.Get("/leads/{id}", h.getLead)
 	r.Patch("/leads/{id}", h.patchLead)
 }
 
 // PublicRoutes are unauthenticated.
-//   GET  /public/studios/{studioSlug}/campaigns/{campaignSlug}
-//   POST /public/studios/{studioSlug}/campaigns/{campaignSlug}/leads
+//
+//	GET  /public/studios/{studioSlug}/campaigns/{campaignSlug}
+//	POST /public/studios/{studioSlug}/campaigns/{campaignSlug}/leads
 func (h *Handler) PublicRoutes(r chi.Router) {
 	r.Get("/public/studios/{studioSlug}/campaigns/{campaignSlug}", h.publicCampaign)
 	r.Post("/public/studios/{studioSlug}/campaigns/{campaignSlug}/leads", h.publicSubmit)
+	r.Patch("/public/leads/{leadId}/trial-slot", h.publicBookSlot)
 }
 
 // resolveStudioID returns the effective studio_id for the request and
 // short-circuits with the right error response if forbidden.
 func (h *Handler) resolveStudioID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	c := identity.MustClaims(r.Context())
-	pathID, err := uuid.Parse(chi.URLParam(r, "studioId"))
-	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "bad_studio_id", "invalid studio id")
-		return uuid.Nil, false
-	}
 	if c.IsSuper() {
+		pathID, err := uuid.Parse(chi.URLParam(r, "studioId"))
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "bad_studio_id", "invalid studio id")
+			return uuid.Nil, false
+		}
 		return pathID, true
 	}
-	if c.StudioID == nil || *c.StudioID != pathID {
-		httpx.WriteError(w, http.StatusForbidden, "forbidden", "cannot access another studio")
+	if c.StudioID == nil {
+		httpx.WriteError(w, http.StatusForbidden, "forbidden", "no studio bound to this user")
 		return uuid.Nil, false
 	}
-	return pathID, true
+	return *c.StudioID, true
 }
 
 // ----- admin: campaigns -----
@@ -154,7 +164,8 @@ func (h *Handler) getCampaign(w http.ResponseWriter, r *http.Request) {
 }
 
 type patchCampaignReq struct {
-	Active *bool `json:"active"`
+	Active       *bool     `json:"active"`
+	FitnessPlans *[]string `json:"fitnessPlans"`
 }
 
 func (h *Handler) patchCampaign(w http.ResponseWriter, r *http.Request) {
@@ -170,6 +181,25 @@ func (h *Handler) patchCampaign(w http.ResponseWriter, r *http.Request) {
 	var req patchCampaignReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
+	}
+	if req.FitnessPlans != nil {
+		camp, errs, err := h.svc.UpdateCampaignFitnessPlans(r.Context(), studioID, id, *req.FitnessPlans)
+		if errs != nil {
+			httpx.WriteValidationError(w, errs)
+			return
+		}
+		if err != nil {
+			if errors.Is(err, ErrCampaignNotFound) {
+				httpx.WriteError(w, http.StatusNotFound, "not_found", "campaign not found")
+				return
+			}
+			httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+			return
+		}
+		if req.Active == nil {
+			httpx.JSON(w, http.StatusOK, h.toCampaignRes(camp))
+			return
+		}
 	}
 	if req.Active != nil {
 		if err := h.svc.SetCampaignActive(r.Context(), studioID, id, *req.Active); err != nil {
@@ -209,6 +239,24 @@ func (h *Handler) listLeads(w http.ResponseWriter, r *http.Request) {
 		s := LeadStatus(v)
 		if s.Valid() {
 			f.Status = &s
+		}
+	}
+	if v := q.Get("hotLead"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err == nil {
+			f.HotLead = &b
+		}
+	}
+	if v := q.Get("contactMade"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err == nil {
+			f.ContactMade = &b
+		}
+	}
+	if v := q.Get("trialPurchased"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err == nil {
+			f.TrialPurchased = &b
 		}
 	}
 	if v := q.Get("limit"); v != "" {
@@ -267,8 +315,13 @@ func (h *Handler) getLead(w http.ResponseWriter, r *http.Request) {
 }
 
 type patchLeadReq struct {
-	Status *LeadStatus `json:"status"`
-	Notes  *string     `json:"notes"`
+	Status         *LeadStatus `json:"status"`
+	Notes          *string     `json:"notes"`
+	ContactMade    *bool       `json:"contactMade"`
+	HotLead        *bool       `json:"hotLead"`
+	TrialPurchased *bool       `json:"trialPurchased"`
+	FirstName      *string     `json:"firstName"`
+	LastName       *string     `json:"lastName"`
 }
 
 func (h *Handler) patchLead(w http.ResponseWriter, r *http.Request) {
@@ -296,13 +349,35 @@ func (h *Handler) patchLead(w http.ResponseWriter, r *http.Request) {
 	}
 	status := current.Status
 	notes := current.Notes
+	contactMade := current.ContactMade
+	hotLead := current.HotLead
+	trialPurchased := current.TrialPurchased
+	firstName := current.FirstName
+	lastName := current.LastName
+
 	if req.Status != nil {
 		status = *req.Status
 	}
 	if req.Notes != nil {
 		notes = *req.Notes
 	}
-	if err := h.svc.UpdateLead(r.Context(), studioID, id, status, notes); err != nil {
+	if req.ContactMade != nil {
+		contactMade = *req.ContactMade
+	}
+	if req.HotLead != nil {
+		hotLead = *req.HotLead
+	}
+	if req.TrialPurchased != nil {
+		trialPurchased = *req.TrialPurchased
+	}
+	if req.FirstName != nil {
+		firstName = *req.FirstName
+	}
+	if req.LastName != nil {
+		lastName = *req.LastName
+	}
+
+	if err := h.svc.UpdateLead(r.Context(), studioID, id, status, notes, contactMade, hotLead, trialPurchased, firstName, lastName); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
 		return
 	}
@@ -393,9 +468,155 @@ func (h *Handler) publicSubmit(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) publicBookSlot(w http.ResponseWriter, r *http.Request) {
+	leadID, err := uuid.Parse(chi.URLParam(r, "leadId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_lead_id", "invalid lead id")
+		return
+	}
+	var req struct {
+		Slot string `json:"slot"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if req.Slot == "" {
+		httpx.WriteValidationError(w, map[string]string{"slot": "required"})
+		return
+	}
+	err = h.svc.BookTrialSlot(r.Context(), leadID, req.Slot)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "lead not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"status": "ok"})
+}
+
+
 // ----- helpers -----
 
 func (h *Handler) toCampaignRes(c *Campaign) campaignRes {
 	share := h.publicBase + "/l/" + c.StudioSlug + "/" + c.Slug
 	return campaignRes{Campaign: *c, ShareURL: share}
+}
+
+type saveSheetsSettingsReq struct {
+	SpreadsheetID string `json:"spreadsheetId"`
+	TabName       string `json:"tabName"`
+	Active        bool   `json:"active"`
+}
+
+func (h *Handler) getSheetsSettings(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := h.resolveStudioID(w, r)
+	if !ok {
+		return
+	}
+	settings, err := h.svc.GetSheetsSettings(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	if settings == nil {
+		httpx.JSON(w, http.StatusOK, map[string]any{"spreadsheetId": "", "tabName": "Leads", "active": false})
+		return
+	}
+	httpx.JSON(w, http.StatusOK, settings)
+}
+
+func (h *Handler) saveSheetsSettings(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := h.resolveStudioID(w, r)
+	if !ok {
+		return
+	}
+	var req saveSheetsSettingsReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if req.SpreadsheetID == "" {
+		httpx.WriteValidationError(w, map[string]string{"spreadsheetId": "required"})
+		return
+	}
+	settings, err := h.svc.SaveSheetsSettings(r.Context(), studioID, req.SpreadsheetID, req.TabName, req.Active)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, settings)
+}
+
+func (h *Handler) importLeads(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := h.resolveStudioID(w, r)
+	if !ok {
+		return
+	}
+
+	// Parse multipart form
+	if err := r.ParseMultipartForm(10 << 20); err != nil { // 10MB max
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "failed to parse multipart form")
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "file field is required")
+		return
+	}
+	defer file.Close()
+
+	campaignIDStr := r.FormValue("campaignId")
+	if campaignIDStr == "" {
+		httpx.WriteValidationError(w, map[string]string{"campaignId": "default campaign is required"})
+		return
+	}
+	campaignID, err := uuid.Parse(campaignIDStr)
+	if err != nil {
+		httpx.WriteValidationError(w, map[string]string{"campaignId": "invalid campaign ID"})
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	var rows [][]string
+
+	if ext == ".csv" {
+		reader := csv.NewReader(file)
+		reader.FieldsPerRecord = -1
+		rows, err = reader.ReadAll()
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "invalid_csv", fmt.Sprintf("failed to parse CSV: %v", err))
+			return
+		}
+	} else if ext == ".xlsx" || ext == ".xls" {
+		f, err := excelize.OpenReader(file)
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "invalid_excel", fmt.Sprintf("failed to open Excel: %v", err))
+			return
+		}
+		sheetName := f.GetSheetName(0)
+		if sheetName == "" {
+			sheetName = "Sheet1"
+		}
+		rows, err = f.GetRows(sheetName)
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "invalid_excel", fmt.Sprintf("failed to read Excel sheet: %v", err))
+			return
+		}
+	} else {
+		httpx.WriteError(w, http.StatusBadRequest, "unsupported_format", "file must be a .csv or .xlsx file")
+		return
+	}
+
+	count, err := h.svc.ImportLeads(r.Context(), studioID, campaignID, rows)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "import_failed", err.Error())
+		return
+	}
+
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"imported": count,
+		"message":  fmt.Sprintf("Successfully imported %d leads", count),
+	})
 }
