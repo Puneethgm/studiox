@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { FieldError, Label } from '@/components/ui/Label';
@@ -35,11 +35,51 @@ export function LeadForm({
   const [goals, setGoals] = useState('');
   const [errors, setErrors] = useState<Errors>({});
   const [submitting, setSubmitting] = useState(false);
+  const [cooldown, setCooldown] = useState(false);
+  const [secondsLeft, setSecondsLeft] = useState(0);
+
+  // Check cooldown on mount
+  useEffect(() => {
+    const storageKey = `cooldown_${studioSlug}_${campaignSlug}`;
+    const lastSubmit = localStorage.getItem(storageKey);
+    if (lastSubmit) {
+      const elapsed = Date.now() - parseInt(lastSubmit, 10);
+      if (elapsed < 20000) {
+        setCooldown(true);
+        setSecondsLeft(Math.ceil((20000 - elapsed) / 1000));
+      }
+    }
+  }, [studioSlug, campaignSlug]);
+
+  // Countdown timer decrement
+  useEffect(() => {
+    if (!cooldown || secondsLeft <= 0) return;
+    const timer = setInterval(() => {
+      setSecondsLeft((prev) => {
+        if (prev <= 1) {
+          setCooldown(false);
+          clearInterval(timer);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [cooldown, secondsLeft]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (cooldown || submitting) return;
+
     setErrors({});
     setSubmitting(true);
+
+    // Apply 20s lock immediately
+    const storageKey = `cooldown_${studioSlug}_${campaignSlug}`;
+    localStorage.setItem(storageKey, Date.now().toString());
+    setCooldown(true);
+    setSecondsLeft(20);
+
     try {
       const res = await fetch(
         `/api/v1/public/studios/${encodeURIComponent(studioSlug)}/campaigns/${encodeURIComponent(campaignSlug)}/leads`,
@@ -147,11 +187,12 @@ export function LeadForm({
       <Button
         type="submit"
         loading={submitting}
+        disabled={submitting || cooldown}
         className="w-full h-12 shadow-lg"
         style={{ background: brandColor }}
         suppressHydrationWarning
       >
-        Get in touch
+        {cooldown ? `Locked (${secondsLeft}s)` : 'Get in touch'}
       </Button>
     </form>
   );

@@ -8,6 +8,7 @@ import { formatDate, formatDateTime } from '@/lib/datetime';
 import type { Campaign, Lead } from '@/lib/types';
 import { CopyLink } from '../CopyLink';
 import { CampaignActions } from './actions';
+import { CampaignPlansEditor } from './CampaignPlansEditor';
 
 const statusTone = {
   new: 'info',
@@ -69,18 +70,14 @@ export default async function CampaignDetailPage({
         </Card>
 
         <div className="grid gap-6 md:grid-cols-2">
-          <Card title="Fitness plans offered">
-            <ul className="flex flex-wrap gap-2">
-              {c.fitnessPlans.map((p) => (
-                <li
-                  key={p}
-                  className="rounded-full px-3 py-1 text-xs font-medium"
-                  style={{ background: 'var(--brand-soft, rgba(124,58,237,0.08))', color: 'var(--brand, #7c3aed)' }}
-                >
-                  {p}
-                </li>
-              ))}
-            </ul>
+          <Card title="Fitness plans offered" subtitle="Edit the options that appear in the public dropdown.">
+            <CampaignPlansEditor
+              studioId={studioId}
+              campaignId={c.id}
+              studioSlug={c.studioSlug || ''}
+              campaignSlug={c.slug}
+              initialPlans={c.fitnessPlans}
+            />
           </Card>
 
           <Card title="Details">

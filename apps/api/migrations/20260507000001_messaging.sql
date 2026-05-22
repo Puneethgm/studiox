@@ -53,12 +53,16 @@ CREATE TABLE channel_accounts (
     disconnected_at       TIMESTAMPTZ,
 
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 
     -- Only live channels are unique so a disconnected account can be reconnected
     -- later as a fresh row without deleting history.
-    UNIQUE (kind, external_id) WHERE status <> 'disconnected'
+    -- Implemented as a partial UNIQUE INDEX (Postgres does not allow WHERE on
+    -- table-level UNIQUE constraints).
 );
+CREATE UNIQUE INDEX idx_channel_accounts_kind_external_live
+    ON channel_accounts(kind, external_id)
+    WHERE status <> 'disconnected';
 CREATE INDEX idx_channel_accounts_studio ON channel_accounts(studio_id);
 CREATE INDEX idx_channel_accounts_kind_external ON channel_accounts(kind, external_id);
 

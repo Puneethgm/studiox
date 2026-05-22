@@ -35,3 +35,6 @@ coverage.txt
 
 # Docker volumes (if mounted locally)
 .docker-data/
+*.json
+heroic-artifact-434914-d4-1b7152cf7bec.json
+apps/api/secrets/

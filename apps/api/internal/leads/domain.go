@@ -9,19 +9,19 @@ import (
 )
 
 type Campaign struct {
-	ID            uuid.UUID `json:"id"`
-	StudioID      uuid.UUID `json:"studioId"`
-	StudioSlug    string    `json:"studioSlug,omitempty"`
-	StudioName    string    `json:"studioName,omitempty"`
-	Slug          string    `json:"slug"`
-	Name          string    `json:"name"`
-	Description   string    `json:"description"`
-	FitnessPlans  []string  `json:"fitnessPlans"`
-	Active        bool      `json:"active"`
-	CreatedBy     uuid.UUID `json:"createdBy"`
-	CreatedAt     time.Time `json:"createdAt"`
-	UpdatedAt     time.Time `json:"updatedAt"`
-	LeadCount     int       `json:"leadCount,omitempty"`
+	ID           uuid.UUID `json:"id"`
+	StudioID     uuid.UUID `json:"studioId"`
+	StudioSlug   string    `json:"studioSlug,omitempty"`
+	StudioName   string    `json:"studioName,omitempty"`
+	Slug         string    `json:"slug"`
+	Name         string    `json:"name"`
+	Description  string    `json:"description"`
+	FitnessPlans []string  `json:"fitnessPlans"`
+	Active       bool      `json:"active"`
+	CreatedBy    uuid.UUID `json:"createdBy"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
+	LeadCount    int       `json:"leadCount,omitempty"`
 }
 
 type LeadStatus string
@@ -43,26 +43,44 @@ func (s LeadStatus) Valid() bool {
 }
 
 type Lead struct {
-	ID           uuid.UUID  `json:"id"`
-	StudioID     uuid.UUID  `json:"studioId"`
-	StudioName   string     `json:"studioName,omitempty"`
-	StudioSlug   string     `json:"studioSlug,omitempty"`
-	CampaignID   uuid.UUID  `json:"campaignId"`
-	CampaignName string     `json:"campaignName,omitempty"`
-	CampaignSlug string     `json:"campaignSlug,omitempty"`
-	Name         string     `json:"name"`
-	Email        string     `json:"email"`
-	Phone        string     `json:"phone"`
-	FitnessPlan  string     `json:"fitnessPlan"`
-	Goals        string     `json:"goals"`
-	Source       string     `json:"source"`
-	Status       LeadStatus `json:"status"`
-	Notes        string     `json:"notes"`
-	Referrer     string     `json:"referrer,omitempty"`
-	UserAgent    string     `json:"userAgent,omitempty"`
-	IPAddress    *net.IP    `json:"ipAddress,omitempty"`
-	CreatedAt    time.Time  `json:"createdAt"`
-	UpdatedAt    time.Time  `json:"updatedAt"`
+	ID              uuid.UUID  `json:"id"`
+	StudioID        uuid.UUID  `json:"studioId"`
+	StudioName      string     `json:"studioName,omitempty"`
+	StudioSlug      string     `json:"studioSlug,omitempty"`
+	CampaignID      uuid.UUID  `json:"campaignId"`
+	CampaignName    string     `json:"campaignName,omitempty"`
+	CampaignSlug    string     `json:"campaignSlug,omitempty"`
+	Name            string     `json:"name"`
+	FirstName       string     `json:"firstName"`
+	LastName        string     `json:"lastName"`
+	Email           string     `json:"email"`
+	Phone           string     `json:"phone"`
+	FitnessPlan     string     `json:"fitnessPlan"`
+	Goals           string     `json:"goals"`
+	Source          string     `json:"source"`
+	Status          LeadStatus `json:"status"`
+	Notes           string     `json:"notes"`
+	ContactAttempts int        `json:"contactAttempts"`
+	LastContactedAt *time.Time `json:"lastContactedAt,omitempty"`
+	ContactMade     bool       `json:"contactMade"`
+	HotLead         bool       `json:"hotLead"`
+	TrialPurchased  bool       `json:"trialPurchased"`
+	AutoContactStage string     `json:"autoContactStage"`
+	Referrer        string     `json:"referrer,omitempty"`
+	UserAgent       string     `json:"userAgent,omitempty"`
+	IPAddress       *net.IP    `json:"ipAddress,omitempty"`
+	CreatedAt       time.Time  `json:"createdAt"`
+	UpdatedAt       time.Time  `json:"updatedAt"`
+}
+
+type StudioSheetsSettings struct {
+	ID            uuid.UUID `json:"id"`
+	StudioID      uuid.UUID `json:"studioId"`
+	SpreadsheetID string    `json:"spreadsheetId"`
+	TabName       string    `json:"tabName"`
+	Active        bool      `json:"active"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
 }
 
 var (

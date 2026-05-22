@@ -120,6 +120,22 @@ func (r *Repo) SetCampaignActive(ctx context.Context, studioID, id uuid.UUID, ac
 	return nil
 }
 
+func (r *Repo) UpdateCampaignFitnessPlans(ctx context.Context, studioID, id uuid.UUID, fitnessPlans []string) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE campaigns
+		SET fitness_plans = $3,
+		    updated_at = now()
+		WHERE studio_id = $1 AND id = $2
+	`, studioID, id, fitnessPlans)
+	if err != nil {
+		return fmt.Errorf("update campaign fitness plans: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrCampaignNotFound
+	}
+	return nil
+}
+
 // ----- leads -----
 
 // CreateLeadWithOutbox writes the lead and a matching outbox row in a single
@@ -132,14 +148,32 @@ func (r *Repo) CreateLeadWithOutbox(ctx context.Context, l *Lead, destination st
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	if l.Status == "" {
+		l.Status = StatusNew
+	}
+
+	if l.FirstName == "" && l.LastName == "" && l.Name != "" {
+		parts := strings.SplitN(l.Name, " ", 2)
+		l.FirstName = parts[0]
+		if len(parts) > 1 {
+			l.LastName = parts[1]
+		}
+	} else if l.Name == "" {
+		l.Name = strings.TrimSpace(l.FirstName + " " + l.LastName)
+	}
+
+	if l.AutoContactStage == "" {
+		l.AutoContactStage = "initial"
+	}
+
 	row := tx.QueryRow(ctx, `
-		INSERT INTO leads (studio_id, campaign_id, name, email, phone, fitness_plan,
-		                   goals, source, referrer, user_agent, ip_address)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-		RETURNING id, status, created_at, updated_at
-	`, l.StudioID, l.CampaignID, l.Name, l.Email, l.Phone, l.FitnessPlan,
-		l.Goals, l.Source, l.Referrer, l.UserAgent, ipText(l.IPAddress))
-	if err := row.Scan(&l.ID, &l.Status, &l.CreatedAt, &l.UpdatedAt); err != nil {
+		INSERT INTO leads (studio_id, campaign_id, name, first_name, last_name, email, phone, fitness_plan,
+		                   goals, source, status, notes, contact_made, hot_lead, trial_purchased, auto_contact_stage, referrer, user_agent, ip_address)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+		RETURNING id, status, contact_attempts, last_contacted_at, contact_made, hot_lead, trial_purchased, auto_contact_stage, created_at, updated_at
+	`, l.StudioID, l.CampaignID, l.Name, l.FirstName, l.LastName, l.Email, l.Phone, l.FitnessPlan,
+		l.Goals, l.Source, l.Status, l.Notes, l.ContactMade, l.HotLead, l.TrialPurchased, l.AutoContactStage, l.Referrer, l.UserAgent, ipText(l.IPAddress))
+	if err := row.Scan(&l.ID, &l.Status, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage, &l.CreatedAt, &l.UpdatedAt); err != nil {
 		return fmt.Errorf("insert lead: %w", err)
 	}
 
@@ -169,10 +203,13 @@ func (r *Repo) CreateLeadWithOutbox(ctx context.Context, l *Lead, destination st
 }
 
 type ListLeadsFilter struct {
-	CampaignID *uuid.UUID
-	Status     *LeadStatus
-	Limit      int
-	Offset     int
+	CampaignID     *uuid.UUID
+	Status         *LeadStatus
+	HotLead        *bool
+	ContactMade    *bool
+	TrialPurchased *bool
+	Limit          int
+	Offset         int
 }
 
 func (r *Repo) ListLeads(ctx context.Context, studioID uuid.UUID, f ListLeadsFilter) ([]Lead, int, error) {
@@ -190,6 +227,18 @@ func (r *Repo) ListLeads(ctx context.Context, studioID uuid.UUID, f ListLeadsFil
 		args = append(args, string(*f.Status))
 		conds = append(conds, fmt.Sprintf("l.status = $%d", len(args)))
 	}
+	if f.HotLead != nil {
+		args = append(args, *f.HotLead)
+		conds = append(conds, fmt.Sprintf("l.hot_lead = $%d", len(args)))
+	}
+	if f.ContactMade != nil {
+		args = append(args, *f.ContactMade)
+		conds = append(conds, fmt.Sprintf("l.contact_made = $%d", len(args)))
+	}
+	if f.TrialPurchased != nil {
+		args = append(args, *f.TrialPurchased)
+		conds = append(conds, fmt.Sprintf("l.trial_purchased = $%d", len(args)))
+	}
 	where := strings.Join(conds, " AND ")
 
 	var total int
@@ -201,8 +250,8 @@ func (r *Repo) ListLeads(ctx context.Context, studioID uuid.UUID, f ListLeadsFil
 	args = append(args, f.Limit, f.Offset)
 	q := `
 		SELECT l.id, l.studio_id, s.name, s.slug, l.campaign_id, c.name, c.slug,
-		       l.name, l.email, l.phone, l.fitness_plan, l.goals,
-		       l.source, l.status, l.notes, l.created_at, l.updated_at
+		       l.name, COALESCE(l.first_name, ''), COALESCE(l.last_name, ''), l.email, l.phone, l.fitness_plan, l.goals,
+		       l.source, l.status, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage, l.created_at, l.updated_at
 		FROM leads l
 		JOIN campaigns c ON c.id = l.campaign_id
 		JOIN studios s ON s.id = l.studio_id
@@ -220,8 +269,8 @@ func (r *Repo) ListLeads(ctx context.Context, studioID uuid.UUID, f ListLeadsFil
 	for rows.Next() {
 		var l Lead
 		if err := rows.Scan(&l.ID, &l.StudioID, &l.StudioName, &l.StudioSlug, &l.CampaignID, &l.CampaignName, &l.CampaignSlug,
-			&l.Name, &l.Email, &l.Phone, &l.FitnessPlan, &l.Goals,
-			&l.Source, &l.Status, &l.Notes, &l.CreatedAt, &l.UpdatedAt); err != nil {
+			&l.Name, &l.FirstName, &l.LastName, &l.Email, &l.Phone, &l.FitnessPlan, &l.Goals,
+			&l.Source, &l.Status, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage, &l.CreatedAt, &l.UpdatedAt); err != nil {
 			return nil, 0, fmt.Errorf("scan lead: %w", err)
 		}
 		out = append(out, l)
@@ -232,8 +281,8 @@ func (r *Repo) ListLeads(ctx context.Context, studioID uuid.UUID, f ListLeadsFil
 func (r *Repo) GetLead(ctx context.Context, studioID, id uuid.UUID) (*Lead, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT l.id, l.studio_id, s.name, s.slug, l.campaign_id, c.name, c.slug,
-		       l.name, l.email, l.phone, l.fitness_plan, l.goals,
-		       l.source, l.status, l.notes, l.created_at, l.updated_at
+		       l.name, COALESCE(l.first_name, ''), COALESCE(l.last_name, ''), l.email, l.phone, l.fitness_plan, l.goals,
+		       l.source, l.status, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage, l.created_at, l.updated_at
 		FROM leads l
 		JOIN campaigns c ON c.id = l.campaign_id
 		JOIN studios s ON s.id = l.studio_id
@@ -241,12 +290,34 @@ func (r *Repo) GetLead(ctx context.Context, studioID, id uuid.UUID) (*Lead, erro
 	`, studioID, id)
 	var l Lead
 	if err := row.Scan(&l.ID, &l.StudioID, &l.StudioName, &l.StudioSlug, &l.CampaignID, &l.CampaignName, &l.CampaignSlug,
-		&l.Name, &l.Email, &l.Phone, &l.FitnessPlan, &l.Goals,
-		&l.Source, &l.Status, &l.Notes, &l.CreatedAt, &l.UpdatedAt); err != nil {
+		&l.Name, &l.FirstName, &l.LastName, &l.Email, &l.Phone, &l.FitnessPlan, &l.Goals,
+		&l.Source, &l.Status, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage, &l.CreatedAt, &l.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrLeadNotFound
 		}
 		return nil, fmt.Errorf("get lead: %w", err)
+	}
+	return &l, nil
+}
+
+func (r *Repo) GetLeadTx(ctx context.Context, tx pgx.Tx, studioID, id uuid.UUID) (*Lead, error) {
+	row := tx.QueryRow(ctx, `
+		SELECT l.id, l.studio_id, s.name, s.slug, l.campaign_id, c.name, c.slug,
+		       l.name, COALESCE(l.first_name, ''), COALESCE(l.last_name, ''), l.email, l.phone, l.fitness_plan, l.goals,
+		       l.source, l.status, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage, l.created_at, l.updated_at
+		FROM leads l
+		JOIN campaigns c ON c.id = l.campaign_id
+		JOIN studios s ON s.id = l.studio_id
+		WHERE l.studio_id = $1 AND l.id = $2
+	`, studioID, id)
+	var l Lead
+	if err := row.Scan(&l.ID, &l.StudioID, &l.StudioName, &l.StudioSlug, &l.CampaignID, &l.CampaignName, &l.CampaignSlug,
+		&l.Name, &l.FirstName, &l.LastName, &l.Email, &l.Phone, &l.FitnessPlan, &l.Goals,
+		&l.Source, &l.Status, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage, &l.CreatedAt, &l.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrLeadNotFound
+		}
+		return nil, fmt.Errorf("get lead tx: %w", err)
 	}
 	return &l, nil
 }
@@ -284,23 +355,75 @@ func (r *Repo) Stats(ctx context.Context, studioID uuid.UUID) (*LeadStats, error
 	return out, rows.Err()
 }
 
-func (r *Repo) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status LeadStatus, notes string) error {
-	tag, err := r.pool.Exec(ctx, `
-		UPDATE leads SET status = $3, notes = $4, updated_at = now()
+func (r *Repo) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status LeadStatus, notes string, contactMade, hotLead, trialPurchased bool, firstName, lastName string) error {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var oldStatus, oldNotes, oldFirstName, oldLastName string
+	err = tx.QueryRow(ctx, `SELECT status, COALESCE(notes, ''), COALESCE(first_name, ''), COALESCE(last_name, '') FROM leads WHERE studio_id = $1 AND id = $2`, studioID, id).Scan(&oldStatus, &oldNotes, &oldFirstName, &oldLastName)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrLeadNotFound
+		}
+		return fmt.Errorf("select old details: %w", err)
+	}
+
+	name := strings.TrimSpace(firstName + " " + lastName)
+	tag, err := tx.Exec(ctx, `
+		UPDATE leads 
+		SET status = $3, notes = $4, contact_made = $5, hot_lead = $6, trial_purchased = $7,
+		    first_name = $8, last_name = $9, name = $10, updated_at = now()
 		WHERE studio_id = $1 AND id = $2
-	`, studioID, id, string(status), notes)
+	`, studioID, id, string(status), notes, contactMade, hotLead, trialPurchased, firstName, lastName, name)
 	if err != nil {
 		return fmt.Errorf("update lead: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrLeadNotFound
 	}
-	return nil
+
+	if string(status) != oldStatus || notes != oldNotes || firstName != oldFirstName || lastName != oldLastName {
+		l, err := r.GetLeadTx(ctx, tx, studioID, id)
+		if err != nil {
+			return fmt.Errorf("get updated lead: %w", err)
+		}
+		payload, err := json.Marshal(l)
+		if err != nil {
+			return fmt.Errorf("marshal lead: %w", err)
+		}
+		_, err = tx.Exec(ctx, `
+			INSERT INTO outbox (aggregate_type, aggregate_id, event_type, destination, payload)
+			VALUES ('lead', $1, 'lead.updated', 'google_sheets', $2)
+		`, l.ID, payload)
+		if err != nil {
+			return fmt.Errorf("enqueue update outbox: %w", err)
+		}
+	}
+
+	return tx.Commit(ctx)
 }
 
 // UpdateStatus updates only the lead status (used by AI worker for auto-status updates)
 func (r *Repo) UpdateStatus(ctx context.Context, studioID, id uuid.UUID, status LeadStatus) error {
-	tag, err := r.pool.Exec(ctx, `
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var oldStatus string
+	err = tx.QueryRow(ctx, `SELECT status FROM leads WHERE studio_id = $1 AND id = $2`, studioID, id).Scan(&oldStatus)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrLeadNotFound
+		}
+		return fmt.Errorf("select old status: %w", err)
+	}
+
+	tag, err := tx.Exec(ctx, `
 		UPDATE leads SET status = $3, updated_at = now()
 		WHERE studio_id = $1 AND id = $2
 	`, studioID, id, string(status))
@@ -310,7 +433,21 @@ func (r *Repo) UpdateStatus(ctx context.Context, studioID, id uuid.UUID, status 
 	if tag.RowsAffected() == 0 {
 		return ErrLeadNotFound
 	}
-	return nil
+
+	if string(status) != oldStatus {
+		l, err := r.GetLeadTx(ctx, tx, studioID, id)
+		if err == nil {
+			payload, err := json.Marshal(l)
+			if err == nil {
+				_, _ = tx.Exec(ctx, `
+					INSERT INTO outbox (aggregate_type, aggregate_id, event_type, destination, payload)
+					VALUES ('lead', $1, 'lead.updated', 'google_sheets', $2)
+				`, l.ID, payload)
+			}
+		}
+	}
+
+	return tx.Commit(ctx)
 }
 
 // MarkLeadContacted increments contact attempts, sets last_contacted_at, and marks status=contacted.
@@ -411,4 +548,67 @@ func ipText(ip *net.IP) any {
 		return nil
 	}
 	return ip.String()
+}
+
+// ----- studio sheets settings -----
+
+func (r *Repo) GetSheetsSettings(ctx context.Context, studioID uuid.UUID) (*StudioSheetsSettings, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT id, studio_id, spreadsheet_id, tab_name, active, created_at, updated_at
+		FROM studio_sheets_settings
+		WHERE studio_id = $1
+	`, studioID)
+	var s StudioSheetsSettings
+	if err := row.Scan(&s.ID, &s.StudioID, &s.SpreadsheetID, &s.TabName, &s.Active, &s.CreatedAt, &s.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil // Return nil, nil if no settings exist yet
+		}
+		return nil, fmt.Errorf("get sheets settings: %w", err)
+	}
+	return &s, nil
+}
+
+func (r *Repo) SaveSheetsSettings(ctx context.Context, s *StudioSheetsSettings) error {
+	row := r.pool.QueryRow(ctx, `
+		INSERT INTO studio_sheets_settings (studio_id, spreadsheet_id, tab_name, active)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (studio_id) DO UPDATE
+		SET spreadsheet_id = EXCLUDED.spreadsheet_id,
+		    tab_name = EXCLUDED.tab_name,
+		    active = EXCLUDED.active,
+		    updated_at = now()
+		RETURNING id, created_at, updated_at
+	`, s.StudioID, s.SpreadsheetID, s.TabName, s.Active)
+	if err := row.Scan(&s.ID, &s.CreatedAt, &s.UpdatedAt); err != nil {
+		return fmt.Errorf("save sheets settings: %w", err)
+	}
+	return nil
+}
+
+func (r *Repo) UpdateAutoContactStage(ctx context.Context, studioID, id uuid.UUID, stage string) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE leads SET auto_contact_stage = $3, updated_at = now()
+		WHERE studio_id = $1 AND id = $2
+	`, studioID, id, stage)
+	if err != nil {
+		return fmt.Errorf("update auto_contact_stage: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrLeadNotFound
+	}
+	return nil
+}
+
+func (r *Repo) UpdateAutoContactStageTx(ctx context.Context, tx pgx.Tx, studioID, id uuid.UUID, stage string) error {
+	tag, err := tx.Exec(ctx, `
+		UPDATE leads SET auto_contact_stage = $3, updated_at = now()
+		WHERE studio_id = $1 AND id = $2
+	`, studioID, id, stage)
+	if err != nil {
+		return fmt.Errorf("update auto_contact_stage tx: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrLeadNotFound
+	}
+	return nil
 }

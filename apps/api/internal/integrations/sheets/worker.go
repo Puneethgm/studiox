@@ -2,10 +2,12 @@ package sheets
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"math"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/projectx/api/internal/leads"
 )
 
@@ -56,7 +58,39 @@ func (w *Worker) tick(ctx context.Context) {
 		return
 	}
 	for _, it := range items {
-		if err := w.client.AppendLead(ctx, it.Payload); err != nil {
+		// Deserialize the payload to find the studio ID
+		var exp LeadExport
+		if err := json.Unmarshal(it.Payload, &exp); err != nil {
+			w.logger.Error("unmarshal outbox lead payload", "outbox_id", it.ID, "err", err)
+			_ = w.repo.MarkOutboxFailed(ctx, it.ID, err.Error(), 1*time.Minute, true)
+			continue
+		}
+
+		studioID, err := uuid.Parse(exp.StudioID)
+		if err != nil {
+			w.logger.Error("invalid studio id in lead payload", "outbox_id", it.ID, "studio_id", exp.StudioID)
+			_ = w.repo.MarkOutboxFailed(ctx, it.ID, "invalid studio ID", 1*time.Minute, true)
+			continue
+		}
+
+		// Retrieve the sheets configuration for this studio
+		settings, err := w.repo.GetSheetsSettings(ctx, studioID)
+		if err != nil {
+			w.logger.Error("failed to get sheets settings", "studio_id", studioID, "err", err)
+			_ = w.repo.MarkOutboxFailed(ctx, it.ID, err.Error(), 1*time.Minute, false)
+			continue
+		}
+
+		// If no active sheet config, skip appending and mark outbox sent
+		if settings == nil || !settings.Active || settings.SpreadsheetID == "" {
+			if err := w.repo.MarkOutboxSent(ctx, it.ID); err != nil {
+				w.logger.Error("mark outbox sent", "outbox_id", it.ID, "err", err)
+			}
+			continue
+		}
+
+		// Ship to the studio's configured sheet
+		if err := w.client.AppendLead(ctx, settings.SpreadsheetID, settings.TabName, it.Payload); err != nil {
 			attempts := it.Attempts + 1
 			dead := attempts >= maxAttempts
 			backoff := backoffFor(attempts)
@@ -67,6 +101,7 @@ func (w *Worker) tick(ctx context.Context) {
 			}
 			continue
 		}
+
 		if err := w.repo.MarkOutboxSent(ctx, it.ID); err != nil {
 			w.logger.Error("mark outbox sent", "outbox_id", it.ID, "err", err)
 		}

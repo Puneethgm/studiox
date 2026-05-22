@@ -18,16 +18,16 @@ import (
 type EventKind string
 
 const (
-	EvtMessageReceived EventKind = "message.received" // inbound from customer
-	EvtMessageSent     EventKind = "message.sent"     // outbound delivered to channel
+	EvtMessageReceived     EventKind = "message.received" // inbound from customer
+	EvtMessageSent         EventKind = "message.sent"     // outbound delivered to channel
 	EvtConversationUpdated EventKind = "conversation.updated"
 )
 
 type Event struct {
-	Kind            EventKind  `json:"kind"`
-	StudioID        uuid.UUID  `json:"studioId"`
-	ConversationID  uuid.UUID  `json:"conversationId"`
-	MessageID       *uuid.UUID `json:"messageId,omitempty"`
+	Kind           EventKind  `json:"kind"`
+	StudioID       uuid.UUID  `json:"studioId"`
+	ConversationID uuid.UUID  `json:"conversationId"`
+	MessageID      *uuid.UUID `json:"messageId,omitempty"`
 }
 
 func (e Event) JSON() string {

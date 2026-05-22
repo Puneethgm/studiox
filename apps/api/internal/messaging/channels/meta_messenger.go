@@ -29,7 +29,7 @@ func NewMetaMessenger(apiVersion string) *MetaMessenger {
 
 // SendText: POST /{page_id}/messages
 // https://developers.facebook.com/docs/messenger-platform/reference/send-api
-func (m *MetaMessenger) SendText(ctx context.Context, accessToken, channelExternalID, recipient, body string) (*SendResult, error) {
+func (m *MetaMessenger) SendText(ctx context.Context, accessToken, channelExternalID, recipient, body string, attachments []Attachment) (*SendResult, error) {
 	if os.Getenv("API_ENV") == "local" && (accessToken == "" || accessToken == "test") {
 		return &SendResult{
 			ExternalID: "mid.test-" + time.Now().Format("20060102150405"),
@@ -41,11 +41,51 @@ func (m *MetaMessenger) SendText(ctx context.Context, accessToken, channelExtern
 
 	url := fmt.Sprintf("%s/%s/%s/messages", MetaGraphBaseURL, m.apiVersion, channelExternalID)
 
-	payload := map[string]any{
-		"recipient": map[string]string{"id": recipient},
-		"message":   map[string]string{"text": body},
+	var lastResult *SendResult
+	if len(attachments) > 0 && attachments[0].URL != "" {
+		mediaType := attachments[0].Type
+		if mediaType == "" {
+			mediaType = "image"
+		}
+		payload := map[string]any{
+			"recipient": map[string]string{"id": recipient},
+			"message": map[string]any{
+				"attachment": map[string]any{
+					"type": mediaType,
+					"payload": map[string]any{
+						"url":         attachments[0].URL,
+						"is_reusable": true,
+					},
+				},
+			},
+		}
+		res, err := m.sendPayload(ctx, accessToken, url, payload)
+		if err != nil {
+			return nil, err
+		}
+		lastResult = res
 	}
 
+	if body != "" {
+		payload := map[string]any{
+			"recipient": map[string]string{"id": recipient},
+			"message":   map[string]string{"text": body},
+		}
+		res, err := m.sendPayload(ctx, accessToken, url, payload)
+		if err != nil {
+			return nil, err
+		}
+		lastResult = res
+	}
+
+	if lastResult == nil {
+		return nil, fmt.Errorf("empty message body and attachments")
+	}
+
+	return lastResult, nil
+}
+
+func (m *MetaMessenger) sendPayload(ctx context.Context, accessToken, url string, payload map[string]any) (*SendResult, error) {
 	buf, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshal: %w", err)

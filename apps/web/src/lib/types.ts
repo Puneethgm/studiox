@@ -26,6 +26,8 @@ export interface Studio {
   active: boolean;
   createdAt: string;
   updatedAt: string;
+  availabilitySlots?: { day: string; times: string[] }[];
+  availabilityTimezone?: string;
   campaignCount?: number;
   leadCount?: number;
 }
@@ -74,6 +76,8 @@ export interface Lead {
   campaignName?: string;
   campaignSlug?: string;
   name: string;
+  firstName: string;
+  lastName: string;
   email: string;
   phone: string;
   fitnessPlan: string;
@@ -81,13 +85,28 @@ export interface Lead {
   source: string;
   status: LeadStatus;
   notes: string;
+  contactAttempts: number;
+  lastContactedAt?: string;
+  contactMade: boolean;
+  hotLead: boolean;
+  trialPurchased: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
+export interface StudioSheetsSettings {
+  id?: string;
+  studioId: string;
+  spreadsheetId: string;
+  tabName: string;
+  active: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 // ===== Messaging =====
 
-export type ChannelKind = 'whatsapp_meta' | 'instagram_meta' | 'messenger_meta' | 'x_dm';
+export type ChannelKind = 'whatsapp_meta' | 'instagram_meta' | 'messenger_meta' | 'x_dm' | 'sms';
 
 export type ChannelStatus = 'active' | 'paused' | 'disconnected' | 'error';
 

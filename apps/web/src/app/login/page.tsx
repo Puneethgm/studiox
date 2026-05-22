@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState, type CSSProperties } from 'react';
-import { ArrowRight, Building2, Inbox, Sparkles } from 'lucide-react';
+import { ArrowRight, Building2, Eye, EyeOff, Inbox, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
@@ -11,10 +11,14 @@ import { ApiError, api } from '@/lib/api';
 import { withAlpha } from '@/lib/color';
 import type { Me } from '@/lib/types';
 
+const noiseSvgDataUri =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.38'/%3E%3C/svg%3E";
+
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [postBrand, setPostBrand] = useState<string | null>(null);
@@ -76,7 +80,15 @@ export default function LoginPage() {
               backgroundPosition: 'center',
             }}
           />
-          <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-[0.03] brightness-100 contrast-150" />
+          <div
+            aria-hidden
+            className="absolute inset-0 opacity-[0.03] brightness-100 contrast-150"
+            style={{
+              backgroundImage: `url("${noiseSvgDataUri}")`,
+              backgroundRepeat: 'repeat',
+              backgroundSize: '160px 160px',
+            }}
+          />
           
           {/* Floating visual elements */}
           <div className="pointer-events-none absolute inset-0 overflow-hidden">
@@ -157,17 +169,27 @@ export default function LoginPage() {
                     <div className="flex items-center justify-between px-1">
                       <Label htmlFor="password" className="ml-2 text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400 dark:text-zinc-500">Password</Label>
                     </div>
-                    <Input
-                      id="password"
-                      type="password"
-                      autoComplete="current-password"
-                      required
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="h-14 rounded-[20px] border-white/20 bg-white/50 px-5 text-base shadow-sm backdrop-blur-md focus-visible:ring-offset-0 dark:border-white/5 dark:bg-black/20"
-                      suppressHydrationWarning
-                    />
+                    <div className="relative">
+                      <Input
+                        id="password"
+                        type={showPassword ? 'text' : 'password'}
+                        autoComplete="current-password"
+                        required
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="••••••••"
+                        className="h-14 rounded-[20px] border-white/20 bg-white/50 px-5 pr-12 text-base shadow-sm backdrop-blur-md focus-visible:ring-offset-0 dark:border-white/5 dark:bg-black/20"
+                        suppressHydrationWarning
+                      />
+                      <button
+                        type="button"
+                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+                        className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-500 transition hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+                        onClick={() => setShowPassword((value) => !value)}
+                      >
+                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
                   </div>
                   <FieldError message={error ?? undefined} />
                   <Button

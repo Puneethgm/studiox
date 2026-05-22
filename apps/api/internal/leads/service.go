@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base32"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/mail"
@@ -11,7 +13,10 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
+
+var ErrNotFound = errors.New("not found")
 
 const sheetsDestination = "google_sheets"
 
@@ -83,6 +88,21 @@ func (s *Service) SetCampaignActive(ctx context.Context, studioID, id uuid.UUID,
 	return s.repo.SetCampaignActive(ctx, studioID, id, active)
 }
 
+func (s *Service) UpdateCampaignFitnessPlans(ctx context.Context, studioID, id uuid.UUID, fitnessPlans []string) (*Campaign, map[string]string, error) {
+	plans := normalizePlans(fitnessPlans)
+	if len(plans) == 0 {
+		return nil, map[string]string{"fitnessPlans": "at least one plan is required"}, nil
+	}
+	if err := s.repo.UpdateCampaignFitnessPlans(ctx, studioID, id, plans); err != nil {
+		return nil, nil, err
+	}
+	updated, err := s.repo.GetCampaign(ctx, studioID, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	return updated, nil, nil
+}
+
 // ----- leads -----
 
 type SubmitLeadInput struct {
@@ -133,25 +153,33 @@ func (s *Service) SubmitPublicLead(ctx context.Context, in SubmitLeadInput) (*Le
 	}
 
 	l := &Lead{
-		StudioID:    c.StudioID,
-		StudioName:  c.StudioName,
-		StudioSlug:  c.StudioSlug,
-		CampaignID:  c.ID,
-		Name:        in.Name,
-		Email:       in.Email,
-		Phone:       in.Phone,
-		FitnessPlan: in.FitnessPlan,
-		Goals:       in.Goals,
-		Source:      "public_form",
-		Referrer:    in.Referrer,
-		UserAgent:   in.UserAgent,
-		IPAddress:   ip,
+		StudioID:     c.StudioID,
+		StudioName:   c.StudioName,
+		StudioSlug:   c.StudioSlug,
+		CampaignID:   c.ID,
+		CampaignName: c.Name,
+		CampaignSlug: c.Slug,
+		Name:         in.Name,
+		Email:        in.Email,
+		Phone:        in.Phone,
+		FitnessPlan:  in.FitnessPlan,
+		Goals:        in.Goals,
+		Source:       "public_form",
+		Referrer:     in.Referrer,
+		UserAgent:    in.UserAgent,
+		IPAddress:    ip,
+	}
+	// If the selected plan indicates a trial booking, set status accordingly.
+	// Accept a wider variety of labels (e.g. "Book a trial", "trial booking")
+	normalizedPlan := strings.ToLower(strings.TrimSpace(in.FitnessPlan))
+	if strings.Contains(normalizedPlan, "trial") {
+		l.Status = StatusTrialBooked
+	} else {
+		l.Status = StatusNew
 	}
 	if err := s.repo.CreateLeadWithOutbox(ctx, l, sheetsDestination); err != nil {
 		return nil, nil, err
 	}
-	l.CampaignName = c.Name
-	l.CampaignSlug = c.Slug
 	return l, nil, nil
 }
 
@@ -167,11 +195,31 @@ func (s *Service) GetLead(ctx context.Context, studioID, id uuid.UUID) (*Lead, e
 	return s.repo.GetLead(ctx, studioID, id)
 }
 
-func (s *Service) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status LeadStatus, notes string) error {
+func (s *Service) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status LeadStatus, notes string, contactMade, hotLead, trialPurchased bool, firstName, lastName string) error {
 	if !status.Valid() {
 		return fmt.Errorf("invalid status %q", status)
 	}
-	return s.repo.UpdateLead(ctx, studioID, id, status, notes)
+	return s.repo.UpdateLead(ctx, studioID, id, status, notes, contactMade, hotLead, trialPurchased, firstName, lastName)
+}
+
+func (s *Service) GetSheetsSettings(ctx context.Context, studioID uuid.UUID) (*StudioSheetsSettings, error) {
+	return s.repo.GetSheetsSettings(ctx, studioID)
+}
+
+func (s *Service) SaveSheetsSettings(ctx context.Context, studioID uuid.UUID, spreadsheetID, tabName string, active bool) (*StudioSheetsSettings, error) {
+	settings := &StudioSheetsSettings{
+		StudioID:      studioID,
+		SpreadsheetID: strings.TrimSpace(spreadsheetID),
+		TabName:       strings.TrimSpace(tabName),
+		Active:        active,
+	}
+	if settings.TabName == "" {
+		settings.TabName = "Leads"
+	}
+	if err := s.repo.SaveSheetsSettings(ctx, settings); err != nil {
+		return nil, err
+	}
+	return settings, nil
 }
 
 // ----- helpers -----
@@ -229,4 +277,216 @@ func randomSuffix(n int) string {
 	_, _ = rand.Read(b)
 	enc := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b)
 	return strings.ToLower(enc)[:n]
+}
+
+func (s *Service) ImportLeads(ctx context.Context, studioID uuid.UUID, defaultCampaignID uuid.UUID, rows [][]string) (int, error) {
+	if len(rows) < 2 {
+		return 0, fmt.Errorf("no data rows found")
+	}
+
+	headerRow := rows[0]
+	mapping := mapHeaders(headerRow)
+
+	// Fetch default campaign details to populate the leads
+	defaultCamp, err := s.repo.GetCampaign(ctx, studioID, defaultCampaignID)
+	if err != nil {
+		return 0, fmt.Errorf("default campaign not found: %w", err)
+	}
+
+	importedCount := 0
+	for rIdx := 1; rIdx < len(rows); rIdx++ {
+		row := rows[rIdx]
+		if len(row) == 0 {
+			continue
+		}
+
+		// Helper to safely get column by mapped key
+		getVal := func(key string, colIdx int) string {
+			if idx, ok := mapping[key]; ok && idx < len(row) {
+				return strings.TrimSpace(row[idx])
+			}
+			if len(mapping) > 0 {
+				return ""
+			}
+			if colIdx >= 0 && colIdx < len(row) {
+				return strings.TrimSpace(row[colIdx])
+			}
+			return ""
+		}
+
+		firstName := getVal("firstName", 0)
+		lastName := getVal("lastName", 1)
+		email := getVal("email", 2)
+		phone := getVal("phone", 3)
+		plan := getVal("plan", 4)
+		goals := getVal("goals", 5)
+		notes := getVal("notes", 6)
+		statusStr := getVal("status", 7)
+		name := getVal("name", -1)
+
+		if email == "" && phone == "" {
+			// Skip rows without any contact info
+			continue
+		}
+
+		// If name is empty but first/last name are provided
+		if name == "" {
+			name = strings.TrimSpace(firstName + " " + lastName)
+		} else if firstName == "" && lastName == "" {
+			// Split full name
+			parts := strings.SplitN(name, " ", 2)
+			firstName = parts[0]
+			if len(parts) > 1 {
+				lastName = parts[1]
+			}
+		}
+
+		// Validate email if present
+		email = strings.ToLower(email)
+		if email != "" {
+			if _, err := mail.ParseAddress(email); err != nil {
+				email = "" // clear invalid email so it doesn't block insertion
+			}
+		}
+
+		// Basic phone cleaning (keep digits, spaces, plus, hyphens)
+		if phone != "" {
+			phone = phoneRe.FindString(phone)
+		}
+
+		// Determine status
+		status := StatusNew
+		if statusStr != "" {
+			sTemp := LeadStatus(strings.ToLower(statusStr))
+			if sTemp.Valid() {
+				status = sTemp
+			}
+		} else if strings.Contains(strings.ToLower(plan), "trial") {
+			status = StatusTrialBooked
+		}
+
+		// Map to a Lead structure
+		l := &Lead{
+			StudioID:     studioID,
+			StudioName:   defaultCamp.StudioName,
+			StudioSlug:   defaultCamp.StudioSlug,
+			CampaignID:   defaultCamp.ID,
+			CampaignName: defaultCamp.Name,
+			CampaignSlug: defaultCamp.Slug,
+			Name:         name,
+			FirstName:    firstName,
+			LastName:     lastName,
+			Email:        email,
+			Phone:        phone,
+			FitnessPlan:  plan,
+			Goals:        goals,
+			Notes:        notes,
+			Status:       status,
+			Source:       "import",
+		}
+
+		if err := s.repo.CreateLeadWithOutbox(ctx, l, sheetsDestination); err != nil {
+			return importedCount, fmt.Errorf("row %d import: %w", rIdx, err)
+		}
+		importedCount++
+	}
+
+	return importedCount, nil
+}
+
+func mapHeaders(headerRow []string) map[string]int {
+	mapping := make(map[string]int)
+	for i, h := range headerRow {
+		h = strings.ToLower(strings.TrimSpace(h))
+		if strings.Contains(h, "first") && strings.Contains(h, "name") {
+			mapping["firstName"] = i
+		} else if strings.Contains(h, "last") && strings.Contains(h, "name") {
+			mapping["lastName"] = i
+		} else if h == "name" || strings.Contains(h, "full name") {
+			mapping["name"] = i
+		} else if strings.Contains(h, "email") {
+			mapping["email"] = i
+		} else if strings.Contains(h, "phone") || strings.Contains(h, "number") || strings.Contains(h, "contact") {
+			mapping["phone"] = i
+		} else if strings.Contains(h, "plan") {
+			mapping["plan"] = i
+		} else if strings.Contains(h, "goal") {
+			mapping["goals"] = i
+		} else if strings.Contains(h, "note") {
+			mapping["notes"] = i
+		} else if strings.Contains(h, "status") {
+			mapping["status"] = i
+		} else if strings.Contains(h, "campaign") {
+			mapping["campaign"] = i
+		}
+	}
+	return mapping
+}
+
+func (s *Service) BookTrialSlot(ctx context.Context, leadID uuid.UUID, slot string) error {
+	tx, err := s.repo.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var studioID uuid.UUID
+	var name, notes, status, phone string
+	err = tx.QueryRow(ctx, `
+		SELECT studio_id, name, notes, status, phone FROM leads
+		WHERE id = $1
+	`, leadID).Scan(&studioID, &name, &notes, &status, &phone)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+
+	if status == "trial_booked" || strings.Contains(notes, "[Selected Trial Slot]:") {
+		return nil
+	}
+
+	newNotes := strings.TrimSpace(notes + "\n[Selected Trial Slot]: " + slot)
+
+	_, err = tx.Exec(ctx, `
+		UPDATE leads
+		SET status = 'trial_booked', notes = $2, auto_contact_stage = 'completed', updated_at = now()
+		WHERE id = $1
+	`, leadID, newNotes)
+	if err != nil {
+		return err
+	}
+
+	// Try to find a conversation for this lead to send the WhatsApp confirmation
+	var convID uuid.UUID
+	err = tx.QueryRow(ctx, `
+		SELECT id FROM conversations
+		WHERE studio_id = $1 AND lead_id = $2
+		LIMIT 1
+	`, studioID, leadID).Scan(&convID)
+	if err == nil {
+		_, err = tx.Exec(ctx, `
+			INSERT INTO outbound_jobs (studio_id, conversation_id, body, attachments,
+			                           source_kind, source_ref, scheduled_for, next_attempt_at)
+			VALUES ($1, $2, 'Tnak you our team will reach u out ', '[]'::jsonb, 'automation', $3, now(), now())
+		`, studioID, convID, fmt.Sprintf("lead:%s:auto_reply:completed", leadID.String()))
+		if err != nil {
+			return err
+		}
+	}
+
+	// Enqueue Google Sheets update
+	l, err := s.repo.GetLeadTx(ctx, tx, studioID, leadID)
+	if err == nil {
+		payload, err := json.Marshal(l)
+		if err == nil {
+			_, _ = tx.Exec(ctx, `
+				INSERT INTO outbox (aggregate_type, aggregate_id, event_type, destination, payload)
+				VALUES ('lead', $1, 'lead.updated', 'google_sheets', $2)
+			`, l.ID, payload)
+		}
+	}
+
+	return tx.Commit(ctx)
 }

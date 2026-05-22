@@ -34,7 +34,7 @@ type Config struct {
 
 	// Meta App credentials (single platform-wide app; each studio brings its
 	// own WABA + access token via the Channels page).
-	Meta MetaConfig
+	Meta   MetaConfig
 	Claude ClaudeConfig
 }
 

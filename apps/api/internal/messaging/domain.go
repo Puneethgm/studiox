@@ -16,11 +16,12 @@ const (
 	KindInstagramMeta ChannelKind = "instagram_meta"
 	KindMessengerMeta ChannelKind = "messenger_meta"
 	KindXDM           ChannelKind = "x_dm"
+	KindSMS           ChannelKind = "sms"
 )
 
 func (k ChannelKind) Valid() bool {
 	switch k {
-	case KindWhatsAppMeta, KindInstagramMeta, KindMessengerMeta, KindXDM:
+	case KindWhatsAppMeta, KindInstagramMeta, KindMessengerMeta, KindXDM, KindSMS:
 		return true
 	}
 	return false
@@ -31,11 +32,11 @@ func (k ChannelKind) Valid() bool {
 type IdentityKind string
 
 const (
-	IdentityPhone   IdentityKind = "phone"
-	IdentityEmail   IdentityKind = "email"
-	IdentityIGPSID  IdentityKind = "ig_psid"
-	IdentityFBPSID  IdentityKind = "fb_psid"
-	IdentityXID     IdentityKind = "x_id"
+	IdentityPhone  IdentityKind = "phone"
+	IdentityEmail  IdentityKind = "email"
+	IdentityIGPSID IdentityKind = "ig_psid"
+	IdentityFBPSID IdentityKind = "fb_psid"
+	IdentityXID    IdentityKind = "x_id"
 )
 
 type ContactIdentity struct {
@@ -64,9 +65,9 @@ type ChannelAccount struct {
 	StudioID       uuid.UUID     `json:"studioId"`
 	Kind           ChannelKind   `json:"kind"`
 	BSP            string        `json:"bsp"`
-	ExternalID     string        `json:"externalId"`     // WhatsApp: phone_number_id
-	ParentID       string        `json:"parentId"`       // WhatsApp: WABA id
-	DisplayHandle  string        `json:"displayHandle"`  // human-readable phone or @handle
+	ExternalID     string        `json:"externalId"`    // WhatsApp: phone_number_id
+	ParentID       string        `json:"parentId"`      // WhatsApp: WABA id
+	DisplayHandle  string        `json:"displayHandle"` // human-readable phone or @handle
 	Status         ChannelStatus `json:"status"`
 	LastError      string        `json:"lastError,omitempty"`
 	ConnectedAt    time.Time     `json:"connectedAt"`
@@ -97,24 +98,24 @@ const (
 )
 
 type Conversation struct {
-	ID                   uuid.UUID  `json:"id"`
-	StudioID             uuid.UUID  `json:"studioId"`
-	ChannelAccountID     uuid.UUID  `json:"channelAccountId"`
-	ChannelKind          ChannelKind `json:"channelKind"`           // joined for the UI
-	ChannelHandle        string     `json:"channelHandle,omitempty"` // joined for the UI
-	ContactIdentityID    uuid.UUID  `json:"contactIdentityId"`
-	ContactDisplayName   string     `json:"contactDisplayName"`
-	ContactValue         string     `json:"contactValue"` // phone or handle
-	ExternalThreadID     string     `json:"externalThreadId"`
-	LeadID               *uuid.UUID `json:"leadId,omitempty"`
-	Status               ConvStatus `json:"status"`
-	AssignedTo           *uuid.UUID `json:"assignedTo,omitempty"`
-	UnreadCount          int        `json:"unreadCount"`
-	LastMessageAt        time.Time  `json:"lastMessageAt"`
-	LastMessagePreview   string     `json:"lastMessagePreview"`
-	LastMessageDirection *Direction `json:"lastMessageDirection,omitempty"`
-	CreatedAt            time.Time  `json:"createdAt"`
-	UpdatedAt            time.Time  `json:"updatedAt"`
+	ID                   uuid.UUID   `json:"id"`
+	StudioID             uuid.UUID   `json:"studioId"`
+	ChannelAccountID     uuid.UUID   `json:"channelAccountId"`
+	ChannelKind          ChannelKind `json:"channelKind"`             // joined for the UI
+	ChannelHandle        string      `json:"channelHandle,omitempty"` // joined for the UI
+	ContactIdentityID    uuid.UUID   `json:"contactIdentityId"`
+	ContactDisplayName   string      `json:"contactDisplayName"`
+	ContactValue         string      `json:"contactValue"` // phone or handle
+	ExternalThreadID     string      `json:"externalThreadId"`
+	LeadID               *uuid.UUID  `json:"leadId,omitempty"`
+	Status               ConvStatus  `json:"status"`
+	AssignedTo           *uuid.UUID  `json:"assignedTo,omitempty"`
+	UnreadCount          int         `json:"unreadCount"`
+	LastMessageAt        time.Time   `json:"lastMessageAt"`
+	LastMessagePreview   string      `json:"lastMessagePreview"`
+	LastMessageDirection *Direction  `json:"lastMessageDirection,omitempty"`
+	CreatedAt            time.Time   `json:"createdAt"`
+	UpdatedAt            time.Time   `json:"updatedAt"`
 }
 
 // ----- message -----
@@ -122,10 +123,10 @@ type Conversation struct {
 type SourceKind string
 
 const (
-	SourceCustomer    SourceKind = "customer"
-	SourceStudioUser  SourceKind = "studio_user"
-	SourceAutomation  SourceKind = "automation"
-	SourceAI          SourceKind = "ai"
+	SourceCustomer   SourceKind = "customer"
+	SourceStudioUser SourceKind = "studio_user"
+	SourceAutomation SourceKind = "automation"
+	SourceAI         SourceKind = "ai"
 )
 
 type MessageStatus string
@@ -146,23 +147,23 @@ type Attachment struct {
 }
 
 type Message struct {
-	ID              uuid.UUID     `json:"id"`
-	ConversationID  uuid.UUID     `json:"conversationId"`
-	StudioID        uuid.UUID     `json:"studioId"`
-	Direction       Direction     `json:"direction"`
-	SourceKind      SourceKind    `json:"sourceKind"`
-	SourceUserID    *uuid.UUID    `json:"sourceUserId,omitempty"`
-	SourceRef       string        `json:"sourceRef,omitempty"`
-	Body            string        `json:"body"`
-	Attachments     []Attachment  `json:"attachments,omitempty"`
-	ExternalID      string        `json:"externalId,omitempty"`
-	InReplyTo       string        `json:"inReplyTo,omitempty"`
-	Status          MessageStatus `json:"status"`
-	FailureReason   string        `json:"failureReason,omitempty"`
-	SentAt          time.Time     `json:"sentAt"`
-	DeliveredAt     *time.Time    `json:"deliveredAt,omitempty"`
-	ReadAt          *time.Time    `json:"readAt,omitempty"`
-	CreatedAt       time.Time     `json:"createdAt"`
+	ID             uuid.UUID     `json:"id"`
+	ConversationID uuid.UUID     `json:"conversationId"`
+	StudioID       uuid.UUID     `json:"studioId"`
+	Direction      Direction     `json:"direction"`
+	SourceKind     SourceKind    `json:"sourceKind"`
+	SourceUserID   *uuid.UUID    `json:"sourceUserId,omitempty"`
+	SourceRef      string        `json:"sourceRef,omitempty"`
+	Body           string        `json:"body"`
+	Attachments    []Attachment  `json:"attachments,omitempty"`
+	ExternalID     string        `json:"externalId,omitempty"`
+	InReplyTo      string        `json:"inReplyTo,omitempty"`
+	Status         MessageStatus `json:"status"`
+	FailureReason  string        `json:"failureReason,omitempty"`
+	SentAt         time.Time     `json:"sentAt"`
+	DeliveredAt    *time.Time    `json:"deliveredAt,omitempty"`
+	ReadAt         *time.Time    `json:"readAt,omitempty"`
+	CreatedAt      time.Time     `json:"createdAt"`
 }
 
 // ----- outbound job -----
@@ -202,3 +203,37 @@ var (
 	ErrNotFound        = errors.New("not found")
 	ErrChannelMismatch = errors.New("channel does not belong to this studio")
 )
+
+// ----- trigger link -----
+
+type TriggerLink struct {
+	ID        uuid.UUID `json:"id"`
+	StudioID  uuid.UUID `json:"studioId"`
+	Name      string    `json:"name"`
+	URL       string    `json:"url"`
+	Clicks    int       `json:"clicks"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type TriggerLinkClick struct {
+	ID        uuid.UUID  `json:"id"`
+	LinkID    uuid.UUID  `json:"linkId"`
+	LeadID    *uuid.UUID `json:"leadId,omitempty"`
+	ClickedAt time.Time  `json:"clickedAt"`
+}
+
+// ----- message template -----
+
+type MessageTemplate struct {
+	ID                   uuid.UUID    `json:"id"`
+	StudioID             uuid.UUID    `json:"studioId"`
+	Name                 string       `json:"name"`
+	Body                 string       `json:"body"`
+	ChannelKinds         []string     `json:"channelKinds"`
+	Attachments          []Attachment `json:"attachments"`
+	WhatsAppTemplateName string       `json:"whatsappTemplateName,omitempty"`
+	WhatsAppTemplateLang string       `json:"whatsappTemplateLang,omitempty"`
+	CreatedAt            time.Time    `json:"createdAt"`
+	UpdatedAt            time.Time    `json:"updatedAt"`
+}

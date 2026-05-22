@@ -40,7 +40,7 @@ func (r *Repo) Create(ctx context.Context, tx pgx.Tx, s *Studio) error {
 func (r *Repo) List(ctx context.Context) ([]Studio, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT s.id, s.slug, s.name, s.brand_color, s.logo_url, s.contact_email,
-		       s.active, s.created_at, s.updated_at,
+		       s.active, s.created_at, s.updated_at, s.availability_slots, s.availability_timezone,
 		       COALESCE(c.cnt, 0), COALESCE(l.cnt, 0)
 		FROM studios s
 		LEFT JOIN (SELECT studio_id, COUNT(*) AS cnt FROM campaigns GROUP BY studio_id) c
@@ -57,7 +57,7 @@ func (r *Repo) List(ctx context.Context) ([]Studio, error) {
 	for rows.Next() {
 		var s Studio
 		if err := rows.Scan(&s.ID, &s.Slug, &s.Name, &s.BrandColor, &s.LogoURL, &s.ContactEmail,
-			&s.Active, &s.CreatedAt, &s.UpdatedAt, &s.CampaignCount, &s.LeadCount); err != nil {
+			&s.Active, &s.CreatedAt, &s.UpdatedAt, &s.AvailabilitySlots, &s.AvailabilityTimezone, &s.CampaignCount, &s.LeadCount); err != nil {
 			return nil, fmt.Errorf("scan studio: %w", err)
 		}
 		out = append(out, s)
@@ -67,7 +67,8 @@ func (r *Repo) List(ctx context.Context) ([]Studio, error) {
 
 func (r *Repo) GetByID(ctx context.Context, id uuid.UUID) (*Studio, error) {
 	row := r.pool.QueryRow(ctx, `
-		SELECT id, slug, name, brand_color, logo_url, contact_email, active, created_at, updated_at
+		SELECT id, slug, name, brand_color, logo_url, contact_email, active, created_at, updated_at,
+		       availability_slots, availability_timezone
 		FROM studios WHERE id = $1
 	`, id)
 	return scanStudio(row)
@@ -75,7 +76,8 @@ func (r *Repo) GetByID(ctx context.Context, id uuid.UUID) (*Studio, error) {
 
 func (r *Repo) GetBySlug(ctx context.Context, slug string) (*Studio, error) {
 	row := r.pool.QueryRow(ctx, `
-		SELECT id, slug, name, brand_color, logo_url, contact_email, active, created_at, updated_at
+		SELECT id, slug, name, brand_color, logo_url, contact_email, active, created_at, updated_at,
+		       availability_slots, availability_timezone
 		FROM studios WHERE slug = $1
 	`, slug)
 	return scanStudio(row)
@@ -84,12 +86,13 @@ func (r *Repo) GetBySlug(ctx context.Context, slug string) (*Studio, error) {
 // Update writes the editable fields. Slug is intentionally NOT updatable here
 // (changing a slug breaks every shared public link). Add a deliberate "rename
 // slug" flow when needed.
-func (r *Repo) Update(ctx context.Context, id uuid.UUID, name, brandColor, logoURL, contactEmail string, active bool) error {
+func (r *Repo) Update(ctx context.Context, id uuid.UUID, name, brandColor, logoURL, contactEmail string, active bool, availabilitySlots []AvailabilitySlot, availabilityTimezone string) error {
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE studios
-		SET name = $2, brand_color = $3, logo_url = $4, contact_email = $5, active = $6, updated_at = now()
-		WHERE id = $1
-	`, id, name, brandColor, logoURL, contactEmail, active)
+		SET name = $2, brand_color = $3, logo_url = $4, contact_email = $5, active = $6,
+		    availability_slots = $7, availability_timezone = $8, updated_at = now()
+		WHERE id = $1`,
+		id, name, brandColor, logoURL, contactEmail, active, availabilitySlots, availabilityTimezone)
 	if err != nil {
 		return fmt.Errorf("update studio: %w", err)
 	}
@@ -99,10 +102,12 @@ func (r *Repo) Update(ctx context.Context, id uuid.UUID, name, brandColor, logoU
 	return nil
 }
 
+
+
 func scanStudio(row pgx.Row) (*Studio, error) {
 	var s Studio
 	if err := row.Scan(&s.ID, &s.Slug, &s.Name, &s.BrandColor, &s.LogoURL, &s.ContactEmail,
-		&s.Active, &s.CreatedAt, &s.UpdatedAt); err != nil {
+		&s.Active, &s.CreatedAt, &s.UpdatedAt, &s.AvailabilitySlots, &s.AvailabilityTimezone); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}

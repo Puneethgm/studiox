@@ -31,6 +31,22 @@ func (r *Repo) FindByID(ctx context.Context, id uuid.UUID) (*User, error) {
 	return scanUser(row)
 }
 
+func (r *Repo) UpdatePasswordHash(ctx context.Context, id uuid.UUID, passwordHash string) error {
+	cmd, err := r.pool.Exec(ctx, `
+		UPDATE users
+		SET password_hash = $2,
+		    updated_at = now()
+		WHERE id = $1
+	`, id, passwordHash)
+	if err != nil {
+		return fmt.Errorf("update password hash: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // UpsertSuperAdmin creates the super-admin user if missing, or updates the
 // password hash if it changed. Idempotent — safe to run on every boot.
 // Super admins always have NULL studio_id.

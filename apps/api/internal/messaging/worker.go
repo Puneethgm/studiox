@@ -103,13 +103,21 @@ func (w *OutboundWorker) dispatch(ctx context.Context, j OutboundJob) {
 		} else {
 			sender = w.messenger
 		}
+	case KindSMS:
+		w.log.Info("SMS outbound job dispatched (mock)", "recipient", conv.ContactValue, "body", j.Body)
+		sender = &testSender{}
 	default:
 		w.failJob(ctx, j, "no sender for channel kind: "+string(channel.Kind), true)
 		return
 	}
 
 	// 2. Send via the channel adapter.
-	res, err := sender.SendText(ctx, channel.AccessToken, channel.ExternalID, conv.ContactValue, j.Body)
+	// Convert domain Attachment → channels.Attachment for the sender.
+	var chAtts []channels.Attachment
+	for _, a := range j.Attachments {
+		chAtts = append(chAtts, channels.Attachment{Type: a.Type, URL: a.URL, Name: a.Name})
+	}
+	res, err := sender.SendText(ctx, channel.AccessToken, channel.ExternalID, conv.ContactValue, j.Body, chAtts)
 	if err != nil {
 		// Credential errors are terminal for this job; mark channel error too.
 		if errors.Is(err, channels.ErrInvalidCredentials) {
@@ -196,7 +204,7 @@ func backoffFor(attempts int) time.Duration {
 // testSender is a mock Sender for local development that logs messages instead of sending them.
 type testSender struct{}
 
-func (t *testSender) SendText(ctx context.Context, accessToken, channelExternalID, recipient, body string) (*channels.SendResult, error) {
+func (t *testSender) SendText(ctx context.Context, accessToken, channelExternalID, recipient, body string, attachments []channels.Attachment) (*channels.SendResult, error) {
 	// Always succeed in test mode with a fake external ID.
 	return &channels.SendResult{
 		ExternalID: "test-msg-" + time.Now().Format("20060102150405"),
