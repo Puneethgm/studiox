@@ -42,8 +42,10 @@ export function AvailabilitySettings({
 
   const updateDay = (index: number, day: string) => {
     const newSlots = [...slots];
-    newSlots[index] = { ...newSlots[index], day };
-    setSlots(newSlots);
+    if (newSlots[index]) {
+      newSlots[index].day = day;
+      setSlots(newSlots);
+    }
   };
 
   const removeDaySlot = (index: number) => {
@@ -52,22 +54,28 @@ export function AvailabilitySettings({
 
   const addTime = (index: number) => {
     const newSlots = [...slots];
-    newSlots[index].times = [...newSlots[index].times, "09:00"];
-    setSlots(newSlots);
+    if (newSlots[index]) {
+      newSlots[index].times = [...newSlots[index].times, "09:00"];
+      setSlots(newSlots);
+    }
   };
 
   const updateTime = (dayIndex: number, timeIndex: number, value: string) => {
     const newSlots = [...slots];
-    const newTimes = [...newSlots[dayIndex].times];
-    newTimes[timeIndex] = value;
-    newSlots[dayIndex].times = newTimes;
-    setSlots(newSlots);
+    if (newSlots[dayIndex]) {
+      const newTimes = [...newSlots[dayIndex].times];
+      newTimes[timeIndex] = value;
+      newSlots[dayIndex].times = newTimes;
+      setSlots(newSlots);
+    }
   };
 
   const removeTime = (dayIndex: number, timeIndex: number) => {
     const newSlots = [...slots];
-    newSlots[dayIndex].times = newSlots[dayIndex].times.filter((_, i) => i !== timeIndex);
-    setSlots(newSlots);
+    if (newSlots[dayIndex]) {
+      newSlots[dayIndex].times = newSlots[dayIndex].times.filter((_, i) => i !== timeIndex);
+      setSlots(newSlots);
+    }
   };
 
   const onSave = async () => {
