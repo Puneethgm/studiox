@@ -1,5 +1,4 @@
 # syntax=docker/dockerfile:1.6
-#
 # Build context: repo root.
 #   docker build -f deploy/api.Dockerfile -t projectx-api .
 #
@@ -8,7 +7,7 @@
 # right entrypoint per service.
 
 # ---------- build ----------
-FROM golang:1.23-alpine AS build
+FROM golang:1.24-alpine AS build
 WORKDIR /src
 
 # Cache deps separately from source.
@@ -26,6 +25,8 @@ RUN go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server \
 
 # ---------- runtime ----------
 FROM gcr.io/distroless/static-debian12:nonroot
+
+WORKDIR /home/nonroot
 
 COPY --from=build /out/server /usr/local/bin/server
 COPY --from=build /out/seed   /usr/local/bin/seed

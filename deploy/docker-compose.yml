@@ -35,6 +35,7 @@ x-api-env: &api_env
   GOOGLE_SHEETS_ID: ${GOOGLE_SHEETS_ID:-}
   GOOGLE_SHEETS_TAB: ${GOOGLE_SHEETS_TAB:-Leads}
   TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY}
+  META_WEBHOOK_VERIFY_TOKEN: ${META_WEBHOOK_VERIFY_TOKEN}
 
 services:
   postgres:
@@ -97,11 +98,14 @@ services:
     environment: *api_env
     volumes:
       - ./secrets:/secrets:ro
+      - uploads_data:/home/nonroot/uploads
 
   web:
     build:
       context: ..
       dockerfile: deploy/web.Dockerfile
+      args:
+        API_BASE_URL: http://api:8080
     image: projectx-web:local
     restart: always
     depends_on:
@@ -110,9 +114,9 @@ services:
       NODE_ENV: production
       PORT: "3000"
       HOSTNAME: "0.0.0.0"
+      API_BASE_URL: http://api:8080
       # Server-side fetches (RSC) hit the API on the docker-internal network.
       # Browser fetches use relative paths and go through nginx.
-      API_BASE_URL: http://api:8080
 
   nginx:
     image: nginx:1.27-alpine
@@ -129,3 +133,4 @@ services:
 
 volumes:
   pg_data:
+  uploads_data:
