@@ -24,9 +24,9 @@ RUN go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server \
  && GOBIN=/out go install github.com/pressly/goose/v3/cmd/goose@v3.22.0
 
 # ---------- runtime ----------
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12
 
-WORKDIR /home/nonroot
+WORKDIR /app
 
 COPY --from=build /out/server /usr/local/bin/server
 COPY --from=build /out/seed   /usr/local/bin/seed
@@ -34,5 +34,4 @@ COPY --from=build /out/goose  /usr/local/bin/goose
 COPY --from=build /src/migrations /migrations
 
 EXPOSE 8080
-USER nonroot:nonroot
 ENTRYPOINT ["/usr/local/bin/server"]

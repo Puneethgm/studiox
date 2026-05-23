@@ -98,7 +98,7 @@ services:
     environment: *api_env
     volumes:
       - ./secrets:/secrets:ro
-      - uploads_data:/home/nonroot/uploads
+      - uploads_data:/app/uploads
 
   web:
     build:
