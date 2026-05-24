@@ -5,6 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"mime"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -233,22 +238,50 @@ func (s *Service) HandleInboundWhatsAppMessage(ctx context.Context,
 		body = msg.Button.Text
 	}
 	if msg.Image != nil {
-		atts = append(atts, Attachment{Type: "image", Mime: msg.Image.MimeType})
+		url, name := "", ""
+		if downloadedURL, downloadedName, err := downloadWhatsAppMedia(ctx, channel.AccessToken, msg.Image.ID, msg.Image.MimeType, msg.ID); err == nil {
+			url, name = downloadedURL, downloadedName
+			if strings.HasPrefix(url, "/") && s.publicFormBaseURL != "" {
+				url = strings.TrimRight(s.publicFormBaseURL, "/") + url
+			}
+		}
+		atts = append(atts, Attachment{Type: "image", URL: url, Mime: msg.Image.MimeType, Name: name})
 		if body == "" {
 			body = msg.Image.Caption
 		}
 	}
 	if msg.Video != nil {
-		atts = append(atts, Attachment{Type: "video", Mime: msg.Video.MimeType})
+		url, name := "", ""
+		if downloadedURL, downloadedName, err := downloadWhatsAppMedia(ctx, channel.AccessToken, msg.Video.ID, msg.Video.MimeType, msg.ID); err == nil {
+			url, name = downloadedURL, downloadedName
+			if strings.HasPrefix(url, "/") && s.publicFormBaseURL != "" {
+				url = strings.TrimRight(s.publicFormBaseURL, "/") + url
+			}
+		}
+		atts = append(atts, Attachment{Type: "video", URL: url, Mime: msg.Video.MimeType, Name: name})
 		if body == "" {
 			body = msg.Video.Caption
 		}
 	}
 	if msg.Audio != nil {
-		atts = append(atts, Attachment{Type: "audio", Mime: msg.Audio.MimeType})
+		url, name := "", ""
+		if downloadedURL, downloadedName, err := downloadWhatsAppMedia(ctx, channel.AccessToken, msg.Audio.ID, msg.Audio.MimeType, msg.ID); err == nil {
+			url, name = downloadedURL, downloadedName
+			if strings.HasPrefix(url, "/") && s.publicFormBaseURL != "" {
+				url = strings.TrimRight(s.publicFormBaseURL, "/") + url
+			}
+		}
+		atts = append(atts, Attachment{Type: "audio", URL: url, Mime: msg.Audio.MimeType, Name: name})
 	}
 	if msg.Document != nil {
-		atts = append(atts, Attachment{Type: "document", Mime: msg.Document.MimeType})
+		url, name := "", ""
+		if downloadedURL, downloadedName, err := downloadWhatsAppMedia(ctx, channel.AccessToken, msg.Document.ID, msg.Document.MimeType, msg.ID); err == nil {
+			url, name = downloadedURL, downloadedName
+			if strings.HasPrefix(url, "/") && s.publicFormBaseURL != "" {
+				url = strings.TrimRight(s.publicFormBaseURL, "/") + url
+			}
+		}
+		atts = append(atts, Attachment{Type: "document", URL: url, Mime: msg.Document.MimeType, Name: name})
 	}
 	if body == "" && len(atts) == 0 {
 		// Unknown type — skip but don't error to Meta.
@@ -388,7 +421,7 @@ func (s *Service) HandleInboundWhatsAppMessage(ctx context.Context,
 				targetNotes = strings.ReplaceAll(targetNotes, "[Selected Trial Date]: "+dateStr, "")
 				targetNotes = strings.TrimSpace(targetNotes + "\n[Selected Trial Slot]: " + dateStr + " " + selectedTime)
 				targetStage = "completed"
-				outboundBody = "Tnak you our team will reach u out "
+				outboundBody = "Thank you our team will reach u out "
 			} else if autoContactStage == "awaiting_reason" {
 				targetNotes = strings.TrimSpace(targetNotes + "\n[Dropped Reason]: " + body)
 				targetStage = "completed"
@@ -428,7 +461,7 @@ func (s *Service) HandleInboundWhatsAppMessage(ctx context.Context,
 					var ipText *string
 					row := tx.QueryRow(ctx, `
 						SELECT l.id, l.studio_id, l.campaign_id, l.name, COALESCE(l.first_name, ''), COALESCE(l.last_name, ''), l.email, l.phone, l.fitness_plan, l.goals,
-						       l.source, l.status, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage, l.referrer, l.user_agent, l.ip_address, l.created_at, l.updated_at,
+						       l.source, l.status, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage, l.referrer, l.user_agent, l.ip_address::text, l.created_at, l.updated_at,
 						       s.name, s.slug, c.name, c.slug
 						FROM leads l
 						JOIN campaigns c ON c.id = l.campaign_id
@@ -474,6 +507,95 @@ func (s *Service) HandleInboundWhatsAppMessage(ctx context.Context,
 		})
 	}
 	return nil
+}
+
+func downloadWhatsAppMedia(ctx context.Context, accessToken, mediaID, mimeType, messageID string) (string, string, error) {
+	if accessToken == "" || mediaID == "" {
+		return "", "", fmt.Errorf("missing media id or access token")
+	}
+
+	metaReq, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/%s", channels.MetaGraphBaseURL, mediaID), nil)
+	if err != nil {
+		return "", "", err
+	}
+	metaReq.Header.Set("Authorization", "Bearer "+accessToken)
+
+	metaResp, err := http.DefaultClient.Do(metaReq)
+	if err != nil {
+		return "", "", fmt.Errorf("media metadata request: %w", err)
+	}
+	defer metaResp.Body.Close()
+	metaBody, _ := io.ReadAll(metaResp.Body)
+	if metaResp.StatusCode >= 400 {
+		return "", "", fmt.Errorf("media metadata HTTP %d: %s", metaResp.StatusCode, string(metaBody))
+	}
+
+	var metaOK struct {
+		URL      string `json:"url"`
+		MimeType string `json:"mime_type"`
+	}
+	if err := json.Unmarshal(metaBody, &metaOK); err != nil {
+		return "", "", fmt.Errorf("decode media metadata: %w", err)
+	}
+	if metaOK.URL == "" {
+		return "", "", fmt.Errorf("empty media url")
+	}
+
+	mediaReq, err := http.NewRequestWithContext(ctx, http.MethodGet, metaOK.URL, nil)
+	if err != nil {
+		return "", "", err
+	}
+	mediaReq.Header.Set("Authorization", "Bearer "+accessToken)
+
+	mediaResp, err := http.DefaultClient.Do(mediaReq)
+	if err != nil {
+		return "", "", fmt.Errorf("download media: %w", err)
+	}
+	defer mediaResp.Body.Close()
+	if mediaResp.StatusCode >= 400 {
+		body, _ := io.ReadAll(mediaResp.Body)
+		return "", "", fmt.Errorf("media download HTTP %d: %s", mediaResp.StatusCode, string(body))
+	}
+
+	if err := os.MkdirAll("uploads", 0o755); err != nil {
+		return "", "", fmt.Errorf("create uploads dir: %w", err)
+	}
+
+	ext := extFromMimeType(mimeType)
+	if ext == "" {
+		ext = extFromMimeType(metaOK.MimeType)
+	}
+	if ext == "" {
+		if exts, _ := mime.ExtensionsByType(mediaResp.Header.Get("Content-Type")); len(exts) > 0 {
+			ext = exts[0]
+		}
+	}
+	if ext == "" {
+		ext = ".bin"
+	}
+
+	fileName := fmt.Sprintf("whatsapp-%s%s", messageID, ext)
+	outPath := filepath.Join("uploads", fileName)
+	outFile, err := os.Create(outPath)
+	if err != nil {
+		return "", "", fmt.Errorf("create media file: %w", err)
+	}
+	defer outFile.Close()
+	if _, err := io.Copy(outFile, mediaResp.Body); err != nil {
+		return "", "", fmt.Errorf("write media file: %w", err)
+	}
+
+	return "/uploads/" + fileName, fileName, nil
+}
+
+func extFromMimeType(mimeType string) string {
+	if mimeType == "" {
+		return ""
+	}
+	if exts, _ := mime.ExtensionsByType(mimeType); len(exts) > 0 {
+		return exts[0]
+	}
+	return ""
 }
 
 // HandleInboundMessaging processes a DM from Instagram or Facebook Messenger.
