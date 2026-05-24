@@ -28,6 +28,7 @@ export interface Studio {
   updatedAt: string;
   availabilitySlots?: { day: string; times: string[] }[];
   availabilityTimezone?: string;
+  geminiApiKey?: string;
   campaignCount?: number;
   leadCount?: number;
 }
@@ -179,3 +180,36 @@ export interface Message {
   readAt?: string;
   createdAt: string;
 }
+
+export interface CampaignAnalytics {
+  id: string;
+  name: string;
+  slug: string;
+  totalLeads: number;
+  convertedLeads: number;
+  conversionRate: number;
+}
+
+export interface PlatformAnalytics {
+  platform: string;
+  totalLeads: number;
+  convertedLeads: number;
+  conversionRate: number;
+}
+
+export interface AnalyticsSummary {
+  totalLeads: number;
+  newLeads: number;
+  trialBookedLeads: number;
+  memberLeads: number;
+  droppedLeads: number;
+  trialToMemberRate: number;
+  followupsRequired: number;
+  unrespondedMessages: number;
+  avgResponseTimeLapseSecs: number;
+  leadToTrialTimeLapseSecs: number;
+  trialToMemberTimeLapseSecs: number;
+  byCampaign: CampaignAnalytics[];
+  byPlatform: PlatformAnalytics[];
+}
+

@@ -89,6 +89,15 @@ services:
     entrypoint: ["/usr/local/bin/seed"]
     restart: "no"
 
+  # One-shot: ensure correct volume permissions for distroless nonroot user
+  init-uploads:
+    image: alpine:3.19
+    user: "0:0"
+    volumes:
+      - uploads_data:/uploads
+    command: chown -R 65532:65532 /uploads
+    restart: "no"
+
   api:
     build:
       context: ..
@@ -98,9 +107,12 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      init-uploads:
+        condition: service_completed_successfully
     environment: *api_env
     volumes:
       - ./secrets:/secrets:ro
+      - uploads_data:/app/uploads
 
   web:
     build:
@@ -135,3 +147,4 @@ services:
 
 volumes:
   pg_data:
+  uploads_data:

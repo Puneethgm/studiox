@@ -490,3 +490,8 @@ func (s *Service) BookTrialSlot(ctx context.Context, leadID uuid.UUID, slot stri
 
 	return tx.Commit(ctx)
 }
+
+func (s *Service) GetAnalytics(ctx context.Context, studioID uuid.UUID, durationDays int) (*AnalyticsSummary, error) {
+	return s.repo.GetAnalytics(ctx, studioID, durationDays)
+}
+

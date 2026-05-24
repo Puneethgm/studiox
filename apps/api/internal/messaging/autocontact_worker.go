@@ -93,12 +93,11 @@ func (w *AutoContactWorker) processItem(ctx context.Context, it leads.OutboxItem
 	}
 
 	// Build initial message with selection options (Interested / Not Interested)
-	first := firstName(l.Name)
 	var body string
 	if l.FitnessPlan != "" {
-		body = fmt.Sprintf("Hi %s, we saw your interest in %s for %s. I’m from %s — would you like to get started? Please select an option:\n1. Interested\n2. Not Interested", first, l.CampaignName, l.FitnessPlan, l.StudioName)
+		body = fmt.Sprintf("Hi {{contact.first_name}}, we saw your interest in {{campaign.name}} for %s. I’m from {{studio.name}} — would you like to get started? Please select an option:\n1. Interested\n2. Not Interested", l.FitnessPlan)
 	} else {
-		body = fmt.Sprintf("Hi %s, we saw your interest in %s. I’m from %s — would you like to get started? Please select an option:\n1. Interested\n2. Not Interested", first, l.CampaignName, l.StudioName)
+		body = "Hi {{contact.first_name}}, we saw your interest in {{campaign.name}}. I’m from {{studio.name}} — would you like to get started? Please select an option:\n1. Interested\n2. Not Interested"
 	}
 
 	// Update auto contact stage to awaiting_interest
@@ -125,7 +124,7 @@ func (w *AutoContactWorker) processItem(ctx context.Context, it leads.OutboxItem
 
 	if l.Status == leads.StatusTrialBooked {
 		// If they booked directly on registration, schedule a 1-day check-in follow-up presenting options again
-		trialFollowupBody := fmt.Sprintf("Hi %s, we hope you're excited for your trial! Ready to take the next step and become a member? Please select an option:\n1. Book a Trial\n2. Become a Member", first)
+		trialFollowupBody := "Hi {{contact.first_name}}, we hope you're excited for your trial! Ready to take the next step and become a member? Please select an option:\n1. Book a Trial\n2. Become a Member"
 		if _, err := w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
 			StudioID:       l.StudioID,
 			ConversationID: conv.ID,
@@ -143,7 +142,7 @@ func (w *AutoContactWorker) processItem(ctx context.Context, it leads.OutboxItem
 			if _, err := w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
 				StudioID:       l.StudioID,
 				ConversationID: conv.ID,
-				Body:           fmt.Sprintf("Just following up on your inquiry — %s", first),
+				Body:           "Just following up on your inquiry — {{contact.first_name}}",
 				SourceKind:     SourceAutomation,
 				SourceRef:      fmt.Sprintf("lead:%s:followup:%d", l.ID.String(), i+1),
 				ScheduledFor:   time.Now().UTC().Add(d),

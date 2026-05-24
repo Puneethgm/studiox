@@ -145,6 +145,7 @@ type updateReq struct {
 	Active               bool                 `json:"active"`
 	AvailabilitySlots    []AvailabilitySlot   `json:"availabilitySlots"`
 	AvailabilityTimezone string               `json:"availabilityTimezone"`
+	GeminiAPIKey         string               `json:"geminiApiKey"`
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
@@ -165,6 +166,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		Active:               req.Active,
 		AvailabilitySlots:    req.AvailabilitySlots,
 		AvailabilityTimezone: req.AvailabilityTimezone,
+		GeminiAPIKey:         req.GeminiAPIKey,
 	})
 	if errs != nil {
 		httpx.WriteValidationError(w, errs)
@@ -252,6 +254,7 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 		Active:               req.Active,
 		AvailabilitySlots:    req.AvailabilitySlots,
 		AvailabilityTimezone: req.AvailabilityTimezone,
+		GeminiAPIKey:         req.GeminiAPIKey,
 	})
 	if errs != nil {
 		httpx.WriteValidationError(w, errs)

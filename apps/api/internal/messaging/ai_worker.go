@@ -360,8 +360,7 @@ func (w *AIWorker) scheduleTrialFollowup(ctx context.Context, studioID uuid.UUID
 		w.log.Warn("could not find conversation for lead to schedule followup", "lead", lead.ID, "err", err)
 	}
 
-	first := firstName(lead.Name)
-	body := fmt.Sprintf("Hi %s, we hope you're enjoying your trial! Are you ready to take the next step and become a member? Please select an option:\n1. Book a Trial\n2. Become a Member", first)
+	body := "Hi {{contact.first_name}}, we hope you're enjoying your trial! Are you ready to take the next step and become a member? Please select an option:\n1. Book a Trial\n2. Become a Member"
 
 	if _, err := w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
 		StudioID:       studioID,

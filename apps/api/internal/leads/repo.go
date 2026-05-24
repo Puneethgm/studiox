@@ -612,3 +612,203 @@ func (r *Repo) UpdateAutoContactStageTx(ctx context.Context, tx pgx.Tx, studioID
 	}
 	return nil
 }
+
+func (r *Repo) GetAnalytics(ctx context.Context, studioID uuid.UUID, durationDays int) (*AnalyticsSummary, error) {
+	// Parse duration interval
+	var dateFilter string
+	if durationDays > 0 {
+		dateFilter = fmt.Sprintf("AND created_at >= now() - INTERVAL '%d days'", durationDays)
+	}
+
+	// 1. Lead counts by status
+	qStatus := fmt.Sprintf(`
+		SELECT status, COUNT(*) 
+		FROM leads 
+		WHERE studio_id = $1 %s 
+		GROUP BY status`, dateFilter)
+	rows, err := r.pool.Query(ctx, qStatus, studioID)
+	if err != nil {
+		return nil, fmt.Errorf("analytics status counts: %w", err)
+	}
+	defer rows.Close()
+
+	var totalLeads, newLeads, trialLeads, memberLeads, droppedLeads int
+	for rows.Next() {
+		var status string
+		var count int
+		if err := rows.Scan(&status, &count); err != nil {
+			return nil, err
+		}
+		totalLeads += count
+		switch status {
+		case "new":
+			newLeads = count
+		case "trial_booked":
+			trialLeads = count
+		case "member":
+			memberLeads = count
+		case "dropped":
+			droppedLeads = count
+		}
+	}
+
+	// 2. Unresponded messages
+	var unresponded int
+	err = r.pool.QueryRow(ctx, `
+		SELECT COUNT(*) 
+		FROM conversations 
+		WHERE studio_id = $1 AND status = 'open' AND last_message_direction = 'inbound'
+	`, studioID).Scan(&unresponded)
+	if err != nil {
+		return nil, fmt.Errorf("analytics unresponded: %w", err)
+	}
+
+	// 3. Followups required
+	qFollowups := fmt.Sprintf(`
+		SELECT COUNT(*) 
+		FROM leads 
+		WHERE studio_id = $1 AND status IN ('new', 'contacted') AND contact_attempts < 3 %s`, dateFilter)
+	var followups int
+	err = r.pool.QueryRow(ctx, qFollowups, studioID).Scan(&followups)
+	if err != nil {
+		return nil, fmt.Errorf("analytics followups: %w", err)
+	}
+
+	// 4. Avg response time lapse
+	var avgResponseTime float64
+	qResponseTime := fmt.Sprintf(`
+		WITH msg_pairs AS (
+			SELECT 
+				m1.created_at as inbound_time,
+				MIN(m2.created_at) as outbound_time
+			FROM messages m1
+			JOIN messages m2 ON m1.conversation_id = m2.conversation_id 
+				AND m2.direction = 'outbound' 
+				AND m2.created_at > m1.created_at
+			WHERE m1.direction = 'inbound'
+			  AND m1.studio_id = $1
+			  %s
+			GROUP BY m1.id, m1.created_at
+		)
+		SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (outbound_time - inbound_time))), 0) FROM msg_pairs`, 
+		strings.ReplaceAll(dateFilter, "created_at", "m1.created_at"))
+	err = r.pool.QueryRow(ctx, qResponseTime, studioID).Scan(&avgResponseTime)
+	if err != nil {
+		return nil, fmt.Errorf("analytics response time: %w", err)
+	}
+
+	// 5. Lead to trial time lapse
+	var leadToTrialTime float64
+	qLeadToTrial := fmt.Sprintf(`
+		SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (updated_at - created_at))), 0) 
+		FROM leads 
+		WHERE studio_id = $1 AND status IN ('trial_booked', 'member') %s`, dateFilter)
+	err = r.pool.QueryRow(ctx, qLeadToTrial, studioID).Scan(&leadToTrialTime)
+	if err != nil {
+		return nil, fmt.Errorf("analytics lead to trial: %w", err)
+	}
+
+	// 6. Trial to member time lapse
+	var trialToMemberTime float64
+	qTrialToMember := fmt.Sprintf(`
+		SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (updated_at - COALESCE(last_contacted_at, created_at)))), 0) 
+		FROM leads 
+		WHERE studio_id = $1 AND status = 'member' %s`, dateFilter)
+	err = r.pool.QueryRow(ctx, qTrialToMember, studioID).Scan(&trialToMemberTime)
+	if err != nil {
+		return nil, fmt.Errorf("analytics trial to member: %w", err)
+	}
+
+	// 7. Campaign metrics
+	qCampaigns := fmt.Sprintf(`
+		SELECT 
+			c.id, c.name, c.slug,
+			COUNT(l.id) as total_leads,
+			COUNT(CASE WHEN l.status IN ('trial_booked', 'member') THEN 1 END) as converted_leads
+		FROM campaigns c
+		LEFT JOIN leads l ON l.campaign_id = c.id %s
+		WHERE c.studio_id = $1
+		GROUP BY c.id, c.name, c.slug
+		ORDER BY total_leads DESC`, strings.ReplaceAll(dateFilter, "created_at", "l.created_at"))
+	rowsC, err := r.pool.Query(ctx, qCampaigns, studioID)
+	if err != nil {
+		return nil, fmt.Errorf("analytics campaigns: %w", err)
+	}
+	defer rowsC.Close()
+
+	byCampaign := []CampaignAnalytics{}
+	for rowsC.Next() {
+		var ca CampaignAnalytics
+		var total, converted int
+		if err := rowsC.Scan(&ca.ID, &ca.Name, &ca.Slug, &total, &converted); err != nil {
+			return nil, err
+		}
+		ca.TotalLeads = total
+		ca.ConvertedLeads = converted
+		if total > 0 {
+			ca.ConversionRate = float64(converted) / float64(total) * 100
+		}
+		byCampaign = append(byCampaign, ca)
+	}
+
+	// 8. Platform metrics
+	qPlatforms := fmt.Sprintf(`
+		SELECT 
+			CASE 
+				WHEN lower(l.source) LIKE '%%instagram%%' OR lower(l.referrer) LIKE '%%instagram.com%%' OR lower(l.referrer) LIKE '%%ig.me%%' THEN 'Instagram'
+				WHEN lower(l.source) LIKE '%%tiktok%%' OR lower(l.referrer) LIKE '%%tiktok.com%%' THEN 'TikTok'
+				WHEN lower(l.source) LIKE '%%youtube%%' OR lower(l.referrer) LIKE '%%youtube.com%%' OR lower(l.referrer) LIKE '%%youtu.be%%' THEN 'YouTube'
+				WHEN lower(l.source) LIKE '%%facebook%%' OR lower(l.referrer) LIKE '%%facebook.com%%' OR lower(l.source) LIKE '%%messenger%%' OR lower(l.referrer) LIKE '%%m.me%%' THEN 'Facebook'
+				WHEN lower(l.source) LIKE '%%google%%' OR lower(l.referrer) LIKE '%%google.com%%' OR lower(l.source) LIKE '%%seo%%' THEN 'Google / SEO'
+				WHEN lower(l.source) LIKE '%%ad%%' OR lower(l.referrer) LIKE '%%ad%%' OR lower(l.referrer) LIKE '%%gclid%%' THEN 'Paid Ads'
+				ELSE 'Direct / Organic'
+			END as platform,
+			COUNT(l.id) as total_leads,
+			COUNT(CASE WHEN l.status IN ('trial_booked', 'member') THEN 1 END) as converted_leads
+		FROM leads l
+		WHERE l.studio_id = $1 %s
+		GROUP BY platform
+		ORDER BY total_leads DESC`, dateFilter)
+	rowsP, err := r.pool.Query(ctx, qPlatforms, studioID)
+	if err != nil {
+		return nil, fmt.Errorf("analytics platforms: %w", err)
+	}
+	defer rowsP.Close()
+
+	byPlatform := []PlatformAnalytics{}
+	for rowsP.Next() {
+		var pa PlatformAnalytics
+		var total, converted int
+		if err := rowsP.Scan(&pa.Platform, &total, &converted); err != nil {
+			return nil, err
+		}
+		pa.TotalLeads = total
+		pa.ConvertedLeads = converted
+		if total > 0 {
+			pa.ConversionRate = float64(converted) / float64(total) * 100
+		}
+		byPlatform = append(byPlatform, pa)
+	}
+
+	trialToMemberRate := 0.0
+	if (trialLeads + memberLeads) > 0 {
+		trialToMemberRate = float64(memberLeads) / float64(trialLeads+memberLeads) * 100
+	}
+
+	return &AnalyticsSummary{
+		TotalLeads:                 totalLeads,
+		NewLeads:                   newLeads,
+		TrialBookedLeads:           trialLeads,
+		MemberLeads:                memberLeads,
+		DroppedLeads:               droppedLeads,
+		TrialToMemberRate:          trialToMemberRate,
+		FollowupsRequired:          followups,
+		UnrespondedMessages:        unresponded,
+		AvgResponseTimeLapseSecs:   avgResponseTime,
+		LeadToTrialTimeLapseSecs:   leadToTrialTime,
+		TrialToMemberTimeLapseSecs: trialToMemberTime,
+		ByCampaign:                 byCampaign,
+		ByPlatform:                 byPlatform,
+	}, nil
+}
+
