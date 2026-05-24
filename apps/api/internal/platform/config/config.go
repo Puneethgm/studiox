@@ -121,7 +121,7 @@ func Load() (Config, error) {
 		},
 		Cookie: CookieConfig{
 			Name:   getEnv("COOKIE_NAME", "px_session"),
-			Domain: getEnv("COOKIE_DOMAIN", "localhost"),
+			Domain: os.Getenv("COOKIE_DOMAIN"),
 			Secure: getEnv("COOKIE_SECURE", "false") == "true",
 		},
 		SuperUser: SuperUserConfig{
