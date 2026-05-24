@@ -24,6 +24,7 @@ type Studio struct {
 	UpdatedAt    time.Time `json:"updatedAt"`
 	AvailabilitySlots []AvailabilitySlot `json:"availabilitySlots"`
 	AvailabilityTimezone string `json:"availabilityTimezone"`
+	GeminiAPIKey string    `json:"geminiApiKey"`
 
 	// Optional summary fields used by list endpoints.
 	CampaignCount int `json:"campaignCount,omitempty"`

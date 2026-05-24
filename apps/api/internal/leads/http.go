@@ -38,6 +38,7 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 
 	r.Get("/leads", h.listLeads)
 	r.Get("/leads/stats", h.leadStats)
+	r.Get("/analytics", h.getAnalytics)
 	r.Get("/leads/sheets-settings", h.getSheetsSettings)
 	r.Post("/leads/sheets-settings", h.saveSheetsSettings)
 	r.Post("/leads/import", h.importLeads)
@@ -290,6 +291,35 @@ func (h *Handler) leadStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, stats)
+}
+
+func (h *Handler) getAnalytics(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := h.resolveStudioID(w, r)
+	if !ok {
+		return
+	}
+	
+	durationStr := r.URL.Query().Get("duration")
+	var durationDays int
+	switch durationStr {
+	case "15d":
+		durationDays = 15
+	case "30d":
+		durationDays = 30
+	case "90d":
+		durationDays = 90
+	case "365d":
+		durationDays = 365
+	default:
+		durationDays = 0 // all-time
+	}
+
+	summary, err := h.svc.GetAnalytics(r.Context(), studioID, durationDays)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, summary)
 }
 
 func (h *Handler) getLead(w http.ResponseWriter, r *http.Request) {

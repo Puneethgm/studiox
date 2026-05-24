@@ -19,6 +19,7 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
   const [brandColor, setBrandColor] = useState(studio.brandColor);
   const [logoUrl, setLogoUrl] = useState(studio.logoUrl);
   const [contactEmail, setContactEmail] = useState(studio.contactEmail);
+  const [geminiApiKey, setGeminiApiKey] = useState(studio.geminiApiKey || '');
   const [active, setActive] = useState(studio.active);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -83,6 +84,7 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
         logoUrl,
         contactEmail,
         active,
+        geminiApiKey,
       });
       if (!result.ok) {
         setErrors(result.details ?? { _: result.error });
@@ -193,6 +195,20 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
                 onChange={(e) => setContactEmail(e.target.value)}
               />
               <FieldError message={errors.contactEmail} />
+            </div>
+
+            <div>
+              <Label htmlFor="geminiApiKey">Gemini API Key</Label>
+              <Input
+                id="geminiApiKey"
+                type="password"
+                placeholder="AIzaSy..."
+                invalid={!!errors.geminiApiKey}
+                value={geminiApiKey}
+                onChange={(e) => setGeminiApiKey(e.target.value)}
+              />
+              <FieldHint>Configure the Gemini API Key to enable AI-driven template generation.</FieldHint>
+              <FieldError message={errors.geminiApiKey} />
             </div>
 
             <div className="flex items-center gap-3">

@@ -125,8 +125,8 @@ Inside Meta: **Your App → WhatsApp → Configuration**
 ### Step 5: Add webhook
 In the **Webhook** section, click **Edit** and enter:
 - **Callback URL**: `https://your-ngrok-url.ngrok-free.dev/api/v1/webhooks/meta/whatsapp`
-- **Verify Token**: Use the same verify token your project/backend uses (e.g., `my_secret_token_123`).
-
+- **Verify Token**: Use the same verify token your project/backend uses (e.g., ``).
+my_secret_token_123
 Click **Verify and Save**.
 
 ### Step 6: Subscribe to message events

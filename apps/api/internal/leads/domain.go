@@ -89,3 +89,36 @@ var (
 	ErrSlugTaken        = errors.New("slug already in use within this studio")
 	ErrInvalidPlan      = errors.New("fitness plan not offered by this campaign")
 )
+
+type AnalyticsSummary struct {
+	TotalLeads                 int                 `json:"totalLeads"`
+	NewLeads                   int                 `json:"newLeads"`
+	TrialBookedLeads           int                 `json:"trialBookedLeads"`
+	MemberLeads                int                 `json:"memberLeads"`
+	DroppedLeads               int                 `json:"droppedLeads"`
+	TrialToMemberRate          float64             `json:"trialToMemberRate"`
+	FollowupsRequired          int                 `json:"followupsRequired"`
+	UnrespondedMessages        int                 `json:"unrespondedMessages"`
+	AvgResponseTimeLapseSecs   float64             `json:"avgResponseTimeLapseSecs"`
+	LeadToTrialTimeLapseSecs   float64             `json:"leadToTrialTimeLapseSecs"`
+	TrialToMemberTimeLapseSecs float64             `json:"trialToMemberTimeLapseSecs"`
+	ByCampaign                 []CampaignAnalytics `json:"byCampaign"`
+	ByPlatform                 []PlatformAnalytics `json:"byPlatform"`
+}
+
+type CampaignAnalytics struct {
+	ID             string  `json:"id"`
+	Name           string  `json:"name"`
+	Slug           string  `json:"slug"`
+	TotalLeads     int     `json:"totalLeads"`
+	ConvertedLeads int     `json:"convertedLeads"`
+	ConversionRate float64 `json:"conversionRate"`
+}
+
+type PlatformAnalytics struct {
+	Platform       string  `json:"platform"`
+	TotalLeads     int     `json:"totalLeads"`
+	ConvertedLeads int     `json:"convertedLeads"`
+	ConversionRate float64 `json:"conversionRate"`
+}
+

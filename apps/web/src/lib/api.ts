@@ -39,7 +39,6 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
 
   const text = await res.text();
   const body = text ? JSON.parse(text) : undefined;
-
   if (!res.ok) {
     throw new ApiError(
       body?.error ?? `HTTP ${res.status}`,

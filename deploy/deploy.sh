@@ -40,9 +40,6 @@ docker compose --profile tools run --rm seed
 echo "==> Bringing up the rest of the stack"
 docker compose up -d --remove-orphans
 
-echo "==> Reloading Nginx configuration"
-docker compose exec -T nginx nginx -s reload
-
 echo "==> Pruning dangling images"
 docker image prune -f >/dev/null
 

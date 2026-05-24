@@ -35,7 +35,10 @@ x-api-env: &api_env
   GOOGLE_SHEETS_ID: ${GOOGLE_SHEETS_ID:-}
   GOOGLE_SHEETS_TAB: ${GOOGLE_SHEETS_TAB:-Leads}
   TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY}
+  META_APP_ID: ${META_APP_ID:-}
+  META_APP_SECRET: ${META_APP_SECRET:-}
   META_WEBHOOK_VERIFY_TOKEN: ${META_WEBHOOK_VERIFY_TOKEN}
+  META_GRAPH_API_VERSION: ${META_GRAPH_API_VERSION:-v21.0}
 
 services:
   postgres:
@@ -86,6 +89,15 @@ services:
     entrypoint: ["/usr/local/bin/seed"]
     restart: "no"
 
+  # One-shot: ensure correct volume permissions for distroless nonroot user
+  init-uploads:
+    image: alpine:3.19
+    user: "0:0"
+    volumes:
+      - uploads_data:/uploads
+    command: chown -R 65532:65532 /uploads
+    restart: "no"
+
   api:
     build:
       context: ..
@@ -95,6 +107,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      init-uploads:
+        condition: service_completed_successfully
     environment: *api_env
     volumes:
       - ./secrets:/secrets:ro
@@ -123,10 +137,10 @@ services:
     restart: always
     ports:
       - "80:80"
-      # - "443:443"   # uncomment when you add TLS
+      - "443:443"
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
-      # - ./certs:/etc/nginx/certs:ro
+      - ./certs:/etc/nginx/certs:ro
     depends_on:
       - web
       - api

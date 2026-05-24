@@ -147,7 +147,8 @@ type UpdateStudioInput struct {
 	ContactEmail         string
 	Active               bool
 	AvailabilitySlots    []AvailabilitySlot `json:"availabilitySlots"`
-	AvailabilityTimezone string `json:"availabilityTimezone"`
+	AvailabilityTimezone string             `json:"availabilityTimezone"`
+	GeminiAPIKey         string             `json:"geminiApiKey"`
 }
 
 func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput) (map[string]string, error) {
@@ -155,6 +156,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput
 	in.BrandColor = normalizeHex(in.BrandColor)
 	in.LogoURL = strings.TrimSpace(in.LogoURL)
 	in.ContactEmail = strings.ToLower(strings.TrimSpace(in.ContactEmail))
+	in.GeminiAPIKey = strings.TrimSpace(in.GeminiAPIKey)
 
 	errs := map[string]string{}
 	if in.Name == "" {
@@ -171,7 +173,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput
 	if len(errs) > 0 {
 		return errs, nil
 	}
-	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.Active, in.AvailabilitySlots, in.AvailabilityTimezone); err != nil {
+	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.Active, in.AvailabilitySlots, in.AvailabilityTimezone, in.GeminiAPIKey); err != nil {
 		return nil, err
 	}
 	return nil, nil

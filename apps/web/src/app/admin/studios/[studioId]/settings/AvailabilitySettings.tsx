@@ -98,6 +98,20 @@ export function AvailabilitySettings({
     if (!res.ok) setError(res.error ?? "Failed to save");
   };
 
+  const commonTimezones = [
+    "Asia/Kolkata",
+    "Asia/Singapore",
+    "Asia/Dubai",
+    "Asia/Tokyo",
+    "Europe/London",
+    "Europe/Paris",
+    "America/New_York",
+    "America/Chicago",
+    "America/Los_Angeles",
+    "Australia/Sydney",
+    "UTC"
+  ];
+
   return (
     <div className="mt-8 overflow-hidden rounded-[24px] border border-white/30 bg-white/30 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30">
       <div className="border-b border-white/20 px-6 py-4 dark:border-white/5">
@@ -107,7 +121,18 @@ export function AvailabilitySettings({
         {/* Timezone selector */}
         <div className="mb-6">
           <label className="block text-sm font-bold mb-2 text-zinc-700 dark:text-zinc-300">Timezone</label>
-          <Input value={timezone} onChange={(e) => setTimezone(e.target.value)} placeholder="Asia/Kolkata" className="max-w-xs" />
+          <select
+            className="rounded-lg border border-zinc-200 px-3 py-1 text-sm font-semibold bg-white dark:bg-zinc-900 dark:border-zinc-800 focus:outline-none h-8 w-full max-w-xs text-zinc-800 dark:text-zinc-200"
+            value={timezone}
+            onChange={(e) => setTimezone(e.target.value)}
+          >
+            {commonTimezones.map((tz) => (
+              <option key={tz} value={tz}>{tz}</option>
+            ))}
+            {timezone && !commonTimezones.includes(timezone) && (
+              <option value={timezone}>{timezone}</option>
+            )}
+          </select>
         </div>
         
         {/* Slots list */}
@@ -169,3 +194,4 @@ function XIcon() {
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
   )
 }
+

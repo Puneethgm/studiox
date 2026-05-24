@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -72,6 +73,40 @@ func (w *OutboundWorker) dispatch(ctx context.Context, j OutboundJob) {
 		w.failJob(ctx, j, "channel lookup: "+err.Error(), true) // dead — channel deleted
 		return
 	}
+
+	// Resolve template variables for the message body
+	var studioName string
+	err = w.repo.Pool().QueryRow(ctx, "SELECT name FROM studios WHERE id = $1", j.StudioID).Scan(&studioName)
+	if err != nil {
+		w.log.Error("failed to fetch studio name for template replacement", "err", err)
+	}
+
+	contactFirstName := ""
+	campaignName := ""
+	if conv.LeadID != nil {
+		err = w.repo.Pool().QueryRow(ctx, `
+			SELECT COALESCE(NULLIF(l.first_name, ''), SPLIT_PART(l.name, ' ', 1)), COALESCE(c.name, '')
+			FROM leads l
+			LEFT JOIN campaigns c ON l.campaign_id = c.id
+			WHERE l.id = $1
+		`, *conv.LeadID).Scan(&contactFirstName, &campaignName)
+		if err != nil {
+			w.log.Error("failed to fetch lead/campaign details for template replacement", "err", err)
+		}
+	}
+
+	if contactFirstName == "" {
+		if conv.ContactDisplayName != "" {
+			contactFirstName = strings.Split(conv.ContactDisplayName, " ")[0]
+		} else {
+			contactFirstName = "there"
+		}
+	}
+
+	// Replace placeholders in the body
+	j.Body = strings.ReplaceAll(j.Body, "{{contact.first_name}}", contactFirstName)
+	j.Body = strings.ReplaceAll(j.Body, "{{studio.name}}", studioName)
+	j.Body = strings.ReplaceAll(j.Body, "{{campaign.name}}", campaignName)
 	// In local/dev mode, allow error status channels for testing.
 	isLocalDev := os.Getenv("API_ENV") == "local"
 	if channel.Status != StatusActive {

@@ -17,7 +17,7 @@ The platform will act as a central intelligence and operations layer connecting:
 2. System Architecture Overview
 2.1 High-Level Architecture
 •	Frontend Layer 
-o	Admin dashboard (enterprise control) 
+o	Admin dashboard (enterprise control)
 o	Vendor/studio dashboards 
 o	Customer mobile/web apps 
 •	Backend Layer (Microservices) 
