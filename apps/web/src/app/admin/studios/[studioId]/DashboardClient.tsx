@@ -78,7 +78,7 @@ export default function DashboardClient({
   initialStats,
 }: DashboardClientProps) {
   const [activeTab, setActiveTab] = useState<'overview' | 'analytics'>('overview');
-  const [duration, setDuration] = useState<'7d' | '15d' | '30d' | '90d' | '365d' | 'all' | 'custom'>('30d');
+  const [duration, setDuration] = useState<'1d' | '7d' | '15d' | '30d' | '90d' | '365d' | 'all' | 'custom'>('30d');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [analytics, setAnalytics] = useState<AnalyticsSummary | null>(null);
@@ -475,7 +475,7 @@ export default function DashboardClient({
                 Select Period:
               </span>
               <div className="inline-flex rounded-xl bg-zinc-100 p-1 dark:bg-zinc-800 flex-wrap gap-1">
-                {(['7d', '15d', '30d', '90d', '365d', 'all', 'custom'] as const).map((d) => (
+                {(['1d', '7d', '15d', '30d', '90d', '365d', 'all', 'custom'] as const).map((d) => (
                   <button
                     key={d}
                     onClick={() => setDuration(d)}
@@ -485,6 +485,7 @@ export default function DashboardClient({
                         : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-300'
                     }`}
                   >
+                    {d === '1d' && 'Today'}
                     {d === '7d' && '1 Week'}
                     {d === '15d' && '15 Days'}
                     {d === '30d' && '1 Month'}
