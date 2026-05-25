@@ -226,6 +226,7 @@ type ListLeadsFilter struct {
 	TrialPurchased *bool
 	Limit          int
 	Offset         int
+	Search         string
 }
 
 func (r *Repo) ListLeads(ctx context.Context, studioID uuid.UUID, f ListLeadsFilter) ([]Lead, int, error) {
@@ -254,6 +255,10 @@ func (r *Repo) ListLeads(ctx context.Context, studioID uuid.UUID, f ListLeadsFil
 	if f.TrialPurchased != nil {
 		args = append(args, *f.TrialPurchased)
 		conds = append(conds, fmt.Sprintf("l.trial_purchased = $%d", len(args)))
+	}
+	if f.Search != "" {
+		args = append(args, "%"+strings.ToLower(f.Search)+"%")
+		conds = append(conds, fmt.Sprintf("(LOWER(l.name) LIKE $%d OR LOWER(COALESCE(l.first_name, '')) LIKE $%d OR LOWER(COALESCE(l.last_name, '')) LIKE $%d OR LOWER(l.email) LIKE $%d OR l.phone LIKE $%d)", len(args), len(args), len(args), len(args), len(args)))
 	}
 	where := strings.Join(conds, " AND ")
 

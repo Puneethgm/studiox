@@ -284,6 +284,9 @@ func (h *Handler) listLeads(w http.ResponseWriter, r *http.Request) {
 		n, _ := strconv.Atoi(v)
 		f.Offset = n
 	}
+	if v := q.Get("search"); v != "" {
+		f.Search = v
+	}
 
 	list, total, err := h.svc.ListLeads(r.Context(), studioID, f)
 	if err != nil {

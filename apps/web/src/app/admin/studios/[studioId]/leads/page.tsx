@@ -20,6 +20,7 @@ interface SearchParams {
   campaignId?: string;
   status?: string;
   page?: string;
+  search?: string;
 }
 
 const PAGE_SIZE = 25;
@@ -67,6 +68,7 @@ export default async function LeadsPage({
   const qs = new URLSearchParams();
   if (sp.campaignId) qs.set('campaignId', sp.campaignId);
   if (sp.status && (LEAD_STATUSES as string[]).includes(sp.status)) qs.set('status', sp.status);
+  if (sp.search) qs.set('search', sp.search);
   qs.set('limit', String(PAGE_SIZE));
   qs.set('offset', String(offset));
 
@@ -115,7 +117,7 @@ export default async function LeadsPage({
       </div>
 
       {/* Filters */}
-      <LeadFilters status={sp.status} />
+      <LeadFilters status={sp.status} search={sp.search} />
 
       {/* List */}
       {data.leads.length === 0 ? (
