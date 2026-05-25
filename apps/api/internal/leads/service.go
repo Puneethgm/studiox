@@ -109,6 +109,8 @@ type SubmitLeadInput struct {
 	StudioSlug   string
 	CampaignSlug string
 	Name         string
+	FirstName    string
+	LastName     string
 	Email        string
 	Phone        string
 	FitnessPlan  string
@@ -125,14 +127,30 @@ func (s *Service) SubmitPublicLead(ctx context.Context, in SubmitLeadInput) (*Le
 	}
 
 	in.Name = strings.TrimSpace(in.Name)
+	in.FirstName = strings.TrimSpace(in.FirstName)
+	in.LastName = strings.TrimSpace(in.LastName)
 	in.Email = strings.ToLower(strings.TrimSpace(in.Email))
 	in.Phone = strings.TrimSpace(in.Phone)
 	in.FitnessPlan = strings.TrimSpace(in.FitnessPlan)
 	in.Goals = strings.TrimSpace(in.Goals)
 
+	// Combine or split names depending on what's provided
+	if in.Name == "" && (in.FirstName != "" || in.LastName != "") {
+		in.Name = strings.TrimSpace(in.FirstName + " " + in.LastName)
+	} else if in.Name != "" && in.FirstName == "" && in.LastName == "" {
+		parts := strings.SplitN(in.Name, " ", 2)
+		in.FirstName = parts[0]
+		if len(parts) > 1 {
+			in.LastName = parts[1]
+		}
+	}
+
 	errs := map[string]string{}
-	if in.Name == "" {
-		errs["name"] = "required"
+	if in.FirstName == "" {
+		errs["firstName"] = "required"
+	}
+	if in.LastName == "" {
+		errs["lastName"] = "required"
 	}
 	if _, err := mail.ParseAddress(in.Email); err != nil {
 		errs["email"] = "invalid email"
@@ -160,6 +178,8 @@ func (s *Service) SubmitPublicLead(ctx context.Context, in SubmitLeadInput) (*Le
 		CampaignName: c.Name,
 		CampaignSlug: c.Slug,
 		Name:         in.Name,
+		FirstName:    in.FirstName,
+		LastName:     in.LastName,
 		Email:        in.Email,
 		Phone:        in.Phone,
 		FitnessPlan:  in.FitnessPlan,

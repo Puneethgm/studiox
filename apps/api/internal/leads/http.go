@@ -484,6 +484,8 @@ func (h *Handler) publicCampaign(w http.ResponseWriter, r *http.Request) {
 
 type publicSubmitReq struct {
 	Name        string `json:"name"`
+	FirstName   string `json:"firstName"`
+	LastName    string `json:"lastName"`
 	Email       string `json:"email"`
 	Phone       string `json:"phone"`
 	FitnessPlan string `json:"fitnessPlan"`
@@ -501,6 +503,8 @@ func (h *Handler) publicSubmit(w http.ResponseWriter, r *http.Request) {
 		StudioSlug:   studioSlug,
 		CampaignSlug: campaignSlug,
 		Name:         req.Name,
+		FirstName:    req.FirstName,
+		LastName:     req.LastName,
 		Email:        req.Email,
 		Phone:        req.Phone,
 		FitnessPlan:  req.FitnessPlan,

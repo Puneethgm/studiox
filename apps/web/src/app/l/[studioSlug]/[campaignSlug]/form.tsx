@@ -9,7 +9,8 @@ import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 
 interface Errors {
-  name?: string;
+  firstName?: string;
+  lastName?: string;
   email?: string;
   phone?: string;
   fitnessPlan?: string;
@@ -28,7 +29,8 @@ export function LeadForm({
   brandColor: string;
 }) {
   const router = useRouter();
-  const [name, setName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [fitnessPlan, setFitnessPlan] = useState(fitnessPlans[0] ?? '');
@@ -86,7 +88,7 @@ export function LeadForm({
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, email, phone, fitnessPlan, goals }),
+          body: JSON.stringify({ firstName, lastName, email, phone, fitnessPlan, goals }),
         },
       );
       if (res.status === 422) {
@@ -110,19 +112,35 @@ export function LeadForm({
 
   return (
     <form onSubmit={onSubmit} className="space-y-5" noValidate>
-      <div>
-        <Label htmlFor="name">Full name</Label>
-        <Input
-          id="name"
-          autoComplete="name"
-          required
-          invalid={!!errors.name}
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Jane Doe"
-          suppressHydrationWarning
-        />
-        <FieldError message={errors.name} />
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <Label htmlFor="firstName">First name</Label>
+          <Input
+            id="firstName"
+            autoComplete="given-name"
+            required
+            invalid={!!errors.firstName}
+            value={firstName}
+            onChange={(e) => setFirstName(e.target.value)}
+            placeholder="Jane"
+            suppressHydrationWarning
+          />
+          <FieldError message={errors.firstName} />
+        </div>
+        <div>
+          <Label htmlFor="lastName">Last name</Label>
+          <Input
+            id="lastName"
+            autoComplete="family-name"
+            required
+            invalid={!!errors.lastName}
+            value={lastName}
+            onChange={(e) => setLastName(e.target.value)}
+            placeholder="Doe"
+            suppressHydrationWarning
+          />
+          <FieldError message={errors.lastName} />
+        </div>
       </div>
       <div>
         <Label htmlFor="email">Email</Label>

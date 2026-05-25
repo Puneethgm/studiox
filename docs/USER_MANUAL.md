@@ -122,3 +122,34 @@ sudo docker compose logs -f
 sudo docker compose logs -f nginx
 sudo docker compose logs -f api
 ```
+
+---
+
+## 6. Lead Import Templates
+
+To import existing leads in bulk into Project-X (using the **Import Leads** button on the Leads page), you can upload an Excel (.xlsx) or CSV file. 
+
+The structure of the file should follow the template layout below. It is highly recommended to construct a spreadsheet with two sheets:
+
+### SHEET 1: Field Descriptions & Instructions
+This sheet serves as a guide for your staff to understand the validation rules for each column:
+
+| Column Header | Accepted Keys / Variations | Data Type | Required? | Validation Rules & Examples |
+| :--- | :--- | :--- | :--- | :--- |
+| **First Name** | `First Name`, `firstName` | Text | **Yes** | The lead's first name. (e.g. `John`) |
+| **Last Name** | `Last Name`, `lastName` | Text | **Yes** | The lead's last name. (e.g. `Doe`) |
+| **Email** | `Email`, `email address` | Text | **Yes*** | Must be a valid email format. (e.g. `john@example.com`). *Either Email or Phone is required. |
+| **Phone** | `Phone`, `phone number`, `contact` | Text/Number | **Yes*** | Digit-based phone format. (e.g. `+15551234567` or `555-123-4567`). *Either Email or Phone is required. |
+| **Plan** | `Plan`, `fitness plan` | Text | No | The plan they are interested in. If it contains the word "trial" (e.g. "Trial Pass"), the lead's status is automatically set to `trial_booked`. |
+| **Goals** | `Goals`, `goal` | Text | No | Additional comments on fitness goals. |
+| **Notes** | `Notes`, `note` | Text | No | Internal follow-up notes. |
+| **Status** | `Status`, `lead status` | Text | No | Initial status. Accepted values: `new`, `contacted`, `trial_booked`, `member`, `dropped`. (Defaults to `new`). |
+
+### SHEET 2: Lead Data (The Actual Import Sheet)
+This is the sheet where you input the actual data rows. The first row must be the headers exactly as shown below:
+
+| First Name | Last Name | Email | Phone | Plan | Goals | Notes | Status |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| Jane | Doe | jane.doe@example.com | +15559876543 | Monthly Membership | Lose weight | Prefers morning classes | new |
+| Bob | Smith | bob.smith@example.com | 555-456-7890 | Trial Pass | Build muscle | Referred by Jane | trial_booked |
+
