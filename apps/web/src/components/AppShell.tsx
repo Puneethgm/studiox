@@ -68,6 +68,11 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
   // All hooks must run unconditionally — keep them above the lockout branch.
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [logoError, setLogoError] = useState(false);
+
+  useEffect(() => {
+    setLogoError(false);
+  }, [studio?.logoUrl]);
 
   // Auto-close the drawer on navigation.
   useEffect(() => {
@@ -170,9 +175,9 @@ function Sidebar({
             className="grid h-12 w-12 shrink-0 animate-float place-items-center overflow-hidden rounded-2xl text-sm font-bold text-white shadow-lg shadow-brand-500/20 ring-4 ring-white/30"
             style={{ background: studio!.brandColor }}
           >
-            {studio!.logoUrl ? (
+            {studio!.logoUrl && !logoError ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={studio!.logoUrl} alt="" className="h-12 w-12 object-cover" />
+              <img src={studio!.logoUrl} alt="" className="h-12 w-12 object-cover" onError={() => setLogoError(true)} />
             ) : (
               brandInitials(studio!.name)
             )}

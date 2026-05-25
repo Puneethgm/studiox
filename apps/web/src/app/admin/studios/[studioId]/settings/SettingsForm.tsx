@@ -18,6 +18,10 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
   const [name, setName] = useState(studio.name);
   const [brandColor, setBrandColor] = useState(studio.brandColor);
   const [logoUrl, setLogoUrl] = useState(studio.logoUrl);
+  const [logoError, setLogoError] = useState(false);
+  useEffect(() => {
+    setLogoError(false);
+  }, [logoUrl]);
   const [contactEmail, setContactEmail] = useState(studio.contactEmail);
   const [geminiApiKey, setGeminiApiKey] = useState(studio.geminiApiKey || '');
   const [active, setActive] = useState(studio.active);
@@ -251,9 +255,9 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
                 className="grid h-12 w-12 place-items-center rounded-2xl text-base font-bold text-white shadow-md"
                 style={{ background: brandColor }}
               >
-                {logoUrl ? (
+                {logoUrl && !logoError ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={logoUrl} alt="" className="h-12 w-12 rounded-2xl object-cover" />
+                  <img src={logoUrl} alt="" className="h-12 w-12 rounded-2xl object-cover" onError={() => setLogoError(true)} />
                 ) : (
                   (name || studio.name).slice(0, 2).toUpperCase()
                 )}
