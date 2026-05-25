@@ -120,6 +120,19 @@ export function ImportLeadsButton({ studioId, campaigns }: ImportLeadsButtonProp
             </div>
 
             <form onSubmit={handleImport} className="mt-5 space-y-5">
+              <div className="flex items-center justify-between rounded-2xl border border-zinc-200/50 bg-zinc-100/50 p-4 dark:border-zinc-800/50 dark:bg-zinc-800/30">
+                <div className="flex flex-col min-w-0 pr-2">
+                  <span className="text-xs font-black text-zinc-900 dark:text-white">Import Template</span>
+                  <span className="text-[10px] text-zinc-400 truncate">Download the format template for importing leads</span>
+                </div>
+                <a
+                  href="/lead_import_template.csv"
+                  download="lead_import_template.csv"
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-violet-500/10 px-3.5 py-1.5 text-[10px] font-black uppercase tracking-widest text-violet-600 dark:text-violet-400 hover:bg-violet-500/20 transition-colors"
+                >
+                  Download
+                </a>
+              </div>
               <div>
                 <Label htmlFor="campaign-select">Default Campaign</Label>
                 <select
