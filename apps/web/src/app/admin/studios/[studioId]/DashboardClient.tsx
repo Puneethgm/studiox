@@ -664,9 +664,9 @@ export default function DashboardClient({
                   title={<span className="text-sm font-black uppercase tracking-[0.15em] text-zinc-400">Campaign Conversions</span>}
                   noPadding
                 >
-                  <div className="overflow-x-auto">
+                  <div className="overflow-x-auto overflow-y-auto max-h-[300px] relative scrollbar-thin">
                     <table className="w-full text-left text-xs">
-                      <thead className="bg-zinc-50 text-[10px] font-black uppercase tracking-widest text-zinc-500 dark:bg-zinc-800/50">
+                      <thead className="sticky top-0 bg-zinc-50 text-[10px] font-black uppercase tracking-widest text-zinc-500 dark:bg-zinc-900 z-10">
                         <tr>
                           <th className="px-6 py-4">Campaign Name</th>
                           <th className="px-6 py-4">Total Leads</th>
@@ -717,9 +717,9 @@ export default function DashboardClient({
                   title={<span className="text-sm font-black uppercase tracking-[0.15em] text-zinc-400">Acquisition Channels</span>}
                   noPadding
                 >
-                  <div className="overflow-x-auto">
+                  <div className="overflow-x-auto overflow-y-auto max-h-[300px] relative scrollbar-thin">
                     <table className="w-full text-left text-xs">
-                      <thead className="bg-zinc-50 text-[10px] font-black uppercase tracking-widest text-zinc-500 dark:bg-zinc-800/50">
+                      <thead className="sticky top-0 bg-zinc-50 text-[10px] font-black uppercase tracking-widest text-zinc-500 dark:bg-zinc-900 z-10">
                         <tr>
                           <th className="px-6 py-4">Channel / Platform</th>
                           <th className="px-6 py-4">Total Leads</th>
