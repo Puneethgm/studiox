@@ -12,15 +12,25 @@ import { cn } from '@/lib/cn';
 
 interface ListResp {
   campaigns: Campaign[];
+  total: number;
 }
 
 export default async function CampaignsPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ studioId: string }>;
+  searchParams: Promise<{ page?: string }>;
 }) {
   const { studioId } = await params;
-  const { campaigns } = await serverFetch<ListResp>(`/api/v1/studios/${studioId}/campaigns`);
+  const sParams = await searchParams;
+  const currentPage = Math.max(1, parseInt(sParams.page ?? '1', 10));
+  const limit = 5; // 5 campaigns + 1 create card = 6 slots on page 1
+  const offset = (currentPage - 1) * limit;
+
+  const { campaigns, total = 0 } = await serverFetch<ListResp>(
+    `/api/v1/studios/${studioId}/campaigns?limit=${limit}&offset=${offset}`,
+  );
 
   return (
     <div className="space-y-8">
@@ -72,21 +82,53 @@ export default async function CampaignsPage({
           />
         </Card>
       ) : (
-        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          {campaigns.map((c, i) => (
-            <CampaignCard key={c.id} campaign={c} studioId={studioId} index={i} />
-          ))}
-          
-          <Link 
-            href={`/admin/studios/${studioId}/campaigns/new`}
-            className="group flex flex-col items-center justify-center rounded-[32px] border-2 border-dashed border-white/20 bg-white/10 p-8 transition-all hover:border-brand-500/50 hover:bg-white/20 dark:border-white/5 dark:bg-white/5 dark:hover:bg-white/10"
-          >
-            <div className="mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-white/80 shadow-lg backdrop-blur-md transition-transform group-hover:scale-110 dark:bg-white/10">
-              <Plus className="h-8 w-8 text-brand-500" />
+        <div className="space-y-6">
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {campaigns.map((c, i) => (
+              <CampaignCard key={c.id} campaign={c} studioId={studioId} index={i} />
+            ))}
+            
+            {currentPage === 1 && (
+              <Link 
+                href={`/admin/studios/${studioId}/campaigns/new`}
+                className="group flex flex-col items-center justify-center rounded-[32px] border-2 border-dashed border-white/20 bg-white/10 p-8 transition-all hover:border-brand-500/50 hover:bg-white/20 dark:border-white/5 dark:bg-white/5 dark:hover:bg-white/10"
+              >
+                <div className="mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-white/80 shadow-lg backdrop-blur-md transition-transform group-hover:scale-110 dark:bg-white/10">
+                  <Plus className="h-8 w-8 text-brand-500" />
+                </div>
+                <span className="text-sm font-bold text-zinc-900 dark:text-zinc-100">Create New Campaign</span>
+                <span className="mt-1 text-xs text-zinc-500">Add another lead magnet</span>
+              </Link>
+            )}
+          </div>
+
+          {total > limit && (
+            <div className="flex items-center justify-between border-t border-zinc-200/50 pt-6 dark:border-zinc-800/50">
+              <span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                Showing {offset + 1} to {Math.min(offset + campaigns.length, total)} of {total} campaigns
+              </span>
+              <div className="flex gap-2">
+                <Link
+                  href={currentPage > 1 ? `?page=${currentPage - 1}` : '#'}
+                  className={cn(
+                    "inline-flex h-9 items-center justify-center rounded-xl bg-white/80 px-4 text-xs font-black shadow-sm backdrop-blur-md border border-zinc-200/50 transition-all dark:bg-zinc-900/80 dark:border-zinc-800/50",
+                    currentPage === 1 ? "pointer-events-none opacity-50" : "hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  )}
+                >
+                  Previous
+                </Link>
+                <Link
+                  href={offset + campaigns.length < total ? `?page=${currentPage + 1}` : '#'}
+                  className={cn(
+                    "inline-flex h-9 items-center justify-center rounded-xl bg-white/80 px-4 text-xs font-black shadow-sm backdrop-blur-md border border-zinc-200/50 transition-all dark:bg-zinc-900/80 dark:border-zinc-800/50",
+                    offset + campaigns.length >= total ? "pointer-events-none opacity-50" : "hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  )}
+                >
+                  Next
+                </Link>
+              </div>
             </div>
-            <span className="text-sm font-bold text-zinc-900 dark:text-zinc-100">Create New Campaign</span>
-            <span className="mt-1 text-xs text-zinc-500">Add another lead magnet</span>
-          </Link>
+          )}
         </div>
       )}
     </div>

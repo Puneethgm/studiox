@@ -72,8 +72,8 @@ func (s *Service) CreateCampaign(ctx context.Context, studioID, userID uuid.UUID
 	return c, nil, nil
 }
 
-func (s *Service) ListCampaigns(ctx context.Context, studioID uuid.UUID) ([]Campaign, error) {
-	return s.repo.ListCampaigns(ctx, studioID)
+func (s *Service) ListCampaigns(ctx context.Context, studioID uuid.UUID, limit, offset int) ([]Campaign, int, error) {
+	return s.repo.ListCampaigns(ctx, studioID, limit, offset)
 }
 
 func (s *Service) GetCampaign(ctx context.Context, studioID, id uuid.UUID) (*Campaign, error) {

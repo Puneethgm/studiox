@@ -39,7 +39,18 @@ func (r *Repo) CreateCampaign(ctx context.Context, c *Campaign) error {
 	return nil
 }
 
-func (r *Repo) ListCampaigns(ctx context.Context, studioID uuid.UUID) ([]Campaign, error) {
+func (r *Repo) ListCampaigns(ctx context.Context, studioID uuid.UUID, limit, offset int) ([]Campaign, int, error) {
+	var total int
+	if err := r.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM campaigns WHERE studio_id = $1
+	`, studioID).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count campaigns: %w", err)
+	}
+
+	if limit <= 0 {
+		limit = 50
+	}
+
 	rows, err := r.pool.Query(ctx, `
 		SELECT c.id, c.studio_id, s.slug, s.name, c.slug, c.name, c.description, c.fitness_plans,
 		       c.active, c.created_by, c.created_at, c.updated_at,
@@ -50,9 +61,10 @@ func (r *Repo) ListCampaigns(ctx context.Context, studioID uuid.UUID) ([]Campaig
 		  ON l.campaign_id = c.id
 		WHERE c.studio_id = $1
 		ORDER BY c.created_at DESC
-	`, studioID)
+		LIMIT $2 OFFSET $3
+	`, studioID, limit, offset)
 	if err != nil {
-		return nil, fmt.Errorf("list campaigns: %w", err)
+		return nil, 0, fmt.Errorf("list campaigns: %w", err)
 	}
 	defer rows.Close()
 	out := make([]Campaign, 0)
@@ -60,11 +72,11 @@ func (r *Repo) ListCampaigns(ctx context.Context, studioID uuid.UUID) ([]Campaig
 		var c Campaign
 		if err := rows.Scan(&c.ID, &c.StudioID, &c.StudioSlug, &c.StudioName, &c.Slug, &c.Name, &c.Description,
 			&c.FitnessPlans, &c.Active, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt, &c.LeadCount); err != nil {
-			return nil, fmt.Errorf("scan campaign: %w", err)
+			return nil, 0, fmt.Errorf("scan campaign: %w", err)
 		}
 		out = append(out, c)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
 }
 
 func (r *Repo) GetCampaign(ctx context.Context, studioID, id uuid.UUID) (*Campaign, error) {

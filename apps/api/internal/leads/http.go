@@ -130,7 +130,20 @@ func (h *Handler) listCampaigns(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	list, err := h.svc.ListCampaigns(r.Context(), studioID)
+	limitVal := 50
+	if lStr := r.URL.Query().Get("limit"); lStr != "" {
+		if val, err := strconv.Atoi(lStr); err == nil && val > 0 {
+			limitVal = val
+		}
+	}
+	offsetVal := 0
+	if oStr := r.URL.Query().Get("offset"); oStr != "" {
+		if val, err := strconv.Atoi(oStr); err == nil && val >= 0 {
+			offsetVal = val
+		}
+	}
+
+	list, total, err := h.svc.ListCampaigns(r.Context(), studioID, limitVal, offsetVal)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return
@@ -139,7 +152,10 @@ func (h *Handler) listCampaigns(w http.ResponseWriter, r *http.Request) {
 	for i := range list {
 		out = append(out, h.toCampaignRes(&list[i]))
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"campaigns": out})
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"campaigns": out,
+		"total":     total,
+	})
 }
 
 func (h *Handler) getCampaign(w http.ResponseWriter, r *http.Request) {
