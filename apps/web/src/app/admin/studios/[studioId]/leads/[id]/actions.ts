@@ -25,6 +25,12 @@ export async function updateLeadStatus(
     contactMade?: boolean;
     hotLead?: boolean;
     trialPurchased?: boolean;
+    assignedTo?: string;
+    trialAttended?: boolean;
+    memberSold?: boolean;
+    monthlyFee?: number;
+    offer?: string;
+    furtherNotes?: string;
   },
 ): Promise<UpdateLeadResult> {
   const cookieStore = await cookies();

@@ -1,8 +1,13 @@
 package studios
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -12,11 +17,12 @@ import (
 )
 
 type Handler struct {
-	svc *Service
+	svc             *Service
+	credentialsPath string
 }
 
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc}
+func NewHandler(svc *Service, credentialsPath string) *Handler {
+	return &Handler{svc: svc, credentialsPath: credentialsPath}
 }
 
 // AdminRoutes are super-admin only — only the platform owner manages studios.
@@ -26,6 +32,9 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Post("/studios", h.create)
 	r.Get("/studios/{id}", h.get)
 	r.Patch("/studios/{id}", h.update)
+
+	r.Get("/google-credentials", h.getGoogleCredentials)
+	r.Post("/google-credentials", h.uploadGoogleCredentials)
 }
 
 // SelfRoutes are for any authenticated user. Studio admins use this to fetch
@@ -297,5 +306,98 @@ func (h *Handler) publicGet(w http.ResponseWriter, r *http.Request) {
 		Name:       s.Name,
 		BrandColor: s.BrandColor,
 		LogoURL:    s.LogoURL,
+	})
+}
+
+func (h *Handler) getGoogleCredentials(w http.ResponseWriter, r *http.Request) {
+	if h.credentialsPath == "" {
+		httpx.JSON(w, http.StatusOK, map[string]any{"configured": false})
+		return
+	}
+
+	data, err := os.ReadFile(h.credentialsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			httpx.JSON(w, http.StatusOK, map[string]any{"configured": false})
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+
+	var creds struct {
+		Type        string `json:"type"`
+		ProjectID   string `json:"project_id"`
+		ClientEmail string `json:"client_email"`
+	}
+	if err := json.Unmarshal(data, &creds); err != nil {
+		httpx.JSON(w, http.StatusOK, map[string]any{"configured": false, "error": "invalid json format"})
+		return
+	}
+
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"configured":  creds.Type == "service_account" && creds.ClientEmail != "",
+		"clientEmail": creds.ClientEmail,
+		"projectId":   creds.ProjectID,
+	})
+}
+
+func (h *Handler) uploadGoogleCredentials(w http.ResponseWriter, r *http.Request) {
+	if h.credentialsPath == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "disabled", "Google Sheets credentials path not configured in env")
+		return
+	}
+
+	// 1MB max for service account JSON
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "failed to parse multipart form")
+		return
+	}
+
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "file field is required")
+		return
+	}
+	defer file.Close()
+
+	bytes, err := io.ReadAll(file)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "failed to read file")
+		return
+	}
+
+	var creds struct {
+		Type        string `json:"type"`
+		ProjectID   string `json:"project_id"`
+		ClientEmail string `json:"client_email"`
+	}
+	if err := json.Unmarshal(bytes, &creds); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "file is not valid JSON")
+		return
+	}
+
+	if creds.Type != "service_account" || creds.ClientEmail == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_credentials", "file is not a valid Google service account JSON key file")
+		return
+	}
+
+	// Ensure the parent directory of h.credentialsPath exists
+	dir := filepath.Dir(h.credentialsPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to create secrets directory")
+		return
+	}
+
+	// Write file
+	if err := os.WriteFile(h.credentialsPath, bytes, 0600); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", fmt.Sprintf("failed to save file: %v", err))
+		return
+	}
+
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"configured":  true,
+		"clientEmail": creds.ClientEmail,
+		"projectId":   creds.ProjectID,
 	})
 }

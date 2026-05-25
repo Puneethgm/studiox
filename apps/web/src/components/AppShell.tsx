@@ -38,7 +38,13 @@ function navItemsFor(me: Me): NavItem[] {
         href: '/admin/studios',
         label: 'Studios',
         icon: <Building2 className="h-[18px] w-[18px]" />,
-        match: (p) => p === '/admin/studios' || p.startsWith('/admin/studios/'),
+        match: (p) => (p === '/admin/studios' || p.startsWith('/admin/studios/')) && !p.startsWith('/admin/settings'),
+      },
+      {
+        href: '/admin/settings',
+        label: 'Settings',
+        icon: <Settings className="h-[18px] w-[18px]" />,
+        match: (p) => p.startsWith('/admin/settings'),
       },
     ];
   }

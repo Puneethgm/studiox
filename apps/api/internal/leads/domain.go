@@ -66,11 +66,17 @@ type Lead struct {
 	HotLead         bool       `json:"hotLead"`
 	TrialPurchased  bool       `json:"trialPurchased"`
 	AutoContactStage string     `json:"autoContactStage"`
-	Referrer        string     `json:"referrer,omitempty"`
-	UserAgent       string     `json:"userAgent,omitempty"`
-	IPAddress       *net.IP    `json:"ipAddress,omitempty"`
-	CreatedAt       time.Time  `json:"createdAt"`
-	UpdatedAt       time.Time  `json:"updatedAt"`
+	AssignedTo       string     `json:"assignedTo"`
+	TrialAttended    bool       `json:"trialAttended"`
+	MemberSold       bool       `json:"memberSold"`
+	MonthlyFee       float64    `json:"monthlyFee"`
+	Offer            string     `json:"offer"`
+	FurtherNotes     string     `json:"furtherNotes"`
+	Referrer         string     `json:"referrer,omitempty"`
+	UserAgent        string     `json:"userAgent,omitempty"`
+	IPAddress        *net.IP    `json:"ipAddress,omitempty"`
+	CreatedAt        time.Time  `json:"createdAt"`
+	UpdatedAt        time.Time  `json:"updatedAt"`
 }
 
 type StudioSheetsSettings struct {

@@ -17,115 +17,123 @@ import (
 	"google.golang.org/api/sheets/v4"
 )
 
-const HeaderRow = "A1:M1"
+const HeaderRow = "A1:U1"
 
-// LeadExport is the JSON shape of the outbox payload for a "lead.created" event
-// destined for Google Sheets. It deliberately mirrors the column order of the
-// header row so the worker can flatten it without per-field decisions.
+// LeadExport is the JSON shape of the outbox payload for a "lead.created" or "lead.updated" event
+// destined for Google Sheets.
 type LeadExport struct {
-	ID           string    `json:"id"`
-	StudioID     string    `json:"studioId"`
-	StudioName   string    `json:"studioName,omitempty"`
-	StudioSlug   string    `json:"studioSlug,omitempty"`
-	CampaignID   string    `json:"campaignId"`
-	CampaignName string    `json:"campaignName,omitempty"`
-	CampaignSlug string    `json:"campaignSlug,omitempty"`
-	Name         string    `json:"name"`
-	Email        string    `json:"email"`
-	Phone        string    `json:"phone"`
-	FitnessPlan  string    `json:"fitnessPlan"`
-	Goals        string    `json:"goals"`
-	Source       string    `json:"source"`
-	Status       string    `json:"status"`
-	Notes        string    `json:"notes"`
-	CreatedAt    time.Time `json:"createdAt"`
+	ID              string     `json:"id"`
+	StudioID        string     `json:"studioId"`
+	StudioName      string     `json:"studioName,omitempty"`
+	StudioSlug      string     `json:"studioSlug,omitempty"`
+	CampaignID      string     `json:"campaignId"`
+	CampaignName    string     `json:"campaignName,omitempty"`
+	CampaignSlug    string     `json:"campaignSlug,omitempty"`
+	Name            string     `json:"name"`
+	FirstName       string     `json:"firstName"`
+	LastName        string     `json:"lastName"`
+	Email           string     `json:"email"`
+	Phone           string     `json:"phone"`
+	FitnessPlan     string     `json:"fitnessPlan"`
+	Goals           string     `json:"goals"`
+	Source          string     `json:"source"`
+	Status          string     `json:"status"`
+	Notes           string     `json:"notes"`
+	ContactAttempts int        `json:"contactAttempts"`
+	LastContactedAt *time.Time `json:"lastContactedAt,omitempty"`
+	ContactMade     bool       `json:"contactMade"`
+	HotLead         bool       `json:"hotLead"`
+	TrialPurchased  bool       `json:"trialPurchased"`
+	AssignedTo      string     `json:"assignedTo"`
+	TrialAttended   bool       `json:"trialAttended"`
+	MemberSold      bool       `json:"memberSold"`
+	MonthlyFee      float64    `json:"monthlyFee"`
+	Offer           string     `json:"offer"`
+	FurtherNotes    string     `json:"furtherNotes"`
+	CreatedAt       time.Time  `json:"createdAt"`
 }
 
 // Header columns must match LeadExport.Row() ordering exactly.
 var Header = []any{
-	"Submitted At",
 	"Lead ID",
-	"Studio",
-	"Studio Slug",
-	"Campaign",
-	"Campaign Slug",
-	"Name",
-	"Email",
-	"Phone",
-	"Fitness Plan",
-	"Goals",
-	"Source",
+	"First Name",
+	"Last Name",
+	"Email Address",
+	"Phone Number",
+	"Date Of Lead",
+	"Lead Source",
+	"Offer?",
+	"Assigned to",
+	"# of Attempts",
+	"Last Followed Up?",
+	"Contact Made?",
+	"HOT LEAD?",
+	"Trial Purchased?",
+	"Notes on Lead",
+	"Trial Attended?",
+	"Member Sold?",
+	"Monthly Fee",
+	"Predicted Revenue Won\n(Based on Monthly Fee x 9 Month Average Lifetime)",
+	"Further Notes on Contact",
 	"Status",
-	"Notes",
 }
 
 func (l LeadExport) Row() []any {
+	lastFollowedUp := ""
+	if l.LastContactedAt != nil {
+		lastFollowedUp = l.LastContactedAt.Format("2006-01-02 15:04:05")
+	}
+
+	contactMadeStr := "No"
+	if l.ContactMade {
+		contactMadeStr = "Yes"
+	}
+
+	hotLeadStr := "No"
+	if l.HotLead {
+		hotLeadStr = "Yes"
+	}
+
+	trialPurchasedStr := "No"
+	if l.TrialPurchased {
+		trialPurchasedStr = "Yes"
+	}
+
+	trialAttendedStr := "No"
+	if l.TrialAttended {
+		trialAttendedStr = "Yes"
+	}
+
+	memberSoldStr := "No"
+	if l.MemberSold {
+		memberSoldStr = "Yes"
+	}
+
+	predictedRevenue := l.MonthlyFee * 9.0
+
 	return []any{
-		l.CreatedAt.Format(time.RFC3339),
 		l.ID,
-		l.StudioName,
-		l.StudioSlug,
-		l.CampaignName,
-		l.CampaignSlug,
-		l.Name,
+		l.FirstName,
+		l.LastName,
 		l.Email,
 		l.Phone,
-		l.FitnessPlan,
-		l.Goals,
+		l.CreatedAt.Format("2006-01-02 15:04:05"),
 		l.Source,
-		l.Status,
+		l.Offer,
+		l.AssignedTo,
+		l.ContactAttempts,
+		lastFollowedUp,
+		contactMadeStr,
+		hotLeadStr,
+		trialPurchasedStr,
 		l.Notes,
-	}
-}
-
-var BookedTrialsHeader = []any{
-	"Submitted At",
-	"Lead ID",
-	"Studio",
-	"Studio Slug",
-	"Campaign",
-	"Campaign Slug",
-	"Name",
-	"Email",
-	"Phone",
-	"Fitness Plan",
-	"Trial Date/Time",
-	"Goals",
-	"Source",
-	"Status",
-	"Notes",
-}
-
-func (l LeadExport) BookedTrialsRow() []any {
-	return []any{
-		l.CreatedAt.Format(time.RFC3339),
-		l.ID,
-		l.StudioName,
-		l.StudioSlug,
-		l.CampaignName,
-		l.CampaignSlug,
-		l.Name,
-		l.Email,
-		l.Phone,
-		l.FitnessPlan,
-		extractTrialSlot(l.Notes),
-		l.Goals,
-		l.Source,
+		trialAttendedStr,
+		memberSoldStr,
+		l.MonthlyFee,
+		predictedRevenue,
+		l.FurtherNotes,
 		l.Status,
-		l.Notes,
 	}
-}
-
-func extractTrialSlot(notes string) string {
-	idx := strings.Index(notes, "[Selected Trial Slot]: ")
-	if idx == -1 {
-		return ""
-	}
-	val := notes[idx+len("[Selected Trial Slot]: "):]
-	if end := strings.Index(val, "\n"); end != -1 {
-		val = val[:end]
-	}
-	return strings.TrimSpace(val)
 }
 
 type Client struct {
@@ -171,7 +179,7 @@ func (c *Client) AppendLead(ctx context.Context, spreadsheetID, tab string, payl
 	if err != nil {
 		return err
 	}
-	if err := c.ensureHeader(ctx, spreadsheetID, resolvedTab, Header, "A1:N1"); err != nil {
+	if err := c.ensureHeader(ctx, spreadsheetID, resolvedTab, Header, "A1:U1"); err != nil {
 		return err
 	}
 	rowNum, err := c.findLeadRow(ctx, spreadsheetID, resolvedTab, l.ID)
@@ -179,7 +187,7 @@ func (c *Client) AppendLead(ctx context.Context, spreadsheetID, tab string, payl
 		return err
 	}
 	if rowNum > 0 {
-		rng := fmt.Sprintf("%s!A%d:N%d", resolvedTab, rowNum, rowNum)
+		rng := fmt.Sprintf("%s!A%d:U%d", resolvedTab, rowNum, rowNum)
 		_, err = c.svc.Spreadsheets.Values.Update(spreadsheetID, rng, &sheets.ValueRange{
 			Values: [][]any{l.Row()},
 		}).ValueInputOption("RAW").Context(ctx).Do()
@@ -187,7 +195,7 @@ func (c *Client) AppendLead(ctx context.Context, spreadsheetID, tab string, payl
 			return fmt.Errorf("update row in %s: %w", resolvedTab, err)
 		}
 	} else {
-		_, err = c.svc.Spreadsheets.Values.Append(spreadsheetID, resolvedTab+"!A:N", &sheets.ValueRange{
+		_, err = c.svc.Spreadsheets.Values.Append(spreadsheetID, resolvedTab+"!A:U", &sheets.ValueRange{
 			Values: [][]any{l.Row()},
 		}).
 			ValueInputOption("RAW").
@@ -195,76 +203,6 @@ func (c *Client) AppendLead(ctx context.Context, spreadsheetID, tab string, payl
 			Context(ctx).Do()
 		if err != nil {
 			return fmt.Errorf("append to %s: %w", resolvedTab, err)
-		}
-	}
-
-	// 2. Sync to "Booked Trials" tab if status is trial_booked
-	if l.Status == "trial_booked" {
-		bookedTab := "Booked Trials"
-		resolvedBookedTab, err := c.ensureTabExists(ctx, spreadsheetID, bookedTab)
-		if err != nil {
-			return err
-		}
-		if err := c.ensureHeader(ctx, spreadsheetID, resolvedBookedTab, BookedTrialsHeader, "A1:O1"); err != nil {
-			return err
-		}
-		rowNum, err := c.findLeadRow(ctx, spreadsheetID, resolvedBookedTab, l.ID)
-		if err != nil {
-			return err
-		}
-		if rowNum > 0 {
-			rng := fmt.Sprintf("%s!A%d:O%d", resolvedBookedTab, rowNum, rowNum)
-			_, err = c.svc.Spreadsheets.Values.Update(spreadsheetID, rng, &sheets.ValueRange{
-				Values: [][]any{l.BookedTrialsRow()},
-			}).ValueInputOption("RAW").Context(ctx).Do()
-			if err != nil {
-				return fmt.Errorf("update row in %s: %w", resolvedBookedTab, err)
-			}
-		} else {
-			_, err = c.svc.Spreadsheets.Values.Append(spreadsheetID, resolvedBookedTab+"!A:O", &sheets.ValueRange{
-				Values: [][]any{l.BookedTrialsRow()},
-			}).
-				ValueInputOption("RAW").
-				InsertDataOption("INSERT_ROWS").
-				Context(ctx).Do()
-			if err != nil {
-				return fmt.Errorf("append to %s: %w", resolvedBookedTab, err)
-			}
-		}
-	}
-
-	// 3. Sync to "Members" tab if status is member
-	if l.Status == "member" {
-		membersTab := "Members"
-		resolvedMembersTab, err := c.ensureTabExists(ctx, spreadsheetID, membersTab)
-		if err != nil {
-			return err
-		}
-		if err := c.ensureHeader(ctx, spreadsheetID, resolvedMembersTab, Header, "A1:N1"); err != nil {
-			return err
-		}
-		rowNum, err := c.findLeadRow(ctx, spreadsheetID, resolvedMembersTab, l.ID)
-		if err != nil {
-			return err
-		}
-		if rowNum > 0 {
-			rng := fmt.Sprintf("%s!A%d:N%d", resolvedMembersTab, rowNum, rowNum)
-			_, err = c.svc.Spreadsheets.Values.Update(spreadsheetID, rng, &sheets.ValueRange{
-				Values: [][]any{l.Row()},
-			}).ValueInputOption("RAW").Context(ctx).Do()
-			if err != nil {
-				return fmt.Errorf("update row in %s: %w", resolvedMembersTab, err)
-			}
-		} else {
-			_, err = c.svc.Spreadsheets.Values.Append(spreadsheetID, resolvedMembersTab+"!A:N", &sheets.ValueRange{
-				Values: [][]any{l.Row()},
-			}).
-				ValueInputOption("RAW").
-				InsertDataOption("INSERT_ROWS").
-				Context(ctx).Do()
-			if err != nil {
-				return fmt.Errorf("append to %s: %w", resolvedMembersTab, err)
-			}
 		}
 	}
 
@@ -303,13 +241,16 @@ func (c *Client) ensureTabExists(ctx context.Context, spreadsheetID, tabName str
 }
 
 func (c *Client) findLeadRow(ctx context.Context, spreadsheetID, tabName, leadID string) (int, error) {
-	rng := tabName + "!B:B"
+	rng := tabName + "!A:B"
 	resp, err := c.svc.Spreadsheets.Values.Get(spreadsheetID, rng).Context(ctx).Do()
 	if err != nil {
 		return 0, nil
 	}
 	for idx, row := range resp.Values {
 		if len(row) > 0 && fmt.Sprintf("%v", row[0]) == leadID {
+			return idx + 1, nil
+		}
+		if len(row) > 1 && fmt.Sprintf("%v", row[1]) == leadID {
 			return idx + 1, nil
 		}
 	}
@@ -320,7 +261,7 @@ func (c *Client) ensureHeader(ctx context.Context, spreadsheetID, tabName string
 	rng := tabName + "!" + rngSuffix
 	resp, err := c.svc.Spreadsheets.Values.Get(spreadsheetID, rng).Context(ctx).Do()
 	if err == nil {
-		if len(resp.Values) == 0 || len(resp.Values[0]) == 0 {
+		if len(resp.Values) == 0 || len(resp.Values[0]) == 0 || len(resp.Values[0]) < len(headers) {
 			_, err = c.svc.Spreadsheets.Values.Update(spreadsheetID, rng, &sheets.ValueRange{
 				Values: [][]any{headers},
 			}).ValueInputOption("RAW").Context(ctx).Do()

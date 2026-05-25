@@ -2,6 +2,7 @@ ifeq ($(OS),Windows_NT)
 SHELL := cmd.exe
 else
 SHELL := /bin/bash
+export PATH := /usr/local/go/bin:$(PATH)
 endif
 .DEFAULT_GOAL := help
 

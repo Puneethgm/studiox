@@ -95,7 +95,8 @@ services:
     user: "0:0"
     volumes:
       - uploads_data:/uploads
-    command: chown -R 65532:65532 /uploads
+      - ./secrets:/secrets
+    command: sh -c "chown -R 65532:65532 /uploads && chmod 777 /secrets && chown -R 65532:65532 /secrets"
     restart: "no"
 
   api:
@@ -111,7 +112,7 @@ services:
         condition: service_completed_successfully
     environment: *api_env
     volumes:
-      - ./secrets:/secrets:ro
+      - ./secrets:/secrets
       - uploads_data:/app/uploads
 
   web:

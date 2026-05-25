@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"math"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,22 +22,32 @@ const (
 // Worker drains the outbox and ships rows to Google Sheets. Runs in-process
 // alongside the API for L1 — split into its own deployment when load demands.
 type Worker struct {
-	repo   *leads.Repo
-	client *Client
-	logger *slog.Logger
+	repo            *leads.Repo
+	client          *Client
+	credentialsPath string
+	lastModTime     time.Time
+	logger          *slog.Logger
 }
 
-func NewWorker(repo *leads.Repo, client *Client, logger *slog.Logger) *Worker {
-	return &Worker{repo: repo, client: client, logger: logger}
+func NewWorker(repo *leads.Repo, client *Client, credentialsPath string, logger *slog.Logger) *Worker {
+	var modTime time.Time
+	if credentialsPath != "" {
+		if info, err := os.Stat(credentialsPath); err == nil {
+			modTime = info.ModTime()
+		}
+	}
+	return &Worker{
+		repo:            repo,
+		client:          client,
+		credentialsPath: credentialsPath,
+		lastModTime:     modTime,
+		logger:          logger,
+	}
 }
 
 // Run blocks until ctx is cancelled. Idempotent + safe to run more than once
 // against the same DB (FOR UPDATE SKIP LOCKED in ClaimOutboxBatch handles it).
 func (w *Worker) Run(ctx context.Context) {
-	if w.client == nil {
-		w.logger.Warn("sheets worker disabled — no credentials configured")
-		return
-	}
 	w.logger.Info("sheets worker started", "poll_interval", pollInterval, "batch_size", batchSize)
 	t := time.NewTicker(pollInterval)
 	defer t.Stop()
@@ -52,6 +63,27 @@ func (w *Worker) Run(ctx context.Context) {
 }
 
 func (w *Worker) tick(ctx context.Context) {
+	// Check for credentials reload
+	if w.credentialsPath != "" {
+		if info, err := os.Stat(w.credentialsPath); err == nil {
+			if info.ModTime().After(w.lastModTime) || w.client == nil {
+				w.logger.Info("loading sheets client from credentials file", "path", w.credentialsPath)
+				client, err := NewClient(ctx, w.credentialsPath)
+				if err != nil {
+					w.logger.Error("failed to load sheets client", "err", err)
+				} else {
+					w.client = client
+					w.lastModTime = info.ModTime()
+					w.logger.Info("sheets client loaded successfully")
+				}
+			}
+		}
+	}
+
+	if w.client == nil {
+		return
+	}
+
 	items, err := w.repo.ClaimOutboxBatch(ctx, destinationID, batchSize)
 	if err != nil {
 		w.logger.Error("claim outbox", "err", err)

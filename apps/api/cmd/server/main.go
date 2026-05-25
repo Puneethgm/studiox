@@ -53,7 +53,7 @@ func main() {
 	tokens := identity.NewTokenIssuer(cfg.JWT.Secret, cfg.JWT.TTL)
 
 	studiosSvc := studios.NewService(studiosRepo, identityRepo)
-	studiosHandler := studios.NewHandler(studiosSvc)
+	studiosHandler := studios.NewHandler(studiosSvc, cfg.Sheets.CredentialsPath)
 
 	// Identity needs to enrich /me + /login responses with the user's studio
 	// brand info. Wire studios in via a callback to keep the import direction one-way.
@@ -79,7 +79,7 @@ func main() {
 	if err != nil {
 		log.Error("sheets init failed — leads will queue in outbox until fixed", "err", err)
 	}
-	sheetsWorker := sheets.NewWorker(leadsRepo, sheetsClient, log.With("component", "sheets_worker"))
+	sheetsWorker := sheets.NewWorker(leadsRepo, sheetsClient, cfg.Sheets.CredentialsPath, log.With("component", "sheets_worker"))
 	go sheetsWorker.Run(rootCtx)
 
 	// --- messaging (channels + inbox) ---

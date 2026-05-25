@@ -59,7 +59,12 @@ export default async function LeadDetailPage({
               <Field label="Phone" value={lead.phone} />
               <Field label="Fitness plan" value={lead.fitnessPlan} />
               <Field label="Source" value={lead.source} />
+              <Field label="Assigned to" value={lead.assignedTo ?? ''} />
+              <Field label="Offer" value={lead.offer ?? ''} />
+              <Field label="Monthly membership fee" value={lead.monthlyFee ? `$${lead.monthlyFee}` : '—'} />
+              <Field label="Predicted Revenue Won" value={lead.monthlyFee ? `$${lead.monthlyFee * 9}` : '—'} />
               {lead.goals && <Field label="Goals" value={lead.goals} className="col-span-2" />}
+              {lead.furtherNotes && <Field label="Further notes on Contact" value={lead.furtherNotes ?? ''} className="col-span-2" />}
             </dl>
           </Card>
         </div>

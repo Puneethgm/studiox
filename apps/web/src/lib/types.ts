@@ -91,6 +91,12 @@ export interface Lead {
   contactMade: boolean;
   hotLead: boolean;
   trialPurchased: boolean;
+  assignedTo?: string;
+  trialAttended: boolean;
+  memberSold: boolean;
+  monthlyFee: number;
+  offer: string;
+  furtherNotes: string;
   createdAt: string;
   updatedAt: string;
 }

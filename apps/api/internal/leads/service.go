@@ -195,11 +195,16 @@ func (s *Service) GetLead(ctx context.Context, studioID, id uuid.UUID) (*Lead, e
 	return s.repo.GetLead(ctx, studioID, id)
 }
 
-func (s *Service) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status LeadStatus, notes string, contactMade, hotLead, trialPurchased bool, firstName, lastName string) error {
+func (s *Service) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status LeadStatus, notes string, contactMade, hotLead, trialPurchased bool, firstName, lastName string, assignedTo string, trialAttended, memberSold bool, monthlyFee float64, offer, furtherNotes string) error {
 	if !status.Valid() {
 		return fmt.Errorf("invalid status %q", status)
 	}
-	return s.repo.UpdateLead(ctx, studioID, id, status, notes, contactMade, hotLead, trialPurchased, firstName, lastName)
+	if status == StatusTrialBooked {
+		trialPurchased = true
+	} else if status == StatusMember {
+		memberSold = true
+	}
+	return s.repo.UpdateLead(ctx, studioID, id, status, notes, contactMade, hotLead, trialPurchased, firstName, lastName, assignedTo, trialAttended, memberSold, monthlyFee, offer, furtherNotes)
 }
 
 func (s *Service) GetSheetsSettings(ctx context.Context, studioID uuid.UUID) (*StudioSheetsSettings, error) {
@@ -451,7 +456,7 @@ func (s *Service) BookTrialSlot(ctx context.Context, leadID uuid.UUID, slot stri
 
 	_, err = tx.Exec(ctx, `
 		UPDATE leads
-		SET status = 'trial_booked', notes = $2, auto_contact_stage = 'completed', updated_at = now()
+		SET status = 'trial_booked', notes = $2, trial_purchased = true, auto_contact_stage = 'completed', updated_at = now()
 		WHERE id = $1
 	`, leadID, newNotes)
 	if err != nil {
