@@ -68,11 +68,6 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
   // All hooks must run unconditionally — keep them above the lockout branch.
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [logoError, setLogoError] = useState(false);
-
-  useEffect(() => {
-    setLogoError(false);
-  }, [me.studio?.logoUrl]);
 
   // Auto-close the drawer on navigation.
   useEffect(() => {
@@ -144,6 +139,11 @@ function Sidebar({
   const items = navItemsFor(me);
   const isStudio = me.role === 'studio_admin' && !!me.studio;
   const studio = isStudio ? me.studio! : null;
+
+  const [logoError, setLogoError] = useState(false);
+  useEffect(() => {
+    setLogoError(false);
+  }, [studio?.logoUrl]);
 
   return (
     <aside

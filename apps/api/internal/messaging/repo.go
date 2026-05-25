@@ -974,3 +974,14 @@ func (r *Repo) SetJobScheduledForNow(ctx context.Context, studioID uuid.UUID, id
 	}
 	return nil
 }
+
+func (r *Repo) GetStudioMetaAppSecret(ctx context.Context, studioID uuid.UUID) (string, error) {
+	var secret string
+	err := r.pool.QueryRow(ctx, `
+		SELECT meta_app_secret FROM studios WHERE id = $1
+	`, studioID).Scan(&secret)
+	if err != nil {
+		return "", err
+	}
+	return secret, nil
+}

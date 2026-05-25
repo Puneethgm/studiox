@@ -81,6 +81,11 @@ export default function DashboardClient({
   const [duration, setDuration] = useState<'15d' | '30d' | '90d' | '365d' | 'all'>('30d');
   const [analytics, setAnalytics] = useState<AnalyticsSummary | null>(null);
   const [loadingAnalytics, setLoadingAnalytics] = useState(false);
+  const [logoError, setLogoError] = useState(false);
+
+  useEffect(() => {
+    setLogoError(false);
+  }, [studio.logoUrl]);
 
   // ROI Calculator inputs
   const [adSpend, setAdSpend] = useState<number>(500);
@@ -162,9 +167,9 @@ export default function DashboardClient({
                   boxShadow: `0 8px 24px ${studio.brandColor}45, 0 0 0 4px ${studio.brandColor}20, inset 0 1px 0 rgba(255,255,255,0.25)`,
                 }}
               >
-                {studio.logoUrl ? (
+                {studio.logoUrl && !logoError ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={studio.logoUrl} alt="" className="h-full w-full object-cover" />
+                  <img src={studio.logoUrl} alt="" className="h-full w-full object-cover" onError={() => setLogoError(true)} />
                 ) : (
                   <span className="text-white drop-shadow">{brandInitials(studio.name)}</span>
                 )}

@@ -147,14 +147,16 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateReq struct {
-	Name         string `json:"name"`
-	BrandColor   string `json:"brandColor"`
-	LogoURL      string `json:"logoUrl"`
-	ContactEmail string `json:"contactEmail"`
-	Active               bool                 `json:"active"`
-	AvailabilitySlots    []AvailabilitySlot   `json:"availabilitySlots"`
-	AvailabilityTimezone string               `json:"availabilityTimezone"`
-	GeminiAPIKey         string               `json:"geminiApiKey"`
+	Name                 *string             `json:"name"`
+	BrandColor           *string             `json:"brandColor"`
+	LogoURL              *string             `json:"logoUrl"`
+	ContactEmail         *string             `json:"contactEmail"`
+	Active               *bool               `json:"active"`
+	AvailabilitySlots    *[]AvailabilitySlot `json:"availabilitySlots"`
+	AvailabilityTimezone *string             `json:"availabilityTimezone"`
+	GeminiAPIKey         *string             `json:"geminiApiKey"`
+	MetaAppID            *string             `json:"metaAppId"`
+	MetaAppSecret        *string             `json:"metaAppSecret"`
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
@@ -167,16 +169,59 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	errs, err := h.svc.Update(r.Context(), id, UpdateStudioInput{
-		Name:         req.Name,
-		BrandColor:   req.BrandColor,
-		LogoURL:      req.LogoURL,
-		ContactEmail: req.ContactEmail,
-		Active:               req.Active,
-		AvailabilitySlots:    req.AvailabilitySlots,
-		AvailabilityTimezone: req.AvailabilityTimezone,
-		GeminiAPIKey:         req.GeminiAPIKey,
-	})
+	existing, err := h.svc.GetByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "studio not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	input := UpdateStudioInput{
+		Name:                 existing.Name,
+		BrandColor:           existing.BrandColor,
+		LogoURL:              existing.LogoURL,
+		ContactEmail:         existing.ContactEmail,
+		Active:               existing.Active,
+		AvailabilitySlots:    existing.AvailabilitySlots,
+		AvailabilityTimezone: existing.AvailabilityTimezone,
+		GeminiAPIKey:         existing.GeminiAPIKey,
+		MetaAppID:            existing.MetaAppID,
+		MetaAppSecret:        existing.MetaAppSecret,
+	}
+	if req.Name != nil {
+		input.Name = *req.Name
+	}
+	if req.BrandColor != nil {
+		input.BrandColor = *req.BrandColor
+	}
+	if req.LogoURL != nil {
+		input.LogoURL = *req.LogoURL
+	}
+	if req.ContactEmail != nil {
+		input.ContactEmail = *req.ContactEmail
+	}
+	if req.Active != nil {
+		input.Active = *req.Active
+	}
+	if req.AvailabilitySlots != nil {
+		input.AvailabilitySlots = *req.AvailabilitySlots
+	}
+	if req.AvailabilityTimezone != nil {
+		input.AvailabilityTimezone = *req.AvailabilityTimezone
+	}
+	if req.GeminiAPIKey != nil {
+		input.GeminiAPIKey = *req.GeminiAPIKey
+	}
+	if req.MetaAppID != nil {
+		input.MetaAppID = *req.MetaAppID
+	}
+	if req.MetaAppSecret != nil {
+		input.MetaAppSecret = *req.MetaAppSecret
+	}
+
+	errs, err := h.svc.Update(r.Context(), id, input)
 	if errs != nil {
 		httpx.WriteValidationError(w, errs)
 		return
@@ -255,16 +300,59 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	errs, err := h.svc.Update(r.Context(), studioID, UpdateStudioInput{
-		Name:                 req.Name,
-		BrandColor:           req.BrandColor,
-		LogoURL:              req.LogoURL,
-		ContactEmail:         req.ContactEmail,
-		Active:               req.Active,
-		AvailabilitySlots:    req.AvailabilitySlots,
-		AvailabilityTimezone: req.AvailabilityTimezone,
-		GeminiAPIKey:         req.GeminiAPIKey,
-	})
+	existing, err := h.svc.GetByID(r.Context(), studioID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "studio not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	input := UpdateStudioInput{
+		Name:                 existing.Name,
+		BrandColor:           existing.BrandColor,
+		LogoURL:              existing.LogoURL,
+		ContactEmail:         existing.ContactEmail,
+		Active:               existing.Active,
+		AvailabilitySlots:    existing.AvailabilitySlots,
+		AvailabilityTimezone: existing.AvailabilityTimezone,
+		GeminiAPIKey:         existing.GeminiAPIKey,
+		MetaAppID:            existing.MetaAppID,
+		MetaAppSecret:        existing.MetaAppSecret,
+	}
+	if req.Name != nil {
+		input.Name = *req.Name
+	}
+	if req.BrandColor != nil {
+		input.BrandColor = *req.BrandColor
+	}
+	if req.LogoURL != nil {
+		input.LogoURL = *req.LogoURL
+	}
+	if req.ContactEmail != nil {
+		input.ContactEmail = *req.ContactEmail
+	}
+	if req.Active != nil {
+		input.Active = *req.Active
+	}
+	if req.AvailabilitySlots != nil {
+		input.AvailabilitySlots = *req.AvailabilitySlots
+	}
+	if req.AvailabilityTimezone != nil {
+		input.AvailabilityTimezone = *req.AvailabilityTimezone
+	}
+	if req.GeminiAPIKey != nil {
+		input.GeminiAPIKey = *req.GeminiAPIKey
+	}
+	if req.MetaAppID != nil {
+		input.MetaAppID = *req.MetaAppID
+	}
+	if req.MetaAppSecret != nil {
+		input.MetaAppSecret = *req.MetaAppSecret
+	}
+
+	errs, err := h.svc.Update(r.Context(), studioID, input)
 	if errs != nil {
 		httpx.WriteValidationError(w, errs)
 		return

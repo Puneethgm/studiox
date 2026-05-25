@@ -25,6 +25,8 @@ type Studio struct {
 	AvailabilitySlots []AvailabilitySlot `json:"availabilitySlots"`
 	AvailabilityTimezone string `json:"availabilityTimezone"`
 	GeminiAPIKey string    `json:"geminiApiKey"`
+	MetaAppID    string    `json:"metaAppId"`
+	MetaAppSecret string   `json:"metaAppSecret"`
 
 	// Optional summary fields used by list endpoints.
 	CampaignCount int `json:"campaignCount,omitempty"`

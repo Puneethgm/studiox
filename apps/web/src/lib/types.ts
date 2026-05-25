@@ -29,6 +29,8 @@ export interface Studio {
   availabilitySlots?: { day: string; times: string[] }[];
   availabilityTimezone?: string;
   geminiApiKey?: string;
+  metaAppId?: string;
+  metaAppSecret?: string;
   campaignCount?: number;
   leadCount?: number;
 }

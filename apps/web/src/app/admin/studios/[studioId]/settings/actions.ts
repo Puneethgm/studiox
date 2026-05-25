@@ -30,6 +30,8 @@ export async function updateStudioSettings(
     availabilitySlots?: any;
     availabilityTimezone?: string;
     geminiApiKey?: string;
+    metaAppId?: string;
+    metaAppSecret?: string;
   },
 ): Promise<UpdateStudioResult> {
   const cookieStore = await cookies();

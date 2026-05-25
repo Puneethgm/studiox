@@ -149,6 +149,8 @@ type UpdateStudioInput struct {
 	AvailabilitySlots    []AvailabilitySlot `json:"availabilitySlots"`
 	AvailabilityTimezone string             `json:"availabilityTimezone"`
 	GeminiAPIKey         string             `json:"geminiApiKey"`
+	MetaAppID            string             `json:"metaAppId"`
+	MetaAppSecret        string             `json:"metaAppSecret"`
 }
 
 func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput) (map[string]string, error) {
@@ -157,6 +159,8 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput
 	in.LogoURL = strings.TrimSpace(in.LogoURL)
 	in.ContactEmail = strings.ToLower(strings.TrimSpace(in.ContactEmail))
 	in.GeminiAPIKey = strings.TrimSpace(in.GeminiAPIKey)
+	in.MetaAppID = strings.TrimSpace(in.MetaAppID)
+	in.MetaAppSecret = strings.TrimSpace(in.MetaAppSecret)
 
 	errs := map[string]string{}
 	if in.Name == "" {
@@ -173,7 +177,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput
 	if len(errs) > 0 {
 		return errs, nil
 	}
-	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.Active, in.AvailabilitySlots, in.AvailabilityTimezone, in.GeminiAPIKey); err != nil {
+	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.Active, in.AvailabilitySlots, in.AvailabilityTimezone, in.GeminiAPIKey, in.MetaAppID, in.MetaAppSecret); err != nil {
 		return nil, err
 	}
 	return nil, nil

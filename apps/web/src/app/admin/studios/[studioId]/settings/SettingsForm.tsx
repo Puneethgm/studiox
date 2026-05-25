@@ -24,6 +24,8 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
   }, [logoUrl]);
   const [contactEmail, setContactEmail] = useState(studio.contactEmail);
   const [geminiApiKey, setGeminiApiKey] = useState(studio.geminiApiKey || '');
+  const [metaAppId, setMetaAppId] = useState(studio.metaAppId || '');
+  const [metaAppSecret, setMetaAppSecret] = useState(studio.metaAppSecret || '');
   const [active, setActive] = useState(studio.active);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -89,6 +91,8 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
         contactEmail,
         active,
         geminiApiKey,
+        metaAppId,
+        metaAppSecret,
       });
       if (!result.ok) {
         setErrors(result.details ?? { _: result.error });
@@ -213,6 +217,34 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
               />
               <FieldHint>Configure the Gemini API Key to enable AI-driven template generation.</FieldHint>
               <FieldError message={errors.geminiApiKey} />
+            </div>
+
+            <div>
+              <Label htmlFor="metaAppId">Meta App ID</Label>
+              <Input
+                id="metaAppId"
+                type="text"
+                placeholder="e.g. 2405726999940224"
+                invalid={!!errors.metaAppId}
+                value={metaAppId}
+                onChange={(e) => setMetaAppId(e.target.value)}
+              />
+              <FieldHint>The custom Facebook Developer App ID for Facebook/Instagram integration.</FieldHint>
+              <FieldError message={errors.metaAppId} />
+            </div>
+
+            <div>
+              <Label htmlFor="metaAppSecret">Meta App Secret</Label>
+              <Input
+                id="metaAppSecret"
+                type="password"
+                placeholder="e.g. d2d2fad32..."
+                invalid={!!errors.metaAppSecret}
+                value={metaAppSecret}
+                onChange={(e) => setMetaAppSecret(e.target.value)}
+              />
+              <FieldHint>The custom Meta App Secret for validating incoming webhook events.</FieldHint>
+              <FieldError message={errors.metaAppSecret} />
             </div>
 
             <div className="flex items-center gap-3">
