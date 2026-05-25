@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"regexp"
 	"strings"
 	"time"
 
@@ -662,10 +663,20 @@ func (r *Repo) UpdateAutoContactStageTx(ctx context.Context, tx pgx.Tx, studioID
 	return nil
 }
 
-func (r *Repo) GetAnalytics(ctx context.Context, studioID uuid.UUID, durationDays int) (*AnalyticsSummary, error) {
+func sanitizeDate(d string) string {
+	matched, _ := regexp.MatchString(`^\d{4}-\d{2}-\d{2}$`, d)
+	if !matched {
+		return "1970-01-01"
+	}
+	return d
+}
+
+func (r *Repo) GetAnalytics(ctx context.Context, studioID uuid.UUID, durationDays int, startDate, endDate string) (*AnalyticsSummary, error) {
 	// Parse duration interval
 	var dateFilter string
-	if durationDays > 0 {
+	if startDate != "" && endDate != "" {
+		dateFilter = fmt.Sprintf("AND created_at >= '%s'::timestamp AND created_at <= '%s 23:59:59'::timestamp", sanitizeDate(startDate), sanitizeDate(endDate))
+	} else if durationDays > 0 {
 		dateFilter = fmt.Sprintf("AND created_at >= now() - INTERVAL '%d days'", durationDays)
 	}
 

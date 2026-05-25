@@ -319,21 +319,31 @@ func (h *Handler) getAnalytics(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	durationStr := r.URL.Query().Get("duration")
+	startDate := r.URL.Query().Get("startDate")
+	endDate := r.URL.Query().Get("endDate")
+
 	var durationDays int
-	switch durationStr {
-	case "15d":
-		durationDays = 15
-	case "30d":
-		durationDays = 30
-	case "90d":
-		durationDays = 90
-	case "365d":
-		durationDays = 365
-	default:
-		durationDays = 0 // all-time
+	if strings.HasSuffix(durationStr, "d") {
+		days, err := strconv.Atoi(strings.TrimSuffix(durationStr, "d"))
+		if err == nil && days > 0 {
+			durationDays = days
+		}
+	} else {
+		switch durationStr {
+		case "15d":
+			durationDays = 15
+		case "30d":
+			durationDays = 30
+		case "90d":
+			durationDays = 90
+		case "365d":
+			durationDays = 365
+		default:
+			durationDays = 0 // all-time
+		}
 	}
 
-	summary, err := h.svc.GetAnalytics(r.Context(), studioID, durationDays)
+	summary, err := h.svc.GetAnalytics(r.Context(), studioID, durationDays, startDate, endDate)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
 		return

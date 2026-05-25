@@ -78,7 +78,9 @@ export default function DashboardClient({
   initialStats,
 }: DashboardClientProps) {
   const [activeTab, setActiveTab] = useState<'overview' | 'analytics'>('overview');
-  const [duration, setDuration] = useState<'15d' | '30d' | '90d' | '365d' | 'all'>('30d');
+  const [duration, setDuration] = useState<'7d' | '15d' | '30d' | '90d' | '365d' | 'all' | 'custom'>('30d');
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
   const [analytics, setAnalytics] = useState<AnalyticsSummary | null>(null);
   const [loadingAnalytics, setLoadingAnalytics] = useState(false);
   const [logoError, setLogoError] = useState(false);
@@ -91,16 +93,19 @@ export default function DashboardClient({
   const [adSpend, setAdSpend] = useState<number>(500);
   const [memberLtv, setMemberLtv] = useState<number>(150);
 
-  // Fetch analytics when tab or duration changes
+  // Fetch analytics when tab, duration, or custom dates change
   useEffect(() => {
     if (activeTab !== 'analytics') return;
+    if (duration === 'custom' && (!startDate || !endDate)) return;
 
     async function loadAnalytics() {
       setLoadingAnalytics(true);
       try {
-        const data = await api<AnalyticsSummary>(
-          `/api/v1/studios/${studio.id}/analytics?duration=${duration}`,
-        );
+        let url = `/api/v1/studios/${studio.id}/analytics?duration=${duration}`;
+        if (duration === 'custom') {
+          url = `/api/v1/studios/${studio.id}/analytics?startDate=${startDate}&endDate=${endDate}`;
+        }
+        const data = await api<AnalyticsSummary>(url);
         setAnalytics(data);
       } catch (err) {
         console.error('Failed to load analytics', err);
@@ -109,7 +114,7 @@ export default function DashboardClient({
       }
     }
     loadAnalytics();
-  }, [activeTab, duration, studio.id]);
+  }, [activeTab, duration, startDate, endDate, studio.id]);
 
   const activeCampaigns = campaigns.filter((c) => c.active).length;
   const totalLeads = initialStats.total;
@@ -469,8 +474,8 @@ export default function DashboardClient({
                 <Calendar className="h-4 w-4" />
                 Select Period:
               </span>
-              <div className="inline-flex rounded-xl bg-zinc-100 p-1 dark:bg-zinc-800">
-                {(['15d', '30d', '90d', '365d', 'all'] as const).map((d) => (
+              <div className="inline-flex rounded-xl bg-zinc-100 p-1 dark:bg-zinc-800 flex-wrap gap-1">
+                {(['7d', '15d', '30d', '90d', '365d', 'all', 'custom'] as const).map((d) => (
                   <button
                     key={d}
                     onClick={() => setDuration(d)}
@@ -480,15 +485,39 @@ export default function DashboardClient({
                         : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-300'
                     }`}
                   >
+                    {d === '7d' && '1 Week'}
                     {d === '15d' && '15 Days'}
                     {d === '30d' && '1 Month'}
                     {d === '90d' && '1 Quarter'}
                     {d === '365d' && '1 Year'}
                     {d === 'all' && 'All Time'}
+                    {d === 'custom' && 'Custom Date'}
                   </button>
                 ))}
               </div>
             </div>
+            {duration === 'custom' && (
+              <div className="flex items-center gap-3 animate-in fade-in slide-in-from-left-2 duration-300">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-bold text-zinc-400">From:</span>
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="rounded-xl border border-zinc-200 bg-white px-3 py-1.5 text-xs font-bold text-zinc-800 shadow-sm focus:border-brand-500 focus:outline-none dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+                  />
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-bold text-zinc-400">To:</span>
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="rounded-xl border border-zinc-200 bg-white px-3 py-1.5 text-xs font-bold text-zinc-800 shadow-sm focus:border-brand-500 focus:outline-none dark:border-zinc-700 dark:bg-zinc-800 dark:text-white"
+                  />
+                </div>
+              </div>
+            )}
             {loadingAnalytics && (
               <span className="text-xs text-zinc-500 flex items-center gap-1">
                 <span className="h-3 w-3 animate-spin rounded-full border-2 border-zinc-400 border-t-transparent" />
