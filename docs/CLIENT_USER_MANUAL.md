@@ -1,144 +1,125 @@
-# Project-X: Studio Owner & Administrator Client Manual
+# Project-X: End-to-End Platform Setup & Administrator Client Manual
 
-Welcome to Project-X! This guide is designed to walk you (and your studio staff) through configuring and using the platform to capture, nurture, communicate with, and sync leads.
+This manual details the step-by-step onboarding, setup, and lead management workflows in Project-X. It is divided into two parts: **SuperAdmin Platform Setup** and **Studio Admin Operations**.
 
 ---
 
-## 1. Setup & Integrations Flow
+## 1. Complete System Setup Flow
 
-Below is the workflow showing the steps needed to connect all channels (WhatsApp + Google Sheets) to your Studio workspace:
+This diagram illustrates the full lifecycle: starting from platform initialization by the SuperAdmin, followed by Studio setup, channel connection, and finally day-to-day CRM lead management.
 
 ```mermaid
 graph TD
-    A[Start: Login to Studio Admin] --> B(Configure Google Sheets)
-    A --> C(Configure WhatsApp Cloud API)
-    
-    B --> B1[Share Google Sheet with Writer Service Email]
-    B1 --> B2[Copy Spreadsheet ID from URL]
-    B2 --> B3[Go to Studio Settings -> Enter Spreadsheet ID & Tab]
-    B3 --> B4[Save Settings & Enable Sync]
-    
-    C --> C1[Obtain WABA ID & Phone Number ID from Meta]
-    C1 --> C2[Generate Meta Access Token]
-    C2 --> C3[Go to Studio Channels -> Connect WhatsApp]
-    C3 --> C4[Paste Meta IDs & Tokens -> Save Connection]
-    
-    B4 --> D[Integration Setup Complete]
-    C4 --> D
+    %% Roles & Platform Initialization
+    subgraph SuperAdmin Platform Setup
+        SA_Start[1. SuperAdmin Logs In] --> SA_Settings[2. Go to Platform Settings]
+        SA_Settings --> SA_Creds[3. Upload Google Sheets JSON Credentials]
+        SA_Creds --> SA_Studio[4. Navigate to Studios -> Click 'Create Studio']
+        SA_Studio --> SA_Fields[5. Enter Studio Name, Slug & Availability Timezone]
+    end
+
+    %% Studio Onboarding
+    subgraph Studio Admin Configuration
+        SA_Fields --> ST_Start[6. Studio Admin Logs In / Selects Studio]
+        ST_Start --> ST_Sheets[7. Go to Studio Settings -> Configure Google Sheets]
+        ST_Sheets --> ST_SheetID[Enter Spreadsheet ID & Tab Name]
+        ST_Sheets --> ST_Share[Share Spreadsheet with Service Account Email]
+        ST_Start --> ST_Meta[8. Go to Channels -> Connect WhatsApp]
+        ST_Meta --> ST_MetaFields[Enter WABA ID, Phone Number ID & Access Token]
+    end
+
+    %% Operations
+    subgraph Lead Management & Automation
+        ST_SheetID --> Lead_Flow[9. Lead Enters System]
+        ST_MetaFields --> Lead_Flow
+        Lead_Flow --> Lead_Action[10. Lead Actions Trigger Auto-Sync]
+        Lead_Action -->|Trial Booked| Lead_Book[Set Trial Purchased = 'Yes' & Sync Status]
+        Lead_Action -->|Member Sold| Lead_Mem[Set Member Sold = 'Yes' & Sync Status + Fee]
+    end
 ```
 
 ---
 
-## 2. Google Sheets Integration (Step-by-Step)
+## 2. PART A: SuperAdmin Platform Setup (Step-by-Step)
 
-By connecting your studio to Google Sheets, any lead captured or modified in Project-X is instantly sent to your spreadsheet.
+The SuperAdmin configures the system-wide credentials and initializes new studio workspaces.
 
-### Step 1: Share Your Spreadsheet
-1. Open your target Google Spreadsheet in your browser.
-2. Click the blue **Share** button in the top right.
-3. Paste the following Project-X service email address:
-   `studiox-sheets-writer@heroic-artifact-434914-d4.iam.gserviceaccount.com`
-4. Set the role to **Editor** and click **Send**.
+### Step 1: Login to the SuperAdmin Portal
+1. Navigate to the login page of Project-X (e.g. `http://3.22.101.52/login`).
+2. Enter the SuperAdmin credentials:
+   * **Default Email**: `admin@example.com` (or your configured admin email).
+3. Click **Sign In** to access the platform overview dashboard.
 
-### Step 2: Copy the Spreadsheet ID
-1. Look at your browser address bar when viewing your spreadsheet.
-2. Copy the long code between `/d/` and `/edit`.
-   * *Example*: In `https://docs.google.com/spreadsheets/d/1A2B3C4D5E6F7G8H9I0J/edit`, the ID is `1A2B3C4D5E6F7G8H9I0J`.
+### Step 2: Configure System Google Credentials
+1. Click on the **Settings** gear icon in the lower-left sidebar menu.
+2. In the **Credentials Manager** card, click **Select JSON File**.
+3. Upload your Google Cloud Service Account JSON key file.
+4. Click **Save Credentials**. The system will reload the Google Sheets client instantly without requiring a server reboot.
 
-### Step 3: Link it in Project-X
-1. Go to your Studio dashboard on Project-X.
-2. Navigate to **Settings** from the sidebar.
-3. Scroll to the **Google Sheets Sync** section.
-4. Paste the **Spreadsheet ID** and enter the **Tab Name** (e.g. `Leads`).
-5. Set the toggle to **Active** and click **Save**.
+### Step 3: Create a New Studio Workspace
+1. Navigate to the **Studios** page in the sidebar.
+2. Click the **Create Studio** button in the top right.
+3. Fill in the required fields:
+   * **Studio Name**: The user-friendly business name (e.g., `Yoga Bliss Singapore`).
+   * **Slug**: The URL slug identifier (e.g., `yoga-bliss-singapore`). This determines the public scheduling and lead capture link.
+   * **Timezone**: Set the operating timezone for booking slot scheduling.
+4. Click **Create Studio**. The studio is now initialized and ready for its administrators.
 
 ---
 
-## 3. WhatsApp Meta Connection (Step-by-Step)
+## 3. PART B: Studio Admin Integration Setup
 
-Connecting WhatsApp allows you to send automated template messages, follow up with leads, and receive replies in a unified studio inbox.
+Once a studio is created, Studio Administrators configure their specific integration channels.
 
-### Step 1: Gather Meta Details
-Log in to your [Meta Developer Console](https://developers.facebook.com) and navigate to your WhatsApp dashboard:
-1. Copy your **WhatsApp Business Account (WABA) ID**.
-2. Copy your **Phone Number ID**.
-3. Generate or copy your **System User Access Token** (encrypted at rest by our database).
+### Step 1: Connect Google Sheets
+1. Log in to Project-X and open the Studio dashboard.
+2. Open your target Google Spreadsheet in a separate browser tab.
+3. Click the blue **Share** button (top right) and share the sheet with Project-X's service email:
+   `studiox-sheets-writer@heroic-artifact-434914-d4.iam.gserviceaccount.com` as an **Editor**.
+4. Copy the **Spreadsheet ID** from the browser address bar (the code between `/d/` and `/edit`).
+5. In Project-X, go to **Studio Settings** (sidebar) -> scroll to **Google Sheets Sync**.
+6. Paste the **Spreadsheet ID**, enter the **Tab Name** (e.g., `Leads`), set the toggle to **Active**, and click **Save**.
 
-### Step 2: Save the Channel
-1. In Project-X, navigate to **Channels** from the sidebar.
+### Step 2: Connect Meta WhatsApp API
+1. Navigate to **Channels** from the sidebar of your studio workspace.
 2. Click **Connect WhatsApp**.
-3. Paste your WABA ID, Phone Number ID, Display Phone Number, and Access Token.
-4. Click **Connect**. The system will verify connection and turn on your WhatsApp channel.
+3. Retrieve your credentials from your Meta Developer WhatsApp settings:
+   * **WABA ID**: WhatsApp Business Account ID.
+   * **Phone Number ID**: WhatsApp Phone Number ID.
+   * **Display Phone Number**: The public number formatted (e.g., `+1 555 645 5341`).
+   * **Access Token**: Your Meta System User Token (encrypted at rest by our database).
+4. Paste these details into the fields and click **Connect**.
 
 ---
 
-## 4. Lead Pipeline & Automation Flow
+## 4. PART C: Lead Management & Pipeline Automation
 
-Here is how the status transitions automatically trigger actions, update flags, and propagate records to Google Sheets:
+Day-to-day operations are automated so that staff actions in Project-X instantly sync to Google Sheets.
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Admin as Studio Administrator
-    participant CRM as Project-X CRM
-    participant Outbox as Outbox Queue
-    participant Sheets as Google Sheets
-    
-    rect rgb(240, 248, 255)
-    Note over Admin, Sheets: Trial Booking Automation
-    Admin->>CRM: Schedule Trial Slot / Set status to 'Trial Booked'
-    CRM->>CRM: DB transaction: set trial_purchased = true
-    CRM->>Outbox: Write 'lead.updated' event
-    Outbox->>Sheets: Sheets Worker syncs row (writes 'Yes' to Trial Purchased? and updates Status to 'trial_booked')
-    end
-    
-    rect rgb(245, 245, 245)
-    Note over Admin, Sheets: Member Sold Automation
-    Admin->>CRM: Edit Lead -> Set Status to 'Member' (and enter Monthly Fee)
-    CRM->>CRM: DB transaction: set member_sold = true & calculate predicted lifetime revenue
-    CRM->>Outbox: Write 'lead.updated' event
-    Outbox->>Sheets: Sheets Worker syncs row (writes 'Yes' to Member Sold?, adds Monthly Fee, and updates Status to 'member')
-    end
+### Scenario A: Scheduling a Trial Slot
+1. When a lead books a slot via your public booking page, or when an admin schedules a slot via the CRM lead profile page:
+   * The database automatically sets `trial_purchased = true`.
+   * An event is queued in the transactional `outbox`.
+   * Within 5 seconds, the Google Sheet is updated: Column N (**Trial Purchased?**) switches to **`Yes`** and Column U (**Status**) updates to **`trial_booked`**.
+
+### Scenario B: Enrolling a Member
+1. When a lead decides to sign up, click **Edit Lead** on their CRM profile page.
+2. Change their status dropdown to **Member**.
+3. Enter their agreed **Monthly Fee** in the input field.
+4. Click **Save**.
+   * The database automatically flags `member_sold = true` and calculates the average predicted lifetime revenue.
+   * The Google Sheet is updated: Column Q (**Member Sold?**) switches to **`Yes`**, Column R receives the **Monthly Fee**, and Column U (**Status**) updates to **`member`**.
+
+---
+
+## 5. Troubleshooting & FAQ
+
+#### Q: The sync state says "Active", but updates aren't appearing in Google Sheets.
+**A**: Ensure that the Google Sheet is shared with `studiox-sheets-writer@heroic-artifact-434914-d4.iam.gserviceaccount.com` as an **Editor**. If it is not shared, Google's API will reject write attempts.
+
+#### Q: How can I check if the background sync worker is running?
+**A**: A platform administrator can check container logs on the EC2 host with:
+```bash
+sudo docker compose logs -f api
 ```
-
-### Lead Status Stages
-*   **New**: A freshly imported or submitted lead.
-*   **Contacted**: Follow-up has started.
-*   **Trial Booked**: Scheduled a class (auto-sets `Trial Purchased` to `Yes`).
-*   **Member**: Purchased a membership (auto-sets `Member Sold` to `Yes` and records the monthly price).
-*   **Dropped**: Lead has opted out or failed to convert.
-
----
-
-## 5. WhatsApp Templates & Variable Replacements
-
-When messaging a lead, you can use templates to automatically populate custom fields. 
-
-### Supported Template Variables
-Our system parses and replaces variables dynamically before sending:
-
-| Variable | Replaced With | Example |
-| :--- | :--- | :--- |
-| `{{contact.first_name}}` | Lead's First Name | "John" |
-| `{{contact.last_name}}` | Lead's Last Name | "Doe" |
-| `{{studio.name}}` | Studio Business Name | "Yoga Bliss Singapore" |
-
-### How to Send a Template Message
-1. Go to the **Inbox** page in Project-X.
-2. Click on a conversation with a lead.
-3. Click the **Send Template** icon at the bottom of the chat box.
-4. Select a pre-approved Meta Template (e.g. `trial_class_reminder`).
-5. Click **Preview & Send**. The variables will be replaced in real-time, sending a personalized message to the lead.
-
----
-
-## 6. Frequently Asked Questions (FAQ)
-
-#### Q: How long does it take for a status change in Project-X to appear in Google Sheets?
-**A**: Less than 5 seconds. The outbox synchronization worker runs in the background and processes updates in near real-time.
-
-#### Q: I changed a lead to 'Trial Booked', but 'Trial Purchased' in the sheet is still 'No'. Why?
-**A**: Make sure the background worker is running and that your Google Sheet has been successfully shared with our Service Account email (`studiox-sheets-writer@heroic-artifact-434914-d4.iam.gserviceaccount.com`) as an **Editor**.
-
-#### Q: What happens if a lead replies to a template message?
-**A**: The reply will instantly pop up in your Project-X **Inbox**. Your staff can chat directly with the lead in real-time.
+Look for logs containing `sheets_worker` processing queue items.
