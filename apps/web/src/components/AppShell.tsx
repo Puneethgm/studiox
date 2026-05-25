@@ -72,7 +72,7 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
 
   useEffect(() => {
     setLogoError(false);
-  }, [studio?.logoUrl]);
+  }, [me.studio?.logoUrl]);
 
   // Auto-close the drawer on navigation.
   useEffect(() => {
