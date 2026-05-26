@@ -26,7 +26,7 @@ git pull --ff-only
 cd "${DEPLOY_DIR}"
 
 echo "==> Building images"
-docker compose build
+docker compose build --no-cache
 
 echo "==> Bringing up Postgres"
 docker compose up -d postgres
