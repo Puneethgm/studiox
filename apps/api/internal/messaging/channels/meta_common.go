@@ -31,7 +31,17 @@ type MetaWebhookUser struct {
 }
 
 type MetaWebhookMessage struct {
-	Mid  string `json:"mid"`
-	Text string `json:"text,omitempty"`
-	// Attachments, replies, etc can be added here as needed.
+	Mid         string                  `json:"mid"`
+	Text        string                  `json:"text,omitempty"`
+	Attachments []MetaWebhookAttachment `json:"attachments,omitempty"`
+	QuickReply  *struct {
+		Payload string `json:"payload"`
+	} `json:"quick_reply,omitempty"`
+}
+
+type MetaWebhookAttachment struct {
+	Type    string `json:"type"` // "image", "video", "audio", "file"
+	Payload struct {
+		URL string `json:"url"`
+	} `json:"payload"`
 }

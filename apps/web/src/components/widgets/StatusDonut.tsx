@@ -11,12 +11,13 @@ export interface StatusDonutProps {
   className?: string;
 }
 
-const ORDER: LeadStatus[] = ['new', 'contacted', 'trial_booked', 'member', 'dropped'];
+const ORDER: LeadStatus[] = ['new', 'contacted', 'trial_booked', 'paused', 'member', 'dropped'];
 
 const COLORS: Record<LeadStatus, string> = {
   new:          '#0ea5e9',
   contacted:    'var(--brand, #7c3aed)',
   trial_booked: '#f59e0b',
+  paused:       '#6366f1',
   member:       '#10b981',
   dropped:      '#94a3b8',
 };

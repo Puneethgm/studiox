@@ -32,6 +32,7 @@ export async function updateStudioSettings(
     geminiApiKey?: string;
     metaAppId?: string;
     metaAppSecret?: string;
+    knowledgeBase?: string;
   },
 ): Promise<UpdateStudioResult> {
   const cookieStore = await cookies();

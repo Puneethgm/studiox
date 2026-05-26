@@ -221,6 +221,101 @@ func (s *Service) HandleInboundWhatsAppMessage(ctx context.Context,
 		return err
 	}
 
+	// Link identity and conversation to lead (or auto-create lead for walk-in/direct messages)
+	var activeLeadID *uuid.UUID
+	if identity.LeadID != nil {
+		activeLeadID = identity.LeadID
+	} else if conv.LeadID != nil {
+		activeLeadID = conv.LeadID
+	}
+
+	if activeLeadID == nil {
+		var leadID uuid.UUID
+		// Search for an existing lead with this phone number in this studio (using clean digits)
+		sanitizedFrom := cleanPhoneNumber(msg.From)
+		err = tx.QueryRow(ctx, `
+			SELECT id FROM leads 
+			WHERE studio_id = $1 AND (
+				REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), ' ', ''), '-', ''), '(', '') = $2 
+				OR REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), ' ', ''), '-', ''), '(', '') = $3
+			)
+			LIMIT 1
+		`, channel.StudioID, msg.From, sanitizedFrom).Scan(&leadID)
+
+		if err != nil && errors.Is(err, pgx.ErrNoRows) {
+			// Fetch active campaign and its first fitness plan
+			var campaignID uuid.UUID
+			var fitnessPlans []string
+			errCampaign := tx.QueryRow(ctx, `
+				SELECT id, fitness_plans FROM campaigns 
+				WHERE studio_id = $1 AND active = true 
+				ORDER BY created_at DESC 
+				LIMIT 1
+			`, channel.StudioID).Scan(&campaignID, &fitnessPlans)
+			if errCampaign != nil {
+				_ = tx.QueryRow(ctx, `
+					SELECT id, fitness_plans FROM campaigns 
+					WHERE studio_id = $1 
+					LIMIT 1
+				`, channel.StudioID).Scan(&campaignID, &fitnessPlans)
+			}
+			
+			defaultPlan := "Trial Class"
+			if len(fitnessPlans) > 0 {
+				defaultPlan = fitnessPlans[0]
+			}
+
+			// No existing lead, create one automatically
+			leadID = uuid.New()
+			fName := displayName
+			lName := ""
+			if displayName == "" {
+				displayName = msg.From
+				fName = msg.From
+			} else {
+				parts := strings.SplitN(displayName, " ", 2)
+				fName = parts[0]
+				if len(parts) > 1 {
+					lName = parts[1]
+				}
+			}
+			emailPlaceholder := fmt.Sprintf("whatsapp-%s@example.com", msg.From)
+
+			_, err = tx.Exec(ctx, `
+				INSERT INTO leads (id, studio_id, campaign_id, name, first_name, last_name, email, phone, fitness_plan, status, source, auto_contact_stage, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'contacted', 'whatsapp', 'awaiting_options', now(), now())
+			`, leadID, channel.StudioID, campaignID, displayName, fName, lName, emailPlaceholder, msg.From, defaultPlan)
+			if err != nil {
+				return fmt.Errorf("auto-create lead: %w", err)
+			}
+		} else if err != nil {
+			return fmt.Errorf("lookup lead by phone: %w", err)
+		}
+		activeLeadID = &leadID
+	}
+
+	// Update identity and conversation with the lead ID if not set
+	if identity.LeadID == nil {
+		_, err = tx.Exec(ctx, `
+			UPDATE contact_identities SET lead_id = $2 WHERE id = $1
+		`, identity.ID, *activeLeadID)
+		if err != nil {
+			return fmt.Errorf("link identity to lead: %w", err)
+		}
+		identity.LeadID = activeLeadID
+	}
+
+	if conv.LeadID == nil {
+		_, err = tx.Exec(ctx, `
+			UPDATE conversations SET lead_id = $2 WHERE id = $1
+		`, conv.ID, *activeLeadID)
+		if err != nil {
+			return fmt.Errorf("link conversation to lead: %w", err)
+		}
+		leadIDStr := *activeLeadID
+		conv.LeadID = &leadIDStr
+	}
+
 	// 5. Insert the message (deduped by external_id).
 	body := ""
 	atts := []Attachment{}
@@ -311,274 +406,8 @@ func (s *Service) HandleInboundWhatsAppMessage(ctx context.Context,
 
 	// Deterministically update lead status based on button clicks / option selections.
 	// This runs inside the transaction and works even if the AI (Claude) worker is disabled.
-	if conv.LeadID != nil && stored != nil {
-		var leadName, leadStatus, leadNotes, autoContactStage, studioSlug, campaignSlug string
-		var slotsJSON []byte
-		var timezone string
-		err = tx.QueryRow(ctx, `
-			SELECT l.name, l.status, l.notes, l.auto_contact_stage, s.slug, COALESCE(c.slug, ''), s.availability_slots, s.availability_timezone
-			FROM leads l
-			JOIN studios s ON s.id = l.studio_id
-			LEFT JOIN campaigns c ON c.id = l.campaign_id
-			WHERE l.studio_id = $1 AND l.id = $2
-		`, channel.StudioID, *conv.LeadID).Scan(&leadName, &leadStatus, &leadNotes, &autoContactStage, &studioSlug, &campaignSlug, &slotsJSON, &timezone)
-
-		if err == nil {
-			text := strings.ToLower(strings.TrimSpace(body))
-			targetStage := autoContactStage
-			targetStatus := leadStatus
-			targetNotes := leadNotes
-			var outboundBody string
-
-			// Parse availability timezone and slots
-			loc, errLoc := time.LoadLocation(timezone)
-			if errLoc != nil {
-				loc = time.UTC
-			}
-			now := time.Now().In(loc)
-
-			type availabilitySlot struct {
-				Day   string   `json:"day"`
-				Times []string `json:"times"`
-			}
-			var slots []availabilitySlot
-			if len(slotsJSON) > 0 {
-				_ = json.Unmarshal(slotsJSON, &slots)
-			}
-			slotsMap := make(map[string][]string)
-			for _, s := range slots {
-				if len(s.Times) > 0 {
-					slotsMap[strings.ToLower(s.Day)] = s.Times
-				}
-			}
-
-			getAvailableDays := func() ([]string, []string) {
-				var days []string
-				var daysWeekdayStr []string
-				t := now
-				for i := 0; i < 30 && len(days) < 3; i++ {
-					weekdayStr := strings.ToLower(t.Weekday().String())
-					hasSlots := false
-					if len(slotsMap) > 0 {
-						_, hasSlots = slotsMap[weekdayStr]
-					} else {
-						hasSlots = t.Weekday() != time.Sunday
-					}
-
-					if hasSlots {
-						days = append(days, t.Format("Mon, Jan 02"))
-						daysWeekdayStr = append(daysWeekdayStr, weekdayStr)
-					}
-					t = t.Add(24 * time.Hour)
-				}
-				if len(days) < 3 {
-					days = nil
-					daysWeekdayStr = nil
-					t = now
-					for len(days) < 3 {
-						if t.Weekday() != time.Sunday {
-							days = append(days, t.Format("Mon, Jan 02"))
-							daysWeekdayStr = append(daysWeekdayStr, strings.ToLower(t.Weekday().String()))
-						}
-						t = t.Add(24 * time.Hour)
-					}
-				}
-				return days, daysWeekdayStr
-			}
-
-			isInterested := text == "1" || text == "interested" || (strings.Contains(text, "interested") && !strings.Contains(text, "not interested"))
-			isNotInterested := text == "2" || text == "not interested" || strings.Contains(text, "not interested") || strings.Contains(text, "not_interested")
-			isTrial := text == "1" || strings.Contains(text, "book a trial") || strings.Contains(text, "book trial") || strings.Contains(text, "trial")
-			isMember := text == "2" || strings.Contains(text, "become a member") || strings.Contains(text, "become member") || strings.Contains(text, "member")
-
-			if autoContactStage == "awaiting_interest" {
-				if isInterested && !isNotInterested {
-					targetStage = "awaiting_options"
-					targetStatus = "contacted"
-					outboundBody = "Hi {{contact.first_name}}, great! Please select an option:\n1. Book a Trial\n2. Become a Member"
-				} else if isNotInterested {
-					targetStage = "awaiting_reason"
-					targetStatus = "dropped"
-					outboundBody = "We would like to know why are u not interested."
-				}
-			} else if autoContactStage == "awaiting_options" || (leadStatus == "trial_booked" && autoContactStage != "awaiting_trial_date" && autoContactStage != "awaiting_trial_time" && (isTrial || isMember)) {
-				if isTrial && !isMember {
-					targetStage = "awaiting_trial_date"
-					targetStatus = "trial_booked"
-					days, _ := getAvailableDays()
-					outboundBody = fmt.Sprintf("Please select a date for your trial:\n1. %s\n2. %s\n3. %s", days[0], days[1], days[2])
-				} else if isMember && !isTrial {
-					targetStage = "completed"
-					targetStatus = "member"
-					outboundBody = "Our team would reach u ASAP."
-				}
-			} else if autoContactStage == "awaiting_trial_date" {
-				days, daysWeekdayStr := getAvailableDays()
-				selectedDate := ""
-				selectedWeekday := ""
-				isOption1 := text == "1" || strings.Contains(text, "choice_1") || strings.Contains(text, strings.ToLower(days[0]))
-				isOption2 := text == "2" || strings.Contains(text, "choice_2") || strings.Contains(text, strings.ToLower(days[1]))
-				isOption3 := text == "3" || strings.Contains(text, "choice_3") || strings.Contains(text, strings.ToLower(days[2]))
-
-				if isOption1 {
-					selectedDate = days[0]
-					selectedWeekday = daysWeekdayStr[0]
-				} else if isOption2 {
-					selectedDate = days[1]
-					selectedWeekday = daysWeekdayStr[1]
-				} else if isOption3 {
-					selectedDate = days[2]
-					selectedWeekday = daysWeekdayStr[2]
-				} else {
-					selectedDate = days[0]
-					selectedWeekday = daysWeekdayStr[0]
-				}
-
-				targetNotes = strings.TrimSpace(targetNotes + "\n[Selected Trial Date]: " + selectedDate)
-				targetStage = "awaiting_trial_time"
-
-				var timeSlots []string
-				if len(slotsMap) > 0 {
-					if times, ok := slotsMap[selectedWeekday]; ok && len(times) > 0 {
-						for _, tm := range times {
-							timeSlots = append(timeSlots, format12Hour(tm))
-						}
-					}
-				}
-				if len(timeSlots) == 0 {
-					timeSlots = []string{"09:00 AM", "12:00 PM", "04:00 PM"}
-				}
-
-				var sb strings.Builder
-				sb.WriteString("Please select a time slot:")
-				for idx, ts := range timeSlots {
-					sb.WriteString(fmt.Sprintf("\n%d. %s", idx+1, ts))
-				}
-				outboundBody = sb.String()
-			} else if autoContactStage == "awaiting_trial_time" {
-				dateStr := ""
-				idx := strings.Index(targetNotes, "[Selected Trial Date]: ")
-				if idx != -1 {
-					dateStr = targetNotes[idx+len("[Selected Trial Date]: "):]
-					if end := strings.Index(dateStr, "\n"); end != -1 {
-						dateStr = dateStr[:end]
-					}
-					dateStr = strings.TrimSpace(dateStr)
-				}
-				if dateStr == "" {
-					dateStr = now.Format("Mon, Jan 02")
-				}
-
-				// Determine weekday from dateStr in local timezone
-				dateStrWithYear := fmt.Sprintf("%s %d", dateStr, now.Year())
-				parsedDate, errDate := time.ParseInLocation("Mon, Jan 02 2006", dateStrWithYear, loc)
-				selectedWeekday := ""
-				if errDate == nil {
-					selectedWeekday = strings.ToLower(parsedDate.Weekday().String())
-				} else {
-					selectedWeekday = strings.ToLower(now.Weekday().String())
-				}
-
-				var timeSlots []string
-				if len(slotsMap) > 0 {
-					if times, ok := slotsMap[selectedWeekday]; ok && len(times) > 0 {
-						for _, tm := range times {
-							timeSlots = append(timeSlots, format12Hour(tm))
-						}
-					}
-				}
-				if len(timeSlots) == 0 {
-					timeSlots = []string{"09:00 AM", "12:00 PM", "04:00 PM"}
-				}
-
-				selectedIndex := -1
-				for idx := range timeSlots {
-					choiceStr := fmt.Sprintf("%d", idx+1)
-					if text == choiceStr || strings.Contains(text, "choice_"+choiceStr) {
-						selectedIndex = idx
-						break
-					}
-				}
-				if selectedIndex == -1 {
-					for idx, ts := range timeSlots {
-						cleanText := strings.ReplaceAll(strings.ReplaceAll(text, " ", ""), ":", "")
-						cleanTs := strings.ReplaceAll(strings.ReplaceAll(strings.ToLower(ts), " ", ""), ":", "")
-						if strings.Contains(cleanText, cleanTs) {
-							selectedIndex = idx
-							break
-						}
-					}
-				}
-				if selectedIndex == -1 || selectedIndex >= len(timeSlots) {
-					selectedIndex = 0
-				}
-				selectedTime := timeSlots[selectedIndex]
-
-				targetNotes = strings.ReplaceAll(targetNotes, "[Selected Trial Date]: "+dateStr, "")
-				targetNotes = strings.TrimSpace(targetNotes + "\n[Selected Trial Slot]: " + dateStr + " " + selectedTime)
-				targetStage = "completed"
-				outboundBody = "Thank you our team will reach u out "
-			} else if autoContactStage == "awaiting_reason" {
-				targetNotes = strings.TrimSpace(targetNotes + "\n[Dropped Reason]: " + body)
-				targetStage = "completed"
-				outboundBody = "Thank you for your time we would get back to u."
-			}
-
-			// Update the lead if anything changed
-			if targetStage != autoContactStage || targetStatus != leadStatus || targetNotes != leadNotes {
-				_, err = tx.Exec(ctx, `
-					UPDATE leads 
-					SET status = $3, notes = $4, auto_contact_stage = $5, updated_at = now()
-					WHERE studio_id = $1 AND id = $2
-				`, channel.StudioID, *conv.LeadID, targetStatus, targetNotes, targetStage)
-
-				// If outbound message needs to be sent
-				if err == nil && outboundBody != "" {
-					_, _ = tx.Exec(ctx, `
-						INSERT INTO outbound_jobs (studio_id, conversation_id, body, attachments,
-						                           source_kind, source_ref, scheduled_for, next_attempt_at)
-						VALUES ($1, $2, $3, '[]'::jsonb, 'automation', $4, $5, $5)
-					`, channel.StudioID, conv.ID, outboundBody, fmt.Sprintf("lead:%s:auto_reply:%s", conv.LeadID.String(), targetStage), time.Now().UTC())
-				}
-
-				// If they just transitioned to trial_booked, schedule the 1-day check-in follow-up
-				if err == nil && targetStatus == "trial_booked" && leadStatus != "trial_booked" {
-					followupBody := "Hi {{contact.first_name}}, we hope you're enjoying your trial! Are you ready to take the next step and become a member? Please select an option:\n1. Book a Trial\n2. Become a Member"
-					_, _ = tx.Exec(ctx, `
-						INSERT INTO outbound_jobs (studio_id, conversation_id, body, attachments,
-						                           source_kind, source_ref, scheduled_for, next_attempt_at)
-						VALUES ($1, $2, $3, '[]'::jsonb, 'automation', $4, $5, $5)
-					`, channel.StudioID, conv.ID, followupBody, fmt.Sprintf("lead:%s:trial_followup:1day", conv.LeadID.String()), time.Now().UTC().Add(24*time.Hour))
-				}
-
-				// Enqueue Google Sheets update if status or notes changed
-				if err == nil && (targetStatus != leadStatus || targetNotes != leadNotes) {
-					var l leads.Lead
-					var ipText *string
-					row := tx.QueryRow(ctx, `
-						SELECT l.id, l.studio_id, l.campaign_id, l.name, COALESCE(l.first_name, ''), COALESCE(l.last_name, ''), l.email, l.phone, l.fitness_plan, l.goals,
-						       l.source, l.status, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage, l.referrer, l.user_agent, l.ip_address::text, l.created_at, l.updated_at,
-						       s.name, s.slug, c.name, c.slug
-						FROM leads l
-						JOIN campaigns c ON c.id = l.campaign_id
-						JOIN studios s ON s.id = l.studio_id
-						WHERE l.id = $1
-					`, *conv.LeadID)
-					scanErr := row.Scan(&l.ID, &l.StudioID, &l.CampaignID, &l.Name, &l.FirstName, &l.LastName, &l.Email, &l.Phone, &l.FitnessPlan, &l.Goals,
-						&l.Source, &l.Status, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage, &l.Referrer, &l.UserAgent, &ipText, &l.CreatedAt, &l.UpdatedAt,
-						&l.StudioName, &l.StudioSlug, &l.CampaignName, &l.CampaignSlug)
-					if scanErr == nil {
-						payload, mErr := json.Marshal(l)
-						if mErr == nil {
-							_, _ = tx.Exec(ctx, `
-								INSERT INTO outbox (aggregate_type, aggregate_id, event_type, destination, payload)
-								VALUES ('lead', $1, 'lead.updated', 'google_sheets', $2)
-							`, l.ID, payload)
-						}
-					}
-				}
-			}
-		}
+	if err := s.processInboundLeadAutomation(ctx, tx, channel.StudioID, conv, stored, body); err != nil {
+		return fmt.Errorf("inbound lead automation: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -732,6 +561,98 @@ func (s *Service) HandleInboundMessaging(ctx context.Context, kind ChannelKind, 
 		return err
 	}
 
+	// Link identity and conversation to lead (or auto-create lead for walk-in/direct messages)
+	var activeLeadID *uuid.UUID
+	if identity.LeadID != nil {
+		activeLeadID = identity.LeadID
+	} else if conv.LeadID != nil {
+		activeLeadID = conv.LeadID
+	}
+
+	if activeLeadID == nil {
+		var campaignID uuid.UUID
+		var fitnessPlans []string
+		errCampaign := tx.QueryRow(ctx, `
+			SELECT id, fitness_plans FROM campaigns 
+			WHERE studio_id = $1 AND active = true 
+			ORDER BY created_at DESC 
+			LIMIT 1
+		`, channel.StudioID).Scan(&campaignID, &fitnessPlans)
+		if errCampaign != nil {
+			_ = tx.QueryRow(ctx, `
+				SELECT id, fitness_plans FROM campaigns 
+				WHERE studio_id = $1 
+				LIMIT 1
+			`, channel.StudioID).Scan(&campaignID, &fitnessPlans)
+		}
+		
+		defaultPlan := "Trial Class"
+		if len(fitnessPlans) > 0 {
+			defaultPlan = fitnessPlans[0]
+		}
+
+		// No existing lead, create one automatically
+		leadID := uuid.New()
+		displayName := "Messenger Guest"
+		if kind == KindInstagramMeta {
+			displayName = "Instagram Guest"
+		}
+		emailPlaceholder := fmt.Sprintf("%s-%s@example.com", string(kind), m.Sender.ID)
+		phonePlaceholder := fmt.Sprintf("meta-%s", m.Sender.ID)
+
+		_, err = tx.Exec(ctx, `
+			INSERT INTO leads (id, studio_id, campaign_id, name, first_name, last_name, email, phone, fitness_plan, status, source, auto_contact_stage, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'contacted', $10, 'awaiting_options', now(), now())
+		`, leadID, channel.StudioID, campaignID, displayName, displayName, "", emailPlaceholder, phonePlaceholder, defaultPlan, string(kind))
+		if err != nil {
+			return fmt.Errorf("auto-create messenger lead: %w", err)
+		}
+		activeLeadID = &leadID
+	}
+
+	// Update identity and conversation with the lead ID if not set
+	if identity.LeadID == nil {
+		_, err = tx.Exec(ctx, `
+			UPDATE contact_identities SET lead_id = $2 WHERE id = $1
+		`, identity.ID, *activeLeadID)
+		if err != nil {
+			return fmt.Errorf("link identity to lead: %w", err)
+		}
+		identity.LeadID = activeLeadID
+	}
+
+	if conv.LeadID == nil {
+		_, err = tx.Exec(ctx, `
+			UPDATE conversations SET lead_id = $2 WHERE id = $1
+		`, conv.ID, *activeLeadID)
+		if err != nil {
+			return fmt.Errorf("link conversation to lead: %w", err)
+		}
+		leadIDStr := *activeLeadID
+		conv.LeadID = &leadIDStr
+	}
+
+	var atts []Attachment
+	for _, a := range m.Message.Attachments {
+		mimeType := ""
+		if a.Type == "image" {
+			mimeType = "image/jpeg"
+		} else if a.Type == "video" {
+			mimeType = "video/mp4"
+		} else if a.Type == "audio" {
+			mimeType = "audio/mpeg"
+		} else if a.Type == "file" || a.Type == "document" {
+			mimeType = "application/octet-stream"
+		}
+		
+		atts = append(atts, Attachment{
+			Type: a.Type,
+			URL:  a.Payload.URL,
+			Mime: mimeType,
+			Name: "attachment",
+		})
+	}
+
 	// 4. Insert message.
 	stored, err := s.repo.InsertMessage(ctx, tx, CreateMessageInput{
 		ConversationID: conv.ID,
@@ -739,11 +660,22 @@ func (s *Service) HandleInboundMessaging(ctx context.Context, kind ChannelKind, 
 		Direction:      DirectionInbound,
 		SourceKind:     SourceCustomer,
 		Body:           m.Message.Text,
+		Attachments:    atts,
 		ExternalID:     m.Message.Mid,
 		SentAt:         time.Unix(m.Timestamp/1000, (m.Timestamp%1000)*1000000).UTC(),
 	})
 	if err != nil {
 		return err
+	}
+
+	inputText := m.Message.Text
+	if m.Message.QuickReply != nil && m.Message.QuickReply.Payload != "" {
+		inputText = m.Message.QuickReply.Payload
+	}
+
+	// Deterministically update lead status based on button clicks / option selections.
+	if err := s.processInboundLeadAutomation(ctx, tx, channel.StudioID, conv, stored, inputText); err != nil {
+		return fmt.Errorf("inbound lead automation: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -1030,4 +962,303 @@ func format12Hour(tm string) string {
 		return tm
 	}
 	return parsed.Format("03:04 PM")
+}
+
+func cleanPhoneNumber(in string) string {
+	var sb strings.Builder
+	for _, r := range in {
+		if r >= '0' && r <= '9' {
+			sb.WriteRune(r)
+		}
+	}
+	s := sb.String()
+	if len(s) == 10 {
+		s = "91" + s
+	}
+	return s
+}
+
+func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, studioID uuid.UUID, conv *Conversation, stored *Message, body string) error {
+	if conv.LeadID == nil || stored == nil {
+		return nil
+	}
+	var leadName, leadStatus, leadNotes, autoContactStage, studioSlug, campaignSlug string
+	var slotsJSON []byte
+	var timezone string
+	err := tx.QueryRow(ctx, `
+		SELECT l.name, l.status, l.notes, l.auto_contact_stage, s.slug, COALESCE(c.slug, ''), s.availability_slots, s.availability_timezone
+		FROM leads l
+		JOIN studios s ON s.id = l.studio_id
+		LEFT JOIN campaigns c ON c.id = l.campaign_id
+		WHERE l.studio_id = $1 AND l.id = $2
+	`, studioID, *conv.LeadID).Scan(&leadName, &leadStatus, &leadNotes, &autoContactStage, &studioSlug, &campaignSlug, &slotsJSON, &timezone)
+
+	if err != nil {
+		return nil // Lead not found or other db error, skip automation
+	}
+
+	text := strings.ToLower(strings.TrimSpace(body))
+	targetStage := autoContactStage
+	targetStatus := leadStatus
+	targetNotes := leadNotes
+	var outboundBody string
+
+	// Parse availability timezone and slots
+	loc, errLoc := time.LoadLocation(timezone)
+	if errLoc != nil {
+		loc = time.UTC
+	}
+	now := time.Now().In(loc)
+
+	type availabilitySlot struct {
+		Day   string   `json:"day"`
+		Times []string `json:"times"`
+	}
+	var slots []availabilitySlot
+	if len(slotsJSON) > 0 {
+		_ = json.Unmarshal(slotsJSON, &slots)
+	}
+	slotsMap := make(map[string][]string)
+	for _, s := range slots {
+		if len(s.Times) > 0 {
+			slotsMap[strings.ToLower(s.Day)] = s.Times
+		}
+	}
+
+	getAvailableDays := func() ([]string, []string) {
+		var days []string
+		var daysWeekdayStr []string
+		t := now
+		for i := 0; i < 30 && len(days) < 3; i++ {
+			weekdayStr := strings.ToLower(t.Weekday().String())
+			hasSlots := false
+			if len(slotsMap) > 0 {
+				_, hasSlots = slotsMap[weekdayStr]
+			} else {
+				hasSlots = t.Weekday() != time.Sunday
+			}
+
+			if hasSlots {
+				days = append(days, t.Format("Mon, Jan 02"))
+				daysWeekdayStr = append(daysWeekdayStr, weekdayStr)
+			}
+			t = t.Add(24 * time.Hour)
+		}
+		if len(days) < 3 {
+			days = nil
+			daysWeekdayStr = nil
+			t = now
+			for len(days) < 3 {
+				if t.Weekday() != time.Sunday {
+					days = append(days, t.Format("Mon, Jan 02"))
+					daysWeekdayStr = append(daysWeekdayStr, strings.ToLower(t.Weekday().String()))
+				}
+				t = t.Add(24 * time.Hour)
+			}
+		}
+		return days, daysWeekdayStr
+	}
+
+	isInterested := text == "1" || text == "interested" || (strings.Contains(text, "interested") && !strings.Contains(text, "not interested"))
+	isNotInterested := text == "2" || text == "not interested" || strings.Contains(text, "not interested") || strings.Contains(text, "not_interested")
+	isTrial := text == "1" || strings.Contains(text, "book a trial") || strings.Contains(text, "book trial") || strings.Contains(text, "trial") || strings.Contains(text, "book a trail") || strings.Contains(text, "book trail") || strings.Contains(text, "trail")
+	isMember := text == "2" || strings.Contains(text, "become a member") || strings.Contains(text, "become member") || strings.Contains(text, "member")
+
+	if autoContactStage == "awaiting_interest" {
+		if isInterested && !isNotInterested {
+			targetStage = "awaiting_options"
+			targetStatus = "contacted"
+			outboundBody = "Hi {{contact.first_name}}, great! Please select an option:\n1. Book a Trial\n2. Become a Member"
+		} else if isNotInterested {
+			targetStage = "awaiting_reason"
+			targetStatus = "dropped"
+			outboundBody = "We would like to know why are u not interested."
+		}
+	} else if autoContactStage == "awaiting_options" || (leadStatus == "trial_booked" && autoContactStage != "awaiting_trial_date" && autoContactStage != "awaiting_trial_time" && (isTrial || isMember)) {
+		if isTrial && !isMember {
+			targetStage = "awaiting_trial_date"
+			targetStatus = "trial_booked"
+			days, _ := getAvailableDays()
+			outboundBody = fmt.Sprintf("Please select a date for your trial:\n1. %s\n2. %s\n3. %s", days[0], days[1], days[2])
+		} else if isMember && !isTrial {
+			targetStage = "completed"
+			targetStatus = "member"
+			outboundBody = "Our team would reach u ASAP."
+		}
+	} else if autoContactStage == "awaiting_trial_date" {
+		days, daysWeekdayStr := getAvailableDays()
+		selectedDate := ""
+		selectedWeekday := ""
+		isOption1 := text == "1" || strings.Contains(text, "choice_1") || strings.Contains(text, strings.ToLower(days[0]))
+		isOption2 := text == "2" || strings.Contains(text, "choice_2") || strings.Contains(text, strings.ToLower(days[1]))
+		isOption3 := text == "3" || strings.Contains(text, "choice_3") || strings.Contains(text, strings.ToLower(days[2]))
+
+		if isOption1 {
+			selectedDate = days[0]
+			selectedWeekday = daysWeekdayStr[0]
+		} else if isOption2 {
+			selectedDate = days[1]
+			selectedWeekday = daysWeekdayStr[1]
+		} else if isOption3 {
+			selectedDate = days[2]
+			selectedWeekday = daysWeekdayStr[2]
+		} else {
+			selectedDate = days[0]
+			selectedWeekday = daysWeekdayStr[0]
+		}
+
+		targetNotes = strings.TrimSpace(targetNotes + "\n[Selected Trial Date]: " + selectedDate)
+		targetStage = "awaiting_trial_time"
+
+		var timeSlots []string
+		if len(slotsMap) > 0 {
+			if times, ok := slotsMap[selectedWeekday]; ok && len(times) > 0 {
+				for _, tm := range times {
+					timeSlots = append(timeSlots, format12Hour(tm))
+				}
+			}
+		}
+		if len(timeSlots) == 0 {
+			timeSlots = []string{"09:00 AM", "12:00 PM", "04:00 PM"}
+		}
+
+		var sb strings.Builder
+		sb.WriteString("Please select a time slot:")
+		for idx, ts := range timeSlots {
+			sb.WriteString(fmt.Sprintf("\n%d. %s", idx+1, ts))
+		}
+		outboundBody = sb.String()
+	} else if autoContactStage == "awaiting_trial_time" {
+		dateStr := ""
+		idx := strings.Index(targetNotes, "[Selected Trial Date]: ")
+		if idx != -1 {
+			dateStr = targetNotes[idx+len("[Selected Trial Date]: "):]
+			if end := strings.Index(dateStr, "\n"); end != -1 {
+				dateStr = dateStr[:end]
+			}
+			dateStr = strings.TrimSpace(dateStr)
+		}
+		if dateStr == "" {
+			dateStr = now.Format("Mon, Jan 02")
+		}
+
+		// Determine weekday from dateStr in local timezone
+		dateStrWithYear := fmt.Sprintf("%s %d", dateStr, now.Year())
+		parsedDate, errDate := time.ParseInLocation("Mon, Jan 02 2006", dateStrWithYear, loc)
+		selectedWeekday := ""
+		if errDate == nil {
+			selectedWeekday = strings.ToLower(parsedDate.Weekday().String())
+		} else {
+			selectedWeekday = strings.ToLower(now.Weekday().String())
+		}
+
+		var timeSlots []string
+		if len(slotsMap) > 0 {
+			if times, ok := slotsMap[selectedWeekday]; ok && len(times) > 0 {
+				for _, tm := range times {
+					timeSlots = append(timeSlots, format12Hour(tm))
+				}
+			}
+		}
+		if len(timeSlots) == 0 {
+			timeSlots = []string{"09:00 AM", "12:00 PM", "04:00 PM"}
+		}
+
+		selectedIndex := -1
+		for idx := range timeSlots {
+			choiceStr := fmt.Sprintf("%d", idx+1)
+			if text == choiceStr || strings.Contains(text, "choice_"+choiceStr) {
+				selectedIndex = idx
+				break
+			}
+		}
+		if selectedIndex == -1 {
+			for idx, ts := range timeSlots {
+				cleanText := strings.ReplaceAll(strings.ReplaceAll(text, " ", ""), ":", "")
+				cleanTs := strings.ReplaceAll(strings.ReplaceAll(strings.ToLower(ts), " ", ""), ":", "")
+				if strings.Contains(cleanText, cleanTs) {
+					selectedIndex = idx
+					break
+				}
+			}
+		}
+		if selectedIndex == -1 || selectedIndex >= len(timeSlots) {
+			selectedIndex = 0
+		}
+		selectedTime := timeSlots[selectedIndex]
+
+		targetNotes = strings.ReplaceAll(targetNotes, "[Selected Trial Date]: "+dateStr, "")
+		targetNotes = strings.TrimSpace(targetNotes + "\n[Selected Trial Slot]: " + dateStr + " " + selectedTime)
+		targetStage = "completed"
+		outboundBody = "Thank you our team will reach u out "
+	} else if autoContactStage == "awaiting_reason" {
+		targetNotes = strings.TrimSpace(targetNotes + "\n[Dropped Reason]: " + body)
+		targetStage = "completed"
+		outboundBody = "Thank you for your time we would get back to u."
+	}
+
+	// Update the lead if anything changed
+	if targetStage != autoContactStage || targetStatus != leadStatus || targetNotes != leadNotes {
+		_, err = tx.Exec(ctx, `
+			UPDATE leads 
+			SET status = $3, notes = $4, auto_contact_stage = $5, updated_at = now()
+			WHERE studio_id = $1 AND id = $2
+		`, studioID, *conv.LeadID, targetStatus, targetNotes, targetStage)
+		if err != nil {
+			return err
+		}
+
+		// If outbound message needs to be sent
+		if outboundBody != "" {
+			_, err = tx.Exec(ctx, `
+				INSERT INTO outbound_jobs (studio_id, conversation_id, body, attachments,
+				                           source_kind, source_ref, scheduled_for, next_attempt_at)
+				VALUES ($1, $2, $3, '[]'::jsonb, 'automation', $4, $5, $5)
+			`, studioID, conv.ID, outboundBody, fmt.Sprintf("lead:%s:auto_reply:%s", conv.LeadID.String(), targetStage), time.Now().UTC())
+			if err != nil {
+				return err
+			}
+		}
+
+		// If they just transitioned to trial_booked, schedule the 1-day check-in follow-up
+		if targetStatus == "trial_booked" && leadStatus != "trial_booked" {
+			followupBody := "Hi {{contact.first_name}}, we hope you're enjoying your trial! Are you ready to take the next step and become a member? Please select an option:\n1. Book a Trial\n2. Become a Member"
+			_, err = tx.Exec(ctx, `
+				INSERT INTO outbound_jobs (studio_id, conversation_id, body, attachments,
+				                           source_kind, source_ref, scheduled_for, next_attempt_at)
+				VALUES ($1, $2, $3, '[]'::jsonb, 'automation', $4, $5, $5)
+			`, studioID, conv.ID, followupBody, fmt.Sprintf("lead:%s:trial_followup:1day", conv.LeadID.String()), time.Now().UTC().Add(24*time.Hour))
+			if err != nil {
+				return err
+			}
+		}
+
+		// Enqueue Google Sheets update if status or notes changed
+		if targetStatus != leadStatus || targetNotes != leadNotes {
+			var l leads.Lead
+			var ipText *string
+			row := tx.QueryRow(ctx, `
+				SELECT l.id, l.studio_id, l.campaign_id, l.name, COALESCE(l.first_name, ''), COALESCE(l.last_name, ''), l.email, l.phone, l.fitness_plan, l.goals,
+				       l.source, l.status, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage, l.referrer, l.user_agent, l.ip_address::text, l.created_at, l.updated_at,
+				       s.name, s.slug, c.name, c.slug
+				FROM leads l
+				JOIN campaigns c ON c.id = l.campaign_id
+				JOIN studios s ON s.id = l.studio_id
+				WHERE l.id = $1
+			`, *conv.LeadID)
+			scanErr := row.Scan(&l.ID, &l.StudioID, &l.CampaignID, &l.Name, &l.FirstName, &l.LastName, &l.Email, &l.Phone, &l.FitnessPlan, &l.Goals,
+				&l.Source, &l.Status, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage, &l.Referrer, &l.UserAgent, &ipText, &l.CreatedAt, &l.UpdatedAt,
+				&l.StudioName, &l.StudioSlug, &l.CampaignName, &l.CampaignSlug)
+			if scanErr == nil {
+				payload, mErr := json.Marshal(l)
+				if mErr == nil {
+					_, _ = tx.Exec(ctx, `
+						INSERT INTO outbox (aggregate_type, aggregate_id, event_type, destination, payload)
+						VALUES ('lead', $1, 'lead.updated', 'google_sheets', $2)
+					`, l.ID, payload)
+				}
+			}
+		}
+	}
+	return nil
 }

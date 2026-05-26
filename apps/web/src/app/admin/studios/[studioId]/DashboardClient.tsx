@@ -101,9 +101,13 @@ export default function DashboardClient({
     async function loadAnalytics() {
       setLoadingAnalytics(true);
       try {
-        let url = `/api/v1/studios/${studio.id}/analytics?duration=${duration}`;
+        let url = studio.id === 'global'
+          ? `/api/v1/admin/analytics?duration=${duration}`
+          : `/api/v1/studios/${studio.id}/analytics?duration=${duration}`;
         if (duration === 'custom') {
-          url = `/api/v1/studios/${studio.id}/analytics?startDate=${startDate}&endDate=${endDate}`;
+          url = studio.id === 'global'
+            ? `/api/v1/admin/analytics?startDate=${startDate}&endDate=${endDate}`
+            : `/api/v1/studios/${studio.id}/analytics?startDate=${startDate}&endDate=${endDate}`;
         }
         const data = await api<AnalyticsSummary>(url);
         setAnalytics(data);
@@ -565,16 +569,18 @@ export default function DashboardClient({
 
                 <Card
                   title={<span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Open Follow-ups</span>}
-                  className="bg-amber-50/20 border-amber-100 dark:border-amber-950/20 dark:bg-amber-950/5"
+                  className="bg-amber-50/20 border-amber-100 dark:border-amber-950/20 dark:bg-amber-950/5 hover:border-amber-200 transition-colors"
                 >
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-3xl font-black text-zinc-900 dark:text-white">
-                      {analytics.followupsRequired}
-                    </span>
-                    <Badge tone={analytics.followupsRequired > 0 ? 'warning' : 'neutral'} className="font-bold">
-                      {analytics.followupsRequired > 0 ? 'Action Needed' : 'Good'}
-                    </Badge>
-                  </div>
+                  <Link href={studio.id === 'global' ? `/admin/leads?status=new` : `/admin/studios/${studio.id}/leads?statuses=new,contacted&maxAttempts=3`}>
+                    <div className="flex items-baseline gap-2 cursor-pointer group">
+                      <span className="text-3xl font-black text-zinc-900 dark:text-white group-hover:underline">
+                        {analytics.followupsRequired}
+                      </span>
+                      <Badge tone={analytics.followupsRequired > 0 ? 'warning' : 'neutral'} className="font-bold">
+                        {analytics.followupsRequired > 0 ? 'Action Needed' : 'Good'}
+                      </Badge>
+                    </div>
+                  </Link>
                   <p className="mt-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
                     New or contacted leads with fewer than 3 contact attempts.
                   </p>
@@ -582,21 +588,65 @@ export default function DashboardClient({
 
                 <Card
                   title={<span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Unresponded Conversations</span>}
-                  className="bg-rose-50/20 border-rose-100 dark:border-rose-950/20 dark:bg-rose-950/5"
+                  className="bg-rose-50/20 border-rose-100 dark:border-rose-950/20 dark:bg-rose-950/5 hover:border-rose-200 transition-colors"
                 >
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-3xl font-black text-zinc-900 dark:text-white">
-                      {analytics.unrespondedMessages}
-                    </span>
-                    <Badge tone={analytics.unrespondedMessages > 0 ? 'danger' : 'neutral'} className="font-bold">
-                      {analytics.unrespondedMessages > 0 ? 'Awaiting Reply' : 'All Clear'}
-                    </Badge>
-                  </div>
+                  {studio.id === 'global' ? (
+                    <div className="flex items-baseline gap-2 group">
+                      <span className="text-3xl font-black text-zinc-900 dark:text-white">
+                        {analytics.unrespondedMessages}
+                      </span>
+                      <Badge tone={analytics.unrespondedMessages > 0 ? 'danger' : 'neutral'} className="font-bold">
+                        {analytics.unrespondedMessages > 0 ? 'Awaiting Reply' : 'All Clear'}
+                      </Badge>
+                    </div>
+                  ) : (
+                    <Link href={`/admin/studios/${studio.id}/inbox?unresponded=true`}>
+                      <div className="flex items-baseline gap-2 cursor-pointer group">
+                        <span className="text-3xl font-black text-zinc-900 dark:text-white group-hover:underline">
+                          {analytics.unrespondedMessages}
+                        </span>
+                        <Badge tone={analytics.unrespondedMessages > 0 ? 'danger' : 'neutral'} className="font-bold">
+                          {analytics.unrespondedMessages > 0 ? 'Awaiting Reply' : 'All Clear'}
+                        </Badge>
+                      </div>
+                    </Link>
+                  )}
                   <p className="mt-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
                     Open customer conversations where the last message was inbound from client.
                   </p>
                 </Card>
-                 <Card
+
+                <Card
+                  title={<span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Members Dropped %</span>}
+                  className="bg-red-50/20 border-red-100 dark:border-red-950/20 dark:bg-red-950/5"
+                >
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-3xl font-black text-zinc-900 dark:text-white">
+                      {analytics.droppedRate ? analytics.droppedRate.toFixed(1) : '0.0'}%
+                    </span>
+                    <span className="text-xs text-zinc-500 font-bold">({analytics.droppedLeads} leads)</span>
+                  </div>
+                  <p className="mt-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                    Percentage of total leads whose membership status is marked as dropped.
+                  </p>
+                </Card>
+
+                <Card
+                  title={<span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Members Paused %</span>}
+                  className="bg-indigo-50/20 border-indigo-100 dark:border-indigo-950/20 dark:bg-indigo-950/5"
+                >
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-3xl font-black text-zinc-900 dark:text-white">
+                      {analytics.pausedRate ? analytics.pausedRate.toFixed(1) : '0.0'}%
+                    </span>
+                    <span className="text-xs text-zinc-500 font-bold">({analytics.pausedLeads} leads)</span>
+                  </div>
+                  <p className="mt-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                    Percentage of total leads whose membership status is currently paused.
+                  </p>
+                </Card>
+
+                <Card
                   title={<span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Avg Response Time</span>}
                   className="bg-blue-50/20 border-blue-100 dark:border-blue-950/20 dark:bg-blue-950/5"
                 >
@@ -653,6 +703,36 @@ export default function DashboardClient({
                   </div>
                   <p className="mt-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
                     Average time from trial booking to fully upgrading to a membership plan.
+                  </p>
+                </Card>
+
+                <Card
+                  title={<span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Member Dropped %</span>}
+                  className="bg-red-50/20 border-red-100 dark:border-red-950/20 dark:bg-red-950/5"
+                >
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-3xl font-black text-zinc-900 dark:text-white">
+                      {(analytics.droppedRate ?? 0).toFixed(1)}%
+                    </span>
+                    <TrendingDown className="h-5 w-5 text-red-500" />
+                  </div>
+                  <p className="mt-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                    Percentage of total leads that have dropped.
+                  </p>
+                </Card>
+
+                <Card
+                  title={<span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Member Paused %</span>}
+                  className="bg-indigo-50/20 border-indigo-100 dark:border-indigo-950/20 dark:bg-indigo-950/5"
+                >
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-3xl font-black text-zinc-900 dark:text-white">
+                      {(analytics.pausedRate ?? 0).toFixed(1)}%
+                    </span>
+                    <Activity className="h-5 w-5 text-indigo-500" />
+                  </div>
+                  <p className="mt-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                    Percentage of total leads whose membership is currently paused.
                   </p>
                 </Card>
               </div>

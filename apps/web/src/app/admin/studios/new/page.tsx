@@ -24,6 +24,7 @@ export default function NewStudioPage() {
   const [contactEmail, setContactEmail] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
+  const [socialPlannerEnabled, setSocialPlannerEnabled] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
 
@@ -34,7 +35,7 @@ export default function NewStudioPage() {
     try {
       const res = await api<CreateResp>('/api/v1/admin/studios', {
         method: 'POST',
-        json: { name, slug, brandColor, logoUrl, contactEmail, adminEmail, adminPassword },
+        json: { name, slug, brandColor, logoUrl, contactEmail, adminEmail, adminPassword, socialPlannerEnabled },
       });
       router.push(`/admin/studios/${res.studio.id}`);
       router.refresh();
@@ -149,6 +150,20 @@ export default function NewStudioPage() {
                 onChange={(e) => setContactEmail(e.target.value)}
               />
               <FieldError message={errors.contactEmail} />
+            </div>
+
+            <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/50">
+              <input
+                type="checkbox"
+                id="socialPlannerEnabled"
+                checked={socialPlannerEnabled}
+                onChange={(e) => setSocialPlannerEnabled(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-600 dark:border-slate-600 dark:bg-slate-700"
+              />
+              <div className="space-y-1 leading-none">
+                <Label htmlFor="socialPlannerEnabled" className="cursor-pointer">Enable Social Planner</Label>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Give this studio access to the AI-driven ad creation and schedule management features.</p>
+              </div>
             </div>
           </form>
         </Card>

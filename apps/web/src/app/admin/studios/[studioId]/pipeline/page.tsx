@@ -75,6 +75,15 @@ const COLUMN_CONFIG: Record<LeadStatus, {
     pillText: '#64748b',
     avatarRing: 'rgba(148,163,184,0.25)',
   },
+  paused: {
+    color: '#6366f1',
+    lightBg: 'rgba(238,242,255,0.45)',
+    border: 'rgba(199,210,254,0.40)',
+    glow: 'rgba(99,102,241,0.12)',
+    pill: 'rgba(99,102,241,0.10)',
+    pillText: '#4f46e5',
+    avatarRing: 'rgba(99,102,241,0.25)',
+  },
 };
 
 const AVATAR_PALETTE = [
@@ -117,7 +126,8 @@ export default async function PipelinePage({
   const activeCount =
     (stats.byStatus.new ?? 0) +
     (stats.byStatus.contacted ?? 0) +
-    (stats.byStatus.trial_booked ?? 0);
+    (stats.byStatus.trial_booked ?? 0) +
+    (stats.byStatus.paused ?? 0);
   const memberCount = stats.byStatus.member ?? 0;
   const conversionPct =
     stats.total > 0 ? Math.round((memberCount / stats.total) * 100) : 0;
@@ -184,7 +194,7 @@ export default async function PipelinePage({
         </div>
       ) : (
         <div className="flex-1 overflow-x-auto pb-2">
-          <div className="grid h-full min-w-[1100px] grid-cols-5 gap-4 xl:min-w-0">
+          <div className="grid h-full min-w-[1300px] grid-cols-6 gap-4 xl:min-w-0">
             {LEAD_STATUSES.map((status) => (
               <PipelineColumn
                 key={status}

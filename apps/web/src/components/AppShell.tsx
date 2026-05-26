@@ -16,6 +16,8 @@ import {
   Settings,
   Sparkles,
   X,
+  CreditCard,
+  Database,
 } from 'lucide-react';
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { Button } from '@/components/ui/Button';
@@ -35,10 +37,16 @@ function navItemsFor(me: Me): NavItem[] {
   if (me.role === 'super_admin') {
     return [
       {
+        href: '/admin',
+        label: 'Overview',
+        icon: <Home className="h-[18px] w-[18px]" />,
+        match: (p) => p === '/admin',
+      },
+      {
         href: '/admin/studios',
         label: 'Studios',
         icon: <Building2 className="h-[18px] w-[18px]" />,
-        match: (p) => (p === '/admin/studios' || p.startsWith('/admin/studios/')) && !p.startsWith('/admin/settings'),
+        match: (p) => p === '/admin/studios' || (p.startsWith('/admin/studios/') && !p.includes('/inbox') && !p.includes('/pipeline') && !p.includes('/campaigns') && !p.includes('/leads') && !p.includes('/channels') && !p.includes('/settings')),
       },
       {
         href: '/admin/settings',
@@ -50,15 +58,26 @@ function navItemsFor(me: Me): NavItem[] {
   }
   const sid = me.studioId!;
   const base = `/admin/studios/${sid}`;
-  return [
+  const links: NavItem[] = [
     { href: base,                 label: 'Dashboard', icon: <Home className="h-[18px] w-[18px]" />,           match: (p) => p === base },
     { href: `${base}/inbox`,      label: 'Inbox',     icon: <MessagesSquare className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/inbox`) },
     { href: `${base}/pipeline`,   label: 'Pipeline',  icon: <KanbanSquare className="h-[18px] w-[18px]" />,   match: (p) => p.startsWith(`${base}/pipeline`) },
     { href: `${base}/campaigns`,  label: 'Campaigns', icon: <Megaphone className="h-[18px] w-[18px]" />,      match: (p) => p.startsWith(`${base}/campaigns`) },
     { href: `${base}/leads`,      label: 'Leads',     icon: <Inbox className="h-[18px] w-[18px]" />,          match: (p) => p.startsWith(`${base}/leads`) },
-    { href: `${base}/channels`,   label: 'Channels',  icon: <Plug className="h-[18px] w-[18px]" />,           match: (p) => p.startsWith(`${base}/channels`) },
-    { href: `${base}/settings`,   label: 'Settings',  icon: <Settings className="h-[18px] w-[18px]" />,       match: (p) => p.startsWith(`${base}/settings`) },
   ];
+  
+  if (me.studio?.socialPlannerEnabled) {
+    links.push({ href: `${base}/social-planner`, label: 'Social Planner', icon: <Sparkles className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/social-planner`) });
+  }
+  
+  links.push(
+    { href: `${base}/payments`,   label: 'Payments',  icon: <CreditCard className="h-[18px] w-[18px]" />,     match: (p) => p.startsWith(`${base}/payments`) },
+    { href: `${base}/channels`,   label: 'Channels',  icon: <Plug className="h-[18px] w-[18px]" />,           match: (p) => p.startsWith(`${base}/channels`) },
+    { href: `${base}/knowledge-base`, label: 'Knowledge Base', icon: <Database className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/knowledge-base`) },
+    { href: `${base}/settings`,   label: 'Settings',  icon: <Settings className="h-[18px] w-[18px]" />,       match: (p) => p.startsWith(`${base}/settings`) }
+  );
+  
+  return links;
 }
 
 export function AppShell({ me, children }: { me: Me; children: ReactNode }) {

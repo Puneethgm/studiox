@@ -42,6 +42,7 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Get("/leads/sheets-settings", h.getSheetsSettings)
 	r.Post("/leads/sheets-settings", h.saveSheetsSettings)
 	r.Post("/leads/import", h.importLeads)
+	r.Get("/leads/sources", h.listUniqueSources)
 	r.Get("/leads/{id}", h.getLead)
 	r.Patch("/leads/{id}", h.patchLead)
 }
@@ -61,7 +62,11 @@ func (h *Handler) PublicRoutes(r chi.Router) {
 func (h *Handler) resolveStudioID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	c := identity.MustClaims(r.Context())
 	if c.IsSuper() {
-		pathID, err := uuid.Parse(chi.URLParam(r, "studioId"))
+		studioIDStr := chi.URLParam(r, "studioId")
+		if studioIDStr == "" {
+			return uuid.Nil, true
+		}
+		pathID, err := uuid.Parse(studioIDStr)
 		if err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, "bad_studio_id", "invalid studio id")
 			return uuid.Nil, false
@@ -258,6 +263,37 @@ func (h *Handler) listLeads(w http.ResponseWriter, r *http.Request) {
 			f.Status = &s
 		}
 	}
+	if v := q.Get("statuses"); v != "" {
+		parts := strings.Split(v, ",")
+		for _, p := range parts {
+			s := LeadStatus(p)
+			if s.Valid() {
+				f.Statuses = append(f.Statuses, s)
+			}
+		}
+	}
+	if v := q.Get("maxAttempts"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err == nil {
+			f.MaxAttempts = &n
+		}
+	}
+	if v := q.Get("source"); v != "" {
+		f.Source = v
+	}
+	if v := q.Get("startDate"); v != "" {
+		f.StartDate = v
+	}
+	if v := q.Get("endDate"); v != "" {
+		f.EndDate = v
+	}
+	if v := q.Get("duration"); v != "" {
+		v = strings.TrimSuffix(v, "d")
+		n, err := strconv.Atoi(v)
+		if err == nil {
+			f.DurationDays = n
+		}
+	}
 	if v := q.Get("hotLead"); v != "" {
 		b, err := strconv.ParseBool(v)
 		if err == nil {
@@ -385,6 +421,7 @@ type patchLeadReq struct {
 	TrialAttended  *bool       `json:"trialAttended"`
 	MemberSold     *bool       `json:"memberSold"`
 	MonthlyFee     *float64    `json:"monthlyFee"`
+	Currency       *string     `json:"currency"`
 	Offer          *string     `json:"offer"`
 	FurtherNotes   *string     `json:"furtherNotes"`
 }
@@ -423,6 +460,7 @@ func (h *Handler) patchLead(w http.ResponseWriter, r *http.Request) {
 	trialAttended := current.TrialAttended
 	memberSold := current.MemberSold
 	monthlyFee := current.MonthlyFee
+	currency := current.Currency
 	offer := current.Offer
 	furtherNotes := current.FurtherNotes
 
@@ -459,6 +497,9 @@ func (h *Handler) patchLead(w http.ResponseWriter, r *http.Request) {
 	if req.MonthlyFee != nil {
 		monthlyFee = *req.MonthlyFee
 	}
+	if req.Currency != nil {
+		currency = *req.Currency
+	}
 	if req.Offer != nil {
 		offer = *req.Offer
 	}
@@ -466,7 +507,7 @@ func (h *Handler) patchLead(w http.ResponseWriter, r *http.Request) {
 		furtherNotes = *req.FurtherNotes
 	}
 
-	if err := h.svc.UpdateLead(r.Context(), studioID, id, status, notes, contactMade, hotLead, trialPurchased, firstName, lastName, assignedTo, trialAttended, memberSold, monthlyFee, offer, furtherNotes); err != nil {
+	if err := h.svc.UpdateLead(r.Context(), studioID, id, status, currency, notes, contactMade, hotLead, trialPurchased, firstName, lastName, assignedTo, trialAttended, memberSold, monthlyFee, offer, furtherNotes); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
 		return
 	}
@@ -712,4 +753,17 @@ func (h *Handler) importLeads(w http.ResponseWriter, r *http.Request) {
 		"imported": count,
 		"message":  fmt.Sprintf("Successfully imported %d leads", count),
 	})
+}
+
+func (h *Handler) listUniqueSources(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := h.resolveStudioID(w, r)
+	if !ok {
+		return
+	}
+	sources, err := h.svc.GetUniqueSources(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, sources)
 }

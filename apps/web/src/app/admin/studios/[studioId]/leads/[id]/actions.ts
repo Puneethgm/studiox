@@ -29,6 +29,7 @@ export async function updateLeadStatus(
     trialAttended?: boolean;
     memberSold?: boolean;
     monthlyFee?: number;
+    currency?: string;
     offer?: string;
     furtherNotes?: string;
   },

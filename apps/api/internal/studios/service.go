@@ -31,8 +31,9 @@ type CreateStudioInput struct {
 	BrandColor    string
 	LogoURL       string
 	ContactEmail  string
-	AdminEmail    string
-	AdminPassword string
+	AdminEmail           string
+	AdminPassword        string
+	SocialPlannerEnabled bool
 }
 
 type CreateStudioResult struct {
@@ -90,8 +91,9 @@ func (s *Service) CreateStudioWithAdmin(ctx context.Context, in CreateStudioInpu
 		Name:         in.Name,
 		BrandColor:   in.BrandColor,
 		LogoURL:      in.LogoURL,
-		ContactEmail: in.ContactEmail,
-		Active:       true,
+		ContactEmail:         in.ContactEmail,
+		Active:               true,
+		SocialPlannerEnabled: in.SocialPlannerEnabled,
 	}
 	if err := s.repo.Create(ctx, tx, studio); err != nil {
 		if errors.Is(err, ErrSlugTaken) {
@@ -151,6 +153,9 @@ type UpdateStudioInput struct {
 	GeminiAPIKey         string             `json:"geminiApiKey"`
 	MetaAppID            string             `json:"metaAppId"`
 	MetaAppSecret        string             `json:"metaAppSecret"`
+	SocialPlannerEnabled bool               `json:"socialPlannerEnabled"`
+	KnowledgeBase        string             `json:"knowledgeBase"`
+	KnowledgeBaseFiles   []KnowledgeBaseFile `json:"knowledgeBaseFiles"`
 }
 
 func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput) (map[string]string, error) {
@@ -177,7 +182,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput
 	if len(errs) > 0 {
 		return errs, nil
 	}
-	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.Active, in.AvailabilitySlots, in.AvailabilityTimezone, in.GeminiAPIKey, in.MetaAppID, in.MetaAppSecret); err != nil {
+	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.Active, in.AvailabilitySlots, in.AvailabilityTimezone, in.GeminiAPIKey, in.MetaAppID, in.MetaAppSecret, in.SocialPlannerEnabled, in.KnowledgeBase, in.KnowledgeBaseFiles); err != nil {
 		return nil, err
 	}
 	return nil, nil
@@ -223,4 +228,8 @@ func isPgUnique(err error) bool {
 		return p.SQLState() == "23505"
 	}
 	return false
+}
+
+func (s *Service) UpdatePayments(ctx context.Context, id uuid.UUID, stripeAccountId, stripeSecretKey, stripePublishableKey, subscriptionTier string) error {
+	return s.repo.UpdatePayments(ctx, id, stripeAccountId, stripeSecretKey, stripePublishableKey, subscriptionTier)
 }

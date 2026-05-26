@@ -10,10 +10,13 @@ interface ListResp {
 
 export default async function InboxPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ studioId: string }>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
   const { studioId } = await params;
+  const { unresponded } = (await searchParams) || {};
 
   const data = await serverFetch<ListResp>(
     `/api/v1/studios/${studioId}/messaging/conversations?limit=50`,
@@ -58,7 +61,7 @@ export default async function InboxPage({
         </div>
       </div>
 
-      <InboxLive studioId={studioId} initialConversations={data.conversations} studio={studio} />
+      <InboxLive studioId={studioId} initialConversations={data.conversations} studio={studio} initialUnresponded={unresponded === 'true'} />
     </div>
   );
 }

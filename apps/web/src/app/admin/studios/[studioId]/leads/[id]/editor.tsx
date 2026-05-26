@@ -24,6 +24,7 @@ export function LeadEditor({ studioId, lead }: { studioId: string; lead: Lead })
   const [trialAttended, setTrialAttended] = useState(lead.trialAttended || false);
   const [memberSold, setMemberSold] = useState(lead.memberSold || false);
   const [monthlyFee, setMonthlyFee] = useState(lead.monthlyFee || 0);
+  const [currency, setCurrency] = useState(lead.currency || 'SGD');
   const [offer, setOffer] = useState(lead.offer || '');
   const [furtherNotes, setFurtherNotes] = useState(lead.furtherNotes || '');
   const [saving, setSaving] = useState(false);
@@ -41,6 +42,7 @@ export function LeadEditor({ studioId, lead }: { studioId: string; lead: Lead })
     trialAttended !== (lead.trialAttended || false) ||
     memberSold !== (lead.memberSold || false) ||
     monthlyFee !== (lead.monthlyFee || 0) ||
+    currency !== (lead.currency || 'SGD') ||
     offer !== (lead.offer || '') ||
     furtherNotes !== (lead.furtherNotes || '');
 
@@ -60,6 +62,7 @@ export function LeadEditor({ studioId, lead }: { studioId: string; lead: Lead })
         trialAttended,
         memberSold,
         monthlyFee,
+        currency,
         offer,
         furtherNotes,
       });
@@ -136,14 +139,26 @@ export function LeadEditor({ studioId, lead }: { studioId: string; lead: Lead })
             </Select>
           </div>
           <div>
-            <Label htmlFor="monthlyFee">Monthly Fee ($)</Label>
-            <Input
-              id="monthlyFee"
-              type="number"
-              value={monthlyFee === 0 ? '' : monthlyFee}
-              onChange={(e) => setMonthlyFee(Number(e.target.value))}
-              placeholder="Membership fee"
-            />
+            <Label htmlFor="monthlyFee">Monthly Fee</Label>
+            <div className="flex gap-2">
+              <Select
+                id="currency"
+                className="w-24 rounded-2xl border border-zinc-200/50 bg-white/50 py-2 focus:border-brand-500 focus:outline-none dark:border-zinc-800/50 dark:bg-zinc-950/50 text-xs font-bold"
+                value={currency}
+                onChange={(e) => setCurrency(e.target.value)}
+              >
+                <option value="SGD">SGD (S$)</option>
+                <option value="INR">INR (₹)</option>
+              </Select>
+              <Input
+                id="monthlyFee"
+                type="number"
+                value={monthlyFee === 0 ? '' : monthlyFee}
+                onChange={(e) => setMonthlyFee(Number(e.target.value))}
+                placeholder="Membership fee"
+                className="flex-1"
+              />
+            </div>
           </div>
         </div>
 

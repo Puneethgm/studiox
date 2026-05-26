@@ -87,15 +87,18 @@ export function InboxLive({
   studioId,
   initialConversations,
   studio,
+  initialUnresponded = false,
 }: {
   studioId: string;
   initialConversations: Conversation[];
   studio?: Studio;
+  initialUnresponded?: boolean;
 }) {
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [currentTab, setCurrentTab] = useState<InboxTab>('conversations');
   const [activeChannel, setActiveChannel] = useState<ChannelKind>('whatsapp_meta');
+  const [unrespondedOnly, setUnrespondedOnly] = useState(initialUnresponded);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -176,9 +179,15 @@ export function InboxLive({
 
   useEffect(() => {
     if (mounted) {
-      setConversations(initialConversations.filter(c => c.channelKind === activeChannel));
+      let filtered = initialConversations;
+      if (unrespondedOnly) {
+        filtered = filtered.filter(c => c.status === 'open' && c.lastMessageDirection === 'inbound');
+      } else {
+        filtered = filtered.filter(c => c.channelKind === activeChannel);
+      }
+      setConversations(filtered);
     }
-  }, [mounted, initialConversations, activeChannel]);
+  }, [mounted, initialConversations, activeChannel, unrespondedOnly]);
 
   useEffect(() => {
     if (mounted && !selectedId && conversations.length > 0 && conversations[0]) {
@@ -196,10 +205,16 @@ export function InboxLive({
 
   const refreshConversations = useCallback(async () => {
     try {
-      const res = await api<{ conversations: Conversation[] }>(
-        `/api/v1/studios/${studioId}/messaging/conversations?limit=50&channelKind=${activeChannel}`,
-      );
-      setConversations(res.conversations);
+      let url = `/api/v1/studios/${studioId}/messaging/conversations?limit=50`;
+      if (!unrespondedOnly) {
+        url += `&channelKind=${activeChannel}`;
+      }
+      const res = await api<{ conversations: Conversation[] }>(url);
+      let filtered = res.conversations;
+      if (unrespondedOnly) {
+        filtered = filtered.filter(c => c.status === 'open' && c.lastMessageDirection === 'inbound');
+      }
+      setConversations(filtered);
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         handleAuthError();
@@ -207,7 +222,7 @@ export function InboxLive({
       }
       throw error;
     }
-  }, [studioId, activeChannel, handleAuthError]);
+  }, [studioId, activeChannel, unrespondedOnly, handleAuthError]);
 
   const refreshMessages = useCallback(
     async (convId: string) => {
@@ -523,7 +538,7 @@ export function InboxLive({
 
   useEffect(() => {
     refreshConversations();
-  }, [activeChannel, refreshConversations]);
+  }, [activeChannel, unrespondedOnly, refreshConversations]);
 
   // Handler calls for Templates
   async function handleCreateTemplate(e: React.FormEvent) {
@@ -795,6 +810,28 @@ export function InboxLive({
                   ))
                 ) : (
                   <div className="flex-1 h-8 bg-white/20 animate-pulse rounded-xl dark:bg-white/5" />
+                )}
+              </div>
+
+              {/* Filter Row */}
+              <div className="px-4 pb-3 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => setUnrespondedOnly(!unrespondedOnly)}
+                  className={cn(
+                    "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-black uppercase tracking-wider transition-all duration-300",
+                    unrespondedOnly
+                      ? "bg-rose-500 text-white shadow-md shadow-rose-500/20"
+                      : "bg-white/30 text-zinc-500 hover:bg-white/50 hover:text-zinc-700 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/10"
+                  )}
+                >
+                  <span className={cn("h-1.5 w-1.5 rounded-full animate-pulse", unrespondedOnly ? "bg-white" : "bg-rose-500")} />
+                  Awaiting Reply
+                </button>
+                {unrespondedOnly && (
+                  <span className="text-[9px] font-bold text-rose-500 dark:text-rose-400">
+                    Showing all channels
+                  </span>
                 )}
               </div>
 

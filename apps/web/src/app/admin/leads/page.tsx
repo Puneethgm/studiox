@@ -1,15 +1,13 @@
 import Link from 'next/link';
-import { Inbox, Users, TrendingUp, Database } from 'lucide-react';
+import { Inbox, Users, TrendingUp } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Pagination } from '@/components/ui/Pagination';
-import { Button } from '@/components/ui/Button';
 import { serverFetch } from '@/lib/auth';
 import { formatDateTime } from '@/lib/datetime';
-import type { Lead, LeadStatus, Campaign } from '@/lib/types';
+import type { Lead, LeadStatus } from '@/lib/types';
 import { LEAD_STATUSES, LEAD_STATUS_LABELS } from '@/lib/types';
-import { LeadFilters } from './LeadFilters';
-import { ImportLeadsButton } from './ImportLeadsButton';
+import { LeadFilters } from '../studios/[studioId]/leads/LeadFilters';
 
 interface ListResp {
   leads: Lead[];
@@ -54,19 +52,17 @@ const avatarGradients = [
   'from-amber-500 to-orange-600',
   'from-rose-500 to-pink-600',
 ];
+
 function gradientForName(name: string) {
   const code = name ? name.charCodeAt(0) : 65;
   return avatarGradients[code % avatarGradients.length];
 }
 
-export default async function LeadsPage({
-  params,
+export default async function GlobalLeadsPage({
   searchParams,
 }: {
-  params: Promise<{ studioId: string }>;
   searchParams: Promise<SearchParams>;
 }) {
-  const { studioId } = await params;
   const sp = await searchParams;
   const page = Math.max(1, Number(sp.page) || 1);
   const offset = (page - 1) * PAGE_SIZE;
@@ -82,14 +78,11 @@ export default async function LeadsPage({
   qs.set('limit', String(PAGE_SIZE));
   qs.set('offset', String(offset));
 
-  const data = await serverFetch<ListResp>(`/api/v1/studios/${studioId}/leads?${qs.toString()}`);
-  const campaignsResp = await serverFetch<{ campaigns: Campaign[] }>(`/api/v1/studios/${studioId}/campaigns`);
-  const campaigns = campaignsResp.campaigns || [];
-  const sources = (await serverFetch<string[]>(`/api/v1/studios/${studioId}/leads/sources`).catch(() => [])) || [];
+  const data = await serverFetch<ListResp>(`/api/v1/admin/leads?${qs.toString()}`);
+  const sources = await serverFetch<string[]>(`/api/v1/admin/leads/sources`).catch(() => []);
 
   return (
     <div className="space-y-5 pb-10">
-
       {/* Header */}
       <div
         className="relative overflow-hidden rounded-[24px] border border-white/30 bg-white/30 px-6 py-4 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30"
@@ -101,8 +94,8 @@ export default async function LeadsPage({
               <Users className="h-5 w-5" />
             </div>
             <div>
-              <h1 className="text-lg font-black tracking-tight text-zinc-900 dark:text-white">Leads</h1>
-              <p className="text-[11px] font-semibold text-zinc-400">{data.total} submissions captured</p>
+              <h1 className="text-lg font-black tracking-tight text-zinc-900 dark:text-white">Global Leads</h1>
+              <p className="text-[11px] font-semibold text-zinc-400">{data.total} submissions captured across all studios</p>
             </div>
           </div>
           
@@ -111,18 +104,6 @@ export default async function LeadsPage({
               <TrendingUp className="h-3 w-3" />
               Live
             </div>
-
-            <ImportLeadsButton studioId={studioId} campaigns={campaigns} />
-
-            <Link href={`/admin/studios/${studioId}/settings`}>
-              <Button
-                variant="ghost"
-                className="flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-bold text-zinc-700 hover:bg-white/20 dark:text-zinc-200 dark:hover:bg-neutral-800/50"
-              >
-                <Database className="h-4 w-4" />
-                Sheets Connection
-              </Button>
-            </Link>
           </div>
         </div>
       </div>
@@ -147,7 +128,7 @@ export default async function LeadsPage({
           <EmptyState
             icon={<Inbox className="h-6 w-6" />}
             title="No leads match these filters"
-            description="Try changing the status filter or share a campaign link to start collecting submissions."
+            description="Try changing the status filter or select a different time range."
           />
         </div>
       ) : (
@@ -157,12 +138,12 @@ export default async function LeadsPage({
             style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 4px 16px rgba(0,0,0,0.04)' }}
           >
             {/* Column headers */}
-            <div className="grid grid-cols-[1fr,1.1fr,90px,80px,110px,110px,100px,120px] items-center gap-4 border-b border-white/20 bg-white/20 px-5 py-3 dark:border-white/5 dark:bg-white/5">
-              <span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Name</span>
+            <div className="grid grid-cols-[1.2fr,1.1fr,1fr,90px,80px,110px,100px,120px] items-center gap-4 border-b border-white/20 bg-white/20 px-5 py-3 dark:border-white/5 dark:bg-white/5">
+              <span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Name / Studio</span>
               <span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Contact</span>
+              <span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Campaign</span>
               <span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Source</span>
               <span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Attempts</span>
-              <span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Last Msg</span>
               <span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Flags</span>
               <span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Status</span>
               <span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400 text-right">Date</span>
@@ -172,23 +153,33 @@ export default async function LeadsPage({
               {data.leads.map((l) => (
                 <li key={l.id}>
                   <Link
-                    href={`/admin/studios/${studioId}/leads/${l.id}`}
-                    className="group grid grid-cols-[1fr,1.1fr,90px,80px,110px,110px,100px,120px] items-center gap-4 px-5 py-3.5 transition-all hover:bg-white/30 dark:hover:bg-white/5"
+                    href={`/admin/studios/${l.studioId}/leads/${l.id}`}
+                    className="group grid grid-cols-[1.2fr,1.1fr,1fr,90px,80px,110px,100px,120px] items-center gap-4 px-5 py-3.5 transition-all hover:bg-white/30 dark:hover:bg-white/5"
                   >
-                    {/* Name */}
+                    {/* Name / Studio */}
                     <div className="flex min-w-0 items-center gap-3">
                       <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-2xl bg-gradient-to-br ${gradientForName(l.name)} text-sm font-black text-white shadow-md`}>
                         {l.name ? l.name.charAt(0).toUpperCase() : 'L'}
                       </div>
-                      <span className="truncate text-sm font-bold text-zinc-900 group-hover:text-brand-600 dark:text-zinc-100 dark:group-hover:text-brand-400">
-                        {l.name || 'Anonymous Lead'}
-                      </span>
+                      <div className="min-w-0">
+                        <span className="truncate block text-sm font-bold text-zinc-900 group-hover:text-brand-600 dark:text-zinc-100 dark:group-hover:text-brand-400">
+                          {l.name || 'Anonymous Lead'}
+                        </span>
+                        <span className="text-[10px] font-semibold text-zinc-400 block truncate">
+                          {l.studioName || 'Unknown Studio'}
+                        </span>
+                      </div>
                     </div>
 
                     {/* Contact */}
                     <div className="min-w-0">
                       <div className="truncate text-sm font-semibold text-zinc-700 dark:text-zinc-300">{l.email || '-'}</div>
                       <div className="truncate text-[11px] text-zinc-400">{l.phone || '-'}</div>
+                    </div>
+
+                    {/* Campaign */}
+                    <div className="truncate text-xs font-semibold text-zinc-600 dark:text-zinc-400">
+                      {l.campaignName || '-'}
                     </div>
 
                     {/* Source */}
@@ -198,11 +189,6 @@ export default async function LeadsPage({
 
                     {/* Attempts */}
                     <div className="text-sm font-medium text-zinc-600 dark:text-zinc-300 pl-4">{l.contactAttempts || 0}</div>
-
-                    {/* Last Msg */}
-                    <div className="text-xs text-zinc-500 dark:text-zinc-400">
-                      {l.lastContactedAt ? formatDateTime(l.lastContactedAt) : 'Never'}
-                    </div>
 
                     {/* Flags */}
                     <div className="flex flex-wrap gap-1">

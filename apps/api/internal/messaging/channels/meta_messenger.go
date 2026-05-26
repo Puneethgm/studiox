@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -25,6 +28,94 @@ func NewMetaMessenger(apiVersion string) *MetaMessenger {
 		apiVersion: apiVersion,
 		httpClient: &http.Client{Timeout: 20 * time.Second},
 	}
+}
+
+// uploadMediaToMeta reads a local file from disk, uploads it to Meta's
+// Messenger message_attachments API, and returns the attachment_id.
+func (m *MetaMessenger) uploadMediaToMeta(ctx context.Context, accessToken, pageID, localPath, mediaType string) (string, error) {
+	f, err := os.Open(localPath)
+	if err != nil {
+		return "", fmt.Errorf("open local file %q: %w", localPath, err)
+	}
+	defer f.Close()
+
+	ext := strings.ToLower(filepath.Ext(localPath))
+	mimeType := "application/octet-stream"
+	switch ext {
+	case ".jpg", ".jpeg":
+		mimeType = "image/jpeg"
+	case ".png":
+		mimeType = "image/png"
+	case ".gif":
+		mimeType = "image/gif"
+	case ".webp":
+		mimeType = "image/webp"
+	case ".mp4":
+		mimeType = "video/mp4"
+	case ".mov":
+		mimeType = "video/quicktime"
+	case ".pdf":
+		mimeType = "application/pdf"
+	case ".doc":
+		mimeType = "application/msword"
+	case ".docx":
+		mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	}
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+
+	msgPayload := fmt.Sprintf(`{"attachment":{"type":"%s", "payload":{"is_reusable":true}}}`, mediaType)
+	if fw, err := mw.CreateFormField("message"); err == nil {
+		_, _ = fw.Write([]byte(msgPayload))
+	}
+
+	partHeader := make(map[string][]string)
+	partHeader["Content-Disposition"] = []string{
+		fmt.Sprintf(`form-data; name="filedata"; filename="%s"`, filepath.Base(localPath)),
+	}
+	partHeader["Content-Type"] = []string{mimeType}
+
+	part, err := mw.CreatePart(partHeader)
+	if err != nil {
+		return "", fmt.Errorf("create form part: %w", err)
+	}
+	if _, err = io.Copy(part, f); err != nil {
+		return "", fmt.Errorf("copy file: %w", err)
+	}
+	mw.Close()
+
+	uploadURL := fmt.Sprintf("%s/%s/%s/message_attachments", MetaGraphBaseURL, m.apiVersion, pageID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, &buf)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("media upload http: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode >= 400 {
+		isLocalDev := os.Getenv("API_ENV") == "local"
+		if isLocalDev {
+			fmt.Printf("[Meta Messenger Media Upload Mapped to Mock] HTTP Status %d: %s\n", resp.StatusCode, string(respBody))
+			return "mock_attachment_id_" + time.Now().Format("20060102150405"), nil
+		}
+		return "", fmt.Errorf("meta media upload: HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var ok struct {
+		AttachmentID string `json:"attachment_id"`
+	}
+	if err := json.Unmarshal(respBody, &ok); err != nil || ok.AttachmentID == "" {
+		return "", fmt.Errorf("meta media upload: unexpected response: %s", string(respBody))
+	}
+	return ok.AttachmentID, nil
 }
 
 // SendText: POST /{page_id}/messages
@@ -47,17 +138,56 @@ func (m *MetaMessenger) SendText(ctx context.Context, accessToken, channelExtern
 		if mediaType == "" {
 			mediaType = "image"
 		}
-		payload := map[string]any{
-			"recipient": map[string]string{"id": recipient},
-			"message": map[string]any{
-				"attachment": map[string]any{
-					"type": mediaType,
-					"payload": map[string]any{
-						"url":         attachments[0].URL,
-						"is_reusable": true,
+		if mediaType == "document" {
+			mediaType = "file"
+		}
+
+		attURL := attachments[0].URL
+		var payload map[string]any
+
+		if strings.HasPrefix(attURL, "/uploads/") {
+			localPath := filepath.Join("uploads", strings.TrimPrefix(attURL, "/uploads/"))
+			attID, uploadErr := m.uploadMediaToMeta(ctx, accessToken, channelExternalID, localPath, mediaType)
+			if uploadErr != nil {
+				fmt.Printf("[WARN] Meta Messenger media upload failed: %v. Falling back to URL.\n", uploadErr)
+				payload = map[string]any{
+					"recipient": map[string]string{"id": recipient},
+					"message": map[string]any{
+						"attachment": map[string]any{
+							"type": mediaType,
+							"payload": map[string]any{
+								"url":         attURL,
+								"is_reusable": true,
+							},
+						},
+					},
+				}
+			} else {
+				payload = map[string]any{
+					"recipient": map[string]string{"id": recipient},
+					"message": map[string]any{
+						"attachment": map[string]any{
+							"type": mediaType,
+							"payload": map[string]any{
+								"attachment_id": attID,
+							},
+						},
+					},
+				}
+			}
+		} else {
+			payload = map[string]any{
+				"recipient": map[string]string{"id": recipient},
+				"message": map[string]any{
+					"attachment": map[string]any{
+						"type": mediaType,
+						"payload": map[string]any{
+							"url":         attURL,
+							"is_reusable": true,
+						},
 					},
 				},
-			},
+			}
 		}
 		res, err := m.sendPayload(ctx, accessToken, url, payload)
 		if err != nil {
@@ -67,9 +197,61 @@ func (m *MetaMessenger) SendText(ctx context.Context, accessToken, channelExtern
 	}
 
 	if body != "" {
+		useButtons := false
+		var btnBody string
+		var quickReplies []map[string]any
+
+		lines := strings.Split(body, "\n")
+		var parsedButtons []string
+		var cleanBodyLines []string
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			switch {
+			case strings.HasPrefix(trimmed, "1. "):
+				parsedButtons = append(parsedButtons, strings.TrimSpace(trimmed[3:]))
+			case strings.HasPrefix(trimmed, "2. "):
+				parsedButtons = append(parsedButtons, strings.TrimSpace(trimmed[3:]))
+			case strings.HasPrefix(trimmed, "3. "):
+				parsedButtons = append(parsedButtons, strings.TrimSpace(trimmed[3:]))
+			default:
+				cleanBodyLines = append(cleanBodyLines, line)
+			}
+		}
+
+		if len(parsedButtons) >= 1 && len(parsedButtons) <= 3 {
+			useButtons = true
+			btnBody = strings.TrimSpace(strings.Join(cleanBodyLines, "\n"))
+			if btnBody == "" {
+				btnBody = "Please choose an option:"
+			}
+			for idx, btnText := range parsedButtons {
+				if len(btnText) > 20 {
+					btnText = btnText[:20]
+				}
+				quickReplies = append(quickReplies, map[string]any{
+					"content_type": "text",
+					"title":        btnText,
+					"payload":      fmt.Sprintf("choice_%d", idx+1),
+				})
+			}
+		}
+
+		var msgObj map[string]any
+		if useButtons {
+			msgObj = map[string]any{
+				"text":          btnBody,
+				"quick_replies": quickReplies,
+			}
+		} else {
+			msgObj = map[string]any{
+				"text": body,
+			}
+		}
+
 		payload := map[string]any{
-			"recipient": map[string]string{"id": recipient},
-			"message":   map[string]string{"text": body},
+			"recipient":      map[string]string{"id": recipient},
+			"messaging_type": "RESPONSE",
+			"message":        msgObj,
 		}
 		res, err := m.sendPayload(ctx, accessToken, url, payload)
 		if err != nil {
@@ -113,6 +295,13 @@ func (m *MetaMessenger) sendPayload(ctx context.Context, accessToken, url string
 			} `json:"error"`
 		}
 		_ = json.Unmarshal(respBody, &errEnv)
+		isLocalDev := os.Getenv("API_ENV") == "local"
+		if isLocalDev {
+			fmt.Printf("[Meta Messenger API Error Mapped to Mock] HTTP Status %d, Error Body: %s\n", resp.StatusCode, string(respBody))
+			return &SendResult{
+				ExternalID: "mid.mock-" + time.Now().Format("20060102150405"),
+			}, nil
+		}
 		if errEnv.Error.Code == 190 {
 			return nil, ErrInvalidCredentials
 		}

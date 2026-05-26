@@ -32,11 +32,12 @@ const (
 	StatusTrialBooked LeadStatus = "trial_booked"
 	StatusMember      LeadStatus = "member"
 	StatusDropped     LeadStatus = "dropped"
+	StatusPaused      LeadStatus = "paused"
 )
 
 func (s LeadStatus) Valid() bool {
 	switch s {
-	case StatusNew, StatusContacted, StatusTrialBooked, StatusMember, StatusDropped:
+	case StatusNew, StatusContacted, StatusTrialBooked, StatusMember, StatusDropped, StatusPaused:
 		return true
 	}
 	return false
@@ -59,6 +60,7 @@ type Lead struct {
 	Goals           string     `json:"goals"`
 	Source          string     `json:"source"`
 	Status          LeadStatus `json:"status"`
+	Currency        string     `json:"currency"`
 	Notes           string     `json:"notes"`
 	ContactAttempts int        `json:"contactAttempts"`
 	LastContactedAt *time.Time `json:"lastContactedAt,omitempty"`
@@ -102,7 +104,10 @@ type AnalyticsSummary struct {
 	TrialBookedLeads           int                 `json:"trialBookedLeads"`
 	MemberLeads                int                 `json:"memberLeads"`
 	DroppedLeads               int                 `json:"droppedLeads"`
+	PausedLeads                int                 `json:"pausedLeads"`
 	TrialToMemberRate          float64             `json:"trialToMemberRate"`
+	DroppedRate                float64             `json:"droppedRate"`
+	PausedRate                 float64             `json:"pausedRate"`
 	FollowupsRequired          int                 `json:"followupsRequired"`
 	UnrespondedMessages        int                 `json:"unrespondedMessages"`
 	AvgResponseTimeLapseSecs   float64             `json:"avgResponseTimeLapseSecs"`

@@ -1,0 +1,4 @@
+# Ignore all uploaded files — these are runtime artifacts, not source code.
+# The uploads/ directory itself is tracked so the folder exists in the image build.
+*
+!.gitignore

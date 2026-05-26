@@ -170,7 +170,7 @@ func (m *MetaWhatsApp) SendText(ctx context.Context, accessToken, channelExterna
 		}
 	}
 
-	if len(parsedButtons) >= 2 && len(parsedButtons) <= 3 {
+	if len(parsedButtons) >= 1 && len(parsedButtons) <= 3 {
 		useButtons = true
 		btnBody = strings.TrimSpace(strings.Join(cleanBodyLines, "\n"))
 		if btnBody == "" {

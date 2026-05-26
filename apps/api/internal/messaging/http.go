@@ -960,7 +960,8 @@ func (h *Handler) uploadMedia(w http.ResponseWriter, r *http.Request) {
 	allowed := map[string]bool{
 		".jpg": true, ".jpeg": true, ".png": true, ".gif": true,
 		".webp": true, ".mp4": true, ".mov": true, ".pdf": true,
-		".doc": true, ".docx": true,
+		".doc": true, ".docx": true, ".txt": true, ".csv": true,
+		".json": true, ".md": true,
 	}
 	if !allowed[strings.ToLower(ext)] {
 		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "unsupported file type")

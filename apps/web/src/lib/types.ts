@@ -6,6 +6,7 @@ export interface StudioBrand {
   brandColor: string;
   logoUrl: string;
   active: boolean;
+  socialPlannerEnabled?: boolean;
 }
 
 export interface Me {
@@ -33,6 +34,8 @@ export interface Studio {
   metaAppSecret?: string;
   campaignCount?: number;
   leadCount?: number;
+  knowledgeBase?: string;
+  knowledgeBaseFiles?: { name: string; url: string; text: string }[];
 }
 
 export interface Campaign {
@@ -52,7 +55,7 @@ export interface Campaign {
   shareUrl: string;
 }
 
-export type LeadStatus = 'new' | 'contacted' | 'trial_booked' | 'member' | 'dropped';
+export type LeadStatus = 'new' | 'contacted' | 'trial_booked' | 'member' | 'dropped' | 'paused';
 
 export const LEAD_STATUSES: LeadStatus[] = [
   'new',
@@ -60,6 +63,7 @@ export const LEAD_STATUSES: LeadStatus[] = [
   'trial_booked',
   'member',
   'dropped',
+  'paused',
 ];
 
 export const LEAD_STATUS_LABELS: Record<LeadStatus, string> = {
@@ -68,6 +72,7 @@ export const LEAD_STATUS_LABELS: Record<LeadStatus, string> = {
   trial_booked: 'Trial booked',
   member: 'Member',
   dropped: 'Dropped',
+  paused: 'Paused',
 };
 
 export interface Lead {
@@ -87,6 +92,7 @@ export interface Lead {
   goals: string;
   source: string;
   status: LeadStatus;
+  currency: string;
   notes: string;
   contactAttempts: number;
   lastContactedAt?: string;
@@ -211,7 +217,10 @@ export interface AnalyticsSummary {
   trialBookedLeads: number;
   memberLeads: number;
   droppedLeads: number;
+  pausedLeads: number;
   trialToMemberRate: number;
+  droppedRate: number;
+  pausedRate: number;
   followupsRequired: number;
   unrespondedMessages: number;
   avgResponseTimeLapseSecs: number;

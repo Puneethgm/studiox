@@ -29,6 +29,7 @@ export default async function StudioOverviewPage({
       trial_booked: stats.byStatus.trial_booked ?? 0,
       member: stats.byStatus.member ?? 0,
       dropped: stats.byStatus.dropped ?? 0,
+      paused: stats.byStatus.paused ?? 0,
     }
   };
 

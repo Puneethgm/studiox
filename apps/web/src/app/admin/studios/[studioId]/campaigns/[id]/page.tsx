@@ -16,6 +16,7 @@ const statusTone = {
   trial_booked: 'warning',
   member: 'success',
   dropped: 'neutral',
+  paused: 'brand',
 } as const;
 
 export default async function CampaignDetailPage({

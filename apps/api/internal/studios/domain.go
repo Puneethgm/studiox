@@ -12,6 +12,12 @@ type AvailabilitySlot struct {
 	Times []string `json:"times"`
 }
 
+type KnowledgeBaseFile struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+	Text string `json:"text"`
+}
+
 type Studio struct {
 	ID           uuid.UUID `json:"id"`
 	Slug         string    `json:"slug"`
@@ -27,6 +33,13 @@ type Studio struct {
 	GeminiAPIKey string    `json:"geminiApiKey"`
 	MetaAppID    string    `json:"metaAppId"`
 	MetaAppSecret string   `json:"metaAppSecret"`
+	StripeAccountID string `json:"stripeAccountId"`
+	StripeSecretKey string `json:"stripeSecretKey"`
+	StripePublishableKey string `json:"stripePublishableKey"`
+	SubscriptionTier string `json:"subscriptionTier"`
+	SocialPlannerEnabled bool                `json:"socialPlannerEnabled"`
+	KnowledgeBase        string              `json:"knowledgeBase"`
+	KnowledgeBaseFiles   []KnowledgeBaseFile `json:"knowledgeBaseFiles"`
 
 	// Optional summary fields used by list endpoints.
 	CampaignCount int `json:"campaignCount,omitempty"`

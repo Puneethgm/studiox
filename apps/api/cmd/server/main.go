@@ -64,10 +64,11 @@ func main() {
 		}
 		return &identity.StudioBrand{
 			Slug:       s.Slug,
-			Name:       s.Name,
-			BrandColor: s.BrandColor,
-			LogoURL:    s.LogoURL,
-			Active:     s.Active,
+			Name:                 s.Name,
+			BrandColor:           s.BrandColor,
+			LogoURL:              s.LogoURL,
+			Active:               s.Active,
+			SocialPlannerEnabled: s.SocialPlannerEnabled,
 		}, nil
 	})
 	identityHandler := identity.NewHandler(identityRepo, tokens, cfg.Cookie, brandLookup)
@@ -168,7 +169,9 @@ func main() {
 
 			// Super-admin only: studio CRUD + create-with-admin
 			r.Route("/admin", func(r chi.Router) {
+				r.Use(identity.RequireRole(identity.RoleSuperAdmin))
 				studiosHandler.AdminRoutes(r)
+				leadsHandler.AdminRoutes(r)
 			})
 
 			// Any authenticated user: read/update OWN studio (studio_admin) or
@@ -185,6 +188,9 @@ func main() {
 			r.Route("/studios/{studioId}", func(r chi.Router) {
 				r.Use(studiosHandler.RequireActiveStudio)
 				leadsHandler.AdminRoutes(r)
+				r.Get("/social-posts", studiosHandler.ListSocialPosts)
+				r.Post("/social-posts", studiosHandler.CreateSocialPost)
+				r.Delete("/social-posts/{postId}", studiosHandler.DeleteSocialPost)
 				r.Route("/messaging", func(r chi.Router) {
 					msgHandler.AdminRoutes(r)
 				})

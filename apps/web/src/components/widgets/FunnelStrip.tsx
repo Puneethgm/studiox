@@ -17,12 +17,13 @@ export interface FunnelStripProps {
 }
 
 // Order matters: visual top-to-bottom of the funnel.
-const ORDER: LeadStatus[] = ['new', 'contacted', 'trial_booked', 'member', 'dropped'];
+const ORDER: LeadStatus[] = ['new', 'contacted', 'trial_booked', 'paused', 'member', 'dropped'];
 
 const COLORS: Record<LeadStatus, string> = {
   new:          '#0ea5e9', // sky
   contacted:    'var(--brand, #7c3aed)',
   trial_booked: '#f59e0b', // amber
+  paused:       '#6366f1', // indigo
   member:       '#10b981', // emerald
   dropped:      '#94a3b8', // slate
 };
@@ -31,6 +32,7 @@ const BAR_GRADIENTS: Record<LeadStatus, string> = {
   new:          'linear-gradient(90deg, #0ea5e9, #38bdf8)',
   contacted:    'linear-gradient(90deg, var(--brand, #7c3aed), #a78bfa)',
   trial_booked: 'linear-gradient(90deg, #f59e0b, #fbbf24)',
+  paused:       'linear-gradient(90deg, #6366f1, #818cf8)',
   member:       'linear-gradient(90deg, #10b981, #34d399)',
   dropped:      'linear-gradient(90deg, #94a3b8, #cbd5e1)',
 };

@@ -1,9 +1,13 @@
 package messaging
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
@@ -34,8 +38,9 @@ func NewAIWorker(bus Bus, msgRepo *Repo, msgSvc *Service, studiosRepo *studios.R
 
 func (w *AIWorker) Run(ctx context.Context) {
 	if w.claude == nil {
-		w.log.Info("claude not configured; ai worker disabled")
-		return
+		w.log.Info("claude not configured; ai worker will run using studio-configured Gemini API keys where available")
+	} else {
+		w.log.Info("claude configured; starting ai worker")
 	}
 	w.log.Info("ai worker started")
 	t := time.NewTicker(aiResyncInterval)
@@ -181,18 +186,38 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		}
 	}
 
+	// Get studio to access knowledge base and timezone
+	studio, err := w.studiosRepo.GetByID(ctx, studioID)
+	if err != nil {
+		return fmt.Errorf("fetch studio for ai context: %w", err)
+	}
+
 	// Analyze sentiment and keywords
 	sentiment, confidence, keywords := w.analyzeSentiment(msg.Body)
 	w.log.Debug("sentiment analyzed", "message_id", msg.ID, "sentiment", sentiment, "confidence", confidence, "keywords", keywords)
 
 	// Generate AI response with context
-	prompt := w.buildPrompt(msg, conv, lead, sentiment, keywords)
-	resp, err := w.claude.GenerateReply(ctx, prompt)
+	prompt := w.buildPrompt(msg, conv, lead, studio, sentiment, keywords)
+	
+	var resp string
+	var sourceRef string
+	if studio.GeminiAPIKey != "" {
+		w.log.Info("generating ai reply using studio gemini api key", "studio_id", studioID, "message_id", msg.ID)
+		resp, err = w.generateGeminiReply(ctx, studio.GeminiAPIKey, prompt)
+		sourceRef = "gemini"
+	} else if w.claude != nil {
+		w.log.Info("generating ai reply using claude", "studio_id", studioID, "message_id", msg.ID)
+		resp, err = w.claude.GenerateReply(ctx, prompt)
+		sourceRef = "claude"
+	} else {
+		w.log.Warn("skipping ai reply: neither claude nor studio gemini key configured", "studio_id", studioID)
+		return nil
+	}
 	if err != nil {
-		return fmt.Errorf("claude generate: %w", err)
+		return fmt.Errorf("ai generate reply failed: %w", err)
 	}
 
-	w.log.Info("ai response generated", "message_id", msg.ID, "response_len", len(resp), "channel", channel.Kind)
+	w.log.Info("ai response generated", "message_id", msg.ID, "response_len", len(resp), "channel", channel.Kind, "model", sourceRef)
 
 	// Enqueue outbound reply
 	if _, err := w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
@@ -200,7 +225,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		ConversationID: msg.ConversationID,
 		Body:           resp,
 		SourceKind:     SourceAI,
-		SourceRef:      "claude",
+		SourceRef:      sourceRef,
 		ScheduledFor:   time.Now().UTC(),
 	}); err != nil {
 		return fmt.Errorf("enqueue ai outbound: %w", err)
@@ -215,13 +240,44 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	return nil
 }
 
-func (w *AIWorker) buildPrompt(msg *Message, conv *Conversation, lead *leads.Lead, sentiment int, keywords []string) string {
+func (w *AIWorker) buildPrompt(msg *Message, conv *Conversation, lead *leads.Lead, studio *studios.Studio, sentiment int, keywords []string) string {
 	context := "You are a helpful AI assistant for a fitness studio. "
+
+	hour := time.Now().UTC().Hour()
+	if studio != nil && studio.AvailabilityTimezone != "" {
+		loc, err := time.LoadLocation(studio.AvailabilityTimezone)
+		if err == nil {
+			hour = time.Now().In(loc).Hour()
+		}
+	}
+	greeting := "Good evening"
+	if hour < 12 {
+		greeting = "Good morning"
+	} else if hour < 17 {
+		greeting = "Good afternoon"
+	}
+	context += fmt.Sprintf("Always start your reply with the appropriate greeting ('%s') based on the current local time. ", greeting)
+
+	kbText := ""
+	if studio != nil {
+		kbText = studio.KnowledgeBase
+		for _, f := range studio.KnowledgeBaseFiles {
+			if f.Text != "" {
+				kbText += fmt.Sprintf("\n\nDocument (%s):\n%s", f.Name, f.Text)
+			}
+		}
+	}
+
+	if kbText != "" {
+		context += fmt.Sprintf("\nHere are the specific company details and knowledge base you MUST use to answer questions:\n\"\"\"\n%s\n\"\"\"\nDo not invent information outside of this knowledge base.\n\n", kbText)
+	}
 
 	if lead != nil {
 		context += fmt.Sprintf("Responding to %s about the %s plan. The lead's current status is '%s'. ", lead.Name, lead.FitnessPlan, lead.Status)
 		if lead.Status == leads.StatusNew || lead.Status == leads.StatusContacted {
 			context += "When presenting next steps or asking the customer to decide between a trial and membership, always end your reply by offering these two clear options to choose from: '1. Book a Trial' and '2. Become a Member'. "
+		} else if lead.Status == leads.StatusTrialBooked {
+			context += "The customer has already booked or taken a trial. When presenting next steps, offer these two clear options to choose from: '1. Yes, I am ready to become a member!' and '2. Not right now'. "
 		}
 	}
 
@@ -229,18 +285,47 @@ func (w *AIWorker) buildPrompt(msg *Message, conv *Conversation, lead *leads.Lea
 
 	// Tailor response based on sentiment
 	if sentiment == 1 {
-		context += "The customer seems interested - try to book a trial session or get more details. "
+		if lead != nil && lead.Status == leads.StatusTrialBooked {
+			context += "The customer seems interested - try to get them to commit to a membership. "
+		} else {
+			context += "The customer seems interested - try to book a trial session or get more details. "
+		}
 	} else if sentiment == -1 {
 		context += "The customer seems hesitant or uninterested - try to understand their concerns and address them. "
 	} else {
 		context += "Ask clarifying questions to understand their needs and interest level. "
 	}
 
+	if lead != nil && lead.Status == leads.StatusTrialBooked {
+		return fmt.Sprintf("%s\nCustomer message: %s\n\nRespond naturally and try to move the conversation toward getting a membership commitment.", context, msg.Body)
+	}
 	return fmt.Sprintf("%s\nCustomer message: %s\n\nRespond naturally and try to move the conversation toward booking a trial or getting commitment.", context, msg.Body)
 }
 
-func (w *AIWorker) detectOptionChoice(body string) (leads.LeadStatus, bool) {
+func (w *AIWorker) detectOptionChoice(body string, status leads.LeadStatus) (leads.LeadStatus, bool) {
 	text := strings.ToLower(strings.TrimSpace(body))
+
+	if status == leads.StatusTrialBooked {
+		hasMemberKeywords := text == "1" ||
+			strings.Contains(text, "become a member") ||
+			strings.Contains(text, "ready") ||
+			strings.Contains(text, "yes")
+		hasDroppedKeywords := text == "2" ||
+			strings.Contains(text, "not right now") ||
+			strings.Contains(text, "no") ||
+			strings.Contains(text, "later")
+
+		if hasMemberKeywords && hasDroppedKeywords {
+			return "", false
+		}
+		if hasMemberKeywords {
+			return leads.StatusMember, true
+		}
+		if hasDroppedKeywords {
+			return leads.StatusDropped, true
+		}
+		return "", false
+	}
 
 	hasTrialKeywords := text == "1" ||
 		strings.Contains(text, "book a trial") ||
@@ -274,7 +359,7 @@ func (w *AIWorker) detectOptionChoice(body string) (leads.LeadStatus, bool) {
 
 func (w *AIWorker) updateLeadStatus(ctx context.Context, studioID uuid.UUID, lead *leads.Lead, body string, sentiment int, confidence float64) {
 	// 1. Check for explicit option choices first
-	if targetStatus, ok := w.detectOptionChoice(body); ok {
+	if targetStatus, ok := w.detectOptionChoice(body, lead.Status); ok {
 		if lead.Status != targetStatus {
 			err := w.leadsRepo.UpdateStatus(ctx, studioID, lead.ID, targetStatus)
 			if err != nil {
@@ -372,4 +457,62 @@ func (w *AIWorker) scheduleTrialFollowup(ctx context.Context, studioID uuid.UUID
 	}); err != nil {
 		w.log.Error("enqueue 1-day trial followup failed", "lead", lead.ID, "err", err)
 	}
+}
+
+func (w *AIWorker) generateGeminiReply(ctx context.Context, apiKey string, prompt string) (string, error) {
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=%s", apiKey)
+
+	reqBody, err := json.Marshal(map[string]any{
+		"contents": []map[string]any{
+			{
+				"parts": []map[string]any{
+					{"text": prompt},
+				},
+			},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(reqBody))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("gemini API error (HTTP %d): %s", resp.StatusCode, string(respBytes))
+	}
+
+	var res struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					Text string `json:"text"`
+				} `json:"parts"`
+			} `json:"content"`
+		} `json:"candidates"`
+	}
+
+	if err := json.Unmarshal(respBytes, &res); err != nil {
+		return "", err
+	}
+
+	if len(res.Candidates) == 0 || len(res.Candidates[0].Content.Parts) == 0 {
+		return "", fmt.Errorf("empty response from Gemini API")
+	}
+
+	return res.Candidates[0].Content.Parts[0].Text, nil
 }

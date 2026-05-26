@@ -192,7 +192,7 @@ func (s *Service) SubmitPublicLead(ctx context.Context, in SubmitLeadInput) (*Le
 	// If the selected plan indicates a trial booking, set status accordingly.
 	// Accept a wider variety of labels (e.g. "Book a trial", "trial booking")
 	normalizedPlan := strings.ToLower(strings.TrimSpace(in.FitnessPlan))
-	if strings.Contains(normalizedPlan, "trial") {
+	if strings.Contains(normalizedPlan, "trial") || strings.Contains(normalizedPlan, "trail") {
 		l.Status = StatusTrialBooked
 	} else {
 		l.Status = StatusNew
@@ -215,7 +215,7 @@ func (s *Service) GetLead(ctx context.Context, studioID, id uuid.UUID) (*Lead, e
 	return s.repo.GetLead(ctx, studioID, id)
 }
 
-func (s *Service) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status LeadStatus, notes string, contactMade, hotLead, trialPurchased bool, firstName, lastName string, assignedTo string, trialAttended, memberSold bool, monthlyFee float64, offer, furtherNotes string) error {
+func (s *Service) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status LeadStatus, currency string, notes string, contactMade, hotLead, trialPurchased bool, firstName, lastName string, assignedTo string, trialAttended, memberSold bool, monthlyFee float64, offer, furtherNotes string) error {
 	if !status.Valid() {
 		return fmt.Errorf("invalid status %q", status)
 	}
@@ -224,7 +224,11 @@ func (s *Service) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status
 	} else if status == StatusMember {
 		memberSold = true
 	}
-	return s.repo.UpdateLead(ctx, studioID, id, status, notes, contactMade, hotLead, trialPurchased, firstName, lastName, assignedTo, trialAttended, memberSold, monthlyFee, offer, furtherNotes)
+	return s.repo.UpdateLead(ctx, studioID, id, status, currency, notes, contactMade, hotLead, trialPurchased, firstName, lastName, assignedTo, trialAttended, memberSold, monthlyFee, offer, furtherNotes)
+}
+
+func (s *Service) GetUniqueSources(ctx context.Context, studioID uuid.UUID) ([]string, error) {
+	return s.repo.GetUniqueSources(ctx, studioID)
 }
 
 func (s *Service) GetSheetsSettings(ctx context.Context, studioID uuid.UUID) (*StudioSheetsSettings, error) {

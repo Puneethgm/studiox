@@ -32,8 +32,9 @@ type StudioBrand struct {
 	Slug       string `json:"slug"`
 	Name       string `json:"name"`
 	BrandColor string `json:"brandColor"`
-	LogoURL    string `json:"logoUrl"`
-	Active     bool   `json:"active"`
+	LogoURL              string `json:"logoUrl"`
+	Active               bool   `json:"active"`
+	SocialPlannerEnabled bool   `json:"socialPlannerEnabled"`
 }
 
 // StudioBrandLookup resolves a studio's brand info by id. Implemented in main

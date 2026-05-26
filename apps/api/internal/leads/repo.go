@@ -42,9 +42,17 @@ func (r *Repo) CreateCampaign(ctx context.Context, c *Campaign) error {
 
 func (r *Repo) ListCampaigns(ctx context.Context, studioID uuid.UUID, limit, offset int) ([]Campaign, int, error) {
 	var total int
-	if err := r.pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM campaigns WHERE studio_id = $1
-	`, studioID).Scan(&total); err != nil {
+	var err error
+	if studioID == uuid.Nil {
+		err = r.pool.QueryRow(ctx, `
+			SELECT COUNT(*) FROM campaigns
+		`).Scan(&total)
+	} else {
+		err = r.pool.QueryRow(ctx, `
+			SELECT COUNT(*) FROM campaigns WHERE studio_id = $1
+		`, studioID).Scan(&total)
+	}
+	if err != nil {
 		return nil, 0, fmt.Errorf("count campaigns: %w", err)
 	}
 
@@ -52,18 +60,33 @@ func (r *Repo) ListCampaigns(ctx context.Context, studioID uuid.UUID, limit, off
 		limit = 50
 	}
 
-	rows, err := r.pool.Query(ctx, `
-		SELECT c.id, c.studio_id, s.slug, s.name, c.slug, c.name, c.description, c.fitness_plans,
-		       c.active, c.created_by, c.created_at, c.updated_at,
-		       COALESCE(l.cnt, 0)
-		FROM campaigns c
-		JOIN studios s ON s.id = c.studio_id
-		LEFT JOIN (SELECT campaign_id, COUNT(*) AS cnt FROM leads GROUP BY campaign_id) l
-		  ON l.campaign_id = c.id
-		WHERE c.studio_id = $1
-		ORDER BY c.created_at DESC
-		LIMIT $2 OFFSET $3
-	`, studioID, limit, offset)
+	var rows pgx.Rows
+	if studioID == uuid.Nil {
+		rows, err = r.pool.Query(ctx, `
+			SELECT c.id, c.studio_id, s.slug, s.name, c.slug, c.name, c.description, c.fitness_plans,
+			       c.active, c.created_by, c.created_at, c.updated_at,
+			       COALESCE(l.cnt, 0)
+			FROM campaigns c
+			JOIN studios s ON s.id = c.studio_id
+			LEFT JOIN (SELECT campaign_id, COUNT(*) AS cnt FROM leads GROUP BY campaign_id) l
+			  ON l.campaign_id = c.id
+			ORDER BY c.created_at DESC
+			LIMIT $1 OFFSET $2
+		`, limit, offset)
+	} else {
+		rows, err = r.pool.Query(ctx, `
+			SELECT c.id, c.studio_id, s.slug, s.name, c.slug, c.name, c.description, c.fitness_plans,
+			       c.active, c.created_by, c.created_at, c.updated_at,
+			       COALESCE(l.cnt, 0)
+			FROM campaigns c
+			JOIN studios s ON s.id = c.studio_id
+			LEFT JOIN (SELECT campaign_id, COUNT(*) AS cnt FROM leads GROUP BY campaign_id) l
+			  ON l.campaign_id = c.id
+			WHERE c.studio_id = $1
+			ORDER BY c.created_at DESC
+			LIMIT $2 OFFSET $3
+		`, studioID, limit, offset)
+	}
 	if err != nil {
 		return nil, 0, fmt.Errorf("list campaigns: %w", err)
 	}
@@ -178,19 +201,22 @@ func (r *Repo) CreateLeadWithOutbox(ctx context.Context, l *Lead, destination st
 	if l.AutoContactStage == "" {
 		l.AutoContactStage = "initial"
 	}
+	if l.Currency == "" {
+		l.Currency = "SGD"
+	}
 
 	row := tx.QueryRow(ctx, `
 		INSERT INTO leads (studio_id, campaign_id, name, first_name, last_name, email, phone, fitness_plan,
-		                   goals, source, status, notes, contact_made, hot_lead, trial_purchased, auto_contact_stage,
+		                   goals, source, status, currency, notes, contact_made, hot_lead, trial_purchased, auto_contact_stage,
 		                   assigned_to, trial_attended, member_sold, monthly_fee, offer, further_notes, referrer, user_agent, ip_address)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
 		RETURNING id, status, contact_attempts, last_contacted_at, contact_made, hot_lead, trial_purchased, auto_contact_stage,
-		          assigned_to, trial_attended, member_sold, monthly_fee, offer, further_notes, created_at, updated_at
+		          assigned_to, trial_attended, member_sold, monthly_fee, currency, offer, further_notes, created_at, updated_at
 	`, l.StudioID, l.CampaignID, l.Name, l.FirstName, l.LastName, l.Email, l.Phone, l.FitnessPlan,
-		l.Goals, l.Source, l.Status, l.Notes, l.ContactMade, l.HotLead, l.TrialPurchased, l.AutoContactStage,
+		l.Goals, l.Source, l.Status, l.Currency, l.Notes, l.ContactMade, l.HotLead, l.TrialPurchased, l.AutoContactStage,
 		l.AssignedTo, l.TrialAttended, l.MemberSold, l.MonthlyFee, l.Offer, l.FurtherNotes, l.Referrer, l.UserAgent, ipText(l.IPAddress))
 	if err := row.Scan(&l.ID, &l.Status, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage,
-		&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.CreatedAt, &l.UpdatedAt); err != nil {
+		&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Currency, &l.Offer, &l.FurtherNotes, &l.CreatedAt, &l.UpdatedAt); err != nil {
 		return fmt.Errorf("insert lead: %w", err)
 	}
 
@@ -222,6 +248,12 @@ func (r *Repo) CreateLeadWithOutbox(ctx context.Context, l *Lead, destination st
 type ListLeadsFilter struct {
 	CampaignID     *uuid.UUID
 	Status         *LeadStatus
+	Statuses       []LeadStatus
+	MaxAttempts    *int
+	StartDate      string
+	EndDate        string
+	DurationDays   int
+	Source         string
 	HotLead        *bool
 	ContactMade    *bool
 	TrialPurchased *bool
@@ -235,16 +267,49 @@ func (r *Repo) ListLeads(ctx context.Context, studioID uuid.UUID, f ListLeadsFil
 		f.Limit = 50
 	}
 
-	conds := []string{"l.studio_id = $1"}
-	args := []any{studioID}
+	conds := []string{}
+	args := []any{}
+	if studioID != uuid.Nil {
+		conds = append(conds, "l.studio_id = $1")
+		args = append(args, studioID)
+	}
 	if f.CampaignID != nil {
 		args = append(args, *f.CampaignID)
 		conds = append(conds, fmt.Sprintf("l.campaign_id = $%d", len(args)))
 	}
-	if f.Status != nil {
+	if len(f.Statuses) > 0 {
+		statusStrs := make([]string, len(f.Statuses))
+		for i, s := range f.Statuses {
+			statusStrs[i] = fmt.Sprintf("'%s'", string(s))
+		}
+		conds = append(conds, fmt.Sprintf("l.status IN (%s)", strings.Join(statusStrs, ",")))
+	} else if f.Status != nil {
 		args = append(args, string(*f.Status))
 		conds = append(conds, fmt.Sprintf("l.status = $%d", len(args)))
 	}
+	if f.MaxAttempts != nil {
+		args = append(args, *f.MaxAttempts)
+		conds = append(conds, fmt.Sprintf("l.contact_attempts < $%d", len(args)))
+	}
+	if f.Source != "" {
+		args = append(args, f.Source)
+		conds = append(conds, fmt.Sprintf("l.source = $%d", len(args)))
+	}
+	
+	var dateFilter string
+	if f.StartDate != "" && f.EndDate != "" {
+		dateFilter = fmt.Sprintf("l.created_at >= '%s'::timestamp AND l.created_at <= '%s 23:59:59'::timestamp", sanitizeDate(f.StartDate), sanitizeDate(f.EndDate))
+	} else if f.DurationDays > 0 {
+		if f.DurationDays == 1 {
+			dateFilter = "l.created_at >= CURRENT_DATE - INTERVAL '1 day'"
+		} else {
+			dateFilter = fmt.Sprintf("l.created_at >= CURRENT_DATE - INTERVAL '%d days'", f.DurationDays)
+		}
+	}
+	if dateFilter != "" {
+		conds = append(conds, dateFilter)
+	}
+
 	if f.HotLead != nil {
 		args = append(args, *f.HotLead)
 		conds = append(conds, fmt.Sprintf("l.hot_lead = $%d", len(args)))
@@ -261,7 +326,10 @@ func (r *Repo) ListLeads(ctx context.Context, studioID uuid.UUID, f ListLeadsFil
 		args = append(args, "%"+strings.ToLower(f.Search)+"%")
 		conds = append(conds, fmt.Sprintf("(LOWER(l.name) LIKE $%d OR LOWER(COALESCE(l.first_name, '')) LIKE $%d OR LOWER(COALESCE(l.last_name, '')) LIKE $%d OR LOWER(l.email) LIKE $%d OR l.phone LIKE $%d)", len(args), len(args), len(args), len(args), len(args)))
 	}
-	where := strings.Join(conds, " AND ")
+	where := "1=1"
+	if len(conds) > 0 {
+		where = strings.Join(conds, " AND ")
+	}
 
 	var total int
 	if err := r.pool.QueryRow(ctx,
@@ -273,7 +341,7 @@ func (r *Repo) ListLeads(ctx context.Context, studioID uuid.UUID, f ListLeadsFil
 	q := `
 		SELECT l.id, l.studio_id, s.name, s.slug, l.campaign_id, c.name, c.slug,
 		       l.name, COALESCE(l.first_name, ''), COALESCE(l.last_name, ''), l.email, l.phone, l.fitness_plan, l.goals,
-		       l.source, l.status, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage,
+		       l.source, l.status, l.currency, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage,
 		       COALESCE(l.assigned_to, ''), l.trial_attended, l.member_sold, l.monthly_fee, COALESCE(l.offer, ''), COALESCE(l.further_notes, ''),
 		       l.created_at, l.updated_at
 		FROM leads l
@@ -294,7 +362,7 @@ func (r *Repo) ListLeads(ctx context.Context, studioID uuid.UUID, f ListLeadsFil
 		var l Lead
 		if err := rows.Scan(&l.ID, &l.StudioID, &l.StudioName, &l.StudioSlug, &l.CampaignID, &l.CampaignName, &l.CampaignSlug,
 			&l.Name, &l.FirstName, &l.LastName, &l.Email, &l.Phone, &l.FitnessPlan, &l.Goals,
-			&l.Source, &l.Status, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage,
+			&l.Source, &l.Status, &l.Currency, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage,
 			&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.CreatedAt, &l.UpdatedAt); err != nil {
 			return nil, 0, fmt.Errorf("scan lead: %w", err)
 		}
@@ -307,7 +375,7 @@ func (r *Repo) GetLead(ctx context.Context, studioID, id uuid.UUID) (*Lead, erro
 	row := r.pool.QueryRow(ctx, `
 		SELECT l.id, l.studio_id, s.name, s.slug, l.campaign_id, c.name, c.slug,
 		       l.name, COALESCE(l.first_name, ''), COALESCE(l.last_name, ''), l.email, l.phone, l.fitness_plan, l.goals,
-		       l.source, l.status, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage,
+		       l.source, l.status, l.currency, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage,
 		       COALESCE(l.assigned_to, ''), l.trial_attended, l.member_sold, l.monthly_fee, COALESCE(l.offer, ''), COALESCE(l.further_notes, ''),
 		       l.created_at, l.updated_at
 		FROM leads l
@@ -318,7 +386,7 @@ func (r *Repo) GetLead(ctx context.Context, studioID, id uuid.UUID) (*Lead, erro
 	var l Lead
 	if err := row.Scan(&l.ID, &l.StudioID, &l.StudioName, &l.StudioSlug, &l.CampaignID, &l.CampaignName, &l.CampaignSlug,
 		&l.Name, &l.FirstName, &l.LastName, &l.Email, &l.Phone, &l.FitnessPlan, &l.Goals,
-		&l.Source, &l.Status, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage,
+		&l.Source, &l.Status, &l.Currency, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage,
 		&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.CreatedAt, &l.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrLeadNotFound
@@ -332,7 +400,7 @@ func (r *Repo) GetLeadTx(ctx context.Context, tx pgx.Tx, studioID, id uuid.UUID)
 	row := tx.QueryRow(ctx, `
 		SELECT l.id, l.studio_id, s.name, s.slug, l.campaign_id, c.name, c.slug,
 		       l.name, COALESCE(l.first_name, ''), COALESCE(l.last_name, ''), l.email, l.phone, l.fitness_plan, l.goals,
-		       l.source, l.status, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage,
+		       l.source, l.status, l.currency, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage,
 		       COALESCE(l.assigned_to, ''), l.trial_attended, l.member_sold, l.monthly_fee, COALESCE(l.offer, ''), COALESCE(l.further_notes, ''),
 		       l.created_at, l.updated_at
 		FROM leads l
@@ -343,7 +411,7 @@ func (r *Repo) GetLeadTx(ctx context.Context, tx pgx.Tx, studioID, id uuid.UUID)
 	var l Lead
 	if err := row.Scan(&l.ID, &l.StudioID, &l.StudioName, &l.StudioSlug, &l.CampaignID, &l.CampaignName, &l.CampaignSlug,
 		&l.Name, &l.FirstName, &l.LastName, &l.Email, &l.Phone, &l.FitnessPlan, &l.Goals,
-		&l.Source, &l.Status, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage,
+		&l.Source, &l.Status, &l.Currency, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage,
 		&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.CreatedAt, &l.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrLeadNotFound
@@ -361,17 +429,25 @@ type LeadStats struct {
 }
 
 func (r *Repo) Stats(ctx context.Context, studioID uuid.UUID) (*LeadStats, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT status, COUNT(*) FROM leads WHERE studio_id = $1 GROUP BY status
-	`, studioID)
+	var rows pgx.Rows
+	var err error
+	if studioID == uuid.Nil {
+		rows, err = r.pool.Query(ctx, `
+			SELECT status, COUNT(*) FROM leads GROUP BY status
+		`)
+	} else {
+		rows, err = r.pool.Query(ctx, `
+			SELECT status, COUNT(*) FROM leads WHERE studio_id = $1 GROUP BY status
+		`, studioID)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("stats: %w", err)
 	}
 	defer rows.Close()
 
-	out := &LeadStats{ByStatus: make(map[LeadStatus]int, 5)}
-	// Seed all five statuses so the response always has the same shape.
-	for _, s := range []LeadStatus{StatusNew, StatusContacted, StatusTrialBooked, StatusMember, StatusDropped} {
+	out := &LeadStats{ByStatus: make(map[LeadStatus]int, 6)}
+	// Seed all six statuses so the response always has the same shape.
+	for _, s := range []LeadStatus{StatusNew, StatusContacted, StatusTrialBooked, StatusMember, StatusDropped, StatusPaused} {
 		out.ByStatus[s] = 0
 	}
 	for rows.Next() {
@@ -386,25 +462,25 @@ func (r *Repo) Stats(ctx context.Context, studioID uuid.UUID) (*LeadStats, error
 	return out, rows.Err()
 }
 
-func (r *Repo) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status LeadStatus, notes string, contactMade, hotLead, trialPurchased bool, firstName, lastName string, assignedTo string, trialAttended, memberSold bool, monthlyFee float64, offer, furtherNotes string) error {
+func (r *Repo) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status LeadStatus, currency string, notes string, contactMade, hotLead, trialPurchased bool, firstName, lastName string, assignedTo string, trialAttended, memberSold bool, monthlyFee float64, offer, furtherNotes string) error {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var oldStatus, oldNotes, oldFirstName, oldLastName, oldAssignedTo, oldOffer, oldFurtherNotes string
+	var oldStatus, oldNotes, oldFirstName, oldLastName, oldAssignedTo, oldOffer, oldFurtherNotes, oldCurrency string
 	var oldContactMade, oldHotLead, oldTrialPurchased, oldTrialAttended, oldMemberSold bool
 	var oldMonthlyFee float64
 	err = tx.QueryRow(ctx, `
 		SELECT status, COALESCE(notes, ''), COALESCE(first_name, ''), COALESCE(last_name, ''),
 		       contact_made, hot_lead, trial_purchased,
-		       COALESCE(assigned_to, ''), trial_attended, member_sold, monthly_fee,
+		       COALESCE(assigned_to, ''), trial_attended, member_sold, monthly_fee, currency,
 		       COALESCE(offer, ''), COALESCE(further_notes, '')
 		FROM leads WHERE studio_id = $1 AND id = $2
 	`, studioID, id).Scan(&oldStatus, &oldNotes, &oldFirstName, &oldLastName,
 		&oldContactMade, &oldHotLead, &oldTrialPurchased,
-		&oldAssignedTo, &oldTrialAttended, &oldMemberSold, &oldMonthlyFee,
+		&oldAssignedTo, &oldTrialAttended, &oldMemberSold, &oldMonthlyFee, &oldCurrency,
 		&oldOffer, &oldFurtherNotes)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -413,16 +489,20 @@ func (r *Repo) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status Le
 		return fmt.Errorf("select old details: %w", err)
 	}
 
+	if currency == "" {
+		currency = "SGD"
+	}
+
 	name := strings.TrimSpace(firstName + " " + lastName)
 	tag, err := tx.Exec(ctx, `
 		UPDATE leads 
 		SET status = $3, notes = $4, contact_made = $5, hot_lead = $6, trial_purchased = $7,
 		    first_name = $8, last_name = $9, name = $10,
 		    assigned_to = $11, trial_attended = $12, member_sold = $13, monthly_fee = $14,
-		    offer = $15, further_notes = $16, updated_at = now()
+		    currency = $15, offer = $16, further_notes = $17, updated_at = now()
 		WHERE studio_id = $1 AND id = $2
 	`, studioID, id, string(status), notes, contactMade, hotLead, trialPurchased, firstName, lastName, name,
-		assignedTo, trialAttended, memberSold, monthlyFee, offer, furtherNotes)
+		assignedTo, trialAttended, memberSold, monthlyFee, currency, offer, furtherNotes)
 	if err != nil {
 		return fmt.Errorf("update lead: %w", err)
 	}
@@ -433,7 +513,7 @@ func (r *Repo) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status Le
 	changed := string(status) != oldStatus || notes != oldNotes || firstName != oldFirstName || lastName != oldLastName ||
 		contactMade != oldContactMade || hotLead != oldHotLead || trialPurchased != oldTrialPurchased ||
 		assignedTo != oldAssignedTo || trialAttended != oldTrialAttended || memberSold != oldMemberSold ||
-		monthlyFee != oldMonthlyFee || offer != oldOffer || furtherNotes != oldFurtherNotes
+		monthlyFee != oldMonthlyFee || currency != oldCurrency || offer != oldOffer || furtherNotes != oldFurtherNotes
 
 	if changed {
 		l, err := r.GetLeadTx(ctx, tx, studioID, id)
@@ -450,6 +530,27 @@ func (r *Repo) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status Le
 		`, l.ID, payload)
 		if err != nil {
 			return fmt.Errorf("enqueue update outbox: %w", err)
+		}
+	}
+
+	if trialAttended && !oldTrialAttended {
+		var convID uuid.UUID
+		err = tx.QueryRow(ctx, `
+			SELECT id FROM conversations
+			WHERE studio_id = $1 AND lead_id = $2
+			ORDER BY updated_at DESC
+			LIMIT 1
+		`, studioID, id).Scan(&convID)
+		if err == nil {
+			msgBody := "Hi {{contact.first_name}}, we hope you're enjoying your trial! Are you ready to take the next step and become a member? Please select an option:\n1. Yes, I am ready!\n2. Not right now"
+			_, err = tx.Exec(ctx, `
+				INSERT INTO outbound_jobs (studio_id, conversation_id, body, attachments,
+				                           source_kind, source_ref, scheduled_for, next_attempt_at)
+				VALUES ($1, $2, $3, '[]'::jsonb, 'automation', $4, now(), now())
+			`, studioID, convID, msgBody, fmt.Sprintf("lead:%s:trial_followup", id.String()))
+			if err != nil {
+				return fmt.Errorf("enqueue trial followup: %w", err)
+			}
 		}
 	}
 
@@ -677,22 +778,35 @@ func (r *Repo) GetAnalytics(ctx context.Context, studioID uuid.UUID, durationDay
 	if startDate != "" && endDate != "" {
 		dateFilter = fmt.Sprintf("AND created_at >= '%s'::timestamp AND created_at <= '%s 23:59:59'::timestamp", sanitizeDate(startDate), sanitizeDate(endDate))
 	} else if durationDays > 0 {
-		dateFilter = fmt.Sprintf("AND created_at >= now() - INTERVAL '%d days'", durationDays)
+		if durationDays == 1 {
+			dateFilter = "AND created_at >= CURRENT_DATE - INTERVAL '1 day'"
+		} else {
+			dateFilter = fmt.Sprintf("AND created_at >= CURRENT_DATE - INTERVAL '%d days'", durationDays)
+		}
+	}
+
+	var args []any
+	var cond string
+	if studioID != uuid.Nil {
+		cond = "WHERE studio_id = $1"
+		args = append(args, studioID)
+	} else {
+		cond = "WHERE 1=1"
 	}
 
 	// 1. Lead counts by status
 	qStatus := fmt.Sprintf(`
 		SELECT status, COUNT(*) 
 		FROM leads 
-		WHERE studio_id = $1 %s 
-		GROUP BY status`, dateFilter)
-	rows, err := r.pool.Query(ctx, qStatus, studioID)
+		%s %s 
+		GROUP BY status`, cond, dateFilter)
+	rows, err := r.pool.Query(ctx, qStatus, args...)
 	if err != nil {
 		return nil, fmt.Errorf("analytics status counts: %w", err)
 	}
 	defer rows.Close()
 
-	var totalLeads, newLeads, trialLeads, memberLeads, droppedLeads int
+	var totalLeads, newLeads, trialLeads, memberLeads, droppedLeads, pausedLeads int
 	for rows.Next() {
 		var status string
 		var count int
@@ -709,33 +823,45 @@ func (r *Repo) GetAnalytics(ctx context.Context, studioID uuid.UUID, durationDay
 			memberLeads = count
 		case "dropped":
 			droppedLeads = count
+		case "paused":
+			pausedLeads = count
 		}
 	}
 
 	// 2. Unresponded messages
 	var unresponded int
-	err = r.pool.QueryRow(ctx, `
-		SELECT COUNT(*) 
-		FROM conversations 
-		WHERE studio_id = $1 AND status = 'open' AND last_message_direction = 'inbound'
-	`, studioID).Scan(&unresponded)
+	var qUnresponded string
+	if studioID != uuid.Nil {
+		qUnresponded = "SELECT COUNT(*) FROM conversations WHERE studio_id = $1 AND status = 'open' AND last_message_direction = 'inbound'"
+	} else {
+		qUnresponded = "SELECT COUNT(*) FROM conversations WHERE status = 'open' AND last_message_direction = 'inbound'"
+	}
+	err = r.pool.QueryRow(ctx, qUnresponded, args...).Scan(&unresponded)
 	if err != nil {
 		return nil, fmt.Errorf("analytics unresponded: %w", err)
 	}
 
 	// 3. Followups required
-	qFollowups := fmt.Sprintf(`
-		SELECT COUNT(*) 
-		FROM leads 
-		WHERE studio_id = $1 AND status IN ('new', 'contacted') AND contact_attempts < 3 %s`, dateFilter)
+	var qFollowups string
+	if studioID != uuid.Nil {
+		qFollowups = fmt.Sprintf("SELECT COUNT(*) FROM leads WHERE studio_id = $1 AND status IN ('new', 'contacted') AND contact_attempts < 3 %s", dateFilter)
+	} else {
+		qFollowups = fmt.Sprintf("SELECT COUNT(*) FROM leads WHERE status IN ('new', 'contacted') AND contact_attempts < 3 %s", dateFilter)
+	}
 	var followups int
-	err = r.pool.QueryRow(ctx, qFollowups, studioID).Scan(&followups)
+	err = r.pool.QueryRow(ctx, qFollowups, args...).Scan(&followups)
 	if err != nil {
 		return nil, fmt.Errorf("analytics followups: %w", err)
 	}
 
 	// 4. Avg response time lapse
 	var avgResponseTime float64
+	var studioMsgCond string
+	if studioID != uuid.Nil {
+		studioMsgCond = "AND m1.studio_id = $1"
+	} else {
+		studioMsgCond = ""
+	}
 	qResponseTime := fmt.Sprintf(`
 		WITH msg_pairs AS (
 			SELECT 
@@ -746,40 +872,51 @@ func (r *Repo) GetAnalytics(ctx context.Context, studioID uuid.UUID, durationDay
 				AND m2.direction = 'outbound' 
 				AND m2.created_at > m1.created_at
 			WHERE m1.direction = 'inbound'
-			  AND m1.studio_id = $1
+			  %s
 			  %s
 			GROUP BY m1.id, m1.created_at
 		)
 		SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (outbound_time - inbound_time))), 0) FROM msg_pairs`, 
+		studioMsgCond,
 		strings.ReplaceAll(dateFilter, "created_at", "m1.created_at"))
-	err = r.pool.QueryRow(ctx, qResponseTime, studioID).Scan(&avgResponseTime)
+	err = r.pool.QueryRow(ctx, qResponseTime, args...).Scan(&avgResponseTime)
 	if err != nil {
 		return nil, fmt.Errorf("analytics response time: %w", err)
 	}
 
 	// 5. Lead to trial time lapse
 	var leadToTrialTime float64
-	qLeadToTrial := fmt.Sprintf(`
-		SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (updated_at - created_at))), 0) 
-		FROM leads 
-		WHERE studio_id = $1 AND status IN ('trial_booked', 'member') %s`, dateFilter)
-	err = r.pool.QueryRow(ctx, qLeadToTrial, studioID).Scan(&leadToTrialTime)
+	var qLeadToTrial string
+	if studioID != uuid.Nil {
+		qLeadToTrial = fmt.Sprintf("SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (updated_at - created_at))), 0) FROM leads WHERE studio_id = $1 AND status IN ('trial_booked', 'member') %s", dateFilter)
+	} else {
+		qLeadToTrial = fmt.Sprintf("SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (updated_at - created_at))), 0) FROM leads WHERE status IN ('trial_booked', 'member') %s", dateFilter)
+	}
+	err = r.pool.QueryRow(ctx, qLeadToTrial, args...).Scan(&leadToTrialTime)
 	if err != nil {
 		return nil, fmt.Errorf("analytics lead to trial: %w", err)
 	}
 
 	// 6. Trial to member time lapse
 	var trialToMemberTime float64
-	qTrialToMember := fmt.Sprintf(`
-		SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (updated_at - COALESCE(last_contacted_at, created_at)))), 0) 
-		FROM leads 
-		WHERE studio_id = $1 AND status = 'member' %s`, dateFilter)
-	err = r.pool.QueryRow(ctx, qTrialToMember, studioID).Scan(&trialToMemberTime)
+	var qTrialToMember string
+	if studioID != uuid.Nil {
+		qTrialToMember = fmt.Sprintf("SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (updated_at - COALESCE(last_contacted_at, created_at)))), 0) FROM leads WHERE studio_id = $1 AND status = 'member' %s", dateFilter)
+	} else {
+		qTrialToMember = fmt.Sprintf("SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (updated_at - COALESCE(last_contacted_at, created_at)))), 0) FROM leads WHERE status = 'member' %s", dateFilter)
+	}
+	err = r.pool.QueryRow(ctx, qTrialToMember, args...).Scan(&trialToMemberTime)
 	if err != nil {
 		return nil, fmt.Errorf("analytics trial to member: %w", err)
 	}
 
 	// 7. Campaign metrics
+	var campaignCond string
+	if studioID != uuid.Nil {
+		campaignCond = "WHERE c.studio_id = $1"
+	} else {
+		campaignCond = ""
+	}
 	qCampaigns := fmt.Sprintf(`
 		SELECT 
 			c.id, c.name, c.slug,
@@ -787,10 +924,10 @@ func (r *Repo) GetAnalytics(ctx context.Context, studioID uuid.UUID, durationDay
 			COUNT(CASE WHEN l.status IN ('trial_booked', 'member') THEN 1 END) as converted_leads
 		FROM campaigns c
 		LEFT JOIN leads l ON l.campaign_id = c.id %s
-		WHERE c.studio_id = $1
+		%s
 		GROUP BY c.id, c.name, c.slug
-		ORDER BY total_leads DESC`, strings.ReplaceAll(dateFilter, "created_at", "l.created_at"))
-	rowsC, err := r.pool.Query(ctx, qCampaigns, studioID)
+		ORDER BY total_leads DESC`, strings.ReplaceAll(dateFilter, "created_at", "l.created_at"), campaignCond)
+	rowsC, err := r.pool.Query(ctx, qCampaigns, args...)
 	if err != nil {
 		return nil, fmt.Errorf("analytics campaigns: %w", err)
 	}
@@ -812,6 +949,12 @@ func (r *Repo) GetAnalytics(ctx context.Context, studioID uuid.UUID, durationDay
 	}
 
 	// 8. Platform metrics
+	var platformCond string
+	if studioID != uuid.Nil {
+		platformCond = "WHERE l.studio_id = $1"
+	} else {
+		platformCond = "WHERE 1=1"
+	}
 	qPlatforms := fmt.Sprintf(`
 		SELECT 
 			CASE 
@@ -826,10 +969,10 @@ func (r *Repo) GetAnalytics(ctx context.Context, studioID uuid.UUID, durationDay
 			COUNT(l.id) as total_leads,
 			COUNT(CASE WHEN l.status IN ('trial_booked', 'member') THEN 1 END) as converted_leads
 		FROM leads l
-		WHERE l.studio_id = $1 %s
+		%s %s
 		GROUP BY platform
-		ORDER BY total_leads DESC`, dateFilter)
-	rowsP, err := r.pool.Query(ctx, qPlatforms, studioID)
+		ORDER BY total_leads DESC`, platformCond, dateFilter)
+	rowsP, err := r.pool.Query(ctx, qPlatforms, args...)
 	if err != nil {
 		return nil, fmt.Errorf("analytics platforms: %w", err)
 	}
@@ -855,13 +998,26 @@ func (r *Repo) GetAnalytics(ctx context.Context, studioID uuid.UUID, durationDay
 		trialToMemberRate = float64(memberLeads) / float64(trialLeads+memberLeads) * 100
 	}
 
+	droppedRate := 0.0
+	if totalLeads > 0 {
+		droppedRate = float64(droppedLeads) / float64(totalLeads) * 100
+	}
+
+	pausedRate := 0.0
+	if totalLeads > 0 {
+		pausedRate = float64(pausedLeads) / float64(totalLeads) * 100
+	}
+
 	return &AnalyticsSummary{
 		TotalLeads:                 totalLeads,
 		NewLeads:                   newLeads,
 		TrialBookedLeads:           trialLeads,
 		MemberLeads:                memberLeads,
 		DroppedLeads:               droppedLeads,
+		PausedLeads:                pausedLeads,
 		TrialToMemberRate:          trialToMemberRate,
+		DroppedRate:                droppedRate,
+		PausedRate:                 pausedRate,
 		FollowupsRequired:          followups,
 		UnrespondedMessages:        unresponded,
 		AvgResponseTimeLapseSecs:   avgResponseTime,
@@ -870,5 +1026,39 @@ func (r *Repo) GetAnalytics(ctx context.Context, studioID uuid.UUID, durationDay
 		ByCampaign:                 byCampaign,
 		ByPlatform:                 byPlatform,
 	}, nil
+}
+
+func (r *Repo) GetUniqueSources(ctx context.Context, studioID uuid.UUID) ([]string, error) {
+	var rows pgx.Rows
+	var err error
+	if studioID == uuid.Nil {
+		rows, err = r.pool.Query(ctx, `
+			SELECT DISTINCT COALESCE(source, '') 
+			FROM leads 
+			WHERE source IS NOT NULL AND source <> ''
+			ORDER BY 1
+		`)
+	} else {
+		rows, err = r.pool.Query(ctx, `
+			SELECT DISTINCT COALESCE(source, '') 
+			FROM leads 
+			WHERE studio_id = $1 AND source IS NOT NULL AND source <> ''
+			ORDER BY 1
+		`, studioID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("unique sources query: %w", err)
+	}
+	defer rows.Close()
+
+	var sources []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		sources = append(sources, s)
+	}
+	return sources, rows.Err()
 }
 

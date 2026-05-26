@@ -42,6 +42,9 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 func (h *Handler) SelfRoutes(r chi.Router) {
 	r.Get("/studios/{id}", h.getScoped)
 	r.Patch("/studios/{id}", h.updateScoped)
+	r.Get("/studios/{id}/payments", h.getPayments)
+	r.Post("/studios/{id}/payments/stripe", h.linkStripe)
+	r.Post("/studios/{id}/payments/plan", h.updatePlan)
 }
 
 // PublicRoutes expose the studio's brand info for the public form to render.
@@ -87,8 +90,9 @@ type createReq struct {
 	BrandColor    string `json:"brandColor"`
 	LogoURL       string `json:"logoUrl"`
 	ContactEmail  string `json:"contactEmail"`
-	AdminEmail    string `json:"adminEmail"`
-	AdminPassword string `json:"adminPassword"`
+	AdminEmail           string `json:"adminEmail"`
+	AdminPassword        string `json:"adminPassword"`
+	SocialPlannerEnabled bool   `json:"socialPlannerEnabled"`
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
@@ -104,9 +108,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		Name:          req.Name,
 		BrandColor:    req.BrandColor,
 		LogoURL:       req.LogoURL,
-		ContactEmail:  req.ContactEmail,
-		AdminEmail:    req.AdminEmail,
-		AdminPassword: req.AdminPassword,
+		ContactEmail:         req.ContactEmail,
+		AdminEmail:           req.AdminEmail,
+		AdminPassword:        req.AdminPassword,
+		SocialPlannerEnabled: req.SocialPlannerEnabled,
 	})
 	if errs != nil {
 		httpx.WriteValidationError(w, errs)
@@ -157,6 +162,9 @@ type updateReq struct {
 	GeminiAPIKey         *string             `json:"geminiApiKey"`
 	MetaAppID            *string             `json:"metaAppId"`
 	MetaAppSecret        *string             `json:"metaAppSecret"`
+	SocialPlannerEnabled *bool               `json:"socialPlannerEnabled"`
+	KnowledgeBase        *string             `json:"knowledgeBase"`
+	KnowledgeBaseFiles   *[]KnowledgeBaseFile `json:"knowledgeBaseFiles"`
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
@@ -189,6 +197,9 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		GeminiAPIKey:         existing.GeminiAPIKey,
 		MetaAppID:            existing.MetaAppID,
 		MetaAppSecret:        existing.MetaAppSecret,
+		SocialPlannerEnabled: existing.SocialPlannerEnabled,
+		KnowledgeBase:        existing.KnowledgeBase,
+		KnowledgeBaseFiles:   existing.KnowledgeBaseFiles,
 	}
 	if req.Name != nil {
 		input.Name = *req.Name
@@ -219,6 +230,15 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.MetaAppSecret != nil {
 		input.MetaAppSecret = *req.MetaAppSecret
+	}
+	if req.SocialPlannerEnabled != nil {
+		input.SocialPlannerEnabled = *req.SocialPlannerEnabled
+	}
+	if req.KnowledgeBase != nil {
+		input.KnowledgeBase = *req.KnowledgeBase
+	}
+	if req.KnowledgeBaseFiles != nil {
+		input.KnowledgeBaseFiles = *req.KnowledgeBaseFiles
 	}
 
 	errs, err := h.svc.Update(r.Context(), id, input)
@@ -320,6 +340,9 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 		GeminiAPIKey:         existing.GeminiAPIKey,
 		MetaAppID:            existing.MetaAppID,
 		MetaAppSecret:        existing.MetaAppSecret,
+		SocialPlannerEnabled: existing.SocialPlannerEnabled,
+		KnowledgeBase:        existing.KnowledgeBase,
+		KnowledgeBaseFiles:   existing.KnowledgeBaseFiles,
 	}
 	if req.Name != nil {
 		input.Name = *req.Name
@@ -350,6 +373,15 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.MetaAppSecret != nil {
 		input.MetaAppSecret = *req.MetaAppSecret
+	}
+	if req.SocialPlannerEnabled != nil {
+		input.SocialPlannerEnabled = *req.SocialPlannerEnabled
+	}
+	if req.KnowledgeBase != nil {
+		input.KnowledgeBase = *req.KnowledgeBase
+	}
+	if req.KnowledgeBaseFiles != nil {
+		input.KnowledgeBaseFiles = *req.KnowledgeBaseFiles
 	}
 
 	errs, err := h.svc.Update(r.Context(), studioID, input)
@@ -488,4 +520,108 @@ func (h *Handler) uploadGoogleCredentials(w http.ResponseWriter, r *http.Request
 		"clientEmail": creds.ClientEmail,
 		"projectId":   creds.ProjectID,
 	})
+}
+
+func (h *Handler) getPayments(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	// If id is 'global', return empty config
+	if idStr == "global" {
+		httpx.JSON(w, http.StatusOK, map[string]any{
+			"stripeAccountId":      "",
+			"stripePublishableKey": "",
+			"stripeSecretKey":      "",
+			"subscriptionTier":     "pro",
+		})
+		return
+	}
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "invalid studio ID")
+		return
+	}
+
+	s, err := h.svc.GetByID(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "studio not found")
+		return
+	}
+
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"stripeAccountId":      s.StripeAccountID,
+		"stripePublishableKey": s.StripePublishableKey,
+		"stripeSecretKey":      s.StripeSecretKey,
+		"subscriptionTier":     s.SubscriptionTier,
+	})
+}
+
+func (h *Handler) linkStripe(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	if idStr == "global" {
+		httpx.WriteError(w, http.StatusBadRequest, "forbidden", "cannot link stripe on global scope")
+		return
+	}
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "invalid studio ID")
+		return
+	}
+
+	var req struct {
+		StripeAccountId      string `json:"stripeAccountId"`
+		StripePublishableKey string `json:"stripePublishableKey"`
+		StripeSecretKey      string `json:"stripeSecretKey"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "failed to decode request body")
+		return
+	}
+
+	s, err := h.svc.GetByID(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "studio not found")
+		return
+	}
+
+	err = h.svc.UpdatePayments(r.Context(), id, req.StripeAccountId, req.StripeSecretKey, req.StripePublishableKey, s.SubscriptionTier)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (h *Handler) updatePlan(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	if idStr == "global" {
+		httpx.WriteError(w, http.StatusBadRequest, "forbidden", "cannot change plan on global scope")
+		return
+	}
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "invalid studio ID")
+		return
+	}
+
+	var req struct {
+		SubscriptionTier string `json:"subscriptionTier"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "failed to decode request body")
+		return
+	}
+
+	s, err := h.svc.GetByID(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "studio not found")
+		return
+	}
+
+	err = h.svc.UpdatePayments(r.Context(), id, s.StripeAccountID, s.StripeSecretKey, s.StripePublishableKey, req.SubscriptionTier)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }

@@ -14,6 +14,8 @@ const nextConfig = {
   // Tell Next where the workspace root is so it traces deps correctly.
   outputFileTracingRoot: path.join(configDir, '../..'),
 
+  serverExternalPackages: ['officeparser', 'pdfjs-dist'],
+
   // Same-origin API: the browser always calls /api/* on whatever host it's
   // loaded from, and Next.js proxies it to the Go backend. In dev that's
   // localhost:8080; in prod nginx fronts the API at /api/* on the same
