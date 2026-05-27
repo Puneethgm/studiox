@@ -187,7 +187,8 @@ func (h *MetaWebhookHandler) Receive(w http.ResponseWriter, r *http.Request) {
 // verifySignature: Meta signs the raw body with HMAC-SHA256 using the App
 // Secret. Header format: "sha256=<hex>". Constant-time compare.
 func (h *MetaWebhookHandler) verifySignature(header string, body []byte, secret string) bool {
-	if os.Getenv("API_ENV") == "local" && (header == "" || header == "skip" || header == "sha256=skip") {
+	if os.Getenv("API_ENV") == "local" {
+		fmt.Printf("DEBUG: MetaWebhookHandler.verifySignature bypassed in local dev mode (header=%s)\n", header)
 		return true
 	}
 	if secret == "" {

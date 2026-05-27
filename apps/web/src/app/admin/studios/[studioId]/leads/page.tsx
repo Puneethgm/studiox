@@ -82,10 +82,12 @@ export default async function LeadsPage({
   qs.set('limit', String(PAGE_SIZE));
   qs.set('offset', String(offset));
 
-  const data = await serverFetch<ListResp>(`/api/v1/studios/${studioId}/leads?${qs.toString()}`);
-  const campaignsResp = await serverFetch<{ campaigns: Campaign[] }>(`/api/v1/studios/${studioId}/campaigns`);
+  const [data, campaignsResp, sources] = await Promise.all([
+    serverFetch<ListResp>(`/api/v1/studios/${studioId}/leads?${qs.toString()}`),
+    serverFetch<{ campaigns: Campaign[] }>(`/api/v1/studios/${studioId}/campaigns`).catch(() => ({ campaigns: [] })),
+    serverFetch<string[]>(`/api/v1/studios/${studioId}/leads/sources`).catch(() => [] as string[]),
+  ]);
   const campaigns = campaignsResp.campaigns || [];
-  const sources = (await serverFetch<string[]>(`/api/v1/studios/${studioId}/leads/sources`).catch(() => [])) || [];
 
   return (
     <div className="space-y-5 pb-10">

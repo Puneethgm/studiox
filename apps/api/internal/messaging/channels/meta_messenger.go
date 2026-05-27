@@ -295,15 +295,15 @@ func (m *MetaMessenger) sendPayload(ctx context.Context, accessToken, url string
 			} `json:"error"`
 		}
 		_ = json.Unmarshal(respBody, &errEnv)
+		if resp.StatusCode == 401 || errEnv.Error.Code == 190 {
+			return nil, ErrInvalidCredentials
+		}
 		isLocalDev := os.Getenv("API_ENV") == "local"
 		if isLocalDev {
 			fmt.Printf("[Meta Messenger API Error Mapped to Mock] HTTP Status %d, Error Body: %s\n", resp.StatusCode, string(respBody))
 			return &SendResult{
 				ExternalID: "mid.mock-" + time.Now().Format("20060102150405"),
 			}, nil
-		}
-		if errEnv.Error.Code == 190 {
-			return nil, ErrInvalidCredentials
 		}
 		return nil, fmt.Errorf("meta messenger send: HTTP %d: %s", resp.StatusCode, errEnv.Error.Message)
 	}

@@ -533,9 +533,13 @@ func (s *Service) HandleInboundMessaging(ctx context.Context, kind ChannelKind, 
 	fmt.Printf("DEBUG: HandleInboundMessaging: kind=%s, recipientID=%s, senderID=%s\n", kind, m.Recipient.ID, m.Sender.ID)
 	channel, err := s.repo.GetChannelByExternalID(ctx, kind, m.Recipient.ID)
 	if err != nil {
-		// Log the mismatch so we can debug.
-		fmt.Printf("DEBUG: Meta message received for unknown channel: kind=%s, recipientID=%s\n", kind, m.Recipient.ID)
-		return nil
+		// Fallback: try sender ID (e.g. if the page itself sent the message or for echo events)
+		channel, err = s.repo.GetChannelByExternalID(ctx, kind, m.Sender.ID)
+		if err != nil {
+			// Log the mismatch so we can debug.
+			fmt.Printf("DEBUG: Meta message received for unknown channel: kind=%s, recipientID=%s, senderID=%s\n", kind, m.Recipient.ID, m.Sender.ID)
+			return nil
+		}
 	}
 
 	tx, err := s.repo.Pool().BeginTx(ctx, pgx.TxOptions{})

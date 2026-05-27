@@ -34,7 +34,7 @@ func (r *Repo) ListSocialPosts(ctx context.Context, studioID string) ([]SocialPo
 		rows, err = r.pool.Query(ctx, `
 			SELECT id, studio_id, campaign, platform, copy, media_url, status, scheduled_at, created_at, updated_at
 			FROM social_posts
-			ORDER BY scheduled_at DESC
+			ORDER BY CASE WHEN status = 'published' THEN 1 ELSE 0 END, scheduled_at DESC
 		`)
 	} else {
 		sID, errParse := uuid.Parse(studioID)
@@ -45,7 +45,7 @@ func (r *Repo) ListSocialPosts(ctx context.Context, studioID string) ([]SocialPo
 			SELECT id, studio_id, campaign, platform, copy, media_url, status, scheduled_at, created_at, updated_at
 			FROM social_posts
 			WHERE studio_id = $1
-			ORDER BY scheduled_at DESC
+			ORDER BY CASE WHEN status = 'published' THEN 1 ELSE 0 END, scheduled_at DESC
 		`, sID)
 	}
 	if err != nil {

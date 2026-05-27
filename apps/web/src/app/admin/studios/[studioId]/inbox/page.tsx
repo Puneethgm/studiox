@@ -18,11 +18,10 @@ export default async function InboxPage({
   const { studioId } = await params;
   const { unresponded } = (await searchParams) || {};
 
-  const data = await serverFetch<ListResp>(
-    `/api/v1/studios/${studioId}/messaging/conversations?limit=50`,
-  );
-  
-  const studio = await serverFetch<Studio>(`/api/v1/me/studios/${studioId}`);
+  const [data, studio] = await Promise.all([
+    serverFetch<ListResp>(`/api/v1/studios/${studioId}/messaging/conversations?limit=50`),
+    serverFetch<Studio>(`/api/v1/me/studios/${studioId}`),
+  ]);
 
   return (
     <div className="space-y-4">
