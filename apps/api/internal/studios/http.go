@@ -162,6 +162,9 @@ type updateReq struct {
 	GeminiAPIKey         *string             `json:"geminiApiKey"`
 	MetaAppID            *string             `json:"metaAppId"`
 	MetaAppSecret        *string             `json:"metaAppSecret"`
+	GoogleClientID       *string             `json:"googleClientId"`
+	GoogleClientSecret   *string             `json:"googleClientSecret"`
+	GoogleDeveloperToken *string             `json:"googleDeveloperToken"`
 	SocialPlannerEnabled *bool               `json:"socialPlannerEnabled"`
 	KnowledgeBase        *string             `json:"knowledgeBase"`
 	KnowledgeBaseFiles   *[]KnowledgeBaseFile `json:"knowledgeBaseFiles"`
@@ -197,6 +200,9 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		GeminiAPIKey:         existing.GeminiAPIKey,
 		MetaAppID:            existing.MetaAppID,
 		MetaAppSecret:        existing.MetaAppSecret,
+		GoogleClientID:       existing.GoogleClientID,
+		GoogleClientSecret:   existing.GoogleClientSecret,
+		GoogleDeveloperToken: existing.GoogleDeveloperToken,
 		SocialPlannerEnabled: existing.SocialPlannerEnabled,
 		KnowledgeBase:        existing.KnowledgeBase,
 		KnowledgeBaseFiles:   existing.KnowledgeBaseFiles,
@@ -230,6 +236,15 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.MetaAppSecret != nil {
 		input.MetaAppSecret = *req.MetaAppSecret
+	}
+	if req.GoogleClientID != nil {
+		input.GoogleClientID = *req.GoogleClientID
+	}
+	if req.GoogleClientSecret != nil {
+		input.GoogleClientSecret = *req.GoogleClientSecret
+	}
+	if req.GoogleDeveloperToken != nil {
+		input.GoogleDeveloperToken = *req.GoogleDeveloperToken
 	}
 	if req.SocialPlannerEnabled != nil {
 		input.SocialPlannerEnabled = *req.SocialPlannerEnabled
@@ -340,6 +355,9 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 		GeminiAPIKey:         existing.GeminiAPIKey,
 		MetaAppID:            existing.MetaAppID,
 		MetaAppSecret:        existing.MetaAppSecret,
+		GoogleClientID:       existing.GoogleClientID,
+		GoogleClientSecret:   existing.GoogleClientSecret,
+		GoogleDeveloperToken: existing.GoogleDeveloperToken,
 		SocialPlannerEnabled: existing.SocialPlannerEnabled,
 		KnowledgeBase:        existing.KnowledgeBase,
 		KnowledgeBaseFiles:   existing.KnowledgeBaseFiles,
@@ -373,6 +391,15 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.MetaAppSecret != nil {
 		input.MetaAppSecret = *req.MetaAppSecret
+	}
+	if req.GoogleClientID != nil {
+		input.GoogleClientID = *req.GoogleClientID
+	}
+	if req.GoogleClientSecret != nil {
+		input.GoogleClientSecret = *req.GoogleClientSecret
+	}
+	if req.GoogleDeveloperToken != nil {
+		input.GoogleDeveloperToken = *req.GoogleDeveloperToken
 	}
 	if req.SocialPlannerEnabled != nil {
 		input.SocialPlannerEnabled = *req.SocialPlannerEnabled

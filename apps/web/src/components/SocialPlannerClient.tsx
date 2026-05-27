@@ -82,6 +82,7 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
   const [mediaUrl, setMediaUrl] = useState('');
   const [mediaName, setMediaName] = useState('');
   const [uploadingFile, setUploadingFile] = useState(false);
+  const [mediaInputType, setMediaInputType] = useState<'upload' | 'url'>('upload');
 
   const fetchPosts = () => {
     setLoadingPosts(true);
@@ -145,15 +146,16 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
   useEffect(() => {
     fetchPosts();
 
-    // Fetch Meta integration state
+    // Fetch Meta and Google Ads integration state
     if (studioId !== 'global') {
       api<any>(`/api/v1/me/studios/${studioId}`)
         .then((res) => {
           const hasMeta = !!(res.metaAppId && res.metaAppSecret);
+          const hasGoogleAds = !!(res.googleClientId && res.googleClientSecret && res.googleDeveloperToken);
           setConnectedChannels({
             facebook: hasMeta,
             instagram: hasMeta,
-            googleAds: false,
+            googleAds: hasGoogleAds,
             tiktok: false,
           });
         })
@@ -207,7 +209,7 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
       const res = await api<{ text?: string }>(`/api/v1/studios/${studioId === 'global' ? '759b1ee2-5a68-4a5c-8fa0-5b2a64d5cc35' : studioId}/messaging/ai/generate`, {
         method: 'POST',
         json: {
-          prompt: `Create a professional marketing social media post copy for platform: ${platform}. Campaign Context: ${campaign}. Tone: ${tone}. Main topic / message details: ${prompt}. Do not include placeholder brackets or system variables. Format with appropriate paragraph spacing and emojis.`
+          prompt: `Create a professional marketing social media post copy for platform: ${platform}. Campaign Context: ${campaign}. Tone: ${tone}. Main topic / message details: ${prompt}.${mediaName ? ` An attachment named "${mediaName}" is included with this post.` : ''} Do not include placeholder brackets or system variables. Format with appropriate paragraph spacing and emojis.`
         }
       });
 
@@ -395,27 +397,75 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
 
                 {/* File / Document Upload area */}
                 <div>
-                  <Label>Attachments / Documents</Label>
-                  {mediaUrl ? (
-                    <div className="mt-1 flex items-center justify-between rounded-xl border border-white/10 bg-white/10 p-2.5 dark:bg-neutral-800/20">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <Paperclip className="h-4 w-4 text-brand-500 shrink-0" />
-                        <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 truncate">
-                          {mediaName || 'Attached File'}
-                        </span>
-                      </div>
+                  <div className="flex items-center justify-between mb-1">
+                    <Label>Attachments / Documents</Label>
+                    <div className="flex gap-2 text-[10px]">
                       <button
                         type="button"
                         onClick={() => {
+                          setMediaInputType('upload');
                           setMediaUrl('');
                           setMediaName('');
                         }}
-                        className="text-xs font-black text-red-500 hover:text-red-400 px-2"
+                        className={`font-black uppercase tracking-wider ${
+                          mediaInputType === 'upload' ? 'text-brand-500' : 'text-zinc-400 hover:text-zinc-200'
+                        }`}
                       >
-                        Remove
+                        Upload File
+                      </button>
+                      <span className="text-zinc-500">|</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMediaInputType('url');
+                          setMediaUrl('');
+                          setMediaName('');
+                        }}
+                        className={`font-black uppercase tracking-wider ${
+                          mediaInputType === 'url' ? 'text-brand-500' : 'text-zinc-400 hover:text-zinc-200'
+                        }`}
+                      >
+                        Image URL Link
                       </button>
                     </div>
-                  ) : (
+                  </div>
+
+                  {mediaUrl ? (
+                    <div className="space-y-2 mt-1">
+                      <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/10 p-2.5 dark:bg-neutral-800/20">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Paperclip className="h-4 w-4 text-brand-500 shrink-0" />
+                          <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 truncate">
+                            {mediaName || mediaUrl}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMediaUrl('');
+                            setMediaName('');
+                          }}
+                          className="text-xs font-black text-red-500 hover:text-red-400 px-2"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                      
+                      {/* Image Preview */}
+                      {(mediaUrl.toLowerCase().startsWith('http') || mediaUrl.toLowerCase().startsWith('/uploads')) && (
+                        <div className="mt-2 rounded-xl border border-white/10 bg-white/5 p-2 max-w-full overflow-hidden flex justify-center">
+                          <img 
+                            src={mediaUrl} 
+                            alt="Media Preview" 
+                            className="max-h-48 rounded-lg object-contain"
+                            onError={(e) => {
+                              (e.target as HTMLElement).style.display = 'none';
+                            }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  ) : mediaInputType === 'upload' ? (
                     <div className="mt-1 flex items-center justify-center border-2 border-dashed border-white/20 rounded-xl p-4 bg-white/5 hover:bg-white/10 transition-all cursor-pointer relative">
                       <input
                         type="file"
@@ -429,6 +479,21 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                           {uploadingFile ? 'Uploading...' : 'Attach Document or Media'}
                         </span>
                       </div>
+                    </div>
+                  ) : (
+                    <div className="mt-1 space-y-2">
+                      <Input
+                        type="url"
+                        placeholder="https://example.com/image.jpg"
+                        value={mediaUrl}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setMediaUrl(val);
+                          setMediaName(val.split('/').pop() || 'Public Image');
+                        }}
+                        className="w-full text-xs"
+                      />
+                      <p className="text-[10px] text-zinc-400">Enter a direct public URL to an image (ends with .jpg, .png, etc.)</p>
                     </div>
                   )}
                 </div>
@@ -667,6 +732,109 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                 />
               </div>
 
+              {/* File / Document Upload area */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <Label>Attachments / Documents</Label>
+                  <div className="flex gap-2 text-[10px]">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMediaInputType('upload');
+                        setMediaUrl('');
+                        setMediaName('');
+                      }}
+                      className={`font-black uppercase tracking-wider ${
+                        mediaInputType === 'upload' ? 'text-brand-500' : 'text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      Upload File
+                    </button>
+                    <span className="text-zinc-500">|</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMediaInputType('url');
+                        setMediaUrl('');
+                        setMediaName('');
+                      }}
+                      className={`font-black uppercase tracking-wider ${
+                        mediaInputType === 'url' ? 'text-brand-500' : 'text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      Image URL Link
+                    </button>
+                  </div>
+                </div>
+
+                {mediaUrl ? (
+                  <div className="space-y-2 mt-1">
+                    <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/10 p-2.5 dark:bg-neutral-800/20">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Paperclip className="h-4 w-4 text-brand-500 shrink-0" />
+                        <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 truncate">
+                          {mediaName || mediaUrl}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMediaUrl('');
+                          setMediaName('');
+                        }}
+                        className="text-xs font-black text-red-500 hover:text-red-400 px-2"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                    
+                    {/* Image Preview */}
+                    {(mediaUrl.toLowerCase().startsWith('http') || mediaUrl.toLowerCase().startsWith('/uploads')) && (
+                      <div className="mt-2 rounded-xl border border-white/10 bg-white/5 p-2 max-w-full overflow-hidden flex justify-center">
+                        <img 
+                          src={mediaUrl} 
+                          alt="Media Preview" 
+                          className="max-h-48 rounded-lg object-contain"
+                          onError={(e) => {
+                            (e.target as HTMLElement).style.display = 'none';
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                ) : mediaInputType === 'upload' ? (
+                  <div className="mt-1 flex items-center justify-center border-2 border-dashed border-white/20 rounded-xl p-4 bg-white/5 hover:bg-white/10 transition-all cursor-pointer relative">
+                    <input
+                      type="file"
+                      onChange={handleFileUpload}
+                      disabled={uploadingFile}
+                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                    />
+                    <div className="text-center">
+                      <Plus className="h-5 w-5 text-zinc-400 mx-auto mb-1" />
+                      <span className="text-[11px] font-bold text-zinc-400">
+                        {uploadingFile ? 'Uploading...' : 'Attach Document or Media'}
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-1 space-y-2">
+                    <Input
+                      type="url"
+                      placeholder="https://example.com/image.jpg"
+                      value={mediaUrl}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setMediaUrl(val);
+                        setMediaName(val.split('/').pop() || 'Public Image');
+                      }}
+                      className="w-full text-xs"
+                    />
+                    <p className="text-[10px] text-zinc-400">Enter a direct public URL to an image (ends with .jpg, .png, etc.)</p>
+                  </div>
+                )}
+              </div>
+
               <Button
                 onClick={handleAiGenerate}
                 className="w-full shadow-lg shadow-brand-500/15"
@@ -723,9 +891,26 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
 
                   {/* AI Visual Mockup Placeholder */}
                   <div className="rounded-2xl border border-dashed border-white/30 bg-white/10 p-4 text-center">
-                    <ImageIcon className="h-6 w-6 text-brand-500 mx-auto mb-2" />
-                    <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200 block">AI Image Mockup Attached</span>
-                    <span className="text-[10px] text-zinc-400 block mt-0.5">High-quality athletic imagery is automatically synced with campaigns.</span>
+                    {mediaUrl && (mediaUrl.toLowerCase().endsWith('.jpg') || mediaUrl.toLowerCase().endsWith('.jpeg') || mediaUrl.toLowerCase().endsWith('.png') || mediaUrl.toLowerCase().endsWith('.webp') || mediaUrl.toLowerCase().endsWith('.gif')) ? (
+                      <div className="space-y-2">
+                        <img src={mediaUrl} alt="Preview" className="max-h-40 mx-auto rounded-lg object-cover" />
+                        <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200 block">{mediaName}</span>
+                      </div>
+                    ) : mediaUrl ? (
+                      <div className="space-y-1">
+                        <Paperclip className="h-6 w-6 text-brand-500 mx-auto mb-1" />
+                        <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200 block">{mediaName}</span>
+                        <a href={mediaUrl} target="_blank" rel="noreferrer" className="text-[10px] text-brand-500 hover:underline">
+                          View Uploaded Document
+                        </a>
+                      </div>
+                    ) : (
+                      <>
+                        <ImageIcon className="h-6 w-6 text-brand-500 mx-auto mb-2" />
+                        <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200 block">AI Image Mockup Attached</span>
+                        <span className="text-[10px] text-zinc-400 block mt-0.5">High-quality athletic imagery is automatically synced with campaigns.</span>
+                      </>
+                    )}
                   </div>
                 </div>
               </Card>

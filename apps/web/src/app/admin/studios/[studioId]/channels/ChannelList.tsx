@@ -25,6 +25,7 @@ const KIND_LABELS: Record<ChannelKind, string> = {
   messenger_meta: 'Facebook Messenger',
   x_dm: 'X DMs',
   sms: 'SMS',
+  google_ads: 'Google Ads',
 };
 
 const STATUS_TONE: Record<ChannelStatus, 'success' | 'warning' | 'danger' | 'neutral'> = {

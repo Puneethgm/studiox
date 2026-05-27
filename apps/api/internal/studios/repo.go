@@ -23,10 +23,10 @@ func (r *Repo) Pool() *pgxpool.Pool { return r.pool }
 
 func (r *Repo) Create(ctx context.Context, tx pgx.Tx, s *Studio) error {
 	row := tx.QueryRow(ctx, `
-		INSERT INTO studios (slug, name, brand_color, logo_url, contact_email, active, gemini_api_key, meta_app_id, meta_app_secret, stripe_account_id, stripe_secret_key, stripe_publishable_key, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+		INSERT INTO studios (slug, name, brand_color, logo_url, contact_email, active, gemini_api_key, meta_app_id, meta_app_secret, google_client_id, google_client_secret, google_developer_token, stripe_account_id, stripe_secret_key, stripe_publishable_key, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
 		RETURNING id, created_at, updated_at
-	`, s.Slug, s.Name, s.BrandColor, s.LogoURL, s.ContactEmail, s.Active, s.GeminiAPIKey, s.MetaAppID, s.MetaAppSecret, s.StripeAccountID, s.StripeSecretKey, s.StripePublishableKey, s.SubscriptionTier, s.SocialPlannerEnabled, s.KnowledgeBase, s.KnowledgeBaseFiles)
+	`, s.Slug, s.Name, s.BrandColor, s.LogoURL, s.ContactEmail, s.Active, s.GeminiAPIKey, s.MetaAppID, s.MetaAppSecret, s.GoogleClientID, s.GoogleClientSecret, s.GoogleDeveloperToken, s.StripeAccountID, s.StripeSecretKey, s.StripePublishableKey, s.SubscriptionTier, s.SocialPlannerEnabled, s.KnowledgeBase, s.KnowledgeBaseFiles)
 	if err := row.Scan(&s.ID, &s.CreatedAt, &s.UpdatedAt); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -41,6 +41,7 @@ func (r *Repo) List(ctx context.Context) ([]Studio, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT s.id, s.slug, s.name, s.brand_color, s.logo_url, s.contact_email,
 		       s.active, s.created_at, s.updated_at, s.availability_slots, s.availability_timezone, s.gemini_api_key, s.meta_app_id, s.meta_app_secret,
+		       s.google_client_id, s.google_client_secret, s.google_developer_token,
 		       s.stripe_account_id, s.stripe_secret_key, s.stripe_publishable_key, s.subscription_tier, s.social_planner_enabled, s.knowledge_base, s.knowledge_base_files,
 		       COALESCE(c.cnt, 0), COALESCE(l.cnt, 0)
 		FROM studios s
@@ -59,6 +60,7 @@ func (r *Repo) List(ctx context.Context) ([]Studio, error) {
 		var s Studio
 		if err := rows.Scan(&s.ID, &s.Slug, &s.Name, &s.BrandColor, &s.LogoURL, &s.ContactEmail,
 			&s.Active, &s.CreatedAt, &s.UpdatedAt, &s.AvailabilitySlots, &s.AvailabilityTimezone, &s.GeminiAPIKey, &s.MetaAppID, &s.MetaAppSecret,
+			&s.GoogleClientID, &s.GoogleClientSecret, &s.GoogleDeveloperToken,
 			&s.StripeAccountID, &s.StripeSecretKey, &s.StripePublishableKey, &s.SubscriptionTier, &s.SocialPlannerEnabled, &s.KnowledgeBase, &s.KnowledgeBaseFiles, &s.CampaignCount, &s.LeadCount); err != nil {
 			return nil, fmt.Errorf("scan studio: %w", err)
 		}
@@ -71,6 +73,7 @@ func (r *Repo) GetByID(ctx context.Context, id uuid.UUID) (*Studio, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, slug, name, brand_color, logo_url, contact_email, active, created_at, updated_at,
 		       availability_slots, availability_timezone, gemini_api_key, meta_app_id, meta_app_secret,
+		       google_client_id, google_client_secret, google_developer_token,
 		       stripe_account_id, stripe_secret_key, stripe_publishable_key, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files
 		FROM studios WHERE id = $1
 	`, id)
@@ -81,6 +84,7 @@ func (r *Repo) GetBySlug(ctx context.Context, slug string) (*Studio, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, slug, name, brand_color, logo_url, contact_email, active, created_at, updated_at,
 		       availability_slots, availability_timezone, gemini_api_key, meta_app_id, meta_app_secret,
+		       google_client_id, google_client_secret, google_developer_token,
 		       stripe_account_id, stripe_secret_key, stripe_publishable_key, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files
 		FROM studios WHERE slug = $1
 	`, slug)
@@ -90,14 +94,15 @@ func (r *Repo) GetBySlug(ctx context.Context, slug string) (*Studio, error) {
 // Update writes the editable fields. Slug is intentionally NOT updatable here
 // (changing a slug breaks every shared public link). Add a deliberate "rename
 // slug" flow when needed.
-func (r *Repo) Update(ctx context.Context, id uuid.UUID, name, brandColor, logoURL, contactEmail string, active bool, availabilitySlots []AvailabilitySlot, availabilityTimezone string, geminiAPIKey, metaAppID, metaAppSecret string, socialPlannerEnabled bool, knowledgeBase string, knowledgeBaseFiles []KnowledgeBaseFile) error {
+func (r *Repo) Update(ctx context.Context, id uuid.UUID, name, brandColor, logoURL, contactEmail string, active bool, availabilitySlots []AvailabilitySlot, availabilityTimezone string, geminiAPIKey, metaAppID, metaAppSecret, googleClientID, googleClientSecret, googleDeveloperToken string, socialPlannerEnabled bool, knowledgeBase string, knowledgeBaseFiles []KnowledgeBaseFile) error {
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE studios
 		SET name = $2, brand_color = $3, logo_url = $4, contact_email = $5, active = $6,
 		    availability_slots = $7, availability_timezone = $8, gemini_api_key = $9,
-		    meta_app_id = $10, meta_app_secret = $11, social_planner_enabled = $12, knowledge_base = $13, knowledge_base_files = $14, updated_at = now()
+		    meta_app_id = $10, meta_app_secret = $11, google_client_id = $12, google_client_secret = $13, google_developer_token = $14,
+		    social_planner_enabled = $15, knowledge_base = $16, knowledge_base_files = $17, updated_at = now()
 		WHERE id = $1`,
-		id, name, brandColor, logoURL, contactEmail, active, availabilitySlots, availabilityTimezone, geminiAPIKey, metaAppID, metaAppSecret, socialPlannerEnabled, knowledgeBase, knowledgeBaseFiles)
+		id, name, brandColor, logoURL, contactEmail, active, availabilitySlots, availabilityTimezone, geminiAPIKey, metaAppID, metaAppSecret, googleClientID, googleClientSecret, googleDeveloperToken, socialPlannerEnabled, knowledgeBase, knowledgeBaseFiles)
 	if err != nil {
 		return fmt.Errorf("update studio: %w", err)
 	}
@@ -111,6 +116,7 @@ func scanStudio(row pgx.Row) (*Studio, error) {
 	var s Studio
 	if err := row.Scan(&s.ID, &s.Slug, &s.Name, &s.BrandColor, &s.LogoURL, &s.ContactEmail,
 		&s.Active, &s.CreatedAt, &s.UpdatedAt, &s.AvailabilitySlots, &s.AvailabilityTimezone, &s.GeminiAPIKey, &s.MetaAppID, &s.MetaAppSecret,
+		&s.GoogleClientID, &s.GoogleClientSecret, &s.GoogleDeveloperToken,
 		&s.StripeAccountID, &s.StripeSecretKey, &s.StripePublishableKey, &s.SubscriptionTier, &s.SocialPlannerEnabled, &s.KnowledgeBase, &s.KnowledgeBaseFiles); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound

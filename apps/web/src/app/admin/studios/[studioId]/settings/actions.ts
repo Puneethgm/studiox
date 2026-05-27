@@ -32,6 +32,9 @@ export async function updateStudioSettings(
     geminiApiKey?: string;
     metaAppId?: string;
     metaAppSecret?: string;
+    googleClientId?: string;
+    googleClientSecret?: string;
+    googleDeveloperToken?: string;
     knowledgeBase?: string;
   },
 ): Promise<UpdateStudioResult> {

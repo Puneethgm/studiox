@@ -153,6 +153,9 @@ type UpdateStudioInput struct {
 	GeminiAPIKey         string             `json:"geminiApiKey"`
 	MetaAppID            string             `json:"metaAppId"`
 	MetaAppSecret        string             `json:"metaAppSecret"`
+	GoogleClientID       string             `json:"googleClientId"`
+	GoogleClientSecret   string             `json:"googleClientSecret"`
+	GoogleDeveloperToken string             `json:"googleDeveloperToken"`
 	SocialPlannerEnabled bool               `json:"socialPlannerEnabled"`
 	KnowledgeBase        string             `json:"knowledgeBase"`
 	KnowledgeBaseFiles   []KnowledgeBaseFile `json:"knowledgeBaseFiles"`
@@ -166,6 +169,9 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput
 	in.GeminiAPIKey = strings.TrimSpace(in.GeminiAPIKey)
 	in.MetaAppID = strings.TrimSpace(in.MetaAppID)
 	in.MetaAppSecret = strings.TrimSpace(in.MetaAppSecret)
+	in.GoogleClientID = strings.TrimSpace(in.GoogleClientID)
+	in.GoogleClientSecret = strings.TrimSpace(in.GoogleClientSecret)
+	in.GoogleDeveloperToken = strings.TrimSpace(in.GoogleDeveloperToken)
 
 	errs := map[string]string{}
 	if in.Name == "" {
@@ -182,7 +188,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput
 	if len(errs) > 0 {
 		return errs, nil
 	}
-	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.Active, in.AvailabilitySlots, in.AvailabilityTimezone, in.GeminiAPIKey, in.MetaAppID, in.MetaAppSecret, in.SocialPlannerEnabled, in.KnowledgeBase, in.KnowledgeBaseFiles); err != nil {
+	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.Active, in.AvailabilitySlots, in.AvailabilityTimezone, in.GeminiAPIKey, in.MetaAppID, in.MetaAppSecret, in.GoogleClientID, in.GoogleClientSecret, in.GoogleDeveloperToken, in.SocialPlannerEnabled, in.KnowledgeBase, in.KnowledgeBaseFiles); err != nil {
 		return nil, err
 	}
 	return nil, nil

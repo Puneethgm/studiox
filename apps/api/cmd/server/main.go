@@ -113,6 +113,10 @@ func main() {
 	aiWorker := messaging.NewAIWorker(msgBus, msgRepo, msgSvc, studiosRepo, leadsRepo, claudeClient, log.With("component", "ai_worker"))
 	go aiWorker.Run(rootCtx)
 
+	// Social Publisher worker
+	socialWorker := studios.NewSocialWorker(pool, cfg.TokenEncryptionKey, log.With("component", "social_worker"))
+	go socialWorker.Run(rootCtx)
+
 	metaWebhook := messaging.NewMetaWebhookHandler(msgSvc,
 		cfg.Meta.WebhookVerifyToken, cfg.Meta.AppSecret,
 		log.With("component", "meta_webhook"))

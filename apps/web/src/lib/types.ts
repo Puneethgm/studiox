@@ -32,6 +32,9 @@ export interface Studio {
   geminiApiKey?: string;
   metaAppId?: string;
   metaAppSecret?: string;
+  googleClientId?: string;
+  googleClientSecret?: string;
+  googleDeveloperToken?: string;
   campaignCount?: number;
   leadCount?: number;
   knowledgeBase?: string;
@@ -121,7 +124,7 @@ export interface StudioSheetsSettings {
 
 // ===== Messaging =====
 
-export type ChannelKind = 'whatsapp_meta' | 'instagram_meta' | 'messenger_meta' | 'x_dm' | 'sms';
+export type ChannelKind = 'whatsapp_meta' | 'instagram_meta' | 'messenger_meta' | 'x_dm' | 'sms' | 'google_ads';
 
 export type ChannelStatus = 'active' | 'paused' | 'disconnected' | 'error';
 

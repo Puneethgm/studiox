@@ -33,6 +33,9 @@ type Studio struct {
 	GeminiAPIKey string    `json:"geminiApiKey"`
 	MetaAppID    string    `json:"metaAppId"`
 	MetaAppSecret string   `json:"metaAppSecret"`
+	GoogleClientID string  `json:"googleClientId"`
+	GoogleClientSecret string `json:"googleClientSecret"`
+	GoogleDeveloperToken string `json:"googleDeveloperToken"`
 	StripeAccountID string `json:"stripeAccountId"`
 	StripeSecretKey string `json:"stripeSecretKey"`
 	StripePublishableKey string `json:"stripePublishableKey"`

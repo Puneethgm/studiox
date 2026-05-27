@@ -41,6 +41,7 @@ const CHANNEL_BADGE: Record<ChannelKind, { label: string; color: string }> = {
   messenger_meta: { label: 'FB',  color: '#0084FF' },
   x_dm:           { label: 'X',   color: '#000000' },
   sms:            { label: 'SMS', color: '#3b82f6' },
+  google_ads:     { label: 'G',   color: '#4285F4' },
 };
 
 interface SSEEvent {
@@ -2303,6 +2304,7 @@ function channelLabel(k: ChannelKind): string {
     case 'messenger_meta': return 'Messenger';
     case 'x_dm':           return 'X DM';
     case 'sms':            return 'SMS';
+    case 'google_ads':     return 'Google Ads';
   }
 }
 

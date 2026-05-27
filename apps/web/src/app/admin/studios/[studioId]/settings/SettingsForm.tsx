@@ -26,9 +26,13 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
   const [geminiApiKey, setGeminiApiKey] = useState(studio.geminiApiKey || '');
   const [metaAppId, setMetaAppId] = useState(studio.metaAppId || '');
   const [metaAppSecret, setMetaAppSecret] = useState(studio.metaAppSecret || '');
+  const [googleClientId, setGoogleClientId] = useState(studio.googleClientId || '');
+  const [googleClientSecret, setGoogleClientSecret] = useState(studio.googleClientSecret || '');
+  const [googleDeveloperToken, setGoogleDeveloperToken] = useState(studio.googleDeveloperToken || '');
   const [active, setActive] = useState(studio.active);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [activeTab, setActiveTab] = useState<'normal' | 'config'>('normal');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -93,6 +97,9 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
         geminiApiKey,
         metaAppId,
         metaAppSecret,
+        googleClientId,
+        googleClientSecret,
+        googleDeveloperToken,
       });
       if (!result.ok) {
         setErrors(result.details ?? { _: result.error });
@@ -143,122 +150,193 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
 
   return (
     <div className="grid gap-6 md:grid-cols-3">
-      <div className="md:col-span-2">
+      <div className="md:col-span-2 space-y-6">
         <div className="overflow-hidden rounded-[24px] border border-white/30 bg-white/30 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30" style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 4px 16px rgba(0,0,0,0.05)' }}>
-          <div className="border-b border-white/20 px-6 py-4 dark:border-white/5">
-            <h3 className="text-sm font-black uppercase tracking-[0.15em] text-zinc-400">Identity</h3>
+          <div className="flex border-b border-white/20 dark:border-white/5">
+            <button
+              type="button"
+              onClick={() => setActiveTab('normal')}
+              className={`flex-1 px-6 py-4 text-xs font-black uppercase tracking-[0.15em] border-b-2 transition-all ${
+                activeTab === 'normal'
+                  ? 'border-brand-500 text-zinc-900 dark:text-white bg-white/10'
+                  : 'border-transparent text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300'
+              }`}
+            >
+              Normal Details
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('config')}
+              className={`flex-1 px-6 py-4 text-xs font-black uppercase tracking-[0.15em] border-b-2 transition-all ${
+                activeTab === 'config'
+                  ? 'border-brand-500 text-zinc-900 dark:text-white bg-white/10'
+                  : 'border-transparent text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300'
+              }`}
+            >
+              Configuration
+            </button>
           </div>
           <form onSubmit={onSubmit} className="space-y-5 p-6">
-            <div>
-              <Label htmlFor="name">Studio name</Label>
-              <Input
-                id="name"
-                required
-                invalid={!!errors.name}
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-              <FieldError message={errors.name} />
-            </div>
+            {activeTab === 'normal' && (
+              <>
+                <div>
+                  <Label htmlFor="name">Studio name</Label>
+                  <Input
+                    id="name"
+                    required
+                    invalid={!!errors.name}
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                  />
+                  <FieldError message={errors.name} />
+                </div>
 
-            <div className="grid gap-5 sm:grid-cols-2">
-              <div>
-                <Label htmlFor="brandColor">Brand color</Label>
-                <div className="flex items-center gap-2">
+                <div className="grid gap-5 sm:grid-cols-2">
+                  <div>
+                    <Label htmlFor="brandColor">Brand color</Label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        id="brandColor"
+                        value={brandColor}
+                        onChange={(e) => setBrandColor(e.target.value)}
+                        className="h-10 w-12 cursor-pointer rounded-md border border-slate-300 bg-white p-1 dark:border-slate-700 dark:bg-slate-900"
+                        suppressHydrationWarning
+                      />
+                      <Input
+                        value={brandColor}
+                        onChange={(e) => setBrandColor(e.target.value)}
+                        invalid={!!errors.brandColor}
+                        className="font-mono"
+                      />
+                    </div>
+                    <FieldError message={errors.brandColor} />
+                  </div>
+                  <div>
+                    <Label htmlFor="logoUrl">Logo URL</Label>
+                    <Input
+                      id="logoUrl"
+                      value={logoUrl}
+                      onChange={(e) => setLogoUrl(e.target.value)}
+                    />
+                    <FieldHint>Square image works best.</FieldHint>
+                  </div>
+                </div>
+
+                <div>
+                  <Label htmlFor="contactEmail">Contact email</Label>
+                  <Input
+                    id="contactEmail"
+                    type="email"
+                    invalid={!!errors.contactEmail}
+                    value={contactEmail}
+                    onChange={(e) => setContactEmail(e.target.value)}
+                  />
+                  <FieldError message={errors.contactEmail} />
+                </div>
+
+                <div className="flex items-center gap-3">
                   <input
-                    type="color"
-                    id="brandColor"
-                    value={brandColor}
-                    onChange={(e) => setBrandColor(e.target.value)}
-                    className="h-10 w-12 cursor-pointer rounded-md border border-slate-300 bg-white p-1 dark:border-slate-700 dark:bg-slate-900"
+                    type="checkbox"
+                    id="active"
+                    checked={active}
+                    onChange={(e) => setActive(e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-[color:var(--brand,#7c3aed)] focus:ring-[color:var(--brand,#7c3aed)]"
                     suppressHydrationWarning
                   />
-                  <Input
-                    value={brandColor}
-                    onChange={(e) => setBrandColor(e.target.value)}
-                    invalid={!!errors.brandColor}
-                    className="font-mono"
-                  />
+                  <Label htmlFor="active" className="mb-0">Studio is active</Label>
                 </div>
-                <FieldError message={errors.brandColor} />
-              </div>
-              <div>
-                <Label htmlFor="logoUrl">Logo URL</Label>
-                <Input
-                  id="logoUrl"
-                  value={logoUrl}
-                  onChange={(e) => setLogoUrl(e.target.value)}
-                />
-                <FieldHint>Square image works best.</FieldHint>
-              </div>
-            </div>
+                <FieldHint>Inactive studios stop accepting public form submissions.</FieldHint>
+              </>
+            )}
 
-            <div>
-              <Label htmlFor="contactEmail">Contact email</Label>
-              <Input
-                id="contactEmail"
-                type="email"
-                invalid={!!errors.contactEmail}
-                value={contactEmail}
-                onChange={(e) => setContactEmail(e.target.value)}
-              />
-              <FieldError message={errors.contactEmail} />
-            </div>
+            {activeTab === 'config' && (
+              <>
+                <div>
+                  <Label htmlFor="geminiApiKey">Gemini API Key</Label>
+                  <Input
+                    id="geminiApiKey"
+                    type="password"
+                    placeholder="AIzaSy..."
+                    invalid={!!errors.geminiApiKey}
+                    value={geminiApiKey}
+                    onChange={(e) => setGeminiApiKey(e.target.value)}
+                  />
+                  <FieldHint>Configure the Gemini API Key to enable AI-driven template generation.</FieldHint>
+                  <FieldError message={errors.geminiApiKey} />
+                </div>
 
-            <div>
-              <Label htmlFor="geminiApiKey">Gemini API Key</Label>
-              <Input
-                id="geminiApiKey"
-                type="password"
-                placeholder="AIzaSy..."
-                invalid={!!errors.geminiApiKey}
-                value={geminiApiKey}
-                onChange={(e) => setGeminiApiKey(e.target.value)}
-              />
-              <FieldHint>Configure the Gemini API Key to enable AI-driven template generation.</FieldHint>
-              <FieldError message={errors.geminiApiKey} />
-            </div>
+                <div>
+                  <Label htmlFor="metaAppId">Meta App ID</Label>
+                  <Input
+                    id="metaAppId"
+                    type="text"
+                    placeholder="e.g. 2405726999940224"
+                    invalid={!!errors.metaAppId}
+                    value={metaAppId}
+                    onChange={(e) => setMetaAppId(e.target.value)}
+                  />
+                  <FieldHint>The custom Facebook Developer App ID for Facebook/Instagram integration.</FieldHint>
+                  <FieldError message={errors.metaAppId} />
+                </div>
 
-            <div>
-              <Label htmlFor="metaAppId">Meta App ID</Label>
-              <Input
-                id="metaAppId"
-                type="text"
-                placeholder="e.g. 2405726999940224"
-                invalid={!!errors.metaAppId}
-                value={metaAppId}
-                onChange={(e) => setMetaAppId(e.target.value)}
-              />
-              <FieldHint>The custom Facebook Developer App ID for Facebook/Instagram integration.</FieldHint>
-              <FieldError message={errors.metaAppId} />
-            </div>
+                <div>
+                  <Label htmlFor="metaAppSecret">Meta App Secret</Label>
+                  <Input
+                    id="metaAppSecret"
+                    type="password"
+                    placeholder="e.g. d2d2fad32..."
+                    invalid={!!errors.metaAppSecret}
+                    value={metaAppSecret}
+                    onChange={(e) => setMetaAppSecret(e.target.value)}
+                  />
+                  <FieldHint>The custom Meta App Secret for validating incoming webhook events.</FieldHint>
+                  <FieldError message={errors.metaAppSecret} />
+                </div>
 
-            <div>
-              <Label htmlFor="metaAppSecret">Meta App Secret</Label>
-              <Input
-                id="metaAppSecret"
-                type="password"
-                placeholder="e.g. d2d2fad32..."
-                invalid={!!errors.metaAppSecret}
-                value={metaAppSecret}
-                onChange={(e) => setMetaAppSecret(e.target.value)}
-              />
-              <FieldHint>The custom Meta App Secret for validating incoming webhook events.</FieldHint>
-              <FieldError message={errors.metaAppSecret} />
-            </div>
+                <div>
+                  <Label htmlFor="googleClientId">Google Ads Client ID</Label>
+                  <Input
+                    id="googleClientId"
+                    type="text"
+                    placeholder="e.g. 123456789-abc.apps.googleusercontent.com"
+                    invalid={!!errors.googleClientId}
+                    value={googleClientId}
+                    onChange={(e) => setGoogleClientId(e.target.value)}
+                  />
+                  <FieldHint>The OAuth 2.0 Web Client ID registered in Google Developer Console.</FieldHint>
+                  <FieldError message={errors.googleClientId} />
+                </div>
 
-            <div className="flex items-center gap-3">
-              <input
-                type="checkbox"
-                id="active"
-                checked={active}
-                onChange={(e) => setActive(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-[color:var(--brand,#7c3aed)] focus:ring-[color:var(--brand,#7c3aed)]"
-                suppressHydrationWarning
-              />
-              <Label htmlFor="active" className="mb-0">Studio is active</Label>
-            </div>
-            <FieldHint>Inactive studios stop accepting public form submissions.</FieldHint>
+                <div>
+                  <Label htmlFor="googleClientSecret">Google Ads Client Secret</Label>
+                  <Input
+                    id="googleClientSecret"
+                    type="password"
+                    placeholder="e.g. GOCSPX-..."
+                    invalid={!!errors.googleClientSecret}
+                    value={googleClientSecret}
+                    onChange={(e) => setGoogleClientSecret(e.target.value)}
+                  />
+                  <FieldHint>The Client Secret matching your Google Web Client ID.</FieldHint>
+                  <FieldError message={errors.googleClientSecret} />
+                </div>
+
+                <div>
+                  <Label htmlFor="googleDeveloperToken">Google Ads Developer Token</Label>
+                  <Input
+                    id="googleDeveloperToken"
+                    type="password"
+                    placeholder="e.g. AbCdEfGhIjKlMnOpQrStUv"
+                    invalid={!!errors.googleDeveloperToken}
+                    value={googleDeveloperToken}
+                    onChange={(e) => setGoogleDeveloperToken(e.target.value)}
+                  />
+                  <FieldHint>The Developer Token issued by Google Ads Manager account.</FieldHint>
+                  <FieldError message={errors.googleDeveloperToken} />
+                </div>
+              </>
+            )}
 
             <FieldError message={errors._} />
 
@@ -271,67 +349,122 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
           </form>
         </div>
 
-        {/* Availability Settings */}
-        <AvailabilitySettings studio={studio} />
+        {activeTab === 'normal' && (
+          <AvailabilitySettings studio={studio} />
+        )}
+
+        {activeTab === 'config' && (
+          <div className="overflow-hidden rounded-[24px] border border-white/30 bg-white/30 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30" style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 4px 16px rgba(0,0,0,0.05)' }}>
+            <div className="border-b border-white/20 px-6 py-4 dark:border-white/5 flex items-center gap-2">
+              <Database className="h-4 w-4 text-zinc-400" />
+              <h3 className="text-sm font-black uppercase tracking-[0.15em] text-zinc-400">Google Sheets Sync</h3>
+            </div>
+            <form onSubmit={onSaveSheetsSettings} className="space-y-4 p-6">
+              <div>
+                <Label htmlFor="spreadsheetId">Spreadsheet ID</Label>
+                <Input
+                  id="spreadsheetId"
+                  placeholder="1aBc...Xyz"
+                  value={spreadsheetId}
+                  onChange={(e) => setSpreadsheetId(e.target.value)}
+                />
+                <FieldHint>The ID of your Google Sheet tracker</FieldHint>
+              </div>
+
+              <div>
+                <Label htmlFor="tabName">Tab Name</Label>
+                <Input
+                  id="tabName"
+                  placeholder="Leads"
+                  value={tabName}
+                  onChange={(e) => setTabName(e.target.value)}
+                />
+              </div>
+
+              <div className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  id="sheetsActive"
+                  checked={sheetsActive}
+                  onChange={(e) => setSheetsActive(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-[color:var(--brand,#7c3aed)] focus:ring-[color:var(--brand,#7c3aed)]"
+                />
+                <Label htmlFor="sheetsActive" className="mb-0">Enable sync</Label>
+              </div>
+
+              {sheetsSuccess ? (
+                <p className="text-sm font-medium text-emerald-600 dark:text-emerald-400">{sheetsSuccess}</p>
+              ) : null}
+              {sheetsError ? (
+                <p className="text-sm font-medium text-rose-600 dark:text-rose-400">{sheetsError}</p>
+              ) : null}
+
+              <div className="flex items-center justify-end border-t border-slate-100 pt-4 dark:border-slate-800/60">
+                <Button type="submit" loading={sheetsSaving}>Save Connection</Button>
+              </div>
+            </form>
+          </div>
+        )}
       </div>
 
       <div>
-        <div className="overflow-hidden rounded-[24px] border border-white/30 bg-white/30 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30" style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 4px 16px rgba(0,0,0,0.05)' }}>
-          <div className="border-b border-white/20 px-6 py-4 dark:border-white/5">
-            <h3 className="text-sm font-black uppercase tracking-[0.15em] text-zinc-400">Live Preview</h3>
-          </div>
-          <div className="p-6">
-          <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-900/40">
-            <div className="flex items-center gap-3">
-              <span
-                className="grid h-12 w-12 place-items-center rounded-2xl text-base font-bold text-white shadow-md"
-                style={{ background: brandColor }}
-              >
-                {logoUrl && !logoError ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={logoUrl} alt="" className="h-12 w-12 rounded-2xl object-cover" onError={() => setLogoError(true)} />
-                ) : (
-                  (name || studio.name).slice(0, 2).toUpperCase()
-                )}
-              </span>
-              <div className="min-w-0">
-                <div className="truncate text-sm font-semibold">{name || studio.name}</div>
-                <div className="truncate font-mono text-xs text-slate-500">/{studio.slug}</div>
+        {activeTab === 'normal' && (
+          <div className="overflow-hidden rounded-[24px] border border-white/30 bg-white/30 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30" style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 4px 16px rgba(0,0,0,0.05)' }}>
+            <div className="border-b border-white/20 px-6 py-4 dark:border-white/5">
+              <h3 className="text-sm font-black uppercase tracking-[0.15em] text-zinc-400">Live Preview</h3>
+            </div>
+            <div className="p-6">
+              <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-900/40">
+                <div className="flex items-center gap-3">
+                  <span
+                    className="grid h-12 w-12 place-items-center rounded-2xl text-base font-bold text-white shadow-md"
+                    style={{ background: brandColor }}
+                  >
+                    {logoUrl && !logoError ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={logoUrl} alt="" className="h-12 w-12 rounded-2xl object-cover" onError={() => setLogoError(true)} />
+                    ) : (
+                      (name || studio.name).slice(0, 2).toUpperCase()
+                    )}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold">{name || studio.name}</div>
+                    <div className="truncate font-mono text-xs text-slate-500">/{studio.slug}</div>
+                  </div>
+                </div>
+                <div className="mt-4">
+                  {previewHref ? (
+                    <a
+                      href={previewHref}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block w-full rounded-xl py-2.5 text-center text-sm font-semibold text-white shadow-sm"
+                      style={{ background: brandColor }}
+                      suppressHydrationWarning
+                    >
+                      Get in touch
+                    </a>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled
+                      className="w-full rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm opacity-60"
+                      style={{ background: brandColor }}
+                      suppressHydrationWarning
+                    >
+                      Create a campaign first
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-            <div className="mt-4">
-              {previewHref ? (
-                <a
-                  href={previewHref}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="block w-full rounded-xl py-2.5 text-center text-sm font-semibold text-white shadow-sm"
-                  style={{ background: brandColor }}
-                  suppressHydrationWarning
-                >
-                  Get in touch
-                </a>
-              ) : (
-                <button
-                  type="button"
-                  disabled
-                  className="w-full rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm opacity-60"
-                  style={{ background: brandColor }}
-                  suppressHydrationWarning
-                >
-                  Create a campaign first
-                </button>
-              )}
+              <FieldHint>
+                Slug is fixed (renaming would break shared links). Ask the platform admin if you need it changed.
+              </FieldHint>
             </div>
           </div>
-          <FieldHint>
-            Slug is fixed (renaming would break shared links). Ask the platform admin if you need it changed.
-          </FieldHint>
-          </div>
-        </div>
+        )}
 
-
-        <div className="mt-6 overflow-hidden rounded-[24px] border border-white/30 bg-white/30 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30" style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 4px 16px rgba(0,0,0,0.05)' }}>
+        <div className={`${activeTab === 'normal' ? 'mt-6' : ''} overflow-hidden rounded-[24px] border border-white/30 bg-white/30 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30`} style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 4px 16px rgba(0,0,0,0.05)' }}>
           <div className="border-b border-white/20 px-6 py-4 dark:border-white/5">
             <h3 className="text-sm font-black uppercase tracking-[0.15em] text-zinc-400">Password</h3>
           </div>
@@ -416,57 +549,6 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
 
             <div className="flex items-center justify-end border-t border-slate-100 pt-4 dark:border-slate-800/60">
               <Button type="submit" loading={changingPassword}>Update password</Button>
-            </div>
-          </form>
-        </div>
-
-        <div className="mt-6 overflow-hidden rounded-[24px] border border-white/30 bg-white/30 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30" style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 4px 16px rgba(0,0,0,0.05)' }}>
-          <div className="border-b border-white/20 px-6 py-4 dark:border-white/5 flex items-center gap-2">
-            <Database className="h-4 w-4 text-zinc-400" />
-            <h3 className="text-sm font-black uppercase tracking-[0.15em] text-zinc-400">Google Sheets Sync</h3>
-          </div>
-          <form onSubmit={onSaveSheetsSettings} className="space-y-4 p-6">
-            <div>
-              <Label htmlFor="spreadsheetId">Spreadsheet ID</Label>
-              <Input
-                id="spreadsheetId"
-                placeholder="1aBc...Xyz"
-                value={spreadsheetId}
-                onChange={(e) => setSpreadsheetId(e.target.value)}
-              />
-              <FieldHint>The ID of your Google Sheet tracker</FieldHint>
-            </div>
-
-            <div>
-              <Label htmlFor="tabName">Tab Name</Label>
-              <Input
-                id="tabName"
-                placeholder="Leads"
-                value={tabName}
-                onChange={(e) => setTabName(e.target.value)}
-              />
-            </div>
-
-            <div className="flex items-center gap-3">
-              <input
-                type="checkbox"
-                id="sheetsActive"
-                checked={sheetsActive}
-                onChange={(e) => setSheetsActive(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-[color:var(--brand,#7c3aed)] focus:ring-[color:var(--brand,#7c3aed)]"
-              />
-              <Label htmlFor="sheetsActive" className="mb-0">Enable sync</Label>
-            </div>
-
-            {sheetsSuccess ? (
-              <p className="text-sm font-medium text-emerald-600 dark:text-emerald-400">{sheetsSuccess}</p>
-            ) : null}
-            {sheetsError ? (
-              <p className="text-sm font-medium text-rose-600 dark:text-rose-400">{sheetsError}</p>
-            ) : null}
-
-            <div className="flex items-center justify-end border-t border-slate-100 pt-4 dark:border-slate-800/60">
-              <Button type="submit" loading={sheetsSaving}>Save Connection</Button>
             </div>
           </form>
         </div>
