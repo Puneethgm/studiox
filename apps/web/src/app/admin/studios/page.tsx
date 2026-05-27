@@ -9,13 +9,47 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { brandInitials } from '@/lib/color';
 import { serverFetch } from '@/lib/auth';
 import type { Studio } from '@/lib/types';
+import { Pagination } from '@/components/ui/Pagination';
+import { StudioFilters } from './StudioFilters';
 
 interface ListResp {
   studios: Studio[];
 }
 
-export default async function StudiosListPage() {
+interface SearchParams {
+  page?: string;
+  search?: string;
+  status?: string;
+}
+
+export default async function StudiosListPage({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParams>;
+}) {
+  const sp = await searchParams;
+  const page = Math.max(1, Number(sp.page) || 1);
+  const PAGE_SIZE = 9;
+  const offset = (page - 1) * PAGE_SIZE;
+
   const { studios } = await serverFetch<ListResp>('/api/v1/admin/studios');
+
+  // Filter studios
+  let filtered = studios;
+  if (sp.search) {
+    const sLower = sp.search.toLowerCase();
+    filtered = filtered.filter(s =>
+      s.name.toLowerCase().includes(sLower) ||
+      s.slug.toLowerCase().includes(sLower) ||
+      (s.contactEmail && s.contactEmail.toLowerCase().includes(sLower))
+    );
+  }
+  if (sp.status) {
+    const active = sp.status === 'active';
+    filtered = filtered.filter(s => s.active === active);
+  }
+
+  const paginatedStudios = filtered.slice(offset, offset + PAGE_SIZE);
 
   const totalCampaigns = studios.reduce((sum, s) => sum + (s.campaignCount ?? 0), 0);
   const totalLeads     = studios.reduce((sum, s) => sum + (s.leadCount ?? 0), 0);
@@ -110,12 +144,33 @@ export default async function StudiosListPage() {
             />
           </div>
 
+          {/* ── Search & Filter Controls ──────── */}
+          <StudioFilters search={sp.search} status={sp.status} />
+
           {/* ── Studio cards grid ─────────────── */}
-          <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-            {studios.map((s, idx) => (
-              <StudioCard key={s.id} studio={s} idx={idx} />
-            ))}
-          </div>
+          {filtered.length === 0 ? (
+            <div
+              className="overflow-hidden rounded-[24px] border border-white/30 bg-white/30 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30 p-8"
+              style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15)' }}
+            >
+              <EmptyState
+                icon={<Building2 className="h-8 w-8 text-zinc-400" />}
+                title="No studios match your search"
+                description="Try clearing your search query or status filter to see all studios."
+              />
+            </div>
+          ) : (
+            <>
+              <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+                {paginatedStudios.map((s, idx) => (
+                  <StudioCard key={s.id} studio={s} idx={idx} />
+                ))}
+              </div>
+
+              {/* Pagination */}
+              <Pagination total={filtered.length} pageSize={PAGE_SIZE} page={page} />
+            </>
+          )}
         </>
       )}
     </div>
