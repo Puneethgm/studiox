@@ -605,63 +605,70 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                   <span className="text-xs font-bold text-zinc-500">No scheduled posts. Use the quick scheduler to add one.</span>
                 </div>
               ) : (
-                <div 
-                  className="space-y-4 overflow-y-auto pr-2" 
-                  style={{ maxHeight: '540px' }}
-                  onScroll={handleQueueScroll}
-                >
-                  {posts.slice(0, visibleQueueCount).map((post) => (
-                    <div
-                      key={post.id}
-                      className="flex items-start gap-4 rounded-2xl border border-white/10 bg-white/10 p-4 hover:bg-white/20 dark:bg-neutral-800/20 dark:hover:bg-neutral-800/35 transition-all"
-                    >
-                      <div className="grid h-10 w-10 place-items-center rounded-xl bg-brand-500/10 text-brand-600">
-                        {post.platform === 'Facebook' && <Facebook className="h-5 w-5 text-blue-600" />}
-                        {post.platform === 'Instagram' && <Instagram className="h-5 w-5 text-pink-600" />}
-                        {post.platform === 'Google Ads' && <Globe className="h-5 w-5 text-indigo-600" />}
-                        {post.platform === 'TikTok' && <Share2 className="h-5 w-5 text-teal-600" />}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-black text-zinc-800 dark:text-zinc-200">{post.platform}</span>
-                          <span className="text-[10px] font-bold text-zinc-400">· {post.campaignName}</span>
-                          <div className="ml-auto flex items-center gap-2">
-                            <Badge tone={post.status === 'published' ? 'success' : post.status === 'scheduled' ? 'warning' : 'neutral'}>
-                              {post.status}
-                            </Badge>
-                            <button
-                              onClick={() => handleDeletePost(post.id)}
-                              className="p-1 text-zinc-400 hover:text-red-500 rounded-lg transition-colors ml-2"
-                              title="Delete Post"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
+                <>
+                  <div 
+                    className="space-y-4 overflow-y-auto pr-2" 
+                    style={{ maxHeight: '540px' }}
+                    onScroll={handleQueueScroll}
+                  >
+                    {posts.slice(0, visibleQueueCount).map((post) => (
+                      <div
+                        key={post.id}
+                        className="flex items-start gap-4 rounded-2xl border border-white/10 bg-white/10 p-4 hover:bg-white/20 dark:bg-neutral-800/20 dark:hover:bg-neutral-800/35 transition-all"
+                      >
+                        <div className="grid h-10 w-10 place-items-center rounded-xl bg-brand-500/10 text-brand-600">
+                          {post.platform === 'Facebook' && <Facebook className="h-5 w-5 text-blue-600" />}
+                          {post.platform === 'Instagram' && <Instagram className="h-5 w-5 text-pink-600" />}
+                          {post.platform === 'Google Ads' && <Globe className="h-5 w-5 text-indigo-600" />}
+                          {post.platform === 'TikTok' && <Share2 className="h-5 w-5 text-teal-600" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-black text-zinc-800 dark:text-zinc-200">{post.platform}</span>
+                            <span className="text-[10px] font-bold text-zinc-400">· {post.campaignName}</span>
+                            <div className="ml-auto flex items-center gap-2">
+                              <Badge tone={post.status === 'published' ? 'success' : post.status === 'scheduled' ? 'warning' : 'neutral'}>
+                                {post.status}
+                              </Badge>
+                              <button
+                                onClick={() => handleDeletePost(post.id)}
+                                className="p-1 text-zinc-400 hover:text-red-500 rounded-lg transition-colors ml-2"
+                                title="Delete Post"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </div>
+                          </div>
+                          <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-300 line-clamp-2">{post.content}</p>
+                          {post.imageUrl && (
+                            <div className="mt-2 flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 p-1.5 w-fit">
+                              <Paperclip className="h-3.5 w-3.5 text-zinc-400" />
+                              <a
+                                href={post.imageUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-[10px] font-bold text-brand-500 hover:underline truncate max-w-[200px]"
+                              >
+                                {post.imageUrl.split('/').pop() || 'Attachment'}
+                              </a>
+                            </div>
+                          )}
+                          <div className="mt-2 flex items-center gap-4 text-[10px] text-zinc-400 font-bold">
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-3.5 w-3.5" />
+                              {new Date(post.scheduledTime).toLocaleString()}
+                            </span>
                           </div>
                         </div>
-                        <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-300 line-clamp-2">{post.content}</p>
-                        {post.imageUrl && (
-                          <div className="mt-2 flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 p-1.5 w-fit">
-                            <Paperclip className="h-3.5 w-3.5 text-zinc-400" />
-                            <a
-                              href={post.imageUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-[10px] font-bold text-brand-500 hover:underline truncate max-w-[200px]"
-                            >
-                              {post.imageUrl.split('/').pop() || 'Attachment'}
-                            </a>
-                          </div>
-                        )}
-                        <div className="mt-2 flex items-center gap-4 text-[10px] text-zinc-400 font-bold">
-                          <span className="flex items-center gap-1">
-                            <Clock className="h-3.5 w-3.5" />
-                            {new Date(post.scheduledTime).toLocaleString()}
-                          </span>
-                        </div>
                       </div>
+                    ))}
+                  </div>
+                  {visibleQueueCount < posts.length && (
+                    <div className="mt-3 flex items-center justify-center gap-2 text-[11px] font-bold text-zinc-400 animate-bounce">
+                      <span>↓ {posts.length - visibleQueueCount} more post{posts.length - visibleQueueCount > 1 ? 's' : ''} — scroll to load</span>
                     </div>
-                  ))}
-                </div>
+                  )}
+                </>
               )}
             </Card>
           </div>

@@ -75,7 +75,7 @@ export function ChannelTabs({
   return (
     <div className="space-y-6">
       {/* Tab bar */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 dark:border-slate-800">
+      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/20 bg-white/20 p-1.5 backdrop-blur-xl dark:border-white/5 dark:bg-neutral-900/20">
         {TABS.map((t) => {
           const isActive = t.kind === active;
           const connectedCount = channels.filter((c) => c.kind === t.kind).length;
@@ -85,34 +85,39 @@ export function ChannelTabs({
               type="button"
               onClick={() => setActive(t.kind)}
               className={cn(
-                'group relative flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors',
+                'group relative flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition-all duration-200',
                 isActive
-                  ? 'text-slate-900 dark:text-slate-100'
-                  : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200',
+                  ? 'text-white shadow-sm'
+                  : 'text-slate-500 hover:bg-white/30 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-slate-200',
               )}
+              style={isActive ? { background: t.brand, boxShadow: `0 2px 12px ${t.brand}55` } : {}}
               suppressHydrationWarning
             >
               <span
                 aria-hidden
-                className="h-2 w-2 rounded-full"
-                style={{ background: t.brand }}
+                className={cn('h-2 w-2 rounded-full transition-all', isActive ? 'bg-white/70' : '')}
+                style={!isActive ? { background: t.brand } : {}}
               />
               {t.label}
               {connectedCount > 0 && (
-                <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                <span className={cn(
+                  'rounded-full px-1.5 py-0.5 text-[10px] font-bold',
+                  isActive
+                    ? 'bg-white/25 text-white'
+                    : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                )}>
                   {connectedCount}
                 </span>
               )}
               {t.status === 'coming_soon' && (
-                <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                <span className={cn(
+                  'rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider',
+                  isActive
+                    ? 'bg-white/20 text-white'
+                    : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+                )}>
                   Soon
                 </span>
-              )}
-              {isActive && (
-                <span
-                  className="absolute inset-x-2 -bottom-px h-0.5 rounded-full"
-                  style={{ background: t.brand }}
-                />
               )}
             </button>
           );

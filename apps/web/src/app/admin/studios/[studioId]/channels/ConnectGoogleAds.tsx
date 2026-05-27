@@ -105,14 +105,14 @@ export function ConnectGoogleAds({ studio }: Props) {
         {!studio.googleClientId ? (
           <Card>
             <div className="py-8 text-center">
-              <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-full bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                <Plug className="h-6 w-6" />
+              <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl text-white shadow-lg" style={{ background: 'linear-gradient(135deg, #4285F4 0%, #34A853 100%)' }}>
+                <Globe className="h-6 w-6" />
               </div>
-              <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">
-                No Google Ads accounts connected yet
+              <p className="text-sm font-bold text-slate-700 dark:text-slate-200">
+                No Google Ads account connected
               </p>
-              <p className="mt-2 text-sm text-slate-500 dark:text-slate-400 max-w-xl mx-auto">
-                Connect your Google Ads account to start automating campaign tracking and syncing incoming lead signals.
+              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto leading-relaxed">
+                Connect your Google Ads account to automate campaign tracking and sync incoming lead signals.
               </p>
             </div>
           </Card>
@@ -156,7 +156,20 @@ export function ConnectGoogleAds({ studio }: Props) {
 
       {/* Right side: Add/Configure Form */}
       <div>
-        <Card title="Connect Google Ads" subtitle="Manage OAuth 2.0 and API developer credentials.">
+        <Card>
+          {/* Google-blue branded header */}
+          <div
+            className="-mx-5 -mt-5 mb-5 flex items-center gap-3 rounded-t-[inherit] px-5 py-4"
+            style={{ background: 'linear-gradient(135deg, #4285F4 0%, #0F9D58 100%)' }}
+          >
+            <div className="grid h-9 w-9 place-items-center rounded-xl bg-white/20 text-white">
+              <Globe className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="text-sm font-black text-white">Connect Google Ads</div>
+              <div className="text-[11px] text-white/70">OAuth 2.0 + API developer credentials</div>
+            </div>
+          </div>
           <form onSubmit={onSubmit} className="space-y-4">
             {success && (
               <div className="flex items-center gap-2 rounded-2xl bg-emerald-500/10 p-4 text-xs font-bold text-emerald-600 dark:text-emerald-400">

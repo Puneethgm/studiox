@@ -269,30 +269,38 @@ function StudioCard({ studio: s, idx }: { studio: Studio; idx: number }) {
       className="group block focus:outline-none"
     >
       <div
-        className="relative h-full overflow-hidden rounded-[24px] backdrop-blur-2xl transition-all duration-500 hover:-translate-y-1.5 hover:scale-[1.012]"
+        className="relative h-full overflow-hidden rounded-[24px] backdrop-blur-2xl transition-all duration-500 hover:-translate-y-2 hover:scale-[1.013]"
         style={{
-          background: 'linear-gradient(145deg, rgba(255,255,255,0.38) 0%, rgba(248,245,255,0.30) 100%)',
-          border: '1px solid rgba(255,255,255,0.35)',
-          boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.20), 0 4px 24px rgba(0,0,0,0.06)',
+          background: 'linear-gradient(160deg, rgba(255,255,255,0.42) 0%, rgba(248,245,255,0.32) 100%)',
+          border: '1px solid rgba(255,255,255,0.38)',
+          boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.22), 0 8px 32px rgba(0,0,0,0.07)',
         }}
       >
-        {/* Brand color top bar with gradient fade */}
+        {/* Full-width colored header strip */}
         <div
-          className="relative h-1.5 w-full"
-          style={{ background: `linear-gradient(90deg, ${s.brandColor} 0%, ${s.brandColor}88 100%)` }}
-        />
+          className="relative h-24 w-full overflow-hidden"
+          style={{ background: `linear-gradient(135deg, ${s.brandColor} 0%, ${s.brandColor}cc 60%, ${s.brandColor}88 100%)` }}
+        >
+          {/* Abstract pattern overlay */}
+          <div className="absolute inset-0 opacity-20"
+            style={{ backgroundImage: `radial-gradient(circle at 80% 20%, white 0%, transparent 50%), radial-gradient(circle at 20% 80%, white 0%, transparent 40%)` }}
+          />
+          {/* Status badge */}
+          <div className="absolute right-4 top-4">
+            <Badge
+              tone={s.active ? 'success' : 'neutral'}
+              className="text-[10px] font-black uppercase tracking-wider shadow-sm"
+            >
+              {s.active ? '● Active' : '○ Inactive'}
+            </Badge>
+          </div>
+        </div>
 
-        {/* Subtle brand color ambient glow */}
-        <div
-          className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full blur-3xl opacity-20 transition-opacity duration-500 group-hover:opacity-40"
-          style={{ background: s.brandColor }}
-        />
-
-        <div className="p-6">
-          {/* Top row: logo + name + badge */}
-          <div className="flex items-start gap-4">
+        {/* Avatar overlapping the header/body boundary */}
+        <div className="relative px-5 pb-5">
+          <div className="-mt-7 mb-3 flex items-end justify-between">
             <div
-              className="relative grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-[18px] text-lg font-black text-white shadow-lg ring-4 ring-white/40 transition-transform duration-500 group-hover:scale-110 group-hover:rotate-3 dark:ring-white/10"
+              className="relative grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-[16px] text-lg font-black text-white shadow-lg ring-4 ring-white transition-transform duration-500 group-hover:scale-110 group-hover:rotate-3 dark:ring-neutral-900"
               style={{ background: s.brandColor }}
             >
               {s.logoUrl ? (
@@ -301,73 +309,76 @@ function StudioCard({ studio: s, idx }: { studio: Studio; idx: number }) {
               ) : (
                 brandInitials(s.name)
               )}
-              {/* Shine overlay */}
-              <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent" />
-            </div>
-
-            <div className="min-w-0 flex-1 pt-0.5">
-              <div className="flex items-center justify-between gap-2">
-                <h3 className="truncate text-base font-black text-zinc-900 transition-colors group-hover:text-brand-600 dark:text-white dark:group-hover:text-brand-400">
-                  {s.name}
-                </h3>
-                <Badge
-                  tone={s.active ? 'success' : 'neutral'}
-                  className="shrink-0 text-[10px] font-black uppercase tracking-wider"
-                >
-                  {s.active ? 'Active' : 'Inactive'}
-                </Badge>
-              </div>
-              <div className="mt-1 flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-wider text-zinc-400">
-                <Building2 className="h-3 w-3" />
-                /{s.slug}
-              </div>
-              {/* Description line */}
-              <p className="mt-1.5 text-[11px] font-semibold leading-relaxed text-zinc-500 dark:text-zinc-400 line-clamp-1">
-                {s.contactEmail ?? 'No contact email set'}
-              </p>
-            </div>
-          </div>
-
-          {/* Divider */}
-          <div className="my-5 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent dark:via-white/10" />
-
-          {/* Stats row */}
-          <div className="flex items-center justify-between">
-            <div className="flex gap-6">
-              {/* Campaigns */}
-              <div className="flex items-center gap-2">
-                <div className="grid h-8 w-8 place-items-center rounded-xl bg-sky-50/70 text-sky-600 dark:bg-sky-500/10 dark:text-sky-400">
-                  <Megaphone className="h-3.5 w-3.5" />
-                </div>
-                <div>
-                  <div className="text-base font-black text-zinc-900 dark:text-white">{s.campaignCount ?? 0}</div>
-                  <div className="text-[9px] font-black uppercase tracking-widest text-zinc-400">Campaigns</div>
-                </div>
-              </div>
-              {/* Leads */}
-              <div className="flex items-center gap-2">
-                <div className="grid h-8 w-8 place-items-center rounded-xl bg-violet-50/70 text-violet-600 dark:bg-violet-500/10 dark:text-violet-400">
-                  <Users className="h-3.5 w-3.5" />
-                </div>
-                <div>
-                  <div className="text-base font-black text-zinc-900 dark:text-white">{s.leadCount ?? 0}</div>
-                  <div className="text-[9px] font-black uppercase tracking-widest text-zinc-400">Leads</div>
-                </div>
-              </div>
+              <div className="absolute inset-0 bg-gradient-to-br from-white/25 to-transparent" />
             </div>
 
             {/* Arrow CTA */}
             <div
-              className="grid h-10 w-10 place-items-center rounded-2xl text-zinc-400 transition-all duration-300 group-hover:scale-110 group-hover:text-white"
-              style={{ background: 'rgba(255,255,255,0.4)' }}
+              className="grid h-9 w-9 place-items-center rounded-2xl transition-all duration-300 group-hover:scale-110"
+              style={{ background: `${s.brandColor}18`, color: s.brandColor }}
             >
-              <ArrowRight
-                className="h-5 w-5 transition-transform duration-300 group-hover:translate-x-0.5"
-                style={{ color: 'inherit' }}
-              />
+              <ArrowRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-0.5" />
+            </div>
+          </div>
+
+          {/* Name + slug */}
+          <div className="min-w-0">
+            <h3 className="truncate text-[15px] font-black text-zinc-900 transition-colors group-hover:text-brand-600 dark:text-white dark:group-hover:text-brand-400">
+              {s.name}
+            </h3>
+            <div className="mt-0.5 flex items-center gap-1 font-mono text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+              <Building2 className="h-3 w-3" />
+              /{s.slug}
+            </div>
+            <p className="mt-1 text-[11px] font-medium leading-relaxed text-zinc-500 dark:text-zinc-400 truncate">
+              {s.contactEmail ?? 'No contact email set'}
+            </p>
+          </div>
+
+          {/* Divider */}
+          <div className="my-4 h-px bg-gradient-to-r from-transparent via-white/40 to-transparent dark:via-white/10" />
+
+          {/* Stats row */}
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 flex-1">
+              <div className="grid h-8 w-8 place-items-center rounded-xl bg-sky-50/80 text-sky-600 dark:bg-sky-500/10 dark:text-sky-400">
+                <Megaphone className="h-3.5 w-3.5" />
+              </div>
+              <div>
+                <div className="text-sm font-black text-zinc-900 dark:text-white leading-none">{s.campaignCount ?? 0}</div>
+                <div className="text-[9px] font-black uppercase tracking-widest text-zinc-400 mt-0.5">Campaigns</div>
+              </div>
+            </div>
+            <div className="h-8 w-px bg-white/30 dark:bg-white/10" />
+            <div className="flex items-center gap-2 flex-1">
+              <div className="grid h-8 w-8 place-items-center rounded-xl bg-violet-50/80 text-violet-600 dark:bg-violet-500/10 dark:text-violet-400">
+                <Users className="h-3.5 w-3.5" />
+              </div>
+              <div>
+                <div className="text-sm font-black text-zinc-900 dark:text-white leading-none">{s.leadCount ?? 0}</div>
+                <div className="text-[9px] font-black uppercase tracking-widest text-zinc-400 mt-0.5">Leads</div>
+              </div>
+            </div>
+            <div className="h-8 w-px bg-white/30 dark:bg-white/10" />
+            <div className="flex items-center gap-2 flex-1">
+              <div className="grid h-8 w-8 place-items-center rounded-xl bg-emerald-50/80 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400">
+                <Activity className="h-3.5 w-3.5" />
+              </div>
+              <div>
+                <div className="text-[9px] font-black uppercase tracking-widest text-zinc-400 mt-0.5">Status</div>
+                <div className="text-[10px] font-black mt-0.5" style={{ color: s.active ? '#10b981' : '#94a3b8' }}>
+                  {s.active ? 'Live' : 'Paused'}
+                </div>
+              </div>
             </div>
           </div>
         </div>
+
+        {/* Ambient glow on hover */}
+        <div
+          className="pointer-events-none absolute -right-10 -top-10 h-40 w-40 rounded-full blur-3xl opacity-0 transition-opacity duration-700 group-hover:opacity-20"
+          style={{ background: s.brandColor }}
+        />
       </div>
     </Link>
   );

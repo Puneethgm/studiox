@@ -279,7 +279,7 @@ function Topbar({ me, onMenuClick }: { me: Me; onMenuClick: () => void }) {
   }
 
   return (
-    <header className="sticky top-0 z-20 flex h-16 items-center justify-between gap-3 border-b border-white/10 bg-white/40 px-4 backdrop-blur-xl sm:px-6 lg:justify-end lg:px-10 dark:bg-neutral-950/40">
+    <header className="sticky top-0 z-20 flex h-16 items-center justify-between gap-3 border-b border-white/20 bg-white/60 px-4 backdrop-blur-2xl sm:px-6 lg:justify-end lg:px-10 dark:border-white/5 dark:bg-neutral-950/60" style={{ boxShadow: '0 1px 0 rgba(255,255,255,0.1), 0 4px 20px rgba(0,0,0,0.04)' }}>
       {/* Mobile menu button */}
       <button
         type="button"
