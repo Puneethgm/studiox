@@ -84,6 +84,21 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
   const [uploadingFile, setUploadingFile] = useState(false);
   const [mediaInputType, setMediaInputType] = useState<'upload' | 'url'>('upload');
 
+  const [visibleQueueCount, setVisibleQueueCount] = useState(4);
+
+  useEffect(() => {
+    setVisibleQueueCount(4);
+  }, [posts]);
+
+  const handleQueueScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.currentTarget;
+    if (target.scrollHeight - target.scrollTop <= target.clientHeight + 20) {
+      if (visibleQueueCount < posts.length) {
+        setVisibleQueueCount(posts.length);
+      }
+    }
+  };
+
   const fetchPosts = () => {
     setLoadingPosts(true);
     const targetStudioId = studioId === 'global' ? 'global' : studioId;
@@ -590,8 +605,12 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                   <span className="text-xs font-bold text-zinc-500">No scheduled posts. Use the quick scheduler to add one.</span>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {posts.map((post) => (
+                <div 
+                  className="space-y-4 overflow-y-auto pr-2" 
+                  style={{ maxHeight: '540px' }}
+                  onScroll={handleQueueScroll}
+                >
+                  {posts.slice(0, visibleQueueCount).map((post) => (
                     <div
                       key={post.id}
                       className="flex items-start gap-4 rounded-2xl border border-white/10 bg-white/10 p-4 hover:bg-white/20 dark:bg-neutral-800/20 dark:hover:bg-neutral-800/35 transition-all"
