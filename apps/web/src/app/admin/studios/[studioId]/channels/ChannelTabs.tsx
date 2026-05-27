@@ -5,10 +5,11 @@ import { Clock, Plug } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/cn';
-import type { ChannelAccount, ChannelKind } from '@/lib/types';
+import type { ChannelAccount, ChannelKind, Studio } from '@/lib/types';
 import { ChannelList } from './ChannelList';
 import { ConnectWhatsApp } from './ConnectWhatsApp';
 import { ConnectMetaChannel } from './ConnectMetaChannel';
+import { ConnectGoogleAds } from './ConnectGoogleAds';
 
 interface TabDef {
   kind: ChannelKind;
@@ -38,6 +39,12 @@ const TABS: TabDef[] = [
     status: 'available',
   },
   {
+    kind: 'google_ads',
+    label: 'Google Ads',
+    brand: '#4285F4',
+    status: 'available',
+  },
+  {
     kind: 'x_dm',
     label: 'X (Twitter) DMs',
     brand: '#000000',
@@ -55,9 +62,11 @@ const TABS: TabDef[] = [
 export function ChannelTabs({
   studioId,
   channels,
+  studio,
 }: {
   studioId: string;
   channels: ChannelAccount[];
+  studio: Studio;
 }) {
   const [active, setActive] = useState<ChannelKind>('whatsapp_meta');
   const activeTab = TABS.find((t) => t.kind === active)!;
@@ -111,7 +120,9 @@ export function ChannelTabs({
       </div>
 
       {/* Tab content */}
-      {activeTab.status === 'available' ? (
+      {active === 'google_ads' ? (
+        <ConnectGoogleAds studio={studio} />
+      ) : activeTab.status === 'available' ? (
         <AvailablePanel
           studioId={studioId}
           channels={channelsForTab}

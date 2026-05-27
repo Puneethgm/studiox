@@ -1,6 +1,6 @@
 import { Share2 } from 'lucide-react';
 import { serverFetch } from '@/lib/auth';
-import type { ChannelAccount } from '@/lib/types';
+import type { ChannelAccount, Studio } from '@/lib/types';
 import { ChannelTabs } from './ChannelTabs';
 
 interface ListResp {
@@ -16,6 +16,7 @@ export default async function ChannelsPage({
   const { channels } = await serverFetch<ListResp>(
     `/api/v1/studios/${studioId}/messaging/channels`,
   );
+  const studio = await serverFetch<Studio>(`/api/v1/me/studios/${studioId}`);
 
   return (
     <div className="space-y-6">
@@ -47,7 +48,7 @@ export default async function ChannelsPage({
           </div>
         </div>
       </div>
-      <ChannelTabs studioId={studioId} channels={channels} />
+      <ChannelTabs studioId={studioId} channels={channels} studio={studio} />
     </div>
   );
 }

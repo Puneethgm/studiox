@@ -26,9 +26,6 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
   const [geminiApiKey, setGeminiApiKey] = useState(studio.geminiApiKey || '');
   const [metaAppId, setMetaAppId] = useState(studio.metaAppId || '');
   const [metaAppSecret, setMetaAppSecret] = useState(studio.metaAppSecret || '');
-  const [googleClientId, setGoogleClientId] = useState(studio.googleClientId || '');
-  const [googleClientSecret, setGoogleClientSecret] = useState(studio.googleClientSecret || '');
-  const [googleDeveloperToken, setGoogleDeveloperToken] = useState(studio.googleDeveloperToken || '');
   const [active, setActive] = useState(studio.active);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -97,9 +94,6 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
         geminiApiKey,
         metaAppId,
         metaAppSecret,
-        googleClientId,
-        googleClientSecret,
-        googleDeveloperToken,
       });
       if (!result.ok) {
         setErrors(result.details ?? { _: result.error });
@@ -292,48 +286,6 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
                   />
                   <FieldHint>The custom Meta App Secret for validating incoming webhook events.</FieldHint>
                   <FieldError message={errors.metaAppSecret} />
-                </div>
-
-                <div>
-                  <Label htmlFor="googleClientId">Google Ads Client ID</Label>
-                  <Input
-                    id="googleClientId"
-                    type="text"
-                    placeholder="e.g. 123456789-abc.apps.googleusercontent.com"
-                    invalid={!!errors.googleClientId}
-                    value={googleClientId}
-                    onChange={(e) => setGoogleClientId(e.target.value)}
-                  />
-                  <FieldHint>The OAuth 2.0 Web Client ID registered in Google Developer Console.</FieldHint>
-                  <FieldError message={errors.googleClientId} />
-                </div>
-
-                <div>
-                  <Label htmlFor="googleClientSecret">Google Ads Client Secret</Label>
-                  <Input
-                    id="googleClientSecret"
-                    type="password"
-                    placeholder="e.g. GOCSPX-..."
-                    invalid={!!errors.googleClientSecret}
-                    value={googleClientSecret}
-                    onChange={(e) => setGoogleClientSecret(e.target.value)}
-                  />
-                  <FieldHint>The Client Secret matching your Google Web Client ID.</FieldHint>
-                  <FieldError message={errors.googleClientSecret} />
-                </div>
-
-                <div>
-                  <Label htmlFor="googleDeveloperToken">Google Ads Developer Token</Label>
-                  <Input
-                    id="googleDeveloperToken"
-                    type="password"
-                    placeholder="e.g. AbCdEfGhIjKlMnOpQrStUv"
-                    invalid={!!errors.googleDeveloperToken}
-                    value={googleDeveloperToken}
-                    onChange={(e) => setGoogleDeveloperToken(e.target.value)}
-                  />
-                  <FieldHint>The Developer Token issued by Google Ads Manager account.</FieldHint>
-                  <FieldError message={errors.googleDeveloperToken} />
                 </div>
               </>
             )}
