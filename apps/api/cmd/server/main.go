@@ -15,6 +15,7 @@ import (
 
 	"github.com/projectx/api/internal/identity"
 	"github.com/projectx/api/internal/integrations/claude"
+	"github.com/projectx/api/internal/integrations/google"
 	"github.com/projectx/api/internal/integrations/sheets"
 	"github.com/projectx/api/internal/leads"
 	"github.com/projectx/api/internal/messaging"
@@ -121,6 +122,8 @@ func main() {
 		cfg.Meta.WebhookVerifyToken, cfg.Meta.AppSecret,
 		log.With("component", "meta_webhook"))
 
+	googleOAuth := google.NewOAuthHandler(studiosSvc, msgRepo, cfg.PublicFormBaseURL)
+
 	// --- router ---
 	r := chi.NewRouter()
 
@@ -153,6 +156,9 @@ func main() {
 		studiosHandler.PublicRoutes(r)
 		leadsHandler.PublicRoutes(r)
 		msgHandler.PublicRoutes(r)
+
+		// Google OAuth endpoints (unauthenticated callbacks)
+		r.Get("/auth/google/callback", googleOAuth.CallbackHandler)
 
 		// Meta webhooks (WA, FB, IG)
 		// We provide separate URLs for clarity, though the handler logic handles all types.
@@ -191,6 +197,7 @@ func main() {
 			// gates against inactive studios for non-super-admins.
 			r.Route("/studios/{studioId}", func(r chi.Router) {
 				r.Use(studiosHandler.RequireActiveStudio)
+				r.Get("/google-oauth/login", googleOAuth.LoginHandler)
 				leadsHandler.AdminRoutes(r)
 				r.Get("/social-posts", studiosHandler.ListSocialPosts)
 				r.Post("/social-posts", studiosHandler.CreateSocialPost)

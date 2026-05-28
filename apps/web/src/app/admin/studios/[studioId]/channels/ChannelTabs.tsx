@@ -126,7 +126,7 @@ export function ChannelTabs({
 
       {/* Tab content */}
       {active === 'google_ads' ? (
-        <ConnectGoogleAds studio={studio} />
+        <ConnectGoogleAds studio={studio} channels={channels.filter(c => c.kind === 'google_ads')} />
       ) : activeTab.status === 'available' ? (
         <AvailablePanel
           studioId={studioId}

@@ -47,6 +47,7 @@ new: migrate-new ## Compatibility alias for `make migrate new name=...`
 migrate-up: ## Apply all pending migrations
 	cd apps/api && $(GOOSE) -dir migrations postgres "$(PG_DSN)" up
 
+
 migrate-down: ## Roll back the most recent migration
 	cd apps/api && $(GOOSE) -dir migrations postgres "$(PG_DSN)" down
 

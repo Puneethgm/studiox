@@ -7,23 +7,49 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { FieldError, FieldHint, Label } from '@/components/ui/Label';
-import type { Studio } from '@/lib/types';
+import type { Studio, ChannelAccount } from '@/lib/types';
 import { updateStudioSettings } from '../settings/actions';
 
 interface Props {
   studio: Studio;
+  channels: ChannelAccount[];
 }
 
-export function ConnectGoogleAds({ studio }: Props) {
+export function ConnectGoogleAds({ studio, channels }: Props) {
   const router = useRouter();
   const [googleClientId, setGoogleClientId] = useState(studio.googleClientId || '');
   const [googleClientSecret, setGoogleClientSecret] = useState(studio.googleClientSecret || '');
   const [googleDeveloperToken, setGoogleDeveloperToken] = useState(studio.googleDeveloperToken || '');
   const [saving, setSaving] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [authenticating, setAuthenticating] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const hasCredentials = !!studio.googleClientId;
+  const isOAuthenticated = channels.length > 0;
+
+  async function handleOAuthLogin() {
+    setAuthenticating(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/v1/studios/${studio.id}/google-oauth/login`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('px_token')}`
+        }
+      });
+      if (!res.ok) {
+        const body = await res.json();
+        throw new Error(body.message || 'Failed to initiate OAuth login');
+      }
+      const data = await res.json();
+      window.location.href = data.url;
+    } catch (err: any) {
+      setError(err.message || 'Error initiating Google login');
+      setAuthenticating(false);
+    }
+  }
 
   // Sync state with updated studio props
   useEffect(() => {
@@ -132,9 +158,22 @@ export function ConnectGoogleAds({ studio }: Props) {
                       Client ID: {studio.googleClientId}
                     </p>
                     <div className="mt-2 flex items-center gap-2">
-                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
-                        ● Active
-                      </span>
+                      {isOAuthenticated ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                          ● Active
+                        </span>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          loading={authenticating}
+                          onClick={handleOAuthLogin}
+                          className="h-7 text-xs border-blue-500/20 bg-blue-50/50 text-blue-700 hover:bg-blue-100 hover:text-blue-800 dark:bg-blue-500/10 dark:text-blue-400"
+                        >
+                          <Globe className="mr-1.5 h-3 w-3" />
+                          Log in with Google
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </div>
