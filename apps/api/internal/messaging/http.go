@@ -882,7 +882,7 @@ func (h *Handler) updateJob(w http.ResponseWriter, r *http.Request) {
 // ============================================================
 
 func callGeminiAPI(ctx context.Context, apiKey string, prompt string) (string, error) {
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=%s", apiKey)
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=%s", apiKey)
 
 	reqBody, err := json.Marshal(map[string]any{
 		"contents": []map[string]any{
@@ -942,6 +942,7 @@ func callGeminiAPI(ctx context.Context, apiKey string, prompt string) (string, e
 func (h *Handler) aiGenerateTemplate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Prompt string `json:"prompt"`
+		Type   string `json:"type"`
 	}
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
@@ -966,7 +967,18 @@ func (h *Handler) aiGenerateTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	systemInstruction := `Generate a professional, friendly customer message template for a fitness/yoga studio.
+	var systemInstruction string
+	if req.Type == "social" {
+		systemInstruction = `You are a social media manager for a fitness/yoga studio.
+Important:
+1. Do not use generic greetings or sign-offs.
+2. Keep it energetic, modern, and perfectly formatted for a social media post (X/Twitter, Facebook).
+3. Use emojis where appropriate.
+4. Do not use template brackets or variables.
+
+Generate the social media copy based on this instruction: ` + req.Prompt
+	} else {
+		systemInstruction = `Generate a professional, friendly customer message template for a fitness/yoga studio.
 Important:
 1. The message must NOT contain any salutation or greeting (e.g. do not start with "Hi" or "Dear" or "Hello").
 2. The message must NOT contain any sign-off or signature (e.g. do not end with "Best" or "Regards" or "Studio Team").
@@ -974,6 +986,7 @@ Important:
 4. If the instruction references a plan, campaign, or link, write the copy naturally.
 
 Generate the message content based on this instruction: ` + req.Prompt
+	}
 
 	generatedText, err := callGeminiAPI(r.Context(), apiKey, systemInstruction)
 	if err != nil {
@@ -981,8 +994,14 @@ Generate the message content based on this instruction: ` + req.Prompt
 		return
 	}
 
-	body := fmt.Sprintf("Hi {{contact.first_name}},\n\n%s\n\nBest,\n{{studio.name}} Team", strings.TrimSpace(generatedText))
-	httpx.JSON(w, http.StatusOK, map[string]string{"body": body})
+	var body string
+	if req.Type == "social" {
+		body = strings.TrimSpace(generatedText)
+	} else {
+		body = fmt.Sprintf("Hi {{contact.first_name}},\n\n%s\n\nBest,\n{{studio.name}} Team", strings.TrimSpace(generatedText))
+	}
+	
+	httpx.JSON(w, http.StatusOK, map[string]string{"body": body, "text": body})
 }
 
 // uploadMedia accepts a multipart/form-data upload (field "file"), saves it

@@ -133,7 +133,8 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
       const res = await api<{ text?: string }>(`/api/v1/studios/${studioId === 'global' ? '759b1ee2-5a68-4a5c-8fa0-5b2a64d5cc35' : studioId}/messaging/ai/generate`, {
         method: 'POST',
         json: {
-          prompt: `Create a professional marketing social media post copy for platform: ${activePlatform}. Campaign Context: ${activeCampaign || 'General Promo'}. Tone: energetic. Main topic / message details: ${quickAiPrompt}. Do not include placeholder brackets or system variables. Format with appropriate paragraph spacing and emojis.`
+          prompt: `Create a professional marketing social media post copy for platform: ${activePlatform}. Campaign Context: ${activeCampaign || 'General Promo'}. Tone: energetic. Main topic / message details: ${quickAiPrompt}. Do not include placeholder brackets or system variables. Format with appropriate paragraph spacing and emojis.`,
+          type: 'social'
         }
       });
 
