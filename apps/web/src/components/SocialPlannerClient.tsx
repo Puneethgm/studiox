@@ -18,7 +18,8 @@ import {
   Lightbulb,
   Trash2,
   Paperclip,
-  X
+  X as XIcon,
+  Twitter
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -32,7 +33,7 @@ import Link from 'next/link';
 interface SocialPost {
   id: string;
   campaignName: string;
-  platform: 'Facebook' | 'Instagram' | 'Google Ads' | 'TikTok';
+  platform: 'Facebook' | 'Instagram' | 'Google Ads' | 'X (Twitter)';
   content: string;
   imageUrl?: string;
   status: 'published' | 'scheduled' | 'draft' | 'failed';
@@ -47,7 +48,7 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
   // AI Form states
   const [campaign, setCampaign] = useState('');
   const [tone, setTone] = useState('energetic');
-  const [platform, setPlatform] = useState<'Facebook' | 'Instagram' | 'Google Ads' | 'TikTok'>('Instagram');
+  const [platform, setPlatform] = useState<'Facebook' | 'Instagram' | 'Google Ads' | 'X (Twitter)'>('Instagram');
   const [prompt, setPrompt] = useState('');
   const [generating, setGenerating] = useState(false);
   const [aiOutput, setAiOutput] = useState<{
@@ -62,7 +63,7 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
     facebook: false,
     instagram: false,
     googleAds: false,
-    tiktok: false,
+    x: false,
   });
 
   // Scheduler Form states
@@ -70,7 +71,7 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
   const [newPostDate, setNewPostDate] = useState('2026-05-28');
   const [newPostTime, setNewPostTime] = useState('09:00');
   const [newPostCampaign, setNewPostCampaign] = useState('');
-  const [newPostPlatform, setNewPostPlatform] = useState<'Facebook' | 'Instagram' | 'Google Ads' | 'TikTok'>('Instagram');
+  const [newPostPlatform, setNewPostPlatform] = useState<'Facebook' | 'Instagram' | 'Google Ads' | 'X (Twitter)'>('Instagram');
 
   // Quick AI Form states
   const [quickAiPrompt, setQuickAiPrompt] = useState('');
@@ -171,7 +172,7 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
             facebook: hasMeta,
             instagram: hasMeta,
             googleAds: hasGoogleAds,
-            tiktok: false,
+            x: false,
           });
         })
         .catch((err) => console.error('Failed to fetch studio integrations:', err));
@@ -180,7 +181,7 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
         facebook: true,
         instagram: true,
         googleAds: false,
-        tiktok: false,
+        x: false,
       });
     }
   }, [studioId]);
@@ -381,7 +382,7 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                     <option value="Instagram">Instagram</option>
                     <option value="Facebook">Facebook</option>
                     <option value="Google Ads">Google Ads</option>
-                    <option value="TikTok">TikTok</option>
+                    <option value="X (Twitter)">X (Twitter)</option>
                   </select>
                 </div>
                 <div>
@@ -620,7 +621,7 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                           {post.platform === 'Facebook' && <Facebook className="h-5 w-5 text-blue-600" />}
                           {post.platform === 'Instagram' && <Instagram className="h-5 w-5 text-pink-600" />}
                           {post.platform === 'Google Ads' && <Globe className="h-5 w-5 text-indigo-600" />}
-                          {post.platform === 'TikTok' && <Share2 className="h-5 w-5 text-teal-600" />}
+                          {post.platform === 'X (Twitter)' && <Twitter className="h-5 w-5 text-sky-500" />}
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
@@ -713,7 +714,7 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                     <option value="Instagram">Instagram Post</option>
                     <option value="Facebook">Facebook Ad</option>
                     <option value="Google Ads">Google Search Ad</option>
-                    <option value="TikTok">TikTok Caption</option>
+                    <option value="X (Twitter)">X (Twitter) Post</option>
                   </select>
                 </div>
                 <div>
@@ -1014,25 +1015,25 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
               )}
             </div>
 
-            {/* TikTok */}
+            {/* X (Twitter) */}
             <div className="rounded-2xl border border-white/25 bg-white/10 p-5 dark:border-white/5 dark:bg-neutral-900/40 flex items-center justify-between">
               <div className="flex items-center gap-4">
-                <div className="grid h-12 w-12 place-items-center rounded-2xl bg-teal-600/10 text-teal-600">
-                  <Share2 className="h-6 w-6" />
+                <div className="grid h-12 w-12 place-items-center rounded-2xl bg-sky-500/10 text-sky-500">
+                  <Twitter className="h-6 w-6" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-zinc-950 dark:text-white">TikTok For Business</h3>
-                  {connectedChannels.tiktok ? (
+                  <h3 className="text-sm font-bold text-zinc-950 dark:text-white">X (Twitter)</h3>
+                  {connectedChannels.x ? (
                     <p className="text-[10px] text-emerald-500 font-bold mt-0.5">Connected & Active</p>
                   ) : (
-                    <p className="text-[10px] text-zinc-400 font-semibold mt-0.5">Video lead generation sync</p>
+                    <p className="text-[10px] text-zinc-400 font-semibold mt-0.5">X Post scheduling & syndication</p>
                   )}
                 </div>
               </div>
-              {connectedChannels.tiktok ? (
+              {connectedChannels.x ? (
                 <Badge tone="success">Active</Badge>
               ) : (
-                <Link href={studioId === 'global' ? '/admin/settings' : `/admin/studios/${studioId}/settings`}>
+                <Link href={`/admin/studios/${studioId}/channels`}>
                   <Button size="sm" variant="ghost" className="text-xs font-bold">
                     Connect
                   </Button>
@@ -1057,7 +1058,7 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                 onClick={() => setShowQuickAiModal(false)} 
                 className="p-1 rounded-lg hover:bg-zinc-100 dark:hover:bg-neutral-800 text-zinc-400"
               >
-                <X className="h-5 w-5" />
+                <XIcon className="h-5 w-5" />
               </button>
             </div>
 
