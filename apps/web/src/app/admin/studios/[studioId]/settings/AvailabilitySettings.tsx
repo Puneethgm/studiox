@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
 import { updateStudioSettings } from './actions';
-import { Plus, Trash2, Clock, X, Calendar } from "lucide-react";
+import { Plus, Trash2, Clock, X, Calendar, CheckCircle2 } from "lucide-react";
 
 export type AvailabilitySlot = {
   day: string;
@@ -56,6 +56,8 @@ export function AvailabilitySettings({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
+  const [success, setSuccess] = useState<string | null>(null);
+  
   // Modal & Pagination state
   const [editingDay, setEditingDay] = useState<string | null>(null);
   const [newTimeInput, setNewTimeInput] = useState<string>("09:00");
@@ -91,6 +93,7 @@ export function AvailabilitySettings({
   const onSave = async () => {
     setSaving(true);
     setError(null);
+    setSuccess(null);
     const sanitizedSlots = slots.map(s => ({
       day: s.day,
       times: s.times || [],
@@ -108,7 +111,8 @@ export function AvailabilitySettings({
     if (!res.ok) {
       setError(res.error ?? "Failed to save");
     } else {
-      alert("Availability settings saved successfully.");
+      setSuccess("Availability settings saved successfully.");
+      setTimeout(() => setSuccess(null), 4000);
     }
   };
 
@@ -214,6 +218,12 @@ export function AvailabilitySettings({
         </div>
 
         {error && <p className="text-xs font-black text-red-500 mt-4 uppercase tracking-wider">{error}</p>}
+        {success && (
+          <div className="mt-4 p-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs font-black uppercase tracking-wider flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-200">
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+            <span>{success}</span>
+          </div>
+        )}
         
         <div className="flex justify-end mt-8 pt-6 border-t border-white/10">
           <Button 

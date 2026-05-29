@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
-import { Eye, EyeOff, Database, Building, Calendar, Cpu, Lock, Save } from 'lucide-react';
+import { Eye, EyeOff, Database, Building, Calendar, Cpu, Lock, Save, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { FieldError, FieldHint, Label } from '@/components/ui/Label';
@@ -46,6 +46,9 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
   const [sheetsSuccess, setSheetsSuccess] = useState<string | null>(null);
   const [sheetsError, setSheetsError] = useState<string | null>(null);
 
+  const [geminiSuccess, setGeminiSuccess] = useState<string | null>(null);
+  const [metaSuccess, setMetaSuccess] = useState<string | null>(null);
+
   const [showGeminiApiKey, setShowGeminiApiKey] = useState(false);
   const [showMetaAppSecret, setShowMetaAppSecret] = useState(false);
 
@@ -72,6 +75,7 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
       });
       if (res.ok) {
         setSheetsSuccess('Google Sheets connection saved successfully.');
+        setTimeout(() => setSheetsSuccess(null), 4000);
       } else {
         setSheetsError(res.error || 'Failed to save settings.');
       }
@@ -114,6 +118,7 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
   async function onSaveGeminiKey(e: React.FormEvent) {
     e.preventDefault();
     setErrors({});
+    setGeminiSuccess(null);
     setSaving(true);
     try {
       const result = await updateStudioSettings(studio.id, studio.slug, {
@@ -130,7 +135,8 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
         setErrors(result.details ?? { _: result.error });
         return;
       }
-      alert('Gemini API Key saved successfully.');
+      setGeminiSuccess('Gemini API Key saved successfully.');
+      setTimeout(() => setGeminiSuccess(null), 4000);
     } finally {
       setSaving(false);
     }
@@ -139,6 +145,7 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
   async function onSaveMetaConfig(e: React.FormEvent) {
     e.preventDefault();
     setErrors({});
+    setMetaSuccess(null);
     setSaving(true);
     try {
       const result = await updateStudioSettings(studio.id, studio.slug, {
@@ -155,7 +162,8 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
         setErrors(result.details ?? { _: result.error });
         return;
       }
-      alert('Meta Integration config saved successfully.');
+      setMetaSuccess('Meta Integration config saved successfully.');
+      setTimeout(() => setMetaSuccess(null), 4000);
     } finally {
       setSaving(false);
     }
@@ -187,6 +195,7 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
       setNewPassword('');
       setConfirmPassword('');
       setPasswordSuccess('Password updated successfully.');
+      setTimeout(() => setPasswordSuccess(null), 4000);
     } finally {
       setChangingPassword(false);
     }
@@ -428,6 +437,13 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
                   <FieldError message={errors.metaAppSecret} />
                 </div>
 
+                {metaSuccess && (
+                  <div className="p-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs font-black uppercase tracking-wider flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-200">
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    <span>{metaSuccess}</span>
+                  </div>
+                )}
+
                 <FieldError message={errors._} />
 
                 <div className="flex items-center justify-end border-t border-white/10 pt-4">
@@ -470,6 +486,13 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
                   <FieldHint>Configure the Gemini API Key to enable AI-driven template and post generation.</FieldHint>
                   <FieldError message={errors.geminiApiKey} />
                 </div>
+
+                {geminiSuccess && (
+                  <div className="p-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs font-black uppercase tracking-wider flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-200">
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    <span>{geminiSuccess}</span>
+                  </div>
+                )}
 
                 <FieldError message={errors._} />
 
@@ -527,9 +550,12 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
                   </div>
                 </div>
 
-                {sheetsSuccess ? (
-                  <p className="text-xs font-black text-emerald-500 uppercase tracking-wider">{sheetsSuccess}</p>
-                ) : null}
+                {sheetsSuccess && (
+                  <div className="p-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs font-black uppercase tracking-wider flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-200">
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    <span>{sheetsSuccess}</span>
+                  </div>
+                )}
                 {sheetsError ? (
                   <p className="text-xs font-black text-rose-500 uppercase tracking-wider">{sheetsError}</p>
                 ) : null}
@@ -628,9 +654,12 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
                   <FieldError message={passwordErrors.confirmPassword} />
                 </div>
 
-                {passwordSuccess ? (
-                  <p className="text-xs font-black text-emerald-500 uppercase tracking-wider">{passwordSuccess}</p>
-                ) : null}
+                {passwordSuccess && (
+                  <div className="p-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs font-black uppercase tracking-wider flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-200">
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    <span>{passwordSuccess}</span>
+                  </div>
+                )}
                 <FieldError message={passwordErrors._} />
 
                 <div className="flex items-center justify-end border-t border-white/10 pt-4">
