@@ -135,91 +135,117 @@ export function AvailabilitySettings({
   const paginatedTimes = (currentEditingSlot?.times || []).slice(startIndex, endIndex);
 
   return (
-    <div className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30">
-      <div className="border-b border-white/20 px-6 py-4 dark:border-white/5">
-        <h3 className="text-sm font-black uppercase tracking-[0.15em] text-zinc-400">Availability</h3>
-      </div>
-      
-      <div className="p-6 space-y-6">
-        {/* Timezone selector */}
-        <div className="max-w-xs">
-          <label className="block text-xs font-black uppercase tracking-wider text-zinc-400 mb-2">Timezone</label>
-          <select
-            className="rounded-xl border border-white/20 px-3 py-1.5 text-xs font-bold bg-white/10 dark:bg-neutral-800/30 dark:border-white/5 focus:outline-none focus:ring-1 focus:ring-brand-500 h-9 w-full text-zinc-800 dark:text-zinc-200"
-            value={timezone}
-            onChange={(e) => setTimezone(e.target.value)}
-          >
-            {commonTimezones.map((tz) => (
-              <option key={tz} value={tz} className="bg-white dark:bg-neutral-900">{tz}</option>
-            ))}
-            {timezone && !commonTimezones.includes(timezone) && (
-              <option value={timezone} className="bg-white dark:bg-neutral-900">{timezone}</option>
-            )}
-          </select>
-        </div>
-        
-        {/* 7 Days of the Week Grid */}
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {slots.map((slot) => {
-            const hasHours = slot.times.length > 0;
-            return (
-              <div 
-                key={slot.day} 
-                className={`p-4 rounded-2xl border transition-all flex flex-col justify-between h-[160px] ${
-                  hasHours 
-                    ? 'border-brand-500/30 bg-brand-500/5 dark:border-brand-500/20' 
-                    : 'border-white/10 bg-white/5 dark:bg-neutral-800/5'
-                }`}
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-black uppercase tracking-wider text-zinc-800 dark:text-zinc-100">{slot.day}</span>
-                    <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
+    <>
+      <div className="grid gap-6 lg:grid-cols-3">
+        {/* Left Column - Weekly Schedule Grid Card */}
+        <div className="lg:col-span-2 overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30 p-6 flex flex-col justify-between">
+          <div className="space-y-6">
+            <div className="border-b border-white/20 pb-4 dark:border-white/5 flex items-center gap-2">
+              <Calendar className="h-4 w-4 text-brand-500" />
+              <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Weekly Schedule</h3>
+            </div>
+            
+            <div className="grid gap-4 sm:grid-cols-2">
+              {slots.map((slot) => {
+                const hasHours = slot.times.length > 0;
+                return (
+                  <div 
+                    key={slot.day} 
+                    className={`p-4 rounded-2xl border transition-all duration-300 flex flex-col justify-between h-[150px] group hover:-translate-y-0.5 hover:shadow-lg ${
                       hasHours 
-                        ? 'bg-brand-500/20 text-brand-600 dark:text-brand-400' 
-                        : 'bg-zinc-500/10 text-zinc-500'
-                    }`}>
-                      {hasHours ? `${slot.times.length} Slots` : 'Unavailable'}
-                    </span>
-                  </div>
-                  
-                  {/* Hours preview list showing 12-hour format */}
-                  <div className="flex flex-wrap gap-1 max-h-[60px] overflow-y-auto pr-1 scrollbar-none">
-                    {hasHours ? (
-                      slot.times.map((t, tidx) => (
-                        <span key={tidx} className="text-[10px] font-bold bg-white/30 dark:bg-neutral-800/40 border border-white/10 text-zinc-700 dark:text-zinc-300 px-2 py-0.5 rounded-lg whitespace-nowrap">
-                          {formatTo12Hour(t)}
+                        ? 'border-brand-500/30 bg-brand-500/5 dark:border-brand-500/20 hover:border-brand-500/50 hover:bg-brand-500/10' 
+                        : 'border-white/10 bg-white/5 dark:bg-neutral-800/5 hover:border-white/20 hover:bg-white/10 dark:hover:bg-neutral-800/10'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-black uppercase tracking-wider text-zinc-800 dark:text-zinc-100">{slot.day}</span>
+                        <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full transition-colors ${
+                          hasHours 
+                            ? 'bg-brand-500/20 text-brand-600 dark:text-brand-400' 
+                            : 'bg-zinc-500/10 text-zinc-500'
+                        }`}>
+                          {hasHours ? `${slot.times.length} Slots` : 'Unavailable'}
                         </span>
-                      ))
-                    ) : (
-                      <span className="text-[10px] font-semibold text-zinc-400 italic">No slots set. Click below to add.</span>
-                    )}
-                  </div>
-                </div>
+                      </div>
+                      
+                      {/* Hours preview list showing 12-hour format */}
+                      <div className="flex flex-wrap gap-1 max-h-[52px] overflow-y-auto pr-1 scrollbar-none">
+                        {hasHours ? (
+                          slot.times.map((t, tidx) => (
+                            <span key={tidx} className="text-[10px] font-bold bg-white/30 dark:bg-neutral-800/40 border border-white/10 text-zinc-700 dark:text-zinc-300 px-2 py-0.5 rounded-lg whitespace-nowrap">
+                              {formatTo12Hour(t)}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-[10px] font-semibold text-zinc-400/80 italic">No slots set. Click below to add.</span>
+                        )}
+                      </div>
+                    </div>
 
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => openEditModal(slot.day)}
-                  className="mt-3 w-full h-8 text-[10px] font-black uppercase tracking-wider hover:bg-white/10 dark:hover:bg-neutral-800/40 rounded-xl flex items-center justify-center gap-1 border border-white/5"
-                >
-                  <Clock className="w-3.5 h-3.5 text-brand-500" /> Manage Hours
-                </Button>
-              </div>
-            );
-          })}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => openEditModal(slot.day)}
+                      className="mt-3 w-full h-8 text-[10px] font-black uppercase tracking-wider hover:bg-white/10 dark:hover:bg-neutral-800/40 rounded-xl flex items-center justify-center gap-1 border border-white/5 transition-all"
+                    >
+                      <Clock className="w-3.5 h-3.5 text-brand-500 group-hover:scale-110 transition-transform" /> Manage Hours
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
 
-        {error && <p className="text-xs font-black text-red-500 mt-4 uppercase tracking-wider">{error}</p>}
-        
-        <div className="flex justify-end mt-8 pt-6 border-t border-white/10">
-          <Button 
-            onClick={onSave} 
-            loading={saving} 
-            className="bg-gradient-to-r from-brand-500 to-violet-600 hover:from-brand-600 hover:to-violet-700 text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-500/25 rounded-xl h-10 px-6"
-          >
-            Save Availability
-          </Button>
+        {/* Right Column - Timezone & Control Card */}
+        <div className="lg:col-span-1 overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30 p-6 flex flex-col justify-between h-fit gap-6">
+          <div className="space-y-6">
+            <div className="border-b border-white/20 pb-4 dark:border-white/5 flex items-center gap-2">
+              <Clock className="h-4 w-4 text-brand-500" />
+              <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Timezone & Info</h3>
+            </div>
+
+            <div>
+              <Label className="block text-xs font-black uppercase tracking-wider text-zinc-400 mb-2">Operating Timezone</Label>
+              <select
+                className="rounded-xl border border-white/20 px-3 py-1.5 text-xs font-bold bg-white/10 dark:bg-neutral-800/30 dark:border-white/5 focus:outline-none focus:ring-1 focus:ring-brand-500 h-9 w-full text-zinc-800 dark:text-zinc-200"
+                value={timezone}
+                onChange={(e) => setTimezone(e.target.value)}
+              >
+                {commonTimezones.map((tz) => (
+                  <option key={tz} value={tz} className="bg-white dark:bg-neutral-900">{tz}</option>
+                ))}
+                {timezone && !commonTimezones.includes(timezone) && (
+                  <option value={timezone} className="bg-white dark:bg-neutral-900">{timezone}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="p-4 rounded-2xl border border-white/10 bg-white/5 dark:bg-neutral-800/5 space-y-3">
+              <div className="text-xs font-black uppercase tracking-wider text-zinc-400">Schedule Overview</div>
+              <div className="flex justify-between text-xs">
+                <span className="text-zinc-500">Active Workdays:</span>
+                <span className="font-bold text-zinc-800 dark:text-zinc-200">{slots.filter(s => s.times.length > 0).length} / 7</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-zinc-500">Total Bookable Slots:</span>
+                <span className="font-bold text-brand-500">{slots.reduce((acc, s) => acc + s.times.length, 0)} slots</span>
+              </div>
+            </div>
+            
+            {error && <p className="text-xs font-black text-red-500 uppercase tracking-wider">{error}</p>}
+          </div>
+
+          <div className="pt-4 border-t border-white/10 flex justify-end">
+            <Button 
+              onClick={onSave} 
+              loading={saving} 
+              className="w-full bg-gradient-to-r from-brand-500 to-violet-600 hover:from-brand-600 hover:to-violet-700 text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-500/25 rounded-xl h-10 px-6"
+            >
+              Save Schedule
+            </Button>
+          </div>
         </div>
       </div>
 
