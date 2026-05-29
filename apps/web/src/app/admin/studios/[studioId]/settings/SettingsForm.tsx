@@ -111,7 +111,7 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
     }
   }
 
-  async function onSubmitConfigOnly(e: React.FormEvent) {
+  async function onSaveGeminiKey(e: React.FormEvent) {
     e.preventDefault();
     setErrors({});
     setSaving(true);
@@ -130,7 +130,32 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
         setErrors(result.details ?? { _: result.error });
         return;
       }
-      alert('Integrations saved successfully.');
+      alert('Gemini API Key saved successfully.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function onSaveMetaConfig(e: React.FormEvent) {
+    e.preventDefault();
+    setErrors({});
+    setSaving(true);
+    try {
+      const result = await updateStudioSettings(studio.id, studio.slug, {
+        name,
+        brandColor,
+        logoUrl,
+        contactEmail,
+        active,
+        geminiApiKey,
+        metaAppId,
+        metaAppSecret,
+      });
+      if (!result.ok) {
+        setErrors(result.details ?? { _: result.error });
+        return;
+      }
+      alert('Meta Integration config saved successfully.');
     } finally {
       setSaving(false);
     }
@@ -358,85 +383,107 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
 
         {activeSection === 'integrations' && (
           <div className="grid gap-6 lg:grid-cols-2 items-start">
-            <form onSubmit={onSubmitConfigOnly} className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30 p-6 space-y-5">
-              <div>
-                <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400 mb-4">AI & Meta Integrations</h3>
-              </div>
-
-              <div>
-                <Label htmlFor="geminiApiKey">Gemini API Key</Label>
-                <div className="relative mt-1">
-                  <Input
-                    id="geminiApiKey"
-                    type={showGeminiApiKey ? 'text' : 'password'}
-                    placeholder="AIzaSy..."
-                    invalid={!!errors.geminiApiKey}
-                    value={geminiApiKey}
-                    onChange={(e) => setGeminiApiKey(e.target.value)}
-                    className="pr-12"
-                  />
-                  <button
-                    type="button"
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 transition hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
-                    onClick={() => setShowGeminiApiKey(!showGeminiApiKey)}
-                  >
-                    {showGeminiApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
+            <div className="space-y-6">
+              {/* Gemini AI Integration Card */}
+              <form onSubmit={onSaveGeminiKey} className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30 p-6 space-y-5">
+                <div>
+                  <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Gemini AI Integration</h3>
                 </div>
-                <FieldHint>Configure the Gemini API Key to enable AI-driven template and post generation.</FieldHint>
-                <FieldError message={errors.geminiApiKey} />
-              </div>
 
-              <div>
-                <Label htmlFor="metaAppId">Meta App ID</Label>
-                <Input
-                  id="metaAppId"
-                  type="text"
-                  placeholder="e.g. 2405726999940224"
-                  invalid={!!errors.metaAppId}
-                  value={metaAppId}
-                  onChange={(e) => setMetaAppId(e.target.value)}
-                />
-                <FieldHint>The custom Facebook Developer App ID for Facebook/Instagram integration.</FieldHint>
-                <FieldError message={errors.metaAppId} />
-              </div>
-
-              <div>
-                <Label htmlFor="metaAppSecret">Meta App Secret</Label>
-                <div className="relative mt-1">
-                  <Input
-                    id="metaAppSecret"
-                    type={showMetaAppSecret ? 'text' : 'password'}
-                    placeholder="e.g. d2d2fad32..."
-                    invalid={!!errors.metaAppSecret}
-                    value={metaAppSecret}
-                    onChange={(e) => setMetaAppSecret(e.target.value)}
-                    className="pr-12"
-                  />
-                  <button
-                    type="button"
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 transition hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
-                    onClick={() => setShowMetaAppSecret(!showMetaAppSecret)}
-                  >
-                    {showMetaAppSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
+                <div>
+                  <Label htmlFor="geminiApiKey">Gemini API Key</Label>
+                  <div className="relative mt-1">
+                    <Input
+                      id="geminiApiKey"
+                      type={showGeminiApiKey ? 'text' : 'password'}
+                      placeholder="AIzaSy..."
+                      invalid={!!errors.geminiApiKey}
+                      value={geminiApiKey}
+                      onChange={(e) => setGeminiApiKey(e.target.value)}
+                      className="pr-12"
+                    />
+                    <button
+                      type="button"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 transition hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+                      onClick={() => setShowGeminiApiKey(!showGeminiApiKey)}
+                    >
+                      {showGeminiApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  <FieldHint>Configure the Gemini API Key to enable AI-driven template and post generation.</FieldHint>
+                  <FieldError message={errors.geminiApiKey} />
                 </div>
-                <FieldHint>The custom Meta App Secret for validating incoming webhook events.</FieldHint>
-                <FieldError message={errors.metaAppSecret} />
-              </div>
 
-              <FieldError message={errors._} />
+                <FieldError message={errors._} />
 
-              <div className="flex items-center justify-end border-t border-white/10 pt-5">
-                <Button 
-                  type="submit" 
-                  loading={saving}
-                  className="bg-gradient-to-r from-brand-500 to-violet-600 hover:from-brand-600 hover:to-violet-700 text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-500/25 rounded-xl h-10 px-6"
-                >
-                  Save API Config
-                </Button>
-              </div>
-            </form>
+                <div className="flex items-center justify-end border-t border-white/10 pt-4">
+                  <Button 
+                    type="submit" 
+                    loading={saving}
+                    className="bg-gradient-to-r from-brand-500 to-violet-600 hover:from-brand-600 hover:to-violet-700 text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-500/25 rounded-xl h-10 px-6"
+                  >
+                    Save Gemini Key
+                  </Button>
+                </div>
+              </form>
+
+              {/* Meta App Settings Card */}
+              <form onSubmit={onSaveMetaConfig} className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30 p-6 space-y-5">
+                <div>
+                  <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Meta App Settings</h3>
+                </div>
+
+                <div>
+                  <Label htmlFor="metaAppId">Meta App ID</Label>
+                  <Input
+                    id="metaAppId"
+                    type="text"
+                    placeholder="e.g. 2405726999940224"
+                    invalid={!!errors.metaAppId}
+                    value={metaAppId}
+                    onChange={(e) => setMetaAppId(e.target.value)}
+                  />
+                  <FieldHint>The custom Facebook Developer App ID for Facebook/Instagram integration.</FieldHint>
+                  <FieldError message={errors.metaAppId} />
+                </div>
+
+                <div>
+                  <Label htmlFor="metaAppSecret">Meta App Secret</Label>
+                  <div className="relative mt-1">
+                    <Input
+                      id="metaAppSecret"
+                      type={showMetaAppSecret ? 'text' : 'password'}
+                      placeholder="e.g. d2d2fad32..."
+                      invalid={!!errors.metaAppSecret}
+                      value={metaAppSecret}
+                      onChange={(e) => setMetaAppSecret(e.target.value)}
+                      className="pr-12"
+                    />
+                    <button
+                      type="button"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 transition hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+                      onClick={() => setShowMetaAppSecret(!showMetaAppSecret)}
+                    >
+                      {showMetaAppSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  <FieldHint>The custom Meta App Secret for validating incoming webhook events.</FieldHint>
+                  <FieldError message={errors.metaAppSecret} />
+                </div>
+
+                <FieldError message={errors._} />
+
+                <div className="flex items-center justify-end border-t border-white/10 pt-4">
+                  <Button 
+                    type="submit" 
+                    loading={saving}
+                    className="bg-gradient-to-r from-brand-500 to-violet-600 hover:from-brand-600 hover:to-violet-700 text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-500/25 rounded-xl h-10 px-6"
+                  >
+                    Save Meta Config
+                  </Button>
+                </div>
+              </form>
+            </div>
 
             {/* Google Sheets Card */}
             <div className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30">
