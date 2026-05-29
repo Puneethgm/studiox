@@ -357,7 +357,7 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
         )}
 
         {activeSection === 'integrations' && (
-          <div className="space-y-6">
+          <div className="grid gap-6 lg:grid-cols-2 items-start">
             <form onSubmit={onSubmitConfigOnly} className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30 p-6 space-y-5">
               <div>
                 <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400 mb-4">AI & Meta Integrations</h3>
