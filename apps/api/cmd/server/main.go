@@ -97,7 +97,8 @@ func main() {
 
 	whatsappClient := channels.NewMetaWhatsApp(cfg.Meta.GraphAPIVersion)
 	messengerClient := channels.NewMetaMessenger(cfg.Meta.GraphAPIVersion)
-	msgWorker := messaging.NewOutboundWorker(msgRepo, msgBus, whatsappClient, messengerClient,
+	twilioClient := channels.NewTwilioSMS()
+	msgWorker := messaging.NewOutboundWorker(msgRepo, msgBus, whatsappClient, messengerClient, twilioClient,
 		log.With("component", "messaging_worker"))
 	go msgWorker.Run(rootCtx)
 
@@ -121,6 +122,8 @@ func main() {
 	metaWebhook := messaging.NewMetaWebhookHandler(msgSvc,
 		cfg.Meta.WebhookVerifyToken, cfg.Meta.AppSecret,
 		log.With("component", "meta_webhook"))
+
+	twilioWebhook := messaging.NewTwilioWebhookHandler(msgSvc, log.With("component", "twilio_webhook"))
 
 	googleOAuth := google.NewOAuthHandler(studiosSvc, msgRepo, cfg.PublicFormBaseURL)
 
@@ -169,6 +172,7 @@ func main() {
 		r.Get("/webhooks/meta/messenger/", metaWebhook.Verify)
 		r.Post("/webhooks/meta/messenger", metaWebhook.Receive)
 		r.Post("/webhooks/meta/messenger/", metaWebhook.Receive)
+		r.Post("/webhooks/twilio", twilioWebhook.HandleInbound)
 
 		r.Get("/webhooks/meta/instagram", metaWebhook.Verify)
 		r.Post("/webhooks/meta/instagram", metaWebhook.Receive)

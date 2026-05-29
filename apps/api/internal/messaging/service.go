@@ -64,6 +64,32 @@ func (s *Service) ConnectMetaChannel(ctx context.Context, studioID uuid.UUID, in
 	})
 }
 
+type ConnectTwilioInput struct {
+	AccountSID string
+	AuthToken  string
+	PhoneNumber string
+}
+
+func (s *Service) ConnectTwilioChannel(ctx context.Context, studioID uuid.UUID, in ConnectTwilioInput) (*ChannelAccount, error) {
+	in.AccountSID = strings.TrimSpace(in.AccountSID)
+	in.AuthToken = strings.TrimSpace(in.AuthToken)
+	in.PhoneNumber = strings.TrimSpace(in.PhoneNumber)
+
+	if in.AccountSID == "" || in.AuthToken == "" || in.PhoneNumber == "" {
+		return nil, errors.New("account SID, auth token, and phone number are required")
+	}
+
+	return s.repo.CreateChannel(ctx, CreateChannelInput{
+		StudioID:      studioID,
+		Kind:          KindSMS,
+		BSP:           "twilio",
+		ExternalID:    in.PhoneNumber,
+		ParentID:      in.AccountSID,
+		DisplayHandle: in.PhoneNumber,
+		AccessToken:   in.AccountSID + ":" + in.AuthToken,
+	})
+}
+
 func (s *Service) ListChannels(ctx context.Context, studioID uuid.UUID) ([]ChannelAccount, error) {
 	return s.repo.ListChannels(ctx, studioID)
 }
@@ -679,6 +705,136 @@ func (s *Service) HandleInboundMessaging(ctx context.Context, kind ChannelKind, 
 
 	// Deterministically update lead status based on button clicks / option selections.
 	if err := s.processInboundLeadAutomation(ctx, tx, channel.StudioID, conv, stored, inputText); err != nil {
+		return fmt.Errorf("inbound lead automation: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+
+	if stored != nil {
+		s.bus.Publish(ctx, Event{
+			Kind:           EvtMessageReceived,
+			StudioID:       channel.StudioID,
+			ConversationID: conv.ID,
+			MessageID:      &stored.ID,
+		})
+	}
+	return nil
+}
+
+// HandleInboundSMS processes a DM from Twilio SMS.
+func (s *Service) HandleInboundSMS(ctx context.Context, messageSid, from, to, body string, attachments []Attachment) error {
+	// 1. Resolve the channel account by the recipient's phone number (Twilio To number).
+	channel, err := s.repo.GetChannelByExternalID(ctx, KindSMS, to)
+	if err != nil {
+		// Log the mismatch so we can debug.
+		fmt.Printf("DEBUG: SMS message received for unknown channel: to=%s, from=%s\n", to, from)
+		return nil
+	}
+
+	tx, err := s.repo.Pool().BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// 2. Identity: use phone.
+	identity, err := s.repo.FindOrCreateIdentity(ctx, tx, channel.StudioID, IdentityPhone, from, from)
+	if err != nil {
+		return err
+	}
+
+	// 3. Conversation.
+	conv, err := s.repo.FindOrCreateConversation(ctx, tx, channel.StudioID, channel.ID, identity.ID, from)
+	if err != nil {
+		return err
+	}
+
+	// Link identity and conversation to lead (or auto-create lead for walk-in/direct messages)
+	var activeLeadID *uuid.UUID
+	if identity.LeadID != nil {
+		activeLeadID = identity.LeadID
+	} else if conv.LeadID != nil {
+		activeLeadID = conv.LeadID
+	}
+
+	if activeLeadID == nil {
+		var campaignID uuid.UUID
+		var fitnessPlans []string
+		errCampaign := tx.QueryRow(ctx, `
+			SELECT id, fitness_plans FROM campaigns 
+			WHERE studio_id = $1 AND active = true 
+			ORDER BY created_at DESC 
+			LIMIT 1
+		`, channel.StudioID).Scan(&campaignID, &fitnessPlans)
+		if errCampaign != nil {
+			_ = tx.QueryRow(ctx, `
+				SELECT id, fitness_plans FROM campaigns 
+				WHERE studio_id = $1 
+				LIMIT 1
+			`, channel.StudioID).Scan(&campaignID, &fitnessPlans)
+		}
+		
+		defaultPlan := "Trial Class"
+		if len(fitnessPlans) > 0 {
+			defaultPlan = fitnessPlans[0]
+		}
+
+		// No existing lead, create one automatically
+		leadID := uuid.New()
+		displayName := from
+		emailPlaceholder := fmt.Sprintf("sms-%s@example.com", from)
+
+		_, err = tx.Exec(ctx, `
+			INSERT INTO leads (id, studio_id, campaign_id, name, first_name, last_name, email, phone, fitness_plan, status, source, auto_contact_stage, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'contacted', 'sms', 'awaiting_options', now(), now())
+		`, leadID, channel.StudioID, campaignID, displayName, displayName, "", emailPlaceholder, from, defaultPlan)
+		if err != nil {
+			return fmt.Errorf("auto-create sms lead: %w", err)
+		}
+		activeLeadID = &leadID
+	}
+
+	// Update identity and conversation with the lead ID if not set
+	if identity.LeadID == nil {
+		_, err = tx.Exec(ctx, `
+			UPDATE contact_identities SET lead_id = $2 WHERE id = $1
+		`, identity.ID, *activeLeadID)
+		if err != nil {
+			return fmt.Errorf("link identity to lead: %w", err)
+		}
+		identity.LeadID = activeLeadID
+	}
+
+	if conv.LeadID == nil {
+		_, err = tx.Exec(ctx, `
+			UPDATE conversations SET lead_id = $2 WHERE id = $1
+		`, conv.ID, *activeLeadID)
+		if err != nil {
+			return fmt.Errorf("link conversation to lead: %w", err)
+		}
+		leadIDStr := *activeLeadID
+		conv.LeadID = &leadIDStr
+	}
+
+	// 4. Insert message.
+	stored, err := s.repo.InsertMessage(ctx, tx, CreateMessageInput{
+		ConversationID: conv.ID,
+		StudioID:       channel.StudioID,
+		Direction:      DirectionInbound,
+		SourceKind:     SourceCustomer,
+		Body:           body,
+		Attachments:    attachments,
+		ExternalID:     messageSid,
+		SentAt:         time.Now().UTC(),
+	})
+	if err != nil {
+		return err
+	}
+
+	// Deterministically update lead status based on button clicks / option selections.
+	if err := s.processInboundLeadAutomation(ctx, tx, channel.StudioID, conv, stored, body); err != nil {
 		return fmt.Errorf("inbound lead automation: %w", err)
 	}
 

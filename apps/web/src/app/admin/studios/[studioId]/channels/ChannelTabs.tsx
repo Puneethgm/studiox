@@ -10,6 +10,7 @@ import { ChannelList } from './ChannelList';
 import { ConnectWhatsApp } from './ConnectWhatsApp';
 import { ConnectMetaChannel } from './ConnectMetaChannel';
 import { ConnectGoogleAds } from './ConnectGoogleAds';
+import { ConnectTwilio } from './ConnectTwilio';
 
 interface TabDef {
   kind: ChannelKind;
@@ -42,6 +43,12 @@ const TABS: TabDef[] = [
     kind: 'google_ads',
     label: 'Google Ads',
     brand: '#4285F4',
+    status: 'available',
+  },
+  {
+    kind: 'sms',
+    label: 'Twilio SMS',
+    brand: '#F22F46',
     status: 'available',
   },
   {
@@ -176,6 +183,8 @@ function AvailablePanel({
       <div className="space-y-6">
         {kind === 'whatsapp_meta' ? (
           <ConnectWhatsApp studioId={studioId} />
+        ) : kind === 'sms' ? (
+          <ConnectTwilio studioId={studioId} />
         ) : (
           <ConnectMetaChannel studioId={studioId} kind={kind} />
         )}

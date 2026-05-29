@@ -22,6 +22,7 @@ type OutboundWorker struct {
 	bus       Bus
 	whatsapp  channels.Sender
 	messenger channels.Sender
+	twilio    channels.Sender
 	log       *slog.Logger
 }
 
@@ -31,8 +32,15 @@ const (
 	maxAttempts        = 6
 )
 
-func NewOutboundWorker(repo *Repo, bus Bus, whatsapp, messenger channels.Sender, log *slog.Logger) *OutboundWorker {
-	return &OutboundWorker{repo: repo, bus: bus, whatsapp: whatsapp, messenger: messenger, log: log}
+func NewOutboundWorker(repo *Repo, bus Bus, whatsapp, messenger, twilio channels.Sender, log *slog.Logger) *OutboundWorker {
+	return &OutboundWorker{
+		repo:      repo,
+		bus:       bus,
+		whatsapp:  whatsapp,
+		messenger: messenger,
+		twilio:    twilio,
+		log:       log,
+	}
 }
 
 func (w *OutboundWorker) Run(ctx context.Context) {
@@ -139,8 +147,11 @@ func (w *OutboundWorker) dispatch(ctx context.Context, j OutboundJob) {
 			sender = w.messenger
 		}
 	case KindSMS:
-		w.log.Info("SMS outbound job dispatched (mock)", "recipient", conv.ContactValue, "body", j.Body)
-		sender = &testSender{}
+		if isLocalDev && channel.AccessToken == "test:test" {
+			sender = &testSender{}
+		} else {
+			sender = w.twilio
+		}
 	default:
 		w.failJob(ctx, j, "no sender for channel kind: "+string(channel.Kind), true)
 		return

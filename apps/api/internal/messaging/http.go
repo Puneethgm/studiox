@@ -43,6 +43,7 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Post("/channels/whatsapp", h.connectWhatsApp)
 	r.Post("/channels/instagram", h.connectInstagram)
 	r.Post("/channels/messenger", h.connectMessenger)
+	r.Post("/channels/twilio", h.connectTwilio)
 	r.Delete("/channels/{id}", h.disconnectChannel)
 	r.Put("/channels/{id}", h.updateChannel)
 
@@ -171,6 +172,31 @@ func (h *Handler) connectMessenger(w http.ResponseWriter, r *http.Request) {
 		ParentID:      req.ParentID,
 		DisplayHandle: req.DisplayHandle,
 		AccessToken:   req.AccessToken,
+	})
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, ch)
+}
+
+func (h *Handler) connectTwilio(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		AccountSID  string `json:"accountSid"`
+		AuthToken   string `json:"authToken"`
+		PhoneNumber string `json:"phoneNumber"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	ch, err := h.svc.ConnectTwilioChannel(r.Context(), studioID, ConnectTwilioInput{
+		AccountSID:  req.AccountSID,
+		AuthToken:   req.AuthToken,
+		PhoneNumber: req.PhoneNumber,
 	})
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
