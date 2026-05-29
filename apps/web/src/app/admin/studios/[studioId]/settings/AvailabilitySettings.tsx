@@ -218,7 +218,7 @@ export function AvailabilitySettings({
                 ))}
                 {timezone && !commonTimezones.includes(timezone) && (
                   <option value={timezone} className="bg-white dark:bg-neutral-900">{timezone}</option>
-                ))}
+                )}
               </select>
             </div>
 
