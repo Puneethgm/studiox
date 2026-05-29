@@ -21,6 +21,20 @@ const daysOfWeek = [
   "Sunday",
 ];
 
+// Helper to format 24-hour HH:MM to 12-hour HH:MM AM/PM
+function formatTo12Hour(time24: string): string {
+  if (!time24) return "";
+  const parts = time24.split(":");
+  if (parts.length < 2) return time24;
+  const hours = parseInt(parts[0], 10);
+  const minutes = parts[1];
+  if (isNaN(hours)) return time24;
+  const ampm = hours >= 12 ? "PM" : "AM";
+  const hours12 = hours % 12 || 12;
+  const hoursStr = hours12.toString().padStart(2, "0");
+  return `${hoursStr}:${minutes} ${ampm}`;
+}
+
 export function AvailabilitySettings({
   studio,
 }: {
@@ -42,9 +56,15 @@ export function AvailabilitySettings({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
-  // Modal state
+  // Modal & Pagination state
   const [editingDay, setEditingDay] = useState<string | null>(null);
   const [newTimeInput, setNewTimeInput] = useState<string>("09:00");
+  const [modalPage, setModalPage] = useState<number>(1);
+
+  const openEditModal = (day: string) => {
+    setEditingDay(day);
+    setModalPage(1); // Reset page to 1
+  };
 
   const addTimeToDay = (time: string) => {
     if (!editingDay || !time) return;
@@ -108,6 +128,15 @@ export function AvailabilitySettings({
 
   const currentEditingSlot = slots.find(s => s.day === editingDay);
 
+  // Pagination calculations inside modal
+  const itemsPerPage = 5;
+  const totalSlotsCount = currentEditingSlot?.times.length || 0;
+  const totalPages = Math.ceil(totalSlotsCount / itemsPerPage) || 1;
+  const activePage = Math.min(modalPage, totalPages);
+  const startIndex = (activePage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedTimes = (currentEditingSlot?.times || []).slice(startIndex, endIndex);
+
   return (
     <div className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30">
       <div className="border-b border-white/20 px-6 py-4 dark:border-white/5">
@@ -157,12 +186,12 @@ export function AvailabilitySettings({
                     </span>
                   </div>
                   
-                  {/* Hours preview list */}
+                  {/* Hours preview list showing 12-hour format */}
                   <div className="flex flex-wrap gap-1 max-h-[60px] overflow-y-auto pr-1 scrollbar-none">
                     {hasHours ? (
                       slot.times.map((t, tidx) => (
-                        <span key={tidx} className="text-[10px] font-bold bg-white/30 dark:bg-neutral-800/40 border border-white/10 text-zinc-700 dark:text-zinc-300 px-2 py-0.5 rounded-lg">
-                          {t}
+                        <span key={tidx} className="text-[10px] font-bold bg-white/30 dark:bg-neutral-800/40 border border-white/10 text-zinc-700 dark:text-zinc-300 px-2 py-0.5 rounded-lg whitespace-nowrap">
+                          {formatTo12Hour(t)}
                         </span>
                       ))
                     ) : (
@@ -174,7 +203,7 @@ export function AvailabilitySettings({
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => setEditingDay(slot.day)}
+                  onClick={() => openEditModal(slot.day)}
                   className="mt-3 w-full h-8 text-[10px] font-black uppercase tracking-wider hover:bg-white/10 dark:hover:bg-neutral-800/40 rounded-xl flex items-center justify-center gap-1 border border-white/5"
                 >
                   <Clock className="w-3.5 h-3.5 text-brand-500" /> Manage Hours
@@ -221,21 +250,52 @@ export function AvailabilitySettings({
             </div>
 
             {/* Current Slots List */}
-            <div className="space-y-2">
-              <label className="block text-xs font-black uppercase tracking-wider text-zinc-400">Current Slots</label>
-              {currentEditingSlot && currentEditingSlot.times.length > 0 ? (
-                <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1 scrollbar-thin">
-                  {currentEditingSlot.times.map((t, idx) => (
-                    <div key={idx} className="flex items-center justify-between p-2.5 rounded-xl border border-white/10 bg-white/10 dark:bg-neutral-800/10">
-                      <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200">{t}</span>
+            <div className="space-y-3">
+              <label className="block text-xs font-black uppercase tracking-wider text-zinc-400">Current Slots ({totalSlotsCount})</label>
+              
+              {paginatedTimes.length > 0 ? (
+                <div className="space-y-1.5">
+                  <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1 scrollbar-thin">
+                    {paginatedTimes.map((t, idx) => (
+                      <div key={idx} className="flex items-center justify-between p-2.5 rounded-xl border border-white/10 bg-white/10 dark:bg-neutral-800/10">
+                        <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200">
+                          {formatTo12Hour(t)}
+                        </span>
+                        <button
+                          onClick={() => {
+                            const absoluteIdx = startIndex + idx;
+                            removeTimeFromDay(absoluteIdx);
+                          }}
+                          className="p-1.5 text-zinc-400 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Pagination Controls */}
+                  {totalPages > 1 && (
+                    <div className="flex items-center justify-between pt-2 border-t border-white/5">
                       <button
-                        onClick={() => removeTimeFromDay(idx)}
-                        className="p-1.5 text-zinc-400 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all"
+                        disabled={activePage === 1}
+                        onClick={() => setModalPage(p => Math.max(p - 1, 1))}
+                        className="px-2.5 py-1 text-[10px] font-black uppercase border border-white/10 rounded-lg disabled:opacity-40 hover:bg-white/5 transition-colors text-zinc-500 dark:text-zinc-400 disabled:hover:bg-transparent"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        Prev
+                      </button>
+                      <span className="text-[10px] font-black uppercase text-zinc-500 dark:text-zinc-400">
+                        Page {activePage} of {totalPages}
+                      </span>
+                      <button
+                        disabled={activePage === totalPages}
+                        onClick={() => setModalPage(p => Math.min(p + 1, totalPages))}
+                        className="px-2.5 py-1 text-[10px] font-black uppercase border border-white/10 rounded-lg disabled:opacity-40 hover:bg-white/5 transition-colors text-zinc-500 dark:text-zinc-400 disabled:hover:bg-transparent"
+                      >
+                        Next
                       </button>
                     </div>
-                  ))}
+                  )}
                 </div>
               ) : (
                 <div className="py-6 text-center border border-dashed border-white/20 rounded-xl bg-white/5">
