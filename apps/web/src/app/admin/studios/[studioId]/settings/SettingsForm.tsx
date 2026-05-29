@@ -96,9 +96,6 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
         logoUrl,
         contactEmail,
         active,
-        geminiApiKey,
-        metaAppId,
-        metaAppSecret,
       });
       if (!result.ok) {
         setErrors(result.details ?? { _: result.error });
@@ -120,14 +117,7 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
     setSaving(true);
     try {
       const result = await updateStudioSettings(studio.id, studio.slug, {
-        name,
-        brandColor,
-        logoUrl,
-        contactEmail,
-        active,
         geminiApiKey,
-        metaAppId,
-        metaAppSecret,
       });
       if (!result.ok) {
         setErrors(result.details ?? { _: result.error });
@@ -145,12 +135,6 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
     setSaving(true);
     try {
       const result = await updateStudioSettings(studio.id, studio.slug, {
-        name,
-        brandColor,
-        logoUrl,
-        contactEmail,
-        active,
-        geminiApiKey,
         metaAppId,
         metaAppSecret,
       });

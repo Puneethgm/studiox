@@ -98,14 +98,9 @@ export function AvailabilitySettings({
       times: s.times || [],
     }));
     const res = await updateStudioSettings(studio.id, studio.slug, {
-      name: studio.name || "",
-      brandColor: studio.brandColor || "#7c3aed",
-      logoUrl: studio.logoUrl || "",
-      contactEmail: studio.contactEmail || "",
-      active: studio.active ?? true,
       availabilitySlots: sanitizedSlots,
       availabilityTimezone: timezone,
-    } as any);
+    });
     setSaving(false);
     if (!res.ok) {
       setError(res.error ?? "Failed to save");

@@ -22,11 +22,11 @@ export async function updateStudioSettings(
   studioId: string,
   studioSlug: string,
   data: {
-    name: string;
-    brandColor: string;
-    logoUrl: string;
-    contactEmail: string;
-    active: boolean;
+    name?: string;
+    brandColor?: string;
+    logoUrl?: string;
+    contactEmail?: string;
+    active?: boolean;
     availabilitySlots?: any;
     availabilityTimezone?: string;
     geminiApiKey?: string;
