@@ -549,54 +549,8 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
             </Card>
           </div>
 
-          {/* Calendar & Queue */}
+          {/* Queue */}
           <div className="lg:col-span-2 space-y-6">
-            <Card className="border-white/30 bg-white/20 dark:border-white/5 dark:bg-neutral-900/30 backdrop-blur-2xl">
-              <div className="flex items-center justify-between mb-6">
-                <div>
-                  <h2 className="text-base font-black text-zinc-900 dark:text-white">Marketing Schedule Grid</h2>
-                  <p className="text-[11px] text-zinc-400">Click a cell to set the schedule date on the left</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Badge tone={activeChannelCount > 0 ? 'success' : 'neutral'}>
-                    {activeChannelCount} Connected
-                  </Badge>
-                </div>
-              </div>
-
-              {/* Grid representation */}
-              <div className="grid grid-cols-7 gap-2 text-center mb-4">
-                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
-                  <span key={d} className="text-[10px] font-black uppercase tracking-wider text-zinc-400">{d}</span>
-                ))}
-                {Array.from({ length: 31 }, (_, i) => {
-                  const day = i + 1;
-                  const dayStr = day < 10 ? `0${day}` : `${day}`;
-                  const fullDateStr = `2026-05-${dayStr}`;
-                  const hasPost = posts.some(p => p.scheduledTime.includes(`-05-${dayStr}`));
-                  const isSelected = newPostDate === fullDateStr;
-                  return (
-                    <div
-                      key={day}
-                      onClick={() => setNewPostDate(fullDateStr)}
-                      className={`relative min-h-[50px] rounded-xl border p-1 transition-all cursor-pointer ${
-                        isSelected 
-                          ? 'border-brand-500 bg-brand-500/20'
-                          : hasPost 
-                            ? 'border-brand-500/30 bg-brand-500/5' 
-                            : 'border-white/10 hover:bg-white/5'
-                      }`}
-                    >
-                      <span className="text-[10px] font-bold text-zinc-500">{day}</span>
-                      {hasPost && (
-                        <span className="absolute bottom-1 right-1 h-2 w-2 rounded-full bg-brand-500" />
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </Card>
-
             {/* Queue List */}
             <Card className="border-white/30 bg-white/20 dark:border-white/5 dark:bg-neutral-900/30 backdrop-blur-2xl">
               <h2 className="text-base font-black text-zinc-900 dark:text-white mb-4">Publishing Queue</h2>
