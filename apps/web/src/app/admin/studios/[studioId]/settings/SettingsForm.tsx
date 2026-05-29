@@ -384,49 +384,6 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
         {activeSection === 'integrations' && (
           <div className="grid gap-6 lg:grid-cols-2 items-start">
             <div className="space-y-6">
-              {/* Gemini AI Integration Card */}
-              <form onSubmit={onSaveGeminiKey} className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30 p-6 space-y-5">
-                <div>
-                  <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Gemini AI Integration</h3>
-                </div>
-
-                <div>
-                  <Label htmlFor="geminiApiKey">Gemini API Key</Label>
-                  <div className="relative mt-1">
-                    <Input
-                      id="geminiApiKey"
-                      type={showGeminiApiKey ? 'text' : 'password'}
-                      placeholder="AIzaSy..."
-                      invalid={!!errors.geminiApiKey}
-                      value={geminiApiKey}
-                      onChange={(e) => setGeminiApiKey(e.target.value)}
-                      className="pr-12"
-                    />
-                    <button
-                      type="button"
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 transition hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
-                      onClick={() => setShowGeminiApiKey(!showGeminiApiKey)}
-                    >
-                      {showGeminiApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                  <FieldHint>Configure the Gemini API Key to enable AI-driven template and post generation.</FieldHint>
-                  <FieldError message={errors.geminiApiKey} />
-                </div>
-
-                <FieldError message={errors._} />
-
-                <div className="flex items-center justify-end border-t border-white/10 pt-4">
-                  <Button 
-                    type="submit" 
-                    loading={saving}
-                    className="bg-gradient-to-r from-brand-500 to-violet-600 hover:from-brand-600 hover:to-violet-700 text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-500/25 rounded-xl h-10 px-6"
-                  >
-                    Save Gemini Key
-                  </Button>
-                </div>
-              </form>
-
               {/* Meta App Settings Card */}
               <form onSubmit={onSaveMetaConfig} className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30 p-6 space-y-5">
                 <div>
@@ -480,6 +437,49 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
                     className="bg-gradient-to-r from-brand-500 to-violet-600 hover:from-brand-600 hover:to-violet-700 text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-500/25 rounded-xl h-10 px-6"
                   >
                     Save Meta Config
+                  </Button>
+                </div>
+              </form>
+
+              {/* Gemini AI Integration Card */}
+              <form onSubmit={onSaveGeminiKey} className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30 p-6 space-y-5">
+                <div>
+                  <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Gemini AI Integration</h3>
+                </div>
+
+                <div>
+                  <Label htmlFor="geminiApiKey">Gemini API Key</Label>
+                  <div className="relative mt-1">
+                    <Input
+                      id="geminiApiKey"
+                      type={showGeminiApiKey ? 'text' : 'password'}
+                      placeholder="AIzaSy..."
+                      invalid={!!errors.geminiApiKey}
+                      value={geminiApiKey}
+                      onChange={(e) => setGeminiApiKey(e.target.value)}
+                      className="pr-12"
+                    />
+                    <button
+                      type="button"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 transition hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+                      onClick={() => setShowGeminiApiKey(!showGeminiApiKey)}
+                    >
+                      {showGeminiApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  <FieldHint>Configure the Gemini API Key to enable AI-driven template and post generation.</FieldHint>
+                  <FieldError message={errors.geminiApiKey} />
+                </div>
+
+                <FieldError message={errors._} />
+
+                <div className="flex items-center justify-end border-t border-white/10 pt-4">
+                  <Button 
+                    type="submit" 
+                    loading={saving}
+                    className="bg-gradient-to-r from-brand-500 to-violet-600 hover:from-brand-600 hover:to-violet-700 text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-500/25 rounded-xl h-10 px-6"
+                  >
+                    Save Gemini Key
                   </Button>
                 </div>
               </form>
