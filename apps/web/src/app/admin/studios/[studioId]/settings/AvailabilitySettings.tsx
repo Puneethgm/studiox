@@ -113,24 +113,25 @@ export function AvailabilitySettings({
   ];
 
   return (
-    <div className="mt-8 overflow-hidden rounded-[24px] border border-white/30 bg-white/30 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30">
+  return (
+    <div className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30">
       <div className="border-b border-white/20 px-6 py-4 dark:border-white/5">
         <h3 className="text-sm font-black uppercase tracking-[0.15em] text-zinc-400">Availability</h3>
       </div>
       <div className="p-6">
         {/* Timezone selector */}
-        <div className="mb-6">
-          <label className="block text-sm font-bold mb-2 text-zinc-700 dark:text-zinc-300">Timezone</label>
+        <div className="mb-6 max-w-xs">
+          <label className="block text-xs font-black uppercase tracking-wider text-zinc-400 mb-2">Timezone</label>
           <select
-            className="rounded-lg border border-zinc-200 px-3 py-1 text-sm font-semibold bg-white dark:bg-zinc-900 dark:border-zinc-800 focus:outline-none h-8 w-full max-w-xs text-zinc-800 dark:text-zinc-200"
+            className="rounded-xl border border-white/20 px-3 py-1.5 text-xs font-bold bg-white/10 dark:bg-neutral-800/30 dark:border-white/5 focus:outline-none focus:ring-1 focus:ring-brand-500 h-9 w-full text-zinc-800 dark:text-zinc-200"
             value={timezone}
             onChange={(e) => setTimezone(e.target.value)}
           >
             {commonTimezones.map((tz) => (
-              <option key={tz} value={tz}>{tz}</option>
+              <option key={tz} value={tz} className="bg-white dark:bg-neutral-900">{tz}</option>
             ))}
             {timezone && !commonTimezones.includes(timezone) && (
-              <option value={timezone}>{timezone}</option>
+              <option value={timezone} className="bg-white dark:bg-neutral-900">{timezone}</option>
             )}
           </select>
         </div>
@@ -138,49 +139,79 @@ export function AvailabilitySettings({
         {/* Slots list */}
         <div className="space-y-4">
           {slots.map((slot, idx) => (
-            <div key={idx} className="p-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/50 dark:bg-black/20 flex flex-wrap items-center gap-3">
+            <div key={idx} className="p-4 rounded-2xl border border-white/10 bg-white/10 dark:bg-neutral-800/10 flex flex-wrap items-center gap-3">
               <select
-                className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-semibold bg-white dark:bg-zinc-900 dark:border-zinc-800 focus:outline-none h-8"
+                className="rounded-xl border border-white/20 px-3 py-1.5 text-xs font-bold bg-white/10 dark:bg-neutral-800/30 dark:border-white/5 focus:outline-none focus:ring-1 focus:ring-brand-500 h-9"
                 value={slot.day}
                 onChange={(e) => updateDay(idx, e.target.value)}
               >
                 {daysOfWeek.map((d) => (
-                  <option key={d} value={d}>{d}</option>
+                  <option key={d} value={d} className="bg-white dark:bg-neutral-900">{d}</option>
                 ))}
               </select>
 
-              {slot.times.map((t, tidx) => (
-                <div key={tidx} className="flex items-center gap-1 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg pr-1">
-                  <Input type="time" value={t} onChange={(e) => updateTime(idx, tidx, e.target.value)} className="w-[110px] border-none shadow-none h-8 text-sm focus-visible:ring-0" />
-                  <Button variant="ghost" size="sm" onClick={() => removeTime(idx, tidx)} className="h-6 w-6 p-0 text-zinc-400 hover:text-red-500 rounded-md">
-                    <XIcon />
-                  </Button>
-                </div>
-              ))}
+              <div className="flex flex-wrap items-center gap-2">
+                {slot.times.map((t, tidx) => (
+                  <div key={tidx} className="flex items-center gap-1 bg-white/20 dark:bg-neutral-800/40 border border-white/10 rounded-xl pr-1.5">
+                    <Input 
+                      type="time" 
+                      value={t} 
+                      onChange={(e) => updateTime(idx, tidx, e.target.value)} 
+                      className="w-[100px] border-none bg-transparent shadow-none h-8 text-xs font-bold focus-visible:ring-0 text-zinc-800 dark:text-zinc-200" 
+                    />
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={() => removeTime(idx, tidx)} 
+                      className="h-5 w-5 p-0 text-zinc-400 hover:text-red-500 hover:bg-transparent rounded-md transition-colors"
+                    >
+                      <XIcon />
+                    </Button>
+                  </div>
+                ))}
+              </div>
               
-              <Button variant="outline" size="sm" onClick={() => addTime(idx)} className="h-8 text-xs font-semibold border-dashed border-zinc-300 dark:border-zinc-700">
-                <Plus className="w-3 h-3 mr-1" /> Add Time
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => addTime(idx)} 
+                className="h-8 text-xs font-black uppercase tracking-wider border-dashed border-white/20 hover:bg-white/10 hover:border-white/30 rounded-xl"
+              >
+                <Plus className="w-3.5 h-3.5 mr-1 text-brand-500" /> Add Time
               </Button>
-
+              
               <div className="flex-1" />
 
-              <Button variant="ghost" size="sm" onClick={() => removeDaySlot(idx)} className="text-red-500 hover:text-red-600 hover:bg-red-50 h-8 px-2">
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={() => removeDaySlot(idx)} 
+                className="text-zinc-400 hover:text-red-500 hover:bg-red-500/10 h-8 px-2.5 rounded-xl transition-all"
+              >
                 <Trash2 className="w-4 h-4" />
               </Button>
             </div>
           ))}
         </div>
 
-        <div className="mt-6">
-          <Button variant="secondary" onClick={addDaySlot} className="font-semibold shadow-sm">
-            <Plus className="w-4 h-4 mr-2" /> Add Day
+        <div className="mt-4">
+          <Button 
+            variant="outline" 
+            onClick={addDaySlot} 
+            className="text-xs font-black uppercase tracking-wider border-white/20 hover:bg-white/10 rounded-xl px-4 py-2"
+          >
+            <Plus className="w-4 h-4 mr-2 text-brand-500" /> Add Day Slot
           </Button>
         </div>
-
-        {error && <p className="text-sm font-semibold text-red-500 mt-4">{error}</p>}
         
-        <div className="flex justify-end mt-8 pt-6 border-t border-zinc-200 dark:border-zinc-800">
-          <Button onClick={onSave} loading={saving} className="bg-violet-600 hover:bg-violet-700 text-white font-bold shadow-md">
+        {error && <p className="text-xs font-black text-red-500 mt-4 uppercase tracking-wider">{error}</p>}
+        
+        <div className="flex justify-end mt-8 pt-6 border-t border-white/10">
+          <Button 
+            onClick={onSave} 
+            loading={saving} 
+            className="bg-gradient-to-r from-brand-500 to-violet-600 hover:from-brand-600 hover:to-violet-700 text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-500/25 rounded-xl h-10 px-6"
+          >
             Save Availability
           </Button>
         </div>
