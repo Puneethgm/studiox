@@ -151,10 +151,10 @@ export function AvailabilitySettings({
                 return (
                   <div 
                     key={slot.day} 
-                    className={`p-4 rounded-2xl border transition-all duration-300 flex flex-col justify-between h-[150px] group hover:-translate-y-0.5 hover:shadow-lg ${
+                    className={`p-4 rounded-2xl border transition-all duration-300 flex flex-col justify-between h-[150px] group hover:-translate-y-1.5 hover:shadow-xl hover:shadow-brand-500/5 ${
                       hasHours 
-                        ? 'border-brand-500/30 bg-brand-500/5 dark:border-brand-500/20 hover:border-brand-500/50 hover:bg-brand-500/10' 
-                        : 'border-white/10 bg-white/5 dark:bg-neutral-800/5 hover:border-white/20 hover:bg-white/10 dark:hover:bg-neutral-800/10'
+                        ? 'border-brand-500/30 bg-brand-500/5 dark:border-brand-500/20 hover:border-brand-500 hover:bg-brand-500/10' 
+                        : 'border-white/10 bg-white/5 dark:bg-neutral-800/5 hover:border-zinc-400/50 dark:hover:border-zinc-600/50 hover:bg-white/10 dark:hover:bg-neutral-800/10'
                     }`}
                   >
                     <div>
