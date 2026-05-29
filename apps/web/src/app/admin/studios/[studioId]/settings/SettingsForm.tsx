@@ -43,6 +43,8 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
   const [sheetsActive, setSheetsActive] = useState(false);
   const [sheetsSaving, setSheetsSaving] = useState(false);
   const [sheetsError, setSheetsError] = useState<string | null>(null);
+  const [metaSaving, setMetaSaving] = useState(false);
+  const [geminiSaving, setGeminiSaving] = useState(false);
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
@@ -114,7 +116,7 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
   async function onSaveGeminiKey(e: React.FormEvent) {
     e.preventDefault();
     setErrors({});
-    setSaving(true);
+    setGeminiSaving(true);
     try {
       const result = await updateStudioSettings(studio.id, studio.slug, {
         geminiApiKey,
@@ -125,14 +127,14 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
       }
       showToast('Gemini API Key saved successfully.');
     } finally {
-      setSaving(false);
+      setGeminiSaving(false);
     }
   }
 
   async function onSaveMetaConfig(e: React.FormEvent) {
     e.preventDefault();
     setErrors({});
-    setSaving(true);
+    setMetaSaving(true);
     try {
       const result = await updateStudioSettings(studio.id, studio.slug, {
         metaAppId,
@@ -144,7 +146,7 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
       }
       showToast('Meta Integration config saved successfully.');
     } finally {
-      setSaving(false);
+      setMetaSaving(false);
     }
   }
 
@@ -419,7 +421,7 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
                 <div className="flex items-center justify-end border-t border-white/10 pt-4">
                   <Button 
                     type="submit" 
-                    loading={saving}
+                    loading={metaSaving}
                     className="bg-gradient-to-r from-brand-500 to-violet-600 hover:from-brand-600 hover:to-violet-700 text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-500/25 rounded-xl h-10 px-6"
                   >
                     Save Meta Config
@@ -462,7 +464,7 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
                 <div className="flex items-center justify-end border-t border-white/10 pt-4">
                   <Button 
                     type="submit" 
-                    loading={saving}
+                    loading={geminiSaving}
                     className="bg-gradient-to-r from-brand-500 to-violet-600 hover:from-brand-600 hover:to-violet-700 text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-500/25 rounded-xl h-10 px-6"
                   >
                     Save Gemini Key
