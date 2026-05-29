@@ -113,7 +113,6 @@ export function AvailabilitySettings({
   ];
 
   return (
-  return (
     <div className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30">
       <div className="border-b border-white/20 px-6 py-4 dark:border-white/5">
         <h3 className="text-sm font-black uppercase tracking-[0.15em] text-zinc-400">Availability</h3>
