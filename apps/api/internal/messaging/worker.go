@@ -23,6 +23,7 @@ type OutboundWorker struct {
 	whatsapp  channels.Sender
 	messenger channels.Sender
 	twilio    channels.Sender
+	x         channels.Sender
 	log       *slog.Logger
 }
 
@@ -32,13 +33,14 @@ const (
 	maxAttempts        = 6
 )
 
-func NewOutboundWorker(repo *Repo, bus Bus, whatsapp, messenger, twilio channels.Sender, log *slog.Logger) *OutboundWorker {
+func NewOutboundWorker(repo *Repo, bus Bus, whatsapp, messenger, twilio, x channels.Sender, log *slog.Logger) *OutboundWorker {
 	return &OutboundWorker{
 		repo:      repo,
 		bus:       bus,
 		whatsapp:  whatsapp,
 		messenger: messenger,
 		twilio:    twilio,
+		x:         x,
 		log:       log,
 	}
 }
@@ -152,6 +154,8 @@ func (w *OutboundWorker) dispatch(ctx context.Context, j OutboundJob) {
 		} else {
 			sender = w.twilio
 		}
+	case KindXDM:
+		sender = w.x
 	default:
 		w.failJob(ctx, j, "no sender for channel kind: "+string(channel.Kind), true)
 		return

@@ -44,6 +44,7 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Post("/channels/instagram", h.connectInstagram)
 	r.Post("/channels/messenger", h.connectMessenger)
 	r.Post("/channels/twilio", h.connectTwilio)
+	r.Post("/channels/x", h.connectX)
 	r.Delete("/channels/{id}", h.disconnectChannel)
 	r.Put("/channels/{id}", h.updateChannel)
 
@@ -197,6 +198,35 @@ func (h *Handler) connectTwilio(w http.ResponseWriter, r *http.Request) {
 		AccountSID:  req.AccountSID,
 		AuthToken:   req.AuthToken,
 		PhoneNumber: req.PhoneNumber,
+	})
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, ch)
+}
+
+func (h *Handler) connectX(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		ConsumerKey       string `json:"consumer_key"`
+		ConsumerSecret    string `json:"consumer_secret"`
+		AccessToken       string `json:"access_token"`
+		AccessTokenSecret string `json:"access_token_secret"`
+		XHandle           string `json:"x_handle"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	ch, err := h.svc.ConnectXChannel(r.Context(), studioID, ConnectXInput{
+		ConsumerKey:       req.ConsumerKey,
+		ConsumerSecret:    req.ConsumerSecret,
+		AccessToken:       req.AccessToken,
+		AccessTokenSecret: req.AccessTokenSecret,
+		XHandle:           req.XHandle,
 	})
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid", err.Error())

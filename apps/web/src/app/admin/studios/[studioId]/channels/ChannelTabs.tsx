@@ -11,6 +11,7 @@ import { ConnectWhatsApp } from './ConnectWhatsApp';
 import { ConnectMetaChannel } from './ConnectMetaChannel';
 import { ConnectGoogleAds } from './ConnectGoogleAds';
 import { ConnectTwilio } from './ConnectTwilio';
+import { ConnectX } from './ConnectX';
 
 interface TabDef {
   kind: ChannelKind;
@@ -55,14 +56,7 @@ const TABS: TabDef[] = [
     kind: 'x_dm',
     label: 'X (Twitter) DMs',
     brand: '#000000',
-    status: 'coming_soon',
-    comingSoonNote: (
-      <>
-        X moved to pay-per-use in Feb 2026 (~$0.01 per outbound DM). We&rsquo;ll
-        wire this after Meta channels are live and per-studio volume justifies
-        the cost.
-      </>
-    ),
+    status: 'available',
   },
 ];
 
@@ -185,6 +179,8 @@ function AvailablePanel({
           <ConnectWhatsApp studioId={studioId} />
         ) : kind === 'sms' ? (
           <ConnectTwilio studioId={studioId} />
+        ) : kind === 'x_dm' ? (
+          <ConnectX studioId={studioId} onSuccess={() => {}} />
         ) : (
           <ConnectMetaChannel studioId={studioId} kind={kind} />
         )}

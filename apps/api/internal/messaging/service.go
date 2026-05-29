@@ -1422,3 +1422,43 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 	}
 	return nil
 }
+
+type ConnectXInput struct {
+	ConsumerKey       string `json:"consumer_key"`
+	ConsumerSecret    string `json:"consumer_secret"`
+	AccessToken       string `json:"access_token"`
+	AccessTokenSecret string `json:"access_token_secret"`
+	XHandle           string `json:"x_handle"`
+}
+
+func (s *Service) ConnectXChannel(ctx context.Context, studioID uuid.UUID, in ConnectXInput) (*ChannelAccount, error) {
+	in.ConsumerKey = strings.TrimSpace(in.ConsumerKey)
+	in.ConsumerSecret = strings.TrimSpace(in.ConsumerSecret)
+	in.AccessToken = strings.TrimSpace(in.AccessToken)
+	in.AccessTokenSecret = strings.TrimSpace(in.AccessTokenSecret)
+	in.XHandle = strings.TrimSpace(in.XHandle)
+
+	if in.ConsumerKey == "" || in.ConsumerSecret == "" || in.AccessToken == "" || in.AccessTokenSecret == "" || in.XHandle == "" {
+		return nil, errors.New("consumer key, consumer secret, access token, token secret, and x handle are required")
+	}
+
+	accessTokenJSON, err := json.Marshal(map[string]string{
+		"consumer_key":        in.ConsumerKey,
+		"consumer_secret":     in.ConsumerSecret,
+		"access_token":        in.AccessToken,
+		"access_token_secret": in.AccessTokenSecret,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return s.repo.CreateChannel(ctx, CreateChannelInput{
+		StudioID:      studioID,
+		Kind:          KindXDM,
+		BSP:           "x_dm",
+		ExternalID:    in.XHandle,
+		ParentID:      in.ConsumerKey,
+		DisplayHandle: in.XHandle,
+		AccessToken:   string(accessTokenJSON),
+	})
+}
