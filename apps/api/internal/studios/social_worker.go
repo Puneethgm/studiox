@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dghubble/oauth1"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -97,6 +98,10 @@ func (w *SocialWorker) publishPost(ctx context.Context, post SocialPost) {
 		w.publishGoogleAds(ctx, post)
 		return
 	}
+	if post.Platform == "X (Twitter)" {
+		w.publishX(ctx, post)
+		return
+	}
 
 	// Fetch connected Meta Channel Account for Page ID & Access Token
 	var pageID string
@@ -178,6 +183,93 @@ func (w *SocialWorker) markStatus(ctx context.Context, postID uuid.UUID, status 
 	if err != nil {
 		w.log.Error("update social post status", "err", err, "post_id", postID, "status", status)
 	}
+}
+
+func (w *SocialWorker) publishX(ctx context.Context, post SocialPost) {
+	var accessTokenEnc string
+	err := w.pool.QueryRow(ctx, `
+		SELECT access_token_enc
+		FROM channel_accounts
+		WHERE studio_id = $1 AND kind = 'x_dm' AND status = 'active'
+		LIMIT 1
+	`, post.StudioID).Scan(&accessTokenEnc)
+
+	isLocalDev := os.Getenv("API_ENV") == "local"
+
+	if err != nil {
+		if isLocalDev {
+			w.log.Info("[MOCK PUBLISH] No active X integration found. Simulating publish in local dev.", "post_id", post.ID)
+			w.markStatus(ctx, post.ID, "published")
+			return
+		}
+		w.log.Error("no active X account connected for studio", "studio_id", post.StudioID, "post_id", post.ID)
+		w.markStatus(ctx, post.ID, "failed")
+		return
+	}
+
+	var accessTokenStr string
+	if w.cipher != nil && accessTokenEnc != "" {
+		dec, err := w.cipher.Decrypt(accessTokenEnc)
+		if err != nil {
+			if isLocalDev {
+				accessTokenStr = "test"
+			} else {
+				w.log.Error("decrypt x token", "err", err, "post_id", post.ID)
+				w.markStatus(ctx, post.ID, "failed")
+				return
+			}
+		} else {
+			accessTokenStr = dec
+		}
+	}
+
+	if isLocalDev && (accessTokenStr == "" || accessTokenStr == "test") {
+		w.log.Info("[MOCK PUBLISH] Successfully published scheduled post to X", "copy", post.Copy)
+		w.markStatus(ctx, post.ID, "published")
+		return
+	}
+
+	var keys struct {
+		ConsumerKey       string `json:"consumer_key"`
+		ConsumerSecret    string `json:"consumer_secret"`
+		AccessToken       string `json:"access_token"`
+		AccessTokenSecret string `json:"access_token_secret"`
+	}
+	if err := json.Unmarshal([]byte(accessTokenStr), &keys); err != nil {
+		w.log.Error("invalid x channel credentials", "err", err, "post_id", post.ID)
+		w.markStatus(ctx, post.ID, "failed")
+		return
+	}
+
+	config := oauth1.NewConfig(keys.ConsumerKey, keys.ConsumerSecret)
+	token := oauth1.NewToken(keys.AccessToken, keys.AccessTokenSecret)
+	httpClient := config.Client(ctx, token)
+
+	// Twitter API v2 Tweet Endpoint
+	endpoint := "https://api.twitter.com/2/tweets"
+	payload := map[string]interface{}{
+		"text": post.Copy,
+	}
+
+	bodyBytes, _ := json.Marshal(payload)
+	req, _ := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := httpClient.Do(req)
+	var errBody []byte
+	if resp != nil && resp.Body != nil {
+		errBody, _ = io.ReadAll(resp.Body)
+	}
+
+	if err != nil || resp.StatusCode >= 300 {
+		w.log.Error("failed to publish to x", "err", err, "status", resp.StatusCode, "body", string(errBody))
+		w.markStatus(ctx, post.ID, "failed")
+		return
+	}
+	defer resp.Body.Close()
+
+	w.log.Info("successfully published to x", "post_id", post.ID, "status", resp.StatusCode, "body", string(errBody))
+	w.markStatus(ctx, post.ID, "published")
 }
 
 func (w *SocialWorker) sendToFacebook(ctx context.Context, pageID, accessToken, message, mediaURL string) error {

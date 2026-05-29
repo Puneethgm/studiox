@@ -164,15 +164,18 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
 
     // Fetch Meta and Google Ads integration state
     if (studioId !== 'global') {
-      api<any>(`/api/v1/me/studios/${studioId}`)
-        .then((res) => {
-          const hasMeta = !!(res.metaAppId && res.metaAppSecret);
-          const hasGoogleAds = !!(res.googleClientId && res.googleClientSecret && res.googleDeveloperToken);
+      Promise.all([
+        api<any>(`/api/v1/me/studios/${studioId}`),
+        api<{channels: any[]}>(`/api/v1/studios/${studioId}/messaging/channels`)
+      ]).then(([studioRes, channelsRes]) => {
+          const hasMeta = !!(studioRes.metaAppId && studioRes.metaAppSecret);
+          const hasGoogleAds = !!(studioRes.googleClientId && studioRes.googleClientSecret && studioRes.googleDeveloperToken);
+          const hasX = channelsRes.channels?.some(c => c.kind === 'x_dm');
           setConnectedChannels({
             facebook: hasMeta,
             instagram: hasMeta,
             googleAds: hasGoogleAds,
-            x: false,
+            x: !!hasX,
           });
         })
         .catch((err) => console.error('Failed to fetch studio integrations:', err));
