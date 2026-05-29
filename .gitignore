@@ -8,7 +8,8 @@
 
 # Production deploy state — created on the EC2 box, never committed
 deploy/.env
-deploy/secrets/
+deploy/secrets/*
+!deploy/secrets/google-credentials.json
 deploy/backups/
 
 # Node
@@ -38,3 +39,4 @@ coverage.txt
 *.json
 heroic-artifact-434914-d4-1b7152cf7bec.json
 apps/api/secrets/
+!deploy/secrets/google-credentials.json
