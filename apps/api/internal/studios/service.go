@@ -87,13 +87,14 @@ func (s *Service) CreateStudioWithAdmin(ctx context.Context, in CreateStudioInpu
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	studio := &Studio{
-		Slug:         in.Slug,
-		Name:         in.Name,
-		BrandColor:   in.BrandColor,
-		LogoURL:      in.LogoURL,
+		Slug:                 in.Slug,
+		Name:                 in.Name,
+		BrandColor:           in.BrandColor,
+		LogoURL:              in.LogoURL,
 		ContactEmail:         in.ContactEmail,
 		Active:               true,
 		SocialPlannerEnabled: in.SocialPlannerEnabled,
+		KnowledgeBaseFiles:   []KnowledgeBaseFile{},
 	}
 	if err := s.repo.Create(ctx, tx, studio); err != nil {
 		if errors.Is(err, ErrSlugTaken) {
