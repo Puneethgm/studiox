@@ -358,6 +358,6 @@ export function AvailabilitySettings({
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
