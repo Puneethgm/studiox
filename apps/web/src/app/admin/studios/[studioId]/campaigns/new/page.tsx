@@ -2,7 +2,7 @@
 
 import { useParams, useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { Megaphone, Plus } from 'lucide-react';
+import { Megaphone, Plus, CheckCircle2, AlertCircle, X } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
@@ -22,6 +22,7 @@ export default function NewCampaignPage() {
   const [plansText, setPlansText] = useState('Yoga\nHIIT\nPersonal Training\nGroup Class');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -36,15 +37,21 @@ export default function NewCampaignPage() {
         method: 'POST',
         json: { name, slug, description, fitnessPlans },
       });
-      router.push(`/admin/studios/${studioId}/campaigns/${c.id}`);
+      setToast({ message: 'Campaign created successfully. Redirecting...', type: 'success' });
       router.refresh();
+      setTimeout(() => {
+        router.push(`/admin/studios/${studioId}/campaigns/${c.id}`);
+      }, 1500);
     } catch (err) {
       if (err instanceof ApiError && err.details) {
         setErrors(err.details);
+        setToast({ message: 'Validation failed. Please correct the fields.', type: 'error' });
       } else if (err instanceof ApiError && err.code === 'slug_taken') {
         setErrors({ slug: 'this slug is already in use within this studio' });
+        setToast({ message: 'This URL slug is already in use.', type: 'error' });
       } else {
         setErrors({ _: 'failed to create campaign' });
+        setToast({ message: 'Failed to create campaign.', type: 'error' });
       }
     } finally {
       setSubmitting(false);
@@ -145,6 +152,34 @@ export default function NewCampaignPage() {
           </form>
         </Card>
       </div>
+      {/* Custom Floating Toast Notification */}
+      {toast && (
+        <div className={`fixed bottom-6 right-6 z-[9999] p-4 rounded-2xl border backdrop-blur-xl shadow-2xl flex items-center gap-3 animate-in slide-in-from-bottom-5 fade-in duration-300 min-w-[320px] ${
+          toast.type === 'success' 
+            ? 'border-emerald-500/30 bg-white/90 dark:bg-zinc-900/90' 
+            : 'border-red-500/30 bg-white/90 dark:bg-zinc-900/90'
+        }`}>
+          <div className={`h-8 w-8 rounded-xl flex items-center justify-center shrink-0 ${
+            toast.type === 'success' 
+              ? 'bg-emerald-500/10 text-emerald-500' 
+              : 'bg-red-500/10 text-red-500'
+          }`}>
+            {toast.type === 'success' ? <CheckCircle2 className="w-5 h-5" /> : <AlertCircle className="w-5 h-5" />}
+          </div>
+          <div className="flex-1 text-left">
+            <p className="text-xs font-black uppercase tracking-wider text-zinc-800 dark:text-zinc-100">
+              {toast.type === 'success' ? 'Success' : 'Error'}
+            </p>
+            <p className="text-[10px] text-zinc-550 dark:text-zinc-400 font-semibold mt-0.5">{toast.message}</p>
+          </div>
+          <button 
+            onClick={() => setToast(null)} 
+            className="text-zinc-400 hover:text-zinc-655 dark:hover:text-white p-1 rounded-lg transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, type ReactNode } from 'react';
-import { Clock, Plug } from 'lucide-react';
+import { Clock, Plug, CheckCircle2, X } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/cn';
@@ -70,6 +70,12 @@ export function ChannelTabs({
   studio: Studio;
 }) {
   const [active, setActive] = useState<ChannelKind>('whatsapp_meta');
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type });
+  };
+
   const activeTab = TABS.find((t) => t.kind === active)!;
   const channelsForTab = channels.filter((c) => c.kind === active);
 
@@ -127,16 +133,36 @@ export function ChannelTabs({
 
       {/* Tab content */}
       {active === 'google_ads' ? (
-        <ConnectGoogleAds studio={studio} channels={channels.filter(c => c.kind === 'google_ads')} />
+        <ConnectGoogleAds studio={studio} channels={channels.filter(c => c.kind === 'google_ads')} showToast={showToast} />
       ) : activeTab.status === 'available' ? (
         <AvailablePanel
           studioId={studioId}
           channels={channelsForTab}
           kind={activeTab.kind}
           label={activeTab.label}
+          showToast={showToast}
         />
       ) : (
         <ComingSoonPanel tab={activeTab} />
+      )}
+
+      {/* Custom Floating Toast Notification */}
+      {toast && (
+        <div className="fixed bottom-6 right-6 z-50 p-4 rounded-2xl border border-emerald-500/30 bg-white/90 dark:bg-zinc-900/90 backdrop-blur-xl shadow-2xl flex items-center gap-3 animate-in slide-in-from-bottom-5 fade-in duration-300 min-w-[320px]">
+          <div className="h-8 w-8 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center shrink-0">
+            <CheckCircle2 className="w-5 h-5" />
+          </div>
+          <div className="flex-1 text-left">
+            <p className="text-xs font-black uppercase tracking-wider text-zinc-800 dark:text-zinc-100">Success</p>
+            <p className="text-[10px] text-zinc-550 dark:text-zinc-400 font-semibold mt-0.5">{toast.message}</p>
+          </div>
+          <button 
+            onClick={() => setToast(null)} 
+            className="text-zinc-400 hover:text-zinc-650 dark:hover:text-white p-1 rounded-lg transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
       )}
     </div>
   );
@@ -147,11 +173,13 @@ function AvailablePanel({
   channels,
   kind,
   label,
+  showToast,
 }: {
   studioId: string;
   channels: ChannelAccount[];
   kind: ChannelKind;
   label: string;
+  showToast: (msg: string, type?: 'success' | 'error') => void;
 }) {
   return (
     <div className="grid gap-6 lg:grid-cols-3">
@@ -171,18 +199,18 @@ function AvailablePanel({
             </div>
           </Card>
         ) : (
-          <ChannelList studioId={studioId} channels={channels} />
+          <ChannelList studioId={studioId} channels={channels} showToast={showToast} />
         )}
       </div>
       <div className="space-y-6">
         {kind === 'whatsapp_meta' ? (
-          <ConnectWhatsApp studioId={studioId} />
+          <ConnectWhatsApp studioId={studioId} showToast={showToast} />
         ) : kind === 'sms' ? (
-          <ConnectTwilio studioId={studioId} />
+          <ConnectTwilio studioId={studioId} showToast={showToast} />
         ) : kind === 'x_dm' ? (
-          <ConnectX studioId={studioId} onSuccess={() => {}} />
+          <ConnectX studioId={studioId} onSuccess={() => {}} showToast={showToast} />
         ) : (
-          <ConnectMetaChannel studioId={studioId} kind={kind} />
+          <ConnectMetaChannel studioId={studioId} kind={kind} showToast={showToast} />
         )}
       </div>
     </div>

@@ -18,6 +18,9 @@ import {
   X,
   CreditCard,
   Database,
+  ChevronLeft,
+  ChevronRight,
+  HelpCircle,
 } from 'lucide-react';
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { Button } from '@/components/ui/Button';
@@ -81,6 +84,22 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
   // All hooks must run unconditionally — keep them above the lockout branch.
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(false);
+
+  useEffect(() => {
+    const val = localStorage.getItem('sidebar-collapsed');
+    if (val !== null) {
+      setIsCollapsed(val === 'true');
+    }
+  }, []);
+
+  const handleToggleSidebar = () => {
+    setIsCollapsed(prev => {
+      const next = !prev;
+      localStorage.setItem('sidebar-collapsed', String(next));
+      return next;
+    });
+  };
 
   // Auto-close the drawer on navigation.
   useEffect(() => {
@@ -127,7 +146,13 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
       />
 
       <div className="lg:flex lg:h-screen lg:gap-4 lg:p-4">
-        <Sidebar me={me} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} />
+        <Sidebar 
+          me={me} 
+          mobileOpen={mobileOpen} 
+          onClose={() => setMobileOpen(false)} 
+          isCollapsed={isCollapsed}
+          onToggle={handleToggleSidebar}
+        />
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden lg:glass-container">
           <Topbar me={me} onMenuClick={() => setMobileOpen(true)} />
           <main className="relative flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
@@ -143,10 +168,14 @@ function Sidebar({
   me,
   mobileOpen,
   onClose,
+  isCollapsed,
+  onToggle,
 }: {
   me: Me;
   mobileOpen: boolean;
   onClose: () => void;
+  isCollapsed: boolean;
+  onToggle: () => void;
 }) {
   const pathname = usePathname();
   const items = navItemsFor(me);
@@ -165,7 +194,10 @@ function Sidebar({
         'fixed inset-y-4 left-4 z-50 flex w-72 flex-col overflow-hidden rounded-[32px] border border-white/40 bg-white/40 px-4 py-6 backdrop-blur-3xl transition-all duration-500 ease-[cubic-bezier(0.34,1.56,0.64,1)]',
         'dark:border-white/10 dark:bg-neutral-900/40',
         // Desktop: sticky in flow, always visible
-        'lg:relative lg:inset-y-0 lg:left-0 lg:z-auto lg:h-full lg:w-20 lg:translate-x-0 lg:items-center lg:rounded-[40px] lg:px-2 lg:shadow-liquid lg:transition-[width,padding] lg:duration-300 lg:ease-out hover:lg:w-64 hover:lg:px-3 group/sidebar',
+        'lg:relative lg:inset-y-0 lg:left-0 lg:z-auto lg:h-full lg:translate-x-0 lg:rounded-[40px] lg:shadow-liquid lg:transition-[width,padding] lg:duration-300 lg:ease-out',
+        isCollapsed 
+          ? 'lg:w-20 lg:items-center lg:px-2' 
+          : 'lg:w-64 lg:items-stretch lg:px-4',
         mobileOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-[calc(100%+20px)]',
       )}
       aria-label="Primary navigation"
@@ -183,7 +215,10 @@ function Sidebar({
 
       {/* Brand block */}
       {isStudio ? (
-        <div className="mb-10 flex animate-in items-center gap-3 lg:flex-col lg:gap-1 lg:transition-all lg:duration-300 group-hover/sidebar:lg:flex-row group-hover/sidebar:lg:gap-3" style={{ animationDelay: '100ms' }}>
+        <div className={cn(
+          "mb-10 flex animate-in items-center gap-3 lg:transition-all lg:duration-300",
+          isCollapsed ? "lg:flex-col lg:gap-1" : "lg:flex-row lg:gap-3"
+        )} style={{ animationDelay: '100ms' }}>
           <div
             className="grid h-12 w-12 shrink-0 animate-float place-items-center overflow-hidden rounded-2xl text-sm font-bold text-white shadow-lg shadow-brand-500/20 ring-4 ring-white/30"
             style={{ background: studio!.brandColor }}
@@ -195,7 +230,10 @@ function Sidebar({
               brandInitials(studio!.name)
             )}
           </div>
-          <div className="min-w-0 lg:block lg:max-w-0 lg:overflow-hidden lg:opacity-0 lg:transition-all lg:duration-300 group-hover/sidebar:lg:max-w-[11rem] group-hover/sidebar:lg:opacity-100">
+          <div className={cn(
+            "min-w-0 lg:block lg:transition-all lg:duration-300",
+            isCollapsed ? "lg:max-w-0 lg:overflow-hidden lg:opacity-0" : "lg:max-w-[11rem] lg:opacity-100"
+          )}>
             <div className="truncate text-sm font-bold text-zinc-900 dark:text-zinc-100">
               {studio!.name}
             </div>
@@ -205,11 +243,17 @@ function Sidebar({
           </div>
         </div>
       ) : (
-        <div className="mb-10 flex animate-in items-center gap-3 lg:flex-col lg:gap-1 lg:transition-all lg:duration-300 group-hover/sidebar:lg:flex-row group-hover/sidebar:lg:gap-3" style={{ animationDelay: '100ms' }}>
+        <div className={cn(
+          "mb-10 flex animate-in items-center gap-3 lg:transition-all lg:duration-300",
+          isCollapsed ? "lg:flex-col lg:gap-1" : "lg:flex-row lg:gap-3"
+        )} style={{ animationDelay: '100ms' }}>
           <div className="grid h-12 w-12 shrink-0 animate-float place-items-center rounded-2xl bg-gradient-to-br from-brand-300 via-brand-primary to-brand-700 text-sm font-extrabold text-white shadow-lg shadow-brand-500/20 ring-4 ring-white/30">
             1H
           </div>
-          <div className="min-w-0 lg:block lg:max-w-0 lg:overflow-hidden lg:opacity-0 lg:transition-all lg:duration-300 group-hover/sidebar:lg:max-w-[11rem] group-hover/sidebar:lg:opacity-100">
+          <div className={cn(
+            "min-w-0 lg:block lg:transition-all lg:duration-300",
+            isCollapsed ? "lg:max-w-0 lg:overflow-hidden lg:opacity-0" : "lg:max-w-[11rem] lg:opacity-100"
+          )}>
             <div className="truncate text-sm font-bold text-zinc-900 dark:text-zinc-100">
               1herosocial.ai
             </div>
@@ -219,7 +263,10 @@ function Sidebar({
       )}
 
       {/* Nav */}
-      <nav className="flex flex-1 flex-col gap-3 overflow-y-auto lg:w-full lg:items-center group-hover/sidebar:lg:items-stretch">
+      <nav className={cn(
+        "flex flex-1 flex-col gap-3 overflow-y-auto lg:w-full",
+        isCollapsed ? "lg:items-center" : "lg:items-stretch"
+      )}>
         {items.map((item, idx) => {
           const active = item.match ? item.match(pathname) : pathname === item.href;
           return (
@@ -231,7 +278,7 @@ function Sidebar({
                 active
                   ? 'text-white shadow-lg'
                   : 'text-zinc-500 hover:bg-white/50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-white/5 dark:hover:text-zinc-100',
-                'lg:justify-center group-hover/sidebar:lg:justify-start',
+                isCollapsed ? 'lg:justify-center' : 'lg:justify-start',
               )}
               style={{
                 animationDelay: `${150 + idx * 50}ms`,
@@ -241,7 +288,10 @@ function Sidebar({
               <span className={cn('shrink-0 transition-transform duration-300 group-hover:scale-110', active && '[&>svg]:stroke-[2.5]')}>
                 {item.icon}
               </span>
-              <span className="truncate lg:block lg:max-w-0 lg:overflow-hidden lg:opacity-0 lg:transition-all lg:duration-300 group-hover/sidebar:lg:max-w-[12rem] group-hover/sidebar:lg:opacity-100">
+              <span className={cn(
+                "truncate lg:block lg:transition-all lg:duration-300",
+                isCollapsed ? "lg:max-w-0 lg:overflow-hidden lg:opacity-0" : "lg:max-w-[12rem] lg:opacity-100"
+              )}>
                 {item.label}
               </span>
             </Link>
@@ -250,7 +300,10 @@ function Sidebar({
       </nav>
 
       {/* Footer hint */}
-      <div className="mt-6 animate-in rounded-3xl border border-white/20 bg-white/20 p-4 text-xs text-zinc-500 backdrop-blur-md dark:border-white/5 dark:bg-black/20 lg:block lg:max-h-0 lg:overflow-hidden lg:p-0 lg:opacity-0 lg:transition-all lg:duration-300 group-hover/sidebar:lg:max-h-40 group-hover/sidebar:lg:p-4 group-hover/sidebar:lg:opacity-100" style={{ animationDelay: '500ms' }}>
+      <div className={cn(
+        "mt-6 mb-4 animate-in rounded-3xl border border-white/20 bg-white/20 text-xs text-zinc-500 backdrop-blur-md dark:border-white/5 dark:bg-black/20 lg:block lg:transition-all lg:duration-300",
+        isCollapsed ? "lg:max-h-0 lg:overflow-hidden lg:p-0 lg:opacity-0" : "lg:max-h-40 lg:p-4 lg:opacity-100"
+      )} style={{ animationDelay: '500ms' }}>
         <div className="flex items-center gap-2 font-black text-zinc-800 dark:text-zinc-200">
           <Sparkles className="h-3.5 w-3.5 text-brand-500" />
           Tip
@@ -260,6 +313,22 @@ function Sidebar({
             ? 'Drop your campaign link in your Instagram bio to start collecting leads.'
             : 'Studios sign in at the same /login URL — their account routes them to their own dashboard.'}
         </p>
+      </div>
+
+      {/* Sidebar Footer Controls */}
+      <div className="mt-auto flex items-center justify-center w-full pt-4 border-t border-white/20 dark:border-white/5 shrink-0">
+        <button
+          type="button"
+          onClick={onToggle}
+          className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/20 hover:bg-white/50 border border-white/20 dark:bg-black/20 dark:hover:bg-white/5 dark:border-white/5 text-zinc-500 hover:text-zinc-800 dark:hover:text-white transition-all duration-300"
+          title={isCollapsed ? "Expand" : "Collapse"}
+        >
+          {isCollapsed ? (
+            <ChevronRight className="h-5 w-5" />
+          ) : (
+            <ChevronLeft className="h-5 w-5" />
+          )}
+        </button>
       </div>
     </aside>
   );

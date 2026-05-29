@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/Input';
 import { FieldError, FieldHint, Label } from '@/components/ui/Label';
 import { ApiError, api } from '@/lib/api';
 
-export function ConnectX({ studioId, onSuccess }: { studioId: string, onSuccess: () => void }) {
+export function ConnectX({ studioId, onSuccess, showToast }: { studioId: string; onSuccess: () => void; showToast: (msg: string) => void }) {
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [consumerKey, setConsumerKey] = useState('');
@@ -50,6 +50,7 @@ export function ConnectX({ studioId, onSuccess }: { studioId: string, onSuccess:
       setAccessTokenSecret('');
       setXHandle('');
       onSuccess();
+      showToast('X (Twitter) DM channel connected successfully.');
       router.refresh();
     } catch (err) {
       if (err instanceof ApiError) setError(getErrorMessage(err.message));

@@ -85,6 +85,16 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
   const [uploadingFile, setUploadingFile] = useState(false);
   const [mediaInputType, setMediaInputType] = useState<'upload' | 'url'>('upload');
 
+  // Confirmation and Notification modals
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [showNotificationModal, setShowNotificationModal] = useState(false);
+  const [notificationStatus, setNotificationStatus] = useState<'success' | 'error'>('success');
+  const [notificationMessage, setNotificationMessage] = useState('');
+
+  // Delete Confirmation states
+  const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
+  const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
+
   const [visibleQueueCount, setVisibleQueueCount] = useState(4);
 
   useEffect(() => {
@@ -100,8 +110,8 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
     }
   };
 
-  const fetchPosts = () => {
-    setLoadingPosts(true);
+  const fetchPosts = (silent = false) => {
+    if (!silent) setLoadingPosts(true);
     const targetStudioId = studioId === 'global' ? 'global' : studioId;
     api<any[]>(`/api/v1/studios/${targetStudioId}/social-posts`)
       .then((res) => {
@@ -115,11 +125,11 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
           scheduledTime: p.scheduledAt,
         }));
         setPosts(mapped);
-        setLoadingPosts(false);
+        if (!silent) setLoadingPosts(false);
       })
       .catch((err) => {
         console.error('Failed to load social posts:', err);
-        setLoadingPosts(false);
+        if (!silent) setLoadingPosts(false);
       });
   };
 
@@ -163,6 +173,11 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
   useEffect(() => {
     fetchPosts();
 
+    // Setup interval to poll for post status updates in the background (every 10s)
+    const interval = setInterval(() => {
+      fetchPosts(true);
+    }, 10000);
+
     // Fetch Meta and Google Ads integration state
     if (studioId !== 'global') {
       Promise.all([
@@ -188,6 +203,8 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
         x: false,
       });
     }
+
+    return () => clearInterval(interval);
   }, [studioId]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -267,10 +284,14 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
     }
   };
 
-  const handleSchedulePost = async (e: React.FormEvent) => {
+  const handleSchedulePost = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPostContent) return;
+    setShowConfirmModal(true);
+  };
 
+  const executeSchedulePost = async () => {
+    setShowConfirmModal(false);
     try {
       const targetStudioId = studioId === 'global' ? '759b1ee2-5a68-4a5c-8fa0-5b2a64d5cc35' : studioId;
       await api(`/api/v1/studios/${targetStudioId}/social-posts`, {
@@ -289,22 +310,45 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
       setMediaUrl('');
       setMediaName('');
       fetchPosts();
+      
+      setNotificationStatus('success');
+      setNotificationMessage(`Your campaign post has been successfully scheduled for ${new Date(`${newPostDate}T${newPostTime}`).toLocaleString()} on ${newPostPlatform}!`);
+      setShowNotificationModal(true);
+      
       setActiveTab('scheduler');
     } catch (err) {
       console.error('Failed to schedule post:', err);
-      alert('Failed to schedule post');
+      setNotificationStatus('error');
+      setNotificationMessage('Failed to schedule campaign post. Please verify backend service and connection configuration.');
+      setShowNotificationModal(true);
     }
   };
 
-  const handleDeletePost = async (postId: string) => {
+  const handleDeletePost = (postId: string) => {
+    setDeletingPostId(postId);
+    setShowDeleteConfirmModal(true);
+  };
+
+  const executeDeletePost = async () => {
+    if (!deletingPostId) return;
+    setShowDeleteConfirmModal(false);
     try {
       const targetStudioId = studioId === 'global' ? 'global' : studioId;
-      await api(`/api/v1/studios/${targetStudioId}/social-posts/${postId}`, {
+      await api(`/api/v1/studios/${targetStudioId}/social-posts/${deletingPostId}`, {
         method: 'DELETE'
       });
       fetchPosts();
+      setDeletingPostId(null);
+
+      setNotificationStatus('success');
+      setNotificationMessage('The scheduled post has been successfully deleted from the queue.');
+      setShowNotificationModal(true);
     } catch (err) {
       console.error('Failed to delete post:', err);
+      setNotificationStatus('error');
+      setNotificationMessage('Failed to delete scheduled campaign post. Please verify connection and try again.');
+      setShowNotificationModal(true);
+      setDeletingPostId(null);
     }
   };
 
@@ -316,72 +360,232 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
     setActiveTab('scheduler');
   };
 
-  const activeChannelCount = Object.values(connectedChannels).filter(Boolean).length;
+  const renderFeedMockup = () => {
+    if (!aiOutput) return null;
+
+    const previewPlatform = platform;
+    const ctaText = aiOutput.cta || 'Book now';
+    const headlineText = aiOutput.headline || `Join ${campaign || 'our fitness journey'}`;
+    const textCopy = aiOutput.text || '';
+    const hashtagsText = aiOutput.hashtags.map(h => h.startsWith('#') ? h : `#${h}`).join(' ');
+
+    const imageUrl = mediaUrl || 'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?q=80&w=1000&auto=format&fit=crop';
+
+    if (previewPlatform === 'Instagram') {
+      return (
+        <div className="w-full max-w-[340px] mx-auto rounded-3xl border border-zinc-200 dark:border-zinc-850 bg-white dark:bg-zinc-950 overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-300">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-100 dark:border-zinc-900">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-yellow-500 via-pink-500 to-purple-600 p-[2px]">
+                <div className="w-full h-full rounded-full bg-white dark:bg-zinc-955 p-[1px]">
+                  <div className="w-full h-full rounded-full bg-brand-500/10 grid place-items-center">
+                    <Instagram className="h-4 w-4 text-pink-600" />
+                  </div>
+                </div>
+              </div>
+              <div>
+                <div className="text-[11px] font-black text-zinc-900 dark:text-white leading-none">your_studio</div>
+                <div className="text-[9px] text-zinc-500 leading-none mt-0.5">Sponsored</div>
+              </div>
+            </div>
+            <button type="button" className="text-zinc-650 dark:text-zinc-400 font-bold text-sm">•••</button>
+          </div>
+
+          <div className="relative aspect-square bg-zinc-100 dark:bg-zinc-900 overflow-hidden flex items-center justify-center">
+            <img src={imageUrl} alt="Instagram Post" className="w-full h-full object-cover" />
+          </div>
+
+          <div className="flex items-center justify-between bg-brand-500 px-4 py-2 text-white">
+            <span className="text-[10px] font-black uppercase tracking-wider">{ctaText}</span>
+            <span className="text-xs font-bold">➔</span>
+          </div>
+
+          <div className="px-4 py-3 space-y-2">
+            <div className="flex items-center justify-between text-zinc-700 dark:text-zinc-300">
+              <div className="flex items-center gap-4 text-sm">
+                <span>❤️</span>
+                <span>💬</span>
+                <span>✈️</span>
+              </div>
+              <span>🔖</span>
+            </div>
+            <div className="text-[10px] font-black text-zinc-955 dark:text-white">Liked by gemini and 1,420 others</div>
+            <div className="text-[11px] text-zinc-800 dark:text-zinc-205 leading-relaxed">
+              <span className="font-black mr-1 text-zinc-955 dark:text-white">your_studio</span>
+              {textCopy}
+              <div className="mt-1 text-brand-500 font-semibold">{hashtagsText}</div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (previewPlatform === 'Facebook') {
+      return (
+        <div className="w-full max-w-[360px] mx-auto rounded-3xl border border-zinc-200 dark:border-zinc-850 bg-white dark:bg-zinc-900 overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-300">
+          <div className="px-4 py-3 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-full bg-blue-600/10 grid place-items-center text-blue-600">
+              <Facebook className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="text-[12px] font-black text-zinc-955 dark:text-white flex items-center gap-1">
+                Your Studio
+                <span className="text-blue-500 text-[10px]">✓</span>
+              </div>
+              <div className="text-[9px] text-zinc-500 flex items-center gap-1 mt-0.5">
+                Sponsored · 🌐
+              </div>
+            </div>
+          </div>
+
+          <div className="px-4 pb-3 text-[11px] text-zinc-800 dark:text-zinc-205 leading-relaxed whitespace-pre-wrap">
+            {textCopy}
+            <div className="mt-1 text-blue-600 dark:text-blue-400 font-semibold">{hashtagsText}</div>
+          </div>
+
+          <div className="aspect-[1.91/1] bg-zinc-100 dark:bg-zinc-955 overflow-hidden flex items-center justify-center border-t border-zinc-100 dark:border-zinc-800">
+            <img src={imageUrl} alt="Facebook Ad" className="w-full h-full object-cover" />
+          </div>
+
+          <div className="px-4 py-3 bg-zinc-50 dark:bg-zinc-955/40 border-t border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between">
+            <div className="min-w-0 flex-1">
+              <div className="text-[9px] text-zinc-500 uppercase tracking-wider font-bold">YOURSTUDIO.COM</div>
+              <div className="text-[11px] font-black text-zinc-955 dark:text-white truncate mt-0.5">{headlineText}</div>
+            </div>
+            <button type="button" className="px-3 py-1.5 rounded-lg bg-zinc-200 dark:bg-zinc-800 text-[10px] font-black uppercase text-zinc-800 dark:text-zinc-200 hover:bg-zinc-300 dark:hover:bg-zinc-700 transition-colors shrink-0">
+              {ctaText}
+            </button>
+          </div>
+
+          <div className="px-4 py-2.5 flex items-center justify-around border-t border-zinc-100 dark:border-zinc-800/60 text-[10px] font-bold text-zinc-500">
+            <span className="flex items-center gap-1 cursor-pointer">👍 Like</span>
+            <span className="flex items-center gap-1 cursor-pointer">💬 Comment</span>
+            <span className="flex items-center gap-1 cursor-pointer">➔ Share</span>
+          </div>
+        </div>
+      );
+    }
+
+    if (previewPlatform === 'X (Twitter)') {
+      return (
+        <div className="w-full max-w-[340px] mx-auto rounded-3xl border border-zinc-200 dark:border-zinc-850 bg-white dark:bg-zinc-955 p-4 shadow-2xl animate-in fade-in zoom-in duration-300">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-full bg-zinc-900 text-white grid place-items-center text-xs font-black">
+              X
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1">
+                <span className="text-[12px] font-black text-zinc-955 dark:text-white">Your Studio</span>
+                <span className="text-[10px] text-zinc-400">@yourstudio · Just now</span>
+              </div>
+              <div className="mt-1 text-[11px] text-zinc-800 dark:text-zinc-205 leading-relaxed whitespace-pre-wrap">
+                {textCopy}
+                <div className="mt-1 text-sky-500 dark:text-sky-400 font-semibold">{hashtagsText}</div>
+              </div>
+              <div className="mt-3 rounded-2xl overflow-hidden border border-zinc-100 dark:border-zinc-900 aspect-[1.91/1]">
+                <img src={imageUrl} alt="X Post" className="w-full h-full object-cover" />
+              </div>
+              <div className="mt-4 flex items-center justify-between text-zinc-400 max-w-[240px]">
+                <span className="text-xs cursor-pointer hover:text-sky-500 transition-colors">💬 12</span>
+                <span className="text-xs cursor-pointer hover:text-emerald-500 transition-colors">🔁 4</span>
+                <span className="text-xs cursor-pointer hover:text-pink-500 transition-colors">❤️ 86</span>
+                <span className="text-xs cursor-pointer hover:text-sky-500 transition-colors">📤</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (previewPlatform === 'Google Ads') {
+      return (
+        <div className="w-full max-w-[365px] mx-auto rounded-3xl border border-zinc-200 dark:border-zinc-850 bg-white dark:bg-zinc-900 p-5 shadow-2xl space-y-3 animate-in fade-in zoom-in duration-300">
+          <div className="flex items-center gap-1.5 text-[10px] font-bold text-zinc-500">
+            <span>Ad</span>
+            <span>·</span>
+            <span className="text-zinc-800 dark:text-zinc-300">https://www.yourstudio.com/promo</span>
+          </div>
+          <div className="text-[14px] text-[#1a0dab] dark:text-[#8ab4f8] font-semibold hover:underline cursor-pointer leading-tight">
+            {headlineText} | {ctaText}
+          </div>
+          <div className="text-[11px] text-zinc-650 dark:text-zinc-300 leading-relaxed">
+            {textCopy}
+          </div>
+        </div>
+      );
+    }
+
+    return null;
+  };
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-300">
+    <div className="space-y-8 animate-in fade-in duration-500">
+
       {/* Navigation Tabs */}
-      <div className="flex border-b border-white/10 pb-px">
+      <div className="flex items-center gap-1.5 rounded-2xl bg-zinc-100/80 p-1.5 dark:bg-neutral-800/80 backdrop-blur-md max-w-xl">
         <button
           onClick={() => setActiveTab('scheduler')}
-          className={`flex items-center gap-2 border-b-2 px-6 py-3 text-sm font-bold transition-all ${
+          className={`flex items-center gap-2 rounded-xl px-5 py-3 text-xs font-black uppercase tracking-wider transition-all duration-300 ${
             activeTab === 'scheduler'
-              ? 'border-brand-500 text-brand-500'
-              : 'border-transparent text-zinc-400 hover:text-zinc-200'
+              ? 'bg-white text-brand-600 shadow-md dark:bg-neutral-900 dark:text-brand-400'
+              : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200'
           }`}
         >
           <CalendarIcon className="h-4 w-4" />
-          Scheduler & Calendar
+          Scheduler
         </button>
         <button
           onClick={() => setActiveTab('ai-creator')}
-          className={`flex items-center gap-2 border-b-2 px-6 py-3 text-sm font-bold transition-all ${
+          className={`flex items-center gap-2 rounded-xl px-5 py-3 text-xs font-black uppercase tracking-wider transition-all duration-300 ${
             activeTab === 'ai-creator'
-              ? 'border-brand-500 text-brand-500'
-              : 'border-transparent text-zinc-400 hover:text-zinc-200'
+              ? 'bg-white text-brand-600 shadow-md dark:bg-neutral-900 dark:text-brand-400'
+              : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200'
           }`}
         >
           <Sparkles className="h-4 w-4" />
-          AI Ad & Content Creator
+          AI Ad Creator
         </button>
         <button
           onClick={() => setActiveTab('connections')}
-          className={`flex items-center gap-2 border-b-2 px-6 py-3 text-sm font-bold transition-all ${
+          className={`flex items-center gap-2 rounded-xl px-5 py-3 text-xs font-black uppercase tracking-wider transition-all duration-300 ${
             activeTab === 'connections'
-              ? 'border-brand-500 text-brand-500'
-              : 'border-transparent text-zinc-400 hover:text-zinc-200'
+              ? 'bg-white text-brand-600 shadow-md dark:bg-neutral-900 dark:text-brand-400'
+              : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200'
           }`}
         >
           <Share2 className="h-4 w-4" />
-          Channel Connections
+          Connections
         </button>
       </div>
 
       {/* Scheduler Tab */}
       {activeTab === 'scheduler' && (
-        <div className="grid gap-6 lg:grid-cols-3">
+        <div className="grid gap-8 lg:grid-cols-3">
           {/* Quick Schedule Form */}
           <div className="lg:col-span-1 space-y-6">
-            <Card className="border-white/30 bg-white/20 dark:border-white/5 dark:bg-neutral-900/30 backdrop-blur-2xl">
-              <h2 className="text-base font-black text-zinc-900 dark:text-white mb-4">Quick Schedule</h2>
-              <form onSubmit={handleSchedulePost} className="space-y-4">
+            <Card className="overflow-hidden rounded-[28px] border border-violet-100/50 bg-white/40 shadow-2xl backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/35 p-6 transition-all hover:shadow-brand-500/5 duration-300">
+              <div className="flex items-center gap-2 mb-6">
+                <Plus className="h-4 w-4 text-brand-500" />
+                <h2 className="text-sm font-black uppercase tracking-wider text-zinc-955 dark:text-white">Quick Scheduler</h2>
+              </div>
+              <form onSubmit={handleSchedulePost} className="space-y-5">
                 <div>
-                  <Label htmlFor="campaign">Campaign Target</Label>
+                  <Label htmlFor="campaign" className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Campaign Target</Label>
                   <Input
                     id="campaign"
                     value={newPostCampaign}
                     onChange={(e) => setNewPostCampaign(e.target.value)}
                     placeholder="e.g. Spring Promo 2026"
-                    className="mt-1"
+                    className="mt-1.5 focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all rounded-xl"
                   />
                 </div>
                 <div>
-                  <Label htmlFor="platform">Target Platform</Label>
+                  <Label htmlFor="platform" className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Target Platform</Label>
                   <select
                     id="platform"
                     value={newPostPlatform}
                     onChange={(e) => setNewPostPlatform(e.target.value as any)}
-                    className="mt-1 block w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm text-zinc-800 dark:bg-neutral-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    className="mt-1.5 block w-full rounded-xl border border-zinc-200/60 dark:border-white/10 bg-white/10 dark:bg-neutral-800/40 px-3.5 py-2.5 text-xs font-semibold text-zinc-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all"
                   >
                     <option value="Instagram">Instagram</option>
                     <option value="Facebook">Facebook</option>
@@ -390,8 +594,8 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                   </select>
                 </div>
                 <div>
-                  <div className="flex items-center justify-between">
-                    <Label htmlFor="content">Ad / Post Copy</Label>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <Label htmlFor="content" className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Ad / Post Copy</Label>
                     <button
                       type="button"
                       onClick={() => {
@@ -399,27 +603,26 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                         setAiModalTarget('scheduler');
                         setShowQuickAiModal(true);
                       }}
-                      className="inline-flex items-center gap-1.5 text-[10px] font-black text-brand-500 hover:text-brand-600 uppercase tracking-widest"
+                      className="inline-flex items-center gap-1.5 text-[9px] font-black text-brand-500 hover:text-brand-600 uppercase tracking-widest transition-transform active:scale-95"
                     >
-                      <Sparkles className="h-3 w-3" /> Write with AI
+                      <Sparkles className="h-3.5 w-3.5 text-brand-500" /> Write with AI
                     </button>
                   </div>
                   <Textarea
                     id="content"
                     value={newPostContent}
                     onChange={(e) => setNewPostContent(e.target.value)}
-                    placeholder="Write copy or generate it using the AI Ad Creator tab or the button above..."
+                    placeholder="Write copy or generate it using AI..."
                     rows={5}
-                    className="mt-1"
+                    className="mt-1 focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all rounded-2xl"
                     required
                   />
                 </div>
 
-                {/* File / Document Upload area */}
                 <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <Label>Attachments / Documents</Label>
-                    <div className="flex gap-2 text-[10px]">
+                  <div className="flex items-center justify-between mb-2">
+                    <Label className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Attachments / Media</Label>
+                    <div className="flex gap-2.5 text-[9px]">
                       <button
                         type="button"
                         onClick={() => {
@@ -427,7 +630,7 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                           setMediaUrl('');
                           setMediaName('');
                         }}
-                        className={`font-black uppercase tracking-wider ${
+                        className={`font-black uppercase tracking-wider transition-colors ${
                           mediaInputType === 'upload' ? 'text-brand-500' : 'text-zinc-400 hover:text-zinc-200'
                         }`}
                       >
@@ -441,18 +644,18 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                           setMediaUrl('');
                           setMediaName('');
                         }}
-                        className={`font-black uppercase tracking-wider ${
+                        className={`font-black uppercase tracking-wider transition-colors ${
                           mediaInputType === 'url' ? 'text-brand-500' : 'text-zinc-400 hover:text-zinc-200'
                         }`}
                       >
-                        Image URL Link
+                        Image URL
                       </button>
                     </div>
                   </div>
 
                   {mediaUrl ? (
                     <div className="space-y-2 mt-1">
-                      <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/10 p-2.5 dark:bg-neutral-800/20">
+                      <div className="flex items-center justify-between rounded-xl border border-zinc-105 bg-white/20 p-2.5 dark:border-white/5 dark:bg-neutral-800/20">
                         <div className="flex items-center gap-2 min-w-0">
                           <Paperclip className="h-4 w-4 text-brand-500 shrink-0" />
                           <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 truncate">
@@ -465,19 +668,18 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                             setMediaUrl('');
                             setMediaName('');
                           }}
-                          className="text-xs font-black text-red-500 hover:text-red-400 px-2"
+                          className="text-xs font-black text-red-500 hover:text-red-400 px-2 transition-colors"
                         >
                           Remove
                         </button>
                       </div>
                       
-                      {/* Image Preview */}
                       {(mediaUrl.toLowerCase().startsWith('http') || mediaUrl.toLowerCase().startsWith('/uploads')) && (
-                        <div className="mt-2 rounded-xl border border-white/10 bg-white/5 p-2 max-w-full overflow-hidden flex justify-center">
+                        <div className="mt-2 rounded-2xl border border-zinc-100/50 bg-white/5 p-2 max-w-full overflow-hidden flex justify-center shadow-inner">
                           <img 
                             src={mediaUrl} 
                             alt="Media Preview" 
-                            className="max-h-48 rounded-lg object-contain"
+                            className="max-h-48 rounded-xl object-contain"
                             onError={(e) => {
                               (e.target as HTMLElement).style.display = 'none';
                             }}
@@ -486,7 +688,7 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                       )}
                     </div>
                   ) : mediaInputType === 'upload' ? (
-                    <div className="mt-1 flex items-center justify-center border-2 border-dashed border-white/20 rounded-xl p-4 bg-white/5 hover:bg-white/10 transition-all cursor-pointer relative">
+                    <div className="mt-1 flex items-center justify-center border-2 border-dashed border-zinc-205 hover:border-brand-500/50 dark:border-white/10 dark:hover:border-brand-500/50 rounded-2xl p-6 bg-white/5 hover:bg-brand-500/5 transition-all cursor-pointer relative group">
                       <input
                         type="file"
                         onChange={handleFileUpload}
@@ -494,9 +696,9 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                         className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
                       />
                       <div className="text-center">
-                        <Plus className="h-5 w-5 text-zinc-400 mx-auto mb-1" />
-                        <span className="text-[11px] font-bold text-zinc-400">
-                          {uploadingFile ? 'Uploading...' : 'Attach Document or Media'}
+                        <Plus className="h-6 w-6 text-zinc-400 group-hover:text-brand-500 mx-auto mb-1.5 transition-colors" />
+                        <span className="text-[11px] font-bold text-zinc-400 group-hover:text-zinc-300 transition-colors">
+                          {uploadingFile ? 'Uploading File...' : 'Attach Document or Media'}
                         </span>
                       </div>
                     </div>
@@ -511,38 +713,18 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                           setMediaUrl(val);
                           setMediaName(val.split('/').pop() || 'Public Image');
                         }}
-                        className="w-full text-xs"
+                        className="w-full text-xs focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all rounded-xl"
                       />
                       <p className="text-[10px] text-zinc-400">Enter a direct public URL to an image (ends with .jpg, .png, etc.)</p>
                     </div>
                   )}
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="date">Date</Label>
-                    <Input
-                      id="date"
-                      type="date"
-                      value={newPostDate}
-                      onChange={(e) => setNewPostDate(e.target.value)}
-                      className="mt-1"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="time">Time</Label>
-                    <Input
-                      id="time"
-                      type="time"
-                      value={newPostTime}
-                      onChange={(e) => setNewPostTime(e.target.value)}
-                      className="mt-1"
-                      required
-                    />
-                  </div>
-                </div>
-                <Button type="submit" className="w-full" disabled={uploadingFile}>
+                <Button 
+                  type="submit" 
+                  className="w-full h-11 bg-gradient-to-r from-brand-500 to-indigo-600 hover:from-brand-600 hover:to-indigo-700 text-white shadow-xl shadow-brand-500/10 hover:shadow-brand-500/20 transition-all font-black uppercase tracking-widest text-[11px] rounded-2xl mt-4" 
+                  disabled={uploadingFile}
+                >
                   Schedule Post
                 </Button>
               </form>
@@ -551,17 +733,20 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
 
           {/* Queue */}
           <div className="lg:col-span-2 space-y-6">
-            {/* Queue List */}
-            <Card className="border-white/30 bg-white/20 dark:border-white/5 dark:bg-neutral-900/30 backdrop-blur-2xl">
-              <h2 className="text-base font-black text-zinc-900 dark:text-white mb-4">Publishing Queue</h2>
+            <Card className="overflow-hidden rounded-[28px] border border-violet-100/50 bg-white/40 shadow-2xl backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/35 p-6 transition-all hover:shadow-brand-500/5 duration-300">
+              <div className="flex items-center gap-2 mb-6">
+                <Megaphone className="h-4 w-4 text-brand-500" />
+                <h2 className="text-sm font-black uppercase tracking-wider text-zinc-955 dark:text-white font-black">Publishing Queue</h2>
+              </div>
+              
               {loadingPosts ? (
-                <div className="flex h-32 items-center justify-center">
-                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" />
+                <div className="flex h-64 items-center justify-center">
+                  <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" />
                 </div>
               ) : posts.length === 0 ? (
-                <div className="flex h-32 flex-col items-center justify-center text-center">
-                  <AlertCircle className="h-6 w-6 text-zinc-400 mb-1" />
-                  <span className="text-xs font-bold text-zinc-500">No scheduled posts. Use the quick scheduler to add one.</span>
+                <div className="flex h-64 flex-col items-center justify-center text-center">
+                  <AlertCircle className="h-8 w-8 text-zinc-400 mb-2 animate-bounce" />
+                  <span className="text-xs font-bold text-zinc-500">No scheduled posts yet. Fill out the scheduler to prepare an ad.</span>
                 </div>
               ) : (
                 <>
@@ -573,14 +758,20 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                     {posts.slice(0, visibleQueueCount).map((post) => (
                       <div
                         key={post.id}
-                        className="flex items-start gap-4 rounded-2xl border border-white/10 bg-white/10 p-4 hover:bg-white/20 dark:bg-neutral-800/20 dark:hover:bg-neutral-800/35 transition-all"
+                        className="flex items-start gap-4 rounded-2xl border border-white/20 bg-white/30 dark:border-white/5 dark:bg-neutral-900/60 p-5 hover:-translate-y-1 hover:shadow-lg hover:border-brand-500/10 transition-all duration-300"
                       >
-                        <div className="grid h-10 w-10 place-items-center rounded-xl bg-brand-500/10 text-brand-600">
-                          {post.platform === 'Facebook' && <Facebook className="h-5 w-5 text-blue-600" />}
-                          {post.platform === 'Instagram' && <Instagram className="h-5 w-5 text-pink-600" />}
-                          {post.platform === 'Google Ads' && <Globe className="h-5 w-5 text-indigo-600" />}
-                          {post.platform === 'X (Twitter)' && <Twitter className="h-5 w-5 text-sky-500" />}
+                        <div className={`grid h-10 w-10 place-items-center rounded-xl shrink-0 ${
+                          post.platform === 'Facebook' ? 'bg-blue-600/10 text-blue-600 shadow-sm' :
+                          post.platform === 'Instagram' ? 'bg-pink-600/10 text-pink-600 shadow-sm' :
+                          post.platform === 'Google Ads' ? 'bg-indigo-600/10 text-indigo-600 shadow-sm' :
+                          'bg-sky-500/10 text-sky-500 shadow-sm'
+                        }`}>
+                          {post.platform === 'Facebook' && <Facebook className="h-5 w-5" />}
+                          {post.platform === 'Instagram' && <Instagram className="h-5 w-5" />}
+                          {post.platform === 'Google Ads' && <Globe className="h-5 w-5" />}
+                          {post.platform === 'X (Twitter)' && <Twitter className="h-5 w-5" />}
                         </div>
+                        
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
                             <span className="text-xs font-black text-zinc-800 dark:text-zinc-200">{post.platform}</span>
@@ -591,31 +782,32 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                               </Badge>
                               <button
                                 onClick={() => handleDeletePost(post.id)}
-                                className="p-1 text-zinc-400 hover:text-red-500 rounded-lg transition-colors ml-2"
+                                className="p-1.5 text-zinc-400 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all ml-1.5"
                                 title="Delete Post"
                               >
                                 <Trash2 className="h-4 w-4" />
                               </button>
                             </div>
                           </div>
-                          <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-300 line-clamp-2">{post.content}</p>
+                          <p className="mt-2 text-xs text-zinc-650 dark:text-zinc-300 leading-relaxed font-semibold whitespace-pre-wrap">{post.content}</p>
+                          
                           {post.imageUrl && (
-                            <div className="mt-2 flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 p-1.5 w-fit">
+                            <div className="mt-3 flex items-center gap-2 rounded-xl border border-zinc-100 bg-white/20 dark:border-white/5 dark:bg-neutral-855/40 p-2 w-fit">
                               <Paperclip className="h-3.5 w-3.5 text-zinc-400" />
                               <a
                                 href={post.imageUrl}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="text-[10px] font-bold text-brand-500 hover:underline truncate max-w-[200px]"
+                                className="text-[10px] font-bold text-brand-500 hover:underline truncate max-w-[240px]"
                               >
                                 {post.imageUrl.split('/').pop() || 'Attachment'}
                               </a>
                             </div>
                           )}
-                          <div className="mt-2 flex items-center gap-4 text-[10px] text-zinc-400 font-bold">
-                            <span className="flex items-center gap-1">
+                          <div className="mt-3 flex items-center gap-4 text-[10px] text-zinc-455 font-bold border-t border-zinc-100/50 dark:border-white/5 pt-2">
+                            <span className="flex items-center gap-1 text-[10px] text-zinc-455 font-bold">
                               <Clock className="h-3.5 w-3.5" />
-                              {new Date(post.scheduledTime).toLocaleString()}
+                              Scheduled for: {new Date(post.scheduledTime).toLocaleString()}
                             </span>
                           </div>
                         </div>
@@ -623,8 +815,8 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                     ))}
                   </div>
                   {visibleQueueCount < posts.length && (
-                    <div className="mt-3 flex items-center justify-center gap-2 text-[11px] font-bold text-zinc-400 animate-bounce">
-                      <span>↓ {posts.length - visibleQueueCount} more post{posts.length - visibleQueueCount > 1 ? 's' : ''} — scroll to load</span>
+                    <div className="mt-3 flex items-center justify-center gap-2 text-[11px] font-black tracking-wider uppercase text-zinc-455 animate-bounce">
+                      <span>↓ Scroll to reveal {posts.length - visibleQueueCount} more scheduled ads</span>
                     </div>
                   )}
                 </>
@@ -636,38 +828,39 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
 
       {/* AI Content Creator Tab */}
       {activeTab === 'ai-creator' && (
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid gap-8 lg:grid-cols-2">
           {/* AI Prompter */}
-          <Card className="border-white/30 bg-white/20 dark:border-white/5 dark:bg-neutral-900/30 backdrop-blur-2xl">
+          <Card className="overflow-hidden rounded-[28px] border border-violet-100/50 bg-white/40 shadow-2xl backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/35 p-6 transition-all hover:shadow-brand-500/5 duration-300">
             <div className="flex items-center gap-3 mb-6">
               <div className="grid h-10 w-10 place-items-center rounded-2xl bg-gradient-to-br from-brand-500 to-indigo-600 text-white shadow-md">
-                <Sparkles className="h-5 w-5" />
+                <Sparkles className="h-5 w-5 animate-pulse" />
               </div>
               <div>
-                <h2 className="text-base font-black text-zinc-900 dark:text-white">AI Ad Creator</h2>
-                <p className="text-[11px] text-zinc-400">Generate high-converting copy using Gemini models</p>
+                <h2 className="text-sm font-black uppercase tracking-wider text-zinc-955 dark:text-white font-black">AI Ad Creator</h2>
+                <p className="text-[10px] text-zinc-400 font-bold mt-0.5">Generate high-converting campaigns powered by Gemini AI</p>
               </div>
             </div>
 
-            <div className="space-y-4">
+            <div className="space-y-5">
               <div>
-                <Label htmlFor="ai-campaign">Target Fitness Plan / Campaign</Label>
+                <Label htmlFor="ai-campaign" className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Target Fitness Plan / Campaign</Label>
                 <Input
                   id="ai-campaign"
                   value={campaign}
                   onChange={(e) => setCampaign(e.target.value)}
                   placeholder="e.g. 6-Week Summer BootCamp Offer"
+                  className="mt-1.5 focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all rounded-xl"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label htmlFor="ai-platform">Destination Platform</Label>
+                  <Label htmlFor="ai-platform" className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Destination Platform</Label>
                   <select
                     id="ai-platform"
                     value={platform}
                     onChange={(e) => setPlatform(e.target.value as any)}
-                    className="mt-1 block w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm text-zinc-800 dark:bg-neutral-800 dark:text-white focus:outline-none"
+                    className="mt-1.5 block w-full rounded-xl border border-zinc-200/60 dark:border-white/10 bg-white/10 dark:bg-neutral-800/40 px-3.5 py-2.5 text-xs font-semibold text-zinc-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all"
                   >
                     <option value="Instagram">Instagram Post</option>
                     <option value="Facebook">Facebook Ad</option>
@@ -676,12 +869,12 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                   </select>
                 </div>
                 <div>
-                  <Label htmlFor="ai-tone">Ad Tone / Style</Label>
+                  <Label htmlFor="ai-tone" className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Ad Tone / Style</Label>
                   <select
                     id="ai-tone"
                     value={tone}
                     onChange={(e) => setTone(e.target.value)}
-                    className="mt-1 block w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm text-zinc-800 dark:bg-neutral-800 dark:text-white focus:outline-none"
+                    className="mt-1.5 block w-full rounded-xl border border-zinc-200/60 dark:border-white/10 bg-white/10 dark:bg-neutral-800/40 px-3.5 py-2.5 text-xs font-semibold text-zinc-800 dark:text-white focus:outline-none"
                   >
                     <option value="energetic">High Energy & Fun</option>
                     <option value="professional">Professional & Informative</option>
@@ -693,8 +886,35 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
               </div>
 
               <div>
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="ai-prompt">What is this ad promoting?</Label>
+                <Label className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Quick Tone Selection</Label>
+                <div className="flex flex-wrap gap-2 mt-1.5">
+                  {[
+                    { id: 'energetic', label: 'High Energy', emoji: '⚡' },
+                    { id: 'professional', label: 'Professional', emoji: '💼' },
+                    { id: 'bold', label: 'Bold', emoji: '🔥' },
+                    { id: 'motivational', label: 'Inspirational', emoji: '🌱' },
+                    { id: 'humorous', label: 'Humorous', emoji: '🎭' },
+                  ].map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setTone(t.id)}
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-black tracking-wider uppercase border transition-all duration-300 active:scale-95 ${
+                        tone === t.id
+                          ? 'bg-brand-500 border-brand-500 text-white shadow-lg shadow-brand-500/25 scale-105'
+                          : 'bg-white/5 border-zinc-200/60 dark:border-white/10 text-zinc-500 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-white/20 hover:text-zinc-800 dark:hover:text-zinc-200'
+                      }`}
+                    >
+                      <span>{t.emoji}</span>
+                      <span>{t.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <Label htmlFor="ai-prompt" className="text-[10px] font-black uppercase tracking-wider text-zinc-400">What is this ad promoting?</Label>
                   <button
                     type="button"
                     onClick={() => {
@@ -702,9 +922,9 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                       setAiModalTarget('creator');
                       setShowQuickAiModal(true);
                     }}
-                    className="inline-flex items-center gap-1.5 text-[10px] font-black text-brand-500 hover:text-brand-600 uppercase tracking-widest"
+                    className="inline-flex items-center gap-1.5 text-[9px] font-black text-brand-500 hover:text-brand-600 uppercase tracking-widest transition-transform active:scale-95"
                   >
-                    <Sparkles className="h-3 w-3" /> Write with AI
+                    <Sparkles className="h-3.5 w-3.5" /> Write with AI
                   </button>
                 </div>
                 <Textarea
@@ -713,15 +933,16 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                   onChange={(e) => setPrompt(e.target.value)}
                   placeholder="e.g. Free 3-day trial pass for working professionals. Focus on early morning slots and flexibility."
                   rows={4}
+                  className="focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all rounded-2xl"
                   required
                 />
               </div>
 
-              {/* File / Document Upload area */}
+              {/* Attachments */}
               <div>
-                <div className="flex items-center justify-between mb-1">
-                  <Label>Attachments / Documents</Label>
-                  <div className="flex gap-2 text-[10px]">
+                <div className="flex items-center justify-between mb-2">
+                  <Label className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Attachments / Media</Label>
+                  <div className="flex gap-2.5 text-[9px]">
                     <button
                       type="button"
                       onClick={() => {
@@ -729,7 +950,7 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                         setMediaUrl('');
                         setMediaName('');
                       }}
-                      className={`font-black uppercase tracking-wider ${
+                      className={`font-black uppercase tracking-wider transition-colors ${
                         mediaInputType === 'upload' ? 'text-brand-500' : 'text-zinc-400 hover:text-zinc-200'
                       }`}
                     >
@@ -743,18 +964,18 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                         setMediaUrl('');
                         setMediaName('');
                       }}
-                      className={`font-black uppercase tracking-wider ${
+                      className={`font-black uppercase tracking-wider transition-colors ${
                         mediaInputType === 'url' ? 'text-brand-500' : 'text-zinc-400 hover:text-zinc-200'
                       }`}
                     >
-                      Image URL Link
+                      Image URL
                     </button>
                   </div>
                 </div>
 
                 {mediaUrl ? (
                   <div className="space-y-2 mt-1">
-                    <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/10 p-2.5 dark:bg-neutral-800/20">
+                    <div className="flex items-center justify-between rounded-xl border border-zinc-105 bg-white/20 p-2.5 dark:border-white/5 dark:bg-neutral-800/20">
                       <div className="flex items-center gap-2 min-w-0">
                         <Paperclip className="h-4 w-4 text-brand-500 shrink-0" />
                         <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 truncate">
@@ -767,19 +988,18 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                           setMediaUrl('');
                           setMediaName('');
                         }}
-                        className="text-xs font-black text-red-500 hover:text-red-400 px-2"
+                        className="text-xs font-black text-red-500 hover:text-red-400 px-2 transition-colors"
                       >
                         Remove
                       </button>
                     </div>
                     
-                    {/* Image Preview */}
                     {(mediaUrl.toLowerCase().startsWith('http') || mediaUrl.toLowerCase().startsWith('/uploads')) && (
-                      <div className="mt-2 rounded-xl border border-white/10 bg-white/5 p-2 max-w-full overflow-hidden flex justify-center">
+                      <div className="mt-2 rounded-2xl border border-zinc-100/50 bg-white/5 p-2 max-w-full overflow-hidden flex justify-center shadow-inner">
                         <img 
                           src={mediaUrl} 
                           alt="Media Preview" 
-                          className="max-h-48 rounded-lg object-contain"
+                          className="max-h-48 rounded-xl object-contain"
                           onError={(e) => {
                             (e.target as HTMLElement).style.display = 'none';
                           }}
@@ -788,7 +1008,7 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                     )}
                   </div>
                 ) : mediaInputType === 'upload' ? (
-                  <div className="mt-1 flex items-center justify-center border-2 border-dashed border-white/20 rounded-xl p-4 bg-white/5 hover:bg-white/10 transition-all cursor-pointer relative">
+                  <div className="mt-1 flex items-center justify-center border-2 border-dashed border-zinc-205 hover:border-brand-500/50 dark:border-white/10 dark:hover:border-brand-500/50 rounded-2xl p-6 bg-white/5 hover:bg-brand-500/5 transition-all cursor-pointer relative group">
                     <input
                       type="file"
                       onChange={handleFileUpload}
@@ -796,9 +1016,9 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                       className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
                     />
                     <div className="text-center">
-                      <Plus className="h-5 w-5 text-zinc-400 mx-auto mb-1" />
-                      <span className="text-[11px] font-bold text-zinc-400">
-                        {uploadingFile ? 'Uploading...' : 'Attach Document or Media'}
+                      <Plus className="h-6 w-6 text-zinc-400 group-hover:text-brand-500 mx-auto mb-1.5 transition-colors" />
+                      <span className="text-[11px] font-bold text-zinc-400 group-hover:text-zinc-300 transition-colors">
+                        {uploadingFile ? 'Uploading File...' : 'Attach Document or Media'}
                       </span>
                     </div>
                   </div>
@@ -813,7 +1033,7 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                         setMediaUrl(val);
                         setMediaName(val.split('/').pop() || 'Public Image');
                       }}
-                      className="w-full text-xs"
+                      className="w-full text-xs focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all rounded-xl"
                     />
                     <p className="text-[10px] text-zinc-400">Enter a direct public URL to an image (ends with .jpg, .png, etc.)</p>
                   </div>
@@ -822,89 +1042,77 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
 
               <Button
                 onClick={handleAiGenerate}
-                className="w-full shadow-lg shadow-brand-500/15"
+                className="w-full h-11 bg-gradient-to-r from-brand-500 to-indigo-600 hover:from-brand-600 hover:to-indigo-700 text-white font-black uppercase tracking-widest text-[11px] rounded-2xl shadow-xl shadow-brand-500/10 hover:shadow-brand-500/20 transition-all mt-3"
                 disabled={generating || !prompt}
               >
-                {generating ? 'Gemini Generating...' : 'Generate Ad Content'}
+                {generating ? 'Gemini Generating Ad Copy...' : 'Generate Ad Content'}
               </Button>
             </div>
           </Card>
 
-          {/* AI Previews */}
-          <div className="space-y-6">
+          {/* AI Previews & Feed Simulator */}
+          <div className="space-y-6 flex flex-col justify-start">
             {aiOutput ? (
-              <Card className="border-brand-500/30 bg-gradient-to-br from-brand-500/5 to-transparent shadow-xl backdrop-blur-2xl">
-                <div className="flex items-center justify-between mb-4">
+              <Card className="overflow-hidden rounded-[28px] border border-brand-500/25 bg-gradient-to-br from-brand-500/5 via-transparent to-transparent shadow-2xl backdrop-blur-2xl p-6 space-y-6">
+                <div className="flex items-center justify-between">
                   <span className="text-[10px] font-black uppercase tracking-wider text-brand-600 dark:text-brand-400 flex items-center gap-1.5">
-                    <CheckCircle2 className="h-4 w-4" />
-                    AI Mockup Ready
+                    <CheckCircle2 className="h-4.5 w-4.5 text-emerald-500 shrink-0" />
+                    Ad Mockup Generated
                   </span>
-                  <Button size="sm" variant="ghost" onClick={applyAiToScheduler} className="text-xs">
-                    Apply to Schedule
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="ghost" onClick={applyAiToScheduler} className="text-[10px] font-black uppercase tracking-wider px-3 py-1.5 text-brand-500 dark:text-brand-400 bg-brand-500/5 hover:bg-brand-500/10 rounded-xl transition-all">
+                      Apply to Queue
+                    </Button>
+                  </div>
                 </div>
 
                 <div className="space-y-4">
-                  <div className="rounded-2xl border border-white/20 bg-white/30 p-4 dark:border-white/5 dark:bg-neutral-900/50">
+                  {/* Generated copy card */}
+                  <div className="rounded-2xl border border-zinc-205 bg-white/50 p-4 dark:border-white/5 dark:bg-neutral-900/60 shadow-inner">
                     <span className="text-[9px] font-black uppercase tracking-wider text-zinc-400">Generated Ad Copy</span>
-                    <p className="mt-1.5 text-xs text-zinc-800 dark:text-zinc-200 whitespace-pre-wrap leading-relaxed">
+                    <p className="mt-2 text-xs text-zinc-805 dark:text-zinc-200 whitespace-pre-wrap leading-relaxed font-semibold">
                       {aiOutput.text}
                     </p>
                     <div className="mt-3 flex flex-wrap gap-1.5">
                       {aiOutput.hashtags.map((h, i) => (
-                        <span key={i} className="text-[10px] font-semibold text-brand-500">
-                          {h}
+                        <span key={i} className="text-[10px] font-black text-brand-500 dark:text-brand-400">
+                          {h.startsWith('#') ? h : `#${h}`}
                         </span>
                       ))}
                     </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
-                    <div className="rounded-2xl border border-white/10 bg-white/15 p-3 dark:bg-neutral-800/15">
+                    <div className="rounded-2xl border border-zinc-100 bg-white/20 p-3.5 dark:border-white/5 dark:bg-neutral-900/40">
                       <span className="text-[9px] font-black uppercase tracking-wider text-zinc-400 block">CTA Anchor</span>
-                      <span className="text-xs font-bold text-zinc-900 dark:text-white mt-1 block">
+                      <span className="text-xs font-black text-zinc-905 dark:text-white mt-1.5 block">
                         {aiOutput.cta}
                       </span>
                     </div>
-                    <div className="rounded-2xl border border-white/10 bg-white/15 p-3 dark:bg-neutral-800/15">
-                      <span className="text-[9px] font-black uppercase tracking-wider text-zinc-400 block">Relevance Rating</span>
-                      <span className="text-xs font-black text-emerald-500 mt-1 block">
-                        98% (High Performance)
+                    <div className="rounded-2xl border border-zinc-100 bg-white/20 p-3.5 dark:border-white/5 dark:bg-neutral-900/40">
+                      <span className="text-[9px] font-black uppercase tracking-wider text-zinc-400 block">Performance Rate</span>
+                      <span className="text-xs font-black text-emerald-500 mt-1.5 block flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span>
+                        98% (High Relevance)
                       </span>
                     </div>
                   </div>
 
-                  {/* AI Visual Mockup Placeholder */}
-                  <div className="rounded-2xl border border-dashed border-white/30 bg-white/10 p-4 text-center">
-                    {mediaUrl && (mediaUrl.toLowerCase().endsWith('.jpg') || mediaUrl.toLowerCase().endsWith('.jpeg') || mediaUrl.toLowerCase().endsWith('.png') || mediaUrl.toLowerCase().endsWith('.webp') || mediaUrl.toLowerCase().endsWith('.gif')) ? (
-                      <div className="space-y-2">
-                        <img src={mediaUrl} alt="Preview" className="max-h-40 mx-auto rounded-lg object-cover" />
-                        <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200 block">{mediaName}</span>
-                      </div>
-                    ) : mediaUrl ? (
-                      <div className="space-y-1">
-                        <Paperclip className="h-6 w-6 text-brand-500 mx-auto mb-1" />
-                        <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200 block">{mediaName}</span>
-                        <a href={mediaUrl} target="_blank" rel="noreferrer" className="text-[10px] text-brand-500 hover:underline">
-                          View Uploaded Document
-                        </a>
-                      </div>
-                    ) : (
-                      <>
-                        <ImageIcon className="h-6 w-6 text-brand-500 mx-auto mb-2" />
-                        <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200 block">AI Image Mockup Attached</span>
-                        <span className="text-[10px] text-zinc-400 block mt-0.5">High-quality athletic imagery is automatically synced with campaigns.</span>
-                      </>
-                    )}
+                  {/* Device Feed Preview */}
+                  <div className="pt-4 border-t border-zinc-100/50 dark:border-white/5 space-y-3">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-zinc-455 block text-center">Live Platform Simulator ({platform})</span>
+                    <div className="flex justify-center items-center py-2">
+                      {renderFeedMockup()}
+                    </div>
                   </div>
                 </div>
               </Card>
             ) : (
-              <Card className="border-white/10 bg-white/10 dark:bg-neutral-900/10 backdrop-blur-2xl flex flex-col items-center justify-center py-20 text-center">
-                <Lightbulb className="h-8 w-8 text-yellow-400 mb-4 animate-pulse" />
-                <h3 className="text-sm font-black text-zinc-900 dark:text-white">Ready for Generation</h3>
-                <p className="text-[11px] text-zinc-400 mt-1 max-w-[280px]">
-                  Fill out the parameters and click Generate to produce content with Gemini.
+              <Card className="border-white/10 bg-white/10 dark:bg-neutral-900/10 backdrop-blur-2xl flex flex-col items-center justify-center py-28 text-center rounded-[28px] border-2 border-dashed border-zinc-205 dark:border-white/5 p-6">
+                <Lightbulb className="h-10 w-10 text-yellow-400 mb-4 animate-pulse" />
+                <h3 className="text-sm font-black text-zinc-900 dark:text-white uppercase tracking-wider">Awaiting Parameters</h3>
+                <p className="text-[11px] text-zinc-400 mt-2 max-w-[280px] font-medium leading-relaxed">
+                  Fill out target plan, choose platform and tone, and click Generate to see the live feed preview simulator.
                 </p>
               </Card>
             )}
@@ -914,33 +1122,39 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
 
       {/* Connections Tab */}
       {activeTab === 'connections' && (
-        <Card className="border-white/30 bg-white/20 dark:border-white/5 dark:bg-neutral-900/30 backdrop-blur-2xl">
+        <Card className="overflow-hidden rounded-[28px] border border-violet-100/50 bg-white/40 shadow-2xl backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/35 p-6 transition-all hover:shadow-brand-500/5 duration-300">
           <div className="mb-6">
-            <h2 className="text-base font-black text-zinc-900 dark:text-white">Connected Platforms</h2>
-            <p className="text-[11px] text-zinc-400">Authorize access to deploy ads and sync tracking metrics</p>
+            <h2 className="text-sm font-black uppercase tracking-wider text-zinc-955 dark:text-white">Connected Platforms</h2>
+            <p className="text-[10px] text-zinc-400 font-bold mt-1">Sync active advertising tokens and deploy campaigns instantly</p>
           </div>
 
           <div className="grid gap-6 sm:grid-cols-2">
             {/* Meta */}
-            <div className="rounded-2xl border border-white/25 bg-white/10 p-5 dark:border-white/5 dark:bg-neutral-900/40 flex items-center justify-between">
+            <div className="rounded-2xl border border-zinc-100 bg-white/20 p-5 dark:border-white/5 dark:bg-neutral-900/50 flex items-center justify-between hover:-translate-y-1 hover:shadow-lg transition-all duration-300">
               <div className="flex items-center gap-4">
-                <div className="grid h-12 w-12 place-items-center rounded-2xl bg-blue-600/10 text-blue-600">
+                <div className="grid h-12 w-12 place-items-center rounded-2xl bg-blue-600/15 text-blue-600 shadow-sm shrink-0">
                   <Facebook className="h-6 w-6" />
                 </div>
-                <div>
-                  <h3 className="text-sm font-bold text-zinc-950 dark:text-white">Meta (Facebook & IG)</h3>
+                <div className="min-w-0">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-zinc-955 dark:text-white">Meta (Facebook & IG)</h3>
                   {connectedChannels.facebook ? (
-                    <p className="text-[10px] text-emerald-500 font-bold mt-0.5">Connected & Active</p>
+                    <p className="text-[10px] text-emerald-500 font-black mt-1 flex items-center gap-1">
+                      <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-455 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                      </span>
+                      CONNECTED & ACTIVE
+                    </p>
                   ) : (
-                    <p className="text-[10px] text-zinc-400 font-semibold mt-0.5">Configure in Settings</p>
+                    <p className="text-[10px] text-zinc-400 font-semibold mt-1">Configure Meta API Credentials</p>
                   )}
                 </div>
               </div>
               {connectedChannels.facebook ? (
-                <Badge tone="success">Active</Badge>
+                <Badge tone="success" className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-lg">Active</Badge>
               ) : (
                 <Link href={studioId === 'global' ? '/admin/settings' : `/admin/studios/${studioId}/settings`}>
-                  <Button size="sm" variant="ghost" className="text-xs font-bold">
+                  <Button size="sm" variant="ghost" className="text-[10px] font-black uppercase tracking-wider px-3.5 py-1.5 hover:bg-brand-500/5 text-brand-500 dark:text-brand-400 rounded-xl transition-all">
                     Connect
                   </Button>
                 </Link>
@@ -948,25 +1162,31 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
             </div>
 
             {/* Google Ads */}
-            <div className="rounded-2xl border border-white/25 bg-white/10 p-5 dark:border-white/5 dark:bg-neutral-900/40 flex items-center justify-between">
+            <div className="rounded-2xl border border-zinc-100 bg-white/20 p-5 dark:border-white/5 dark:bg-neutral-900/50 flex items-center justify-between hover:-translate-y-1 hover:shadow-lg transition-all duration-300">
               <div className="flex items-center gap-4">
-                <div className="grid h-12 w-12 place-items-center rounded-2xl bg-indigo-600/10 text-indigo-600">
+                <div className="grid h-12 w-12 place-items-center rounded-2xl bg-indigo-600/15 text-indigo-600 shadow-sm shrink-0">
                   <Globe className="h-6 w-6" />
                 </div>
-                <div>
-                  <h3 className="text-sm font-bold text-zinc-950 dark:text-white">Google Ads</h3>
+                <div className="min-w-0">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-zinc-955 dark:text-white">Google Ads Campaign</h3>
                   {connectedChannels.googleAds ? (
-                    <p className="text-[10px] text-emerald-500 font-bold mt-0.5">Connected & Active</p>
+                    <p className="text-[10px] text-emerald-500 font-black mt-1 flex items-center gap-1">
+                      <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-455 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                      </span>
+                      CONNECTED & ACTIVE
+                    </p>
                   ) : (
-                    <p className="text-[10px] text-zinc-400 font-semibold mt-0.5">Automated campaigns tracking</p>
+                    <p className="text-[10px] text-zinc-400 font-semibold mt-1">Requires OAuth Authentication</p>
                   )}
                 </div>
               </div>
               {connectedChannels.googleAds ? (
-                <Badge tone="success">Active</Badge>
+                <Badge tone="success" className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-lg">Active</Badge>
               ) : (
                 <Link href={studioId === 'global' ? '/admin/settings' : `/admin/studios/${studioId}/settings`}>
-                  <Button size="sm" variant="ghost" className="text-xs font-bold">
+                  <Button size="sm" variant="ghost" className="text-[10px] font-black uppercase tracking-wider px-3.5 py-1.5 hover:bg-brand-500/5 text-brand-500 dark:text-brand-400 rounded-xl transition-all">
                     Connect
                   </Button>
                 </Link>
@@ -974,25 +1194,31 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
             </div>
 
             {/* X (Twitter) */}
-            <div className="rounded-2xl border border-white/25 bg-white/10 p-5 dark:border-white/5 dark:bg-neutral-900/40 flex items-center justify-between">
+            <div className="rounded-2xl border border-zinc-100 bg-white/20 p-5 dark:border-white/5 dark:bg-neutral-900/50 flex items-center justify-between hover:-translate-y-1 hover:shadow-lg transition-all duration-300">
               <div className="flex items-center gap-4">
-                <div className="grid h-12 w-12 place-items-center rounded-2xl bg-sky-500/10 text-sky-500">
+                <div className="grid h-12 w-12 place-items-center rounded-2xl bg-sky-500/15 text-sky-500 shadow-sm shrink-0">
                   <Twitter className="h-6 w-6" />
                 </div>
-                <div>
-                  <h3 className="text-sm font-bold text-zinc-950 dark:text-white">X (Twitter)</h3>
+                <div className="min-w-0">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-zinc-955 dark:text-white">X (Twitter) DM Feed</h3>
                   {connectedChannels.x ? (
-                    <p className="text-[10px] text-emerald-500 font-bold mt-0.5">Connected & Active</p>
+                    <p className="text-[10px] text-emerald-500 font-black mt-1 flex items-center gap-1">
+                      <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-455 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                      </span>
+                      CONNECTED & ACTIVE
+                    </p>
                   ) : (
-                    <p className="text-[10px] text-zinc-400 font-semibold mt-0.5">X Post scheduling & syndication</p>
+                    <p className="text-[10px] text-zinc-400 font-semibold mt-1">Requires Dev Keys Setup</p>
                   )}
                 </div>
               </div>
               {connectedChannels.x ? (
-                <Badge tone="success">Active</Badge>
+                <Badge tone="success" className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-lg">Active</Badge>
               ) : (
                 <Link href={`/admin/studios/${studioId}/channels`}>
-                  <Button size="sm" variant="ghost" className="text-xs font-bold">
+                  <Button size="sm" variant="ghost" className="text-[10px] font-black uppercase tracking-wider px-3.5 py-1.5 hover:bg-brand-500/5 text-brand-500 dark:text-brand-400 rounded-xl transition-all">
                     Connect
                   </Button>
                 </Link>
@@ -1005,11 +1231,11 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
       {/* Quick AI Helper Modal */}
       {showQuickAiModal && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-          <div className="w-full max-w-md p-6 rounded-[28px] border border-white/10 bg-white dark:bg-neutral-900 space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+          <div className="w-full max-w-md p-6 rounded-[28px] border border-zinc-100 dark:border-white/5 bg-white dark:bg-neutral-900 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-zinc-100 dark:border-white/5 pb-3">
               <div className="flex items-center gap-2">
                 <Sparkles className="h-5 w-5 text-brand-500" />
-                <h3 className="text-sm font-black uppercase tracking-wider text-zinc-955 dark:text-white">AI Content Generator</h3>
+                <h3 className="text-xs font-black uppercase tracking-wider text-zinc-955 dark:text-white font-black">AI Content Generator</h3>
               </div>
               <button 
                 type="button"
@@ -1022,23 +1248,23 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
 
             <div className="space-y-4">
               <div>
-                <Label htmlFor="modal-prompt" className="text-[10px] uppercase text-zinc-400">What is this ad promoting?</Label>
+                <Label htmlFor="modal-prompt" className="text-[10px] font-black uppercase tracking-wider text-zinc-400">What is this ad promoting?</Label>
                 <Textarea
                   id="modal-prompt"
                   rows={4}
                   value={quickAiPrompt}
                   onChange={(e) => setQuickAiPrompt(e.target.value)}
                   placeholder="e.g. Free 3-day trial pass for working professionals. Focus on early morning slots."
-                  className="mt-1.5 text-xs font-semibold"
+                  className="mt-1.5 text-xs font-semibold focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all rounded-xl"
                 />
               </div>
 
-              <div className="flex gap-2">
+              <div className="flex gap-3">
                 <Button
                   type="button"
                   variant="ghost"
                   onClick={() => setShowQuickAiModal(false)}
-                  className="flex-1 text-xs"
+                  className="flex-1 text-[10px] font-black uppercase tracking-wider py-2.5 rounded-xl hover:bg-zinc-100 dark:hover:bg-neutral-800 transition-colors"
                 >
                   Cancel
                 </Button>
@@ -1046,11 +1272,166 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                   type="button"
                   onClick={handleQuickAiGenerate}
                   disabled={!quickAiPrompt.trim() || generatingQuickAi}
-                  className="flex-1 text-xs"
+                  className="flex-1 text-[10px] font-black uppercase tracking-wider py-2.5 rounded-xl bg-gradient-to-r from-brand-500 to-indigo-600 text-white shadow-xl shadow-brand-500/10 hover:shadow-brand-500/20 transition-all"
                 >
                   {generatingQuickAi ? "Generating..." : "Generate Copy"}
                 </Button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal (Select Date & Time) */}
+      {showConfirmModal && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-md p-6 rounded-[28px] border border-zinc-150 dark:border-white/5 bg-white dark:bg-neutral-900 space-y-5 shadow-2xl">
+            <div className="flex items-center gap-3 border-b border-zinc-100 dark:border-white/5 pb-3">
+              <div className="grid h-10 w-10 place-items-center rounded-2xl bg-brand-500/10 text-brand-500">
+                <Clock className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-wider text-zinc-955 dark:text-white">Schedule Campaign Post</h3>
+                <p className="text-[10px] text-zinc-400 font-bold">Select publish date and time below</p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="rounded-xl border border-zinc-100 bg-zinc-50/50 p-4 dark:border-white/5 dark:bg-neutral-955/45 space-y-2 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-[10px] uppercase font-black text-zinc-400">Platform:</span>
+                  <span className="font-bold text-zinc-900 dark:text-white">{newPostPlatform}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[10px] uppercase font-black text-zinc-400">Campaign:</span>
+                  <span className="font-bold text-zinc-900 dark:text-white">{newPostCampaign || 'General Promo'}</span>
+                </div>
+              </div>
+
+              {/* Date and Time selectors inside the popup */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="popup-date" className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Date</Label>
+                  <Input
+                    id="popup-date"
+                    type="date"
+                    value={newPostDate}
+                    onChange={(e) => setNewPostDate(e.target.value)}
+                    className="mt-1.5 focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all rounded-xl text-xs font-semibold"
+                    required
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="popup-time" className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Time</Label>
+                  <Input
+                    id="popup-time"
+                    type="time"
+                    value={newPostTime}
+                    onChange={(e) => setNewPostTime(e.target.value)}
+                    className="mt-1.5 focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all rounded-xl text-xs font-semibold"
+                    required
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setShowConfirmModal(false)}
+                className="flex-1 text-[10px] font-black uppercase tracking-wider py-2.5 rounded-xl hover:bg-zinc-100 dark:hover:bg-neutral-800 transition-colors"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={executeSchedulePost}
+                disabled={!newPostDate || !newPostTime}
+                className="flex-1 text-[10px] font-black uppercase tracking-wider py-2.5 rounded-xl bg-gradient-to-r from-brand-500 to-indigo-600 text-white shadow-xl shadow-brand-500/10 hover:shadow-brand-500/20 transition-all animate-pulse"
+              >
+                Save & Schedule
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Success/Error Notification Modal */}
+      {showNotificationModal && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-sm p-6 rounded-[28px] border border-zinc-150 dark:border-white/5 bg-white dark:bg-neutral-900 space-y-5 shadow-2xl text-center">
+            <div className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-zinc-50 dark:bg-neutral-950 shadow-inner">
+              {notificationStatus === 'success' ? (
+                <CheckCircle2 className="h-8 w-8 text-emerald-500 animate-bounce" />
+              ) : (
+                <AlertCircle className="h-8 w-8 text-red-500 animate-pulse" />
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <h3 className="text-sm font-black uppercase tracking-wider text-zinc-955 dark:text-white">
+                {notificationStatus === 'success' 
+                  ? (notificationMessage.toLowerCase().includes('delete') ? 'Post Deleted' : 'Campaign Scheduled!') 
+                  : (notificationMessage.toLowerCase().includes('delete') ? 'Deletion Failed' : 'Scheduling Failed')}
+              </h3>
+              <p className="text-xs text-zinc-550 dark:text-zinc-400 font-semibold leading-relaxed px-2">
+                {notificationMessage}
+              </p>
+            </div>
+
+            <Button
+              type="button"
+              onClick={() => setShowNotificationModal(false)}
+              className={`w-full text-[10px] font-black uppercase tracking-wider py-2.5 rounded-xl transition-all ${
+                notificationStatus === 'success'
+                  ? 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/10'
+                  : 'bg-red-500 hover:bg-red-650 text-white shadow-lg shadow-red-500/10'
+              }`}
+            >
+              Okay, Got it
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirmModal && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-md p-6 rounded-[28px] border border-zinc-150 dark:border-white/5 bg-white dark:bg-neutral-900 space-y-5 shadow-2xl">
+            <div className="flex items-center gap-3 border-b border-zinc-100 dark:border-white/5 pb-3">
+              <div className="grid h-10 w-10 place-items-center rounded-2xl bg-red-500/10 text-red-500">
+                <Trash2 className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-wider text-zinc-955 dark:text-white">Delete Scheduled Post</h3>
+                <p className="text-[10px] text-zinc-400 font-bold">This action cannot be undone</p>
+              </div>
+            </div>
+
+            <div className="space-y-3.5 text-xs text-zinc-650 dark:text-zinc-300 font-medium text-center">
+              <p>Are you sure you want to remove this scheduled post from the publishing queue?</p>
+            </div>
+
+            <div className="flex gap-3">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  setShowDeleteConfirmModal(false);
+                  setDeletingPostId(null);
+                }}
+                className="flex-1 text-[10px] font-black uppercase tracking-wider py-2.5 rounded-xl hover:bg-zinc-100 dark:hover:bg-neutral-800 transition-colors"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={executeDeletePost}
+                className="flex-1 text-[10px] font-black uppercase tracking-wider py-2.5 rounded-xl bg-red-500 hover:bg-red-655 text-white shadow-xl shadow-red-500/10 hover:shadow-red-500/20 transition-all"
+              >
+                Delete Post
+              </Button>
             </div>
           </div>
         </div>

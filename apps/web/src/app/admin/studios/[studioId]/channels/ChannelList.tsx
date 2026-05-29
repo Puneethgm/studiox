@@ -35,7 +35,7 @@ const STATUS_TONE: Record<ChannelStatus, 'success' | 'warning' | 'danger' | 'neu
   error: 'danger',
 };
 
-export function ChannelList({ studioId, channels }: { studioId: string; channels: ChannelAccount[] }) {
+export function ChannelList({ studioId, channels, showToast }: { studioId: string; channels: ChannelAccount[]; showToast: (msg: string) => void }) {
   const router = useRouter();
   const [pendingId, setPendingId] = useState<string | null>(null);
 
@@ -52,6 +52,8 @@ export function ChannelList({ studioId, channels }: { studioId: string; channels
   const [submitting, setSubmitting] = useState(false);
 
   async function disconnect(id: string) {
+    const c = channels.find((x) => x.id === id);
+    const channelName = c ? KIND_LABELS[c.kind] : 'Channel';
     const confirmed = confirm(
       '⚠️ Disconnect this channel?\n\n' +
       'After disconnecting:\n' +
@@ -64,6 +66,7 @@ export function ChannelList({ studioId, channels }: { studioId: string; channels
     setPendingId(id);
     try {
       await api(`/api/v1/studios/${studioId}/messaging/channels/${id}`, { method: 'DELETE' });
+      showToast(`${channelName} channel disconnected successfully.`);
       router.refresh();
     } finally {
       setPendingId(null);
@@ -107,7 +110,9 @@ export function ChannelList({ studioId, channels }: { studioId: string; channels
           accessToken: finalAccessToken,
         },
       });
+      const channelName = KIND_LABELS[editingChannel.kind];
       setEditingChannel(null);
+      showToast(`${channelName} channel configuration updated successfully.`);
       router.refresh();
     } catch (err) {
       if (err instanceof ApiError) setError(err.message);

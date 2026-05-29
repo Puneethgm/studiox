@@ -231,15 +231,6 @@ export default function DashboardClient({
           </div>
 
           <div className="flex items-center gap-3">
-            <Link href={`/admin/studios/${studio.id}/settings`}>
-              <Button
-                variant="secondary"
-                leftIcon={<SettingsIcon className="h-4 w-4" />}
-                suppressHydrationWarning
-              >
-                Settings
-              </Button>
-            </Link>
             <Link href={`/admin/studios/${studio.id}/campaigns/new`}>
               <Button
                 leftIcon={<Plus className="h-4 w-4" />}
@@ -450,19 +441,6 @@ export default function DashboardClient({
                 )}
               </Card>
 
-              <div className="relative overflow-hidden rounded-[32px] bg-gradient-to-br from-brand-500 to-brand-700 p-7 text-white shadow-xl shadow-brand-500/30">
-                <div className="absolute -right-10 -top-10 h-40 w-40 rounded-full bg-white/10 blur-3xl animate-pulse-liquid" />
-                <div className="absolute -left-10 -bottom-10 h-32 w-32 rounded-full bg-white/5 blur-2xl" />
-                <div className="relative z-10">
-                  <div className="mb-3 flex items-center gap-2 text-lg font-black tracking-tight">
-                    <ExternalLink className="h-5 w-5" />
-                    Studio Login URL
-                  </div>
-                  <p className="text-sm font-semibold text-white/80 leading-relaxed">
-                    Admins can sign in at <code className="rounded-xl bg-black/20 px-2 py-1 font-mono text-xs">/login</code> to access this studio directly.
-                  </p>
-                </div>
-              </div>
             </div>
           </div>
         </>
@@ -531,22 +509,7 @@ export default function DashboardClient({
             )}
           </div>
 
-          {/* Lead vs Pipeline Explanation Card */}
-          <div className="rounded-[24px] border border-blue-200 bg-blue-50/50 p-5 dark:border-blue-900/30 dark:bg-blue-950/20">
-            <div className="flex gap-3">
-              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-blue-500/10 text-blue-500">
-                <Info className="h-5 w-5" />
-              </div>
-              <div>
-                <h4 className="text-sm font-black text-blue-950 dark:text-blue-200">
-                  Understanding Your Dashboard: Lead vs Pipeline
-                </h4>
-                <p className="mt-1 text-xs text-blue-800 dark:text-blue-300 leading-relaxed font-semibold">
-                  A <strong>Lead</strong> is any prospective student captured in the system. The <strong>Pipeline</strong> maps the stages they advance through (<em>New &rarr; Contacted &rarr; Trial Booked &rarr; Member</em>). This dashboard calculates how fast prospects transition through each stage, enabling you to optimize conversions.
-                </p>
-              </div>
-            </div>
-          </div>
+
 
           {analytics ? (
             <>

@@ -13,9 +13,10 @@ import { updateStudioSettings } from '../settings/actions';
 interface Props {
   studio: Studio;
   channels: ChannelAccount[];
+  showToast: (msg: string) => void;
 }
 
-export function ConnectGoogleAds({ studio, channels }: Props) {
+export function ConnectGoogleAds({ studio, channels, showToast }: Props) {
   const router = useRouter();
   const [googleClientId, setGoogleClientId] = useState(studio.googleClientId || '');
   const [googleClientSecret, setGoogleClientSecret] = useState(studio.googleClientSecret || '');
@@ -82,6 +83,7 @@ export function ConnectGoogleAds({ studio, channels }: Props) {
         setErrors(result.details || {});
       } else {
         setSuccess('Google Ads credentials saved successfully.');
+        showToast('Google Ads channel credentials saved successfully.');
         router.refresh();
       }
     } catch (err: any) {
@@ -115,6 +117,7 @@ export function ConnectGoogleAds({ studio, channels }: Props) {
         setError(result.error || 'Failed to disconnect Google Ads.');
       } else {
         setSuccess('Google Ads credentials cleared successfully.');
+        showToast('Google Ads channel disconnected successfully.');
         router.refresh();
       }
     } catch (err: any) {

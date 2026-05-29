@@ -13,9 +13,10 @@ import type { ChannelKind } from '@/lib/types';
 interface Props {
   studioId: string;
   kind: ChannelKind;
+  showToast: (msg: string) => void;
 }
 
-export function ConnectMetaChannel({ studioId, kind }: Props) {
+export function ConnectMetaChannel({ studioId, kind, showToast }: Props) {
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [externalId, setExternalId] = useState('');
@@ -48,6 +49,7 @@ export function ConnectMetaChannel({ studioId, kind }: Props) {
       setExternalId('');
       setDisplayHandle('');
       setAccessToken('');
+      showToast(`${label} channel connected successfully.`);
       router.refresh();
     } catch (err) {
       if (err instanceof ApiError) setError(err.message);

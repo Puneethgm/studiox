@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/Input';
 import { FieldError, FieldHint, Label } from '@/components/ui/Label';
 import { ApiError, api } from '@/lib/api';
 
-export function ConnectTwilio({ studioId }: { studioId: string }) {
+export function ConnectTwilio({ studioId, showToast }: { studioId: string; showToast: (msg: string) => void }) {
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [accountSid, setAccountSid] = useState('');
@@ -41,6 +41,7 @@ export function ConnectTwilio({ studioId }: { studioId: string }) {
       setAccountSid('');
       setAuthToken('');
       setPhoneNumber('');
+      showToast('Twilio SMS channel connected successfully.');
       router.refresh();
     } catch (err) {
       if (err instanceof ApiError) setError(getErrorMessage(err.message));
