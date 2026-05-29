@@ -6,6 +6,7 @@ const configDir = path.dirname(fileURLToPath(import.meta.url));
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  devIndicators: false,
 
   // Standalone output: Next.js writes a self-contained server + minimal
   // node_modules to .next/standalone. The Docker image ships only that,
