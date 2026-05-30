@@ -136,15 +136,24 @@ export default async function CampaignsPage({
 
 function CampaignCard({ campaign, studioId, index }: { campaign: Campaign, studioId: string, index: number }) {
   const delay = `${index * 0.1}s`;
-  
+  const detailHref = `/admin/studios/${studioId}/campaigns/${campaign.id}`;
+
   return (
-    <div 
+    <div
       className="group relative animate-in"
       style={{ animationDelay: delay }}
     >
+      {/* Glow on hover */}
       <div className="absolute -inset-1 rounded-[36px] bg-gradient-to-br from-brand-500/20 to-sky-500/20 opacity-0 blur-xl transition duration-500 group-hover:opacity-100" />
-      
+
       <Card className="relative h-full border border-white/30 bg-white/30 shadow-xl backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30" noPadding elevated>
+        {/* ── Full-card clickable overlay ── */}
+        <Link
+          href={detailHref}
+          className="absolute inset-0 z-10 rounded-[inherit]"
+          aria-label={`Open campaign: ${campaign.name}`}
+        />
+
         <div className="flex h-full flex-col p-8">
           <div className="mb-6 flex items-start justify-between">
             <div className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-brand-500 to-brand-600 text-white shadow-lg shadow-brand-500/20">
@@ -156,9 +165,10 @@ function CampaignCard({ campaign, studioId, index }: { campaign: Campaign, studi
           </div>
 
           <div className="mb-2">
-            <Link 
-              href={`/admin/studios/${studioId}/campaigns/${campaign.id}`}
-              className="text-xl font-black tracking-tight text-slate-900 hover:text-brand-500 dark:text-white dark:hover:text-brand-400"
+            {/* Title — sits above overlay via z-20, still navigates (same href) */}
+            <Link
+              href={detailHref}
+              className="relative z-20 text-xl font-black tracking-tight text-slate-900 hover:text-brand-500 dark:text-white dark:hover:text-brand-400"
             >
               {campaign.name}
             </Link>
@@ -193,13 +203,14 @@ function CampaignCard({ campaign, studioId, index }: { campaign: Campaign, studi
             </div>
           </div>
 
-          <div className="mt-auto pt-6 border-t border-slate-100 dark:border-white/5">
+          {/* ── Footer: raised above overlay so buttons still work ── */}
+          <div className="relative z-20 mt-auto border-t border-slate-100 pt-6 dark:border-white/5">
             <div className="flex items-center gap-3">
               <div className="min-w-0 flex-1">
                 <CopyLink url={campaign.shareUrl} />
               </div>
-              <Link 
-                href={campaign.shareUrl} 
+              <Link
+                href={campaign.shareUrl}
                 target="_blank"
                 className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-500 transition-all hover:bg-slate-200 hover:text-slate-900 dark:bg-neutral-800 dark:text-zinc-400 dark:hover:bg-neutral-700 dark:hover:text-white"
                 title="Preview live page"
@@ -213,3 +224,4 @@ function CampaignCard({ campaign, studioId, index }: { campaign: Campaign, studi
     </div>
   );
 }
+

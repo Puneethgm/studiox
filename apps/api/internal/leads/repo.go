@@ -106,14 +106,17 @@ func (r *Repo) ListCampaigns(ctx context.Context, studioID uuid.UUID, limit, off
 func (r *Repo) GetCampaign(ctx context.Context, studioID, id uuid.UUID) (*Campaign, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT c.id, c.studio_id, s.slug, s.name, c.slug, c.name, c.description, c.fitness_plans,
-		       c.active, c.created_by, c.created_at, c.updated_at
+		       c.active, c.created_by, c.created_at, c.updated_at,
+		       COALESCE(l.cnt, 0)
 		FROM campaigns c
 		JOIN studios s ON s.id = c.studio_id
+		LEFT JOIN (SELECT campaign_id, COUNT(*) AS cnt FROM leads GROUP BY campaign_id) l
+		  ON l.campaign_id = c.id
 		WHERE c.studio_id = $1 AND c.id = $2
 	`, studioID, id)
 	var c Campaign
 	if err := row.Scan(&c.ID, &c.StudioID, &c.StudioSlug, &c.StudioName, &c.Slug, &c.Name, &c.Description,
-		&c.FitnessPlans, &c.Active, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		&c.FitnessPlans, &c.Active, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt, &c.LeadCount); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrCampaignNotFound
 		}

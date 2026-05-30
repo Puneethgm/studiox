@@ -44,6 +44,16 @@
     @apply font-bold tracking-tight text-zinc-900 dark:text-white;
     letter-spacing: -0.03em;
   }
+
+  /* Style dropdown options to support dark mode */
+  select option {
+    background-color: #ffffff;
+    color: #0f172a;
+  }
+  .dark select option {
+    background-color: #171717; /* Matches the dark glass background */
+    color: #f5f5f5;
+  }
 }
 
 @layer components {

@@ -4,18 +4,27 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/projectx/api/internal/platform/cache"
 )
 
 type Repo struct {
-	pool *pgxpool.Pool
+	pool  *pgxpool.Pool
+	cache *cache.MemoryCache
 }
 
-func NewRepo(pool *pgxpool.Pool) *Repo { return &Repo{pool: pool} }
+func NewRepo(pool *pgxpool.Pool) *Repo {
+	return &Repo{
+		pool:  pool,
+		cache: cache.New(),
+	}
+}
 
 // Pool exposes the underlying pool so the studios service can run a
 // transactional create-studio-with-admin flow.
@@ -70,6 +79,13 @@ func (r *Repo) List(ctx context.Context) ([]Studio, error) {
 }
 
 func (r *Repo) GetByID(ctx context.Context, id uuid.UUID) (*Studio, error) {
+	key := "studio:id:" + id.String()
+	if val, ok := r.cache.Get(key); ok {
+		if s, ok := val.(*Studio); ok {
+			return s, nil
+		}
+	}
+
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, slug, name, brand_color, logo_url, contact_email, active, created_at, updated_at,
 		       availability_slots, availability_timezone, gemini_api_key, meta_app_id, meta_app_secret,
@@ -77,10 +93,22 @@ func (r *Repo) GetByID(ctx context.Context, id uuid.UUID) (*Studio, error) {
 		       stripe_account_id, stripe_secret_key, stripe_publishable_key, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files
 		FROM studios WHERE id = $1
 	`, id)
-	return scanStudio(row)
+	s, err := scanStudio(row)
+	if err == nil {
+		r.cache.Set(key, s, 10*time.Minute)
+		r.cache.Set("studio:slug:"+s.Slug, s, 10*time.Minute)
+	}
+	return s, err
 }
 
 func (r *Repo) GetBySlug(ctx context.Context, slug string) (*Studio, error) {
+	key := "studio:slug:" + slug
+	if val, ok := r.cache.Get(key); ok {
+		if s, ok := val.(*Studio); ok {
+			return s, nil
+		}
+	}
+
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, slug, name, brand_color, logo_url, contact_email, active, created_at, updated_at,
 		       availability_slots, availability_timezone, gemini_api_key, meta_app_id, meta_app_secret,
@@ -88,7 +116,12 @@ func (r *Repo) GetBySlug(ctx context.Context, slug string) (*Studio, error) {
 		       stripe_account_id, stripe_secret_key, stripe_publishable_key, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files
 		FROM studios WHERE slug = $1
 	`, slug)
-	return scanStudio(row)
+	s, err := scanStudio(row)
+	if err == nil {
+		r.cache.Set(key, s, 10*time.Minute)
+		r.cache.Set("studio:id:"+s.ID.String(), s, 10*time.Minute)
+	}
+	return s, err
 }
 
 // Update writes the editable fields. Slug is intentionally NOT updatable here
@@ -109,6 +142,9 @@ func (r *Repo) Update(ctx context.Context, id uuid.UUID, name, brandColor, logoU
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
+
+	// Cache eviction
+	r.evict(id)
 	return nil
 }
 
@@ -138,5 +174,18 @@ func (r *Repo) UpdatePayments(ctx context.Context, id uuid.UUID, stripeAccountId
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
+
+	// Cache eviction
+	r.evict(id)
 	return nil
+}
+
+func (r *Repo) evict(id uuid.UUID) {
+	idKey := "studio:id:" + id.String()
+	if val, ok := r.cache.Get(idKey); ok {
+		if s, ok := val.(*Studio); ok {
+			r.cache.Evict("studio:slug:" + s.Slug)
+		}
+	}
+	r.cache.Evict(idKey)
 }

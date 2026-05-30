@@ -2,7 +2,7 @@
 
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Select } from '@/components/ui/Select';
-import { LEAD_STATUSES, LEAD_STATUS_LABELS } from '@/lib/types';
+import { LEAD_STATUSES, LEAD_STATUS_LABELS, Campaign } from '@/lib/types';
 import { Search, X, Calendar } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -14,6 +14,8 @@ export function LeadFilters({
   startDate,
   endDate,
   sources = [],
+  campaigns = [],
+  campaignId,
 }: {
   status?: string;
   search?: string;
@@ -22,6 +24,8 @@ export function LeadFilters({
   startDate?: string;
   endDate?: string;
   sources?: string[];
+  campaigns?: Campaign[];
+  campaignId?: string;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -69,6 +73,14 @@ export function LeadFilters({
     router.push(`?${params.toString()}`);
   }
 
+  function setCampaign(next: string) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (next) params.set('campaignId', next);
+    else params.delete('campaignId');
+    params.delete('page');
+    router.push(`?${params.toString()}`);
+  }
+
   // Handle dynamic multi-source filtering
   function setSource(next: string) {
     const params = new URLSearchParams(searchParams.toString());
@@ -111,7 +123,7 @@ export function LeadFilters({
     <div className="flex flex-col gap-4 rounded-3xl border border-white/20 bg-white/20 p-4 backdrop-blur-xl dark:border-white/5 dark:bg-neutral-900/20 shadow-sm">
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         {/* Search Box */}
-        <div className="relative flex-1 max-w-md">
+        <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
           <input
             type="text"
@@ -132,6 +144,23 @@ export function LeadFilters({
 
         {/* Dropdown Filters */}
         <div className="flex flex-wrap items-center gap-4">
+          {/* Campaign Filter */}
+          <div className="flex items-center gap-2.5">
+            <span className="text-xs font-black uppercase tracking-wider text-zinc-400">Campaign:</span>
+            <Select
+              className="w-36 rounded-2xl border border-zinc-200/50 bg-white/50 py-2 focus:border-brand-500 focus:outline-none dark:border-zinc-800/50 dark:bg-zinc-950/50 text-xs font-bold"
+              value={campaignId ?? ''}
+              onChange={(e) => setCampaign(e.target.value)}
+            >
+              <option value="">All Campaigns</option>
+              {campaigns.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+
           {/* Duration Filter */}
           <div className="flex items-center gap-2.5">
             <span className="text-xs font-black uppercase tracking-wider text-zinc-400 flex items-center gap-1">
@@ -139,7 +168,7 @@ export function LeadFilters({
               Period:
             </span>
             <Select
-              className="w-36 rounded-2xl border border-zinc-200/50 bg-white/50 py-2 focus:border-brand-500 focus:outline-none dark:border-zinc-800/50 dark:bg-zinc-950/50 text-xs font-bold"
+              className="w-32 rounded-2xl border border-zinc-200/50 bg-white/50 py-2 focus:border-brand-500 focus:outline-none dark:border-zinc-800/50 dark:bg-zinc-950/50 text-xs font-bold"
               value={duration ?? ''}
               onChange={(e) => setDuration(e.target.value)}
             >
@@ -156,7 +185,7 @@ export function LeadFilters({
           <div className="flex items-center gap-2.5">
             <span className="text-xs font-black uppercase tracking-wider text-zinc-400">Source:</span>
             <Select
-              className="w-36 rounded-2xl border border-zinc-200/50 bg-white/50 py-2 focus:border-brand-500 focus:outline-none dark:border-zinc-800/50 dark:bg-zinc-950/50 text-xs font-bold"
+              className="w-32 rounded-2xl border border-zinc-200/50 bg-white/50 py-2 focus:border-brand-500 focus:outline-none dark:border-zinc-800/50 dark:bg-zinc-950/50 text-xs font-bold"
               value={source ?? ''}
               onChange={(e) => setSource(e.target.value)}
             >
@@ -173,7 +202,7 @@ export function LeadFilters({
           <div className="flex items-center gap-2.5">
             <span className="text-xs font-black uppercase tracking-wider text-zinc-400">Status:</span>
             <Select
-              className="w-36 rounded-2xl border border-zinc-200/50 bg-white/50 py-2 focus:border-brand-500 focus:outline-none dark:border-zinc-800/50 dark:bg-zinc-950/50 text-xs font-bold"
+              className="w-32 rounded-2xl border border-zinc-200/50 bg-white/50 py-2 focus:border-brand-500 focus:outline-none dark:border-zinc-800/50 dark:bg-zinc-950/50 text-xs font-bold"
               value={status ?? ''}
               onChange={(e) => setStatus(e.target.value)}
             >
@@ -220,3 +249,4 @@ export function LeadFilters({
     </div>
   );
 }
+

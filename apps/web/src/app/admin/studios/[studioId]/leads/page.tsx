@@ -131,6 +131,7 @@ export default async function LeadsPage({
 
       {/* Filters */}
       <LeadFilters
+        campaignId={sp.campaignId}
         status={sp.status}
         search={sp.search}
         source={sp.source}
@@ -138,6 +139,7 @@ export default async function LeadsPage({
         startDate={sp.startDate}
         endDate={sp.endDate}
         sources={sources}
+        campaigns={campaigns}
       />
 
       {/* List */}
@@ -159,9 +161,10 @@ export default async function LeadsPage({
             style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 4px 16px rgba(0,0,0,0.04)' }}
           >
             {/* Column headers */}
-            <div className="grid grid-cols-[1fr,1.1fr,90px,80px,110px,110px,100px,120px] items-center gap-4 border-b border-white/20 bg-white/20 px-5 py-3 dark:border-white/5 dark:bg-white/5">
+            <div className="grid grid-cols-[1fr,1.1fr,110px,80px,80px,110px,110px,100px,120px] items-center gap-4 border-b border-white/20 bg-white/20 px-5 py-3 dark:border-white/5 dark:bg-white/5">
               <span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Name</span>
               <span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Contact</span>
+              <span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Campaign</span>
               <span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Source</span>
               <span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Attempts</span>
               <span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Last Msg</span>
@@ -175,7 +178,7 @@ export default async function LeadsPage({
                 <li key={l.id}>
                   <Link
                     href={`/admin/studios/${studioId}/leads/${l.id}`}
-                    className="group grid grid-cols-[1fr,1.1fr,90px,80px,110px,110px,100px,120px] items-center gap-4 px-5 py-3.5 transition-all hover:bg-white/30 dark:hover:bg-white/5"
+                    className="group grid grid-cols-[1fr,1.1fr,110px,80px,80px,110px,110px,100px,120px] items-center gap-4 px-5 py-3.5 transition-all hover:bg-white/30 dark:hover:bg-white/5"
                   >
                     {/* Name */}
                     <div className="flex min-w-0 items-center gap-3">
@@ -191,6 +194,11 @@ export default async function LeadsPage({
                     <div className="min-w-0">
                       <div className="truncate text-sm font-semibold text-zinc-700 dark:text-zinc-300">{l.email || '-'}</div>
                       <div className="truncate text-[11px] text-zinc-400">{l.phone || '-'}</div>
+                    </div>
+
+                    {/* Campaign */}
+                    <div className="truncate text-xs font-semibold text-zinc-600 dark:text-zinc-400">
+                      {l.campaignName || '-'}
                     </div>
 
                     {/* Source */}
