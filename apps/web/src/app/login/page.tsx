@@ -61,11 +61,8 @@ export default function LoginPage() {
 
   return (
     <main
-      className="min-h-screen w-full text-zinc-900 transition-all duration-700 dark:text-zinc-100"
-      style={{
-        ...themeStyle,
-        background: 'rgb(248, 250, 255)',
-      }}
+      className="min-h-screen w-full text-zinc-900 transition-all duration-700 dark:text-zinc-100 bg-slate-50 dark:bg-neutral-950"
+      style={themeStyle}
     >
       <div className="grid min-h-screen w-full grid-cols-1 lg:grid-cols-[1.1fr,1fr] xl:grid-cols-[1.2fr,1fr]">
         {/* Hero */}
@@ -122,10 +119,7 @@ export default function LoginPage() {
 
         {/* Form - Right Side with Rich Professional Gradient */}
         <section 
-          className="relative flex items-center justify-center px-6 py-12 sm:px-10 lg:px-12 xl:px-16"
-          style={{
-            background: 'linear-gradient(135deg, #f3f0ff 0%, #e0e7ff 50%, #dbeafe 100%)',
-          }}
+          className="relative flex items-center justify-center px-6 py-12 sm:px-10 lg:px-12 xl:px-16 bg-gradient-to-br from-violet-50 via-indigo-50 to-blue-50 dark:from-neutral-950 dark:via-zinc-900/50 dark:to-neutral-950"
         >
           {/* Enhanced Ambient Glows for Right Side */}
           <div className="absolute inset-0 -z-10 overflow-hidden">
