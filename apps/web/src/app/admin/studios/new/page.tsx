@@ -37,6 +37,10 @@ export default function NewStudioPage() {
         method: 'POST',
         json: { name, slug, brandColor, logoUrl, contactEmail, adminEmail, adminPassword, socialPlannerEnabled },
       });
+      sessionStorage.setItem('studiox_toast', JSON.stringify({
+        message: `Studio "${name}" has been created successfully.`,
+        type: 'success'
+      }));
       router.push(`/admin/studios/${res.studio.id}`);
       router.refresh();
     } catch (err) {

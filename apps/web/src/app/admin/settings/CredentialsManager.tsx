@@ -37,10 +37,9 @@ export function CredentialsManager() {
     fetchStatus();
   }, []);
 
-  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const [isDragging, setIsDragging] = useState(false);
 
+  async function uploadFile(file: File) {
     setUploading(true);
     setError(null);
     setSuccessMessage(null);
@@ -62,12 +61,58 @@ export function CredentialsManager() {
 
       setStatus(body);
       setSuccessMessage('Credentials uploaded and verified successfully!');
+
+      sessionStorage.setItem('studiox_toast', JSON.stringify({
+        message: 'Google Cloud service account JSON credentials uploaded successfully.',
+        type: 'success'
+      }));
+      window.dispatchEvent(new Event('studiox_toast_update'));
     } catch (err: any) {
       setError(err.message || 'Failed to upload credentials file');
+      sessionStorage.setItem('studiox_toast', JSON.stringify({
+        message: err.message || 'Failed to upload credentials file',
+        type: 'error'
+      }));
+      window.dispatchEvent(new Event('studiox_toast_update'));
     } finally {
       setUploading(false);
     }
   }
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await uploadFile(file);
+  }
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+
+    const file = e.dataTransfer?.files?.[0];
+    if (!file) return;
+
+    if (!file.name.endsWith('.json')) {
+      setError('Please upload a valid JSON credentials file.');
+      sessionStorage.setItem('studiox_toast', JSON.stringify({
+        message: 'Please upload a valid JSON credentials file.',
+        type: 'error'
+      }));
+      window.dispatchEvent(new Event('studiox_toast_update'));
+      return;
+    }
+
+    await uploadFile(file);
+  };
 
   if (loading) {
     return (
@@ -126,8 +171,17 @@ export function CredentialsManager() {
           </div>
         )}
 
-        <div className="mt-6 flex flex-col items-center justify-center rounded-2xl border border-dashed border-zinc-300 p-8 dark:border-zinc-800">
-          <UploadCloud className="h-10 w-10 text-zinc-400 dark:text-zinc-600" />
+        <div
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          className={`mt-6 flex flex-col items-center justify-center rounded-2xl border border-dashed p-8 transition-all duration-200 ${
+            isDragging
+              ? 'border-brand-500 bg-brand-500/5 dark:border-brand-400 dark:bg-brand-400/5 scale-[1.01]'
+              : 'border-zinc-300 dark:border-zinc-800 hover:border-zinc-450 dark:hover:border-zinc-700'
+          }`}
+        >
+          <UploadCloud className={`h-10 w-10 transition-colors ${isDragging ? 'text-brand-500' : 'text-zinc-400 dark:text-zinc-600'}`} />
           <h3 className="mt-3 text-sm font-bold text-zinc-900 dark:text-white">
             {status?.configured ? 'Upload new credentials file' : 'Upload google-credentials.json'}
           </h3>

@@ -23,6 +23,8 @@ import {
   HelpCircle,
   Sun,
   Moon,
+  CheckCircle2,
+  AlertCircle,
 } from 'lucide-react';
 import { useEffect, useState, useRef, type CSSProperties, type ReactNode } from 'react';
 import { Button } from '@/components/ui/Button';
@@ -87,6 +89,31 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [globalToast, setGlobalToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const checkToast = () => {
+    const raw = sessionStorage.getItem('studiox_toast');
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        setGlobalToast(parsed);
+        sessionStorage.removeItem('studiox_toast');
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  };
+
+  useEffect(() => {
+    checkToast();
+  }, [pathname]);
+
+  useEffect(() => {
+    window.addEventListener('studiox_toast_update', checkToast);
+    return () => {
+      window.removeEventListener('studiox_toast_update', checkToast);
+    };
+  }, []);
 
   const mainRef = useRef<HTMLDivElement>(null);
   const [scrolled, setScrolled] = useState(false);
@@ -180,6 +207,33 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
           </main>
         </div>
       </div>
+
+      {/* Custom Floating Toast Notification */}
+      {globalToast && (
+        <div className="fixed bottom-6 right-6 z-[9999] p-4 rounded-2xl border border-emerald-500/30 bg-white/90 dark:bg-zinc-900/90 backdrop-blur-xl shadow-2xl flex items-center gap-3 animate-in slide-in-from-bottom-5 fade-in duration-300 min-w-[320px]">
+          <div className={`h-8 w-8 rounded-xl flex items-center justify-center shrink-0 ${
+            globalToast.type === 'success' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'
+          }`}>
+            {globalToast.type === 'success' ? (
+              <CheckCircle2 className="w-5 h-5" />
+            ) : (
+              <AlertCircle className="w-5 h-5" />
+            )}
+          </div>
+          <div className="flex-1">
+            <p className="text-xs font-black uppercase tracking-wider text-zinc-800 dark:text-zinc-100">
+              {globalToast.type === 'success' ? 'Success' : 'Error'}
+            </p>
+            <p className="text-[10px] text-zinc-500 dark:text-zinc-400 font-semibold mt-0.5">{globalToast.message}</p>
+          </div>
+          <button 
+            onClick={() => setGlobalToast(null)} 
+            className="text-zinc-400 hover:text-zinc-600 dark:hover:text-white p-1 rounded-lg transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
