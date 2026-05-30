@@ -448,21 +448,6 @@ function ThemeToggle() {
   );
 }
 
-function getPageTitle(pathname: string): string {
-  if (pathname === '/admin/studios') return 'Studios';
-  if (pathname === '/admin/settings') return 'Platform Settings';
-  if (pathname.includes('/inbox')) return 'Inbox';
-  if (pathname.includes('/pipeline')) return 'Pipeline';
-  if (pathname.includes('/campaigns')) return 'Campaigns';
-  if (pathname.includes('/leads')) return 'Leads';
-  if (pathname.includes('/social-planner')) return 'Social Planner';
-  if (pathname.includes('/payments')) return 'Payments';
-  if (pathname.includes('/channels')) return 'Channels';
-  if (pathname.includes('/knowledge-base')) return 'Knowledge Base';
-  if (pathname.includes('/settings')) return 'Settings';
-  return 'Dashboard';
-}
-
 function Topbar({
   me,
   scrolled,
@@ -475,8 +460,6 @@ function Topbar({
   const pathname = usePathname();
   const router = useRouter();
   const [open, setOpen] = useState(false);
-
-  const pageTitle = getPageTitle(pathname);
 
   async function logout() {
     try {
@@ -500,12 +483,8 @@ function Topbar({
         <Menu className="h-5 w-5" />
       </button>
 
-      {/* Modern, always-visible premium page title block */}
-      <div className="flex items-center gap-2.5 mr-auto">
-        <span className="text-lg sm:text-xl font-black bg-gradient-to-r from-zinc-900 via-zinc-800 to-zinc-700 dark:from-white dark:via-zinc-200 dark:to-zinc-400 bg-clip-text text-transparent tracking-tight">
-          {pageTitle}
-        </span>
-      </div>
+      {/* Spacer to push controls to the right */}
+      <div className="mr-auto" />
 
       <div className="flex items-center gap-3">
         {/* Theme Toggle Button */}
