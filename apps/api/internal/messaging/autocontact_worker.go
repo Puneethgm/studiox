@@ -81,9 +81,17 @@ func (w *AutoContactWorker) processItem(ctx context.Context, it leads.OutboxItem
 		return fmt.Errorf("empty phone for lead %s", l.ID)
 	}
 
-	// Create or find conversation on WhatsApp for this studio.
+	// Resolve active channel for phone-based contact (WhatsApp first, then SMS)
+	channelKind := KindWhatsAppMeta
+	if _, err := w.msgRepo.GetActiveChannelByKind(ctx, l.StudioID, KindWhatsAppMeta); err != nil {
+		if _, smsErr := w.msgRepo.GetActiveChannelByKind(ctx, l.StudioID, KindSMS); smsErr == nil {
+			channelKind = KindSMS
+		}
+	}
+
+	// Create or find conversation
 	conv, err := w.msgSvc.CreateConversation(ctx, l.StudioID, CreateConversationInput{
-		ChannelKind:  KindWhatsAppMeta,
+		ChannelKind:  channelKind,
 		ContactValue: phone,
 		DisplayName:  l.Name,
 		LeadID:       &l.ID,
