@@ -1331,7 +1331,7 @@ export function InboxLive({
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0">
           {/* Creator/Edit Form */}
-          <div className="lg:col-span-1 p-5 rounded-[22px] border border-violet-200/20 bg-white/20 backdrop-blur-md dark:border-white/5 dark:bg-white/5 space-y-4 shadow-xl lg:overflow-y-auto no-scrollbar h-fit">
+          <div className="lg:col-span-1 p-5 rounded-[22px] border border-violet-200/20 bg-white/20 backdrop-blur-md dark:border-white/5 dark:bg-white/5 space-y-4 shadow-xl lg:max-h-full lg:overflow-y-auto no-scrollbar">
             <h4 className="text-xs font-black uppercase tracking-wider text-violet-600 dark:text-violet-400 border-b border-violet-200/20 pb-3 dark:border-white/5">
               {editingJobId ? "Edit Scheduled Message" : "Schedule Message"}
             </h4>
@@ -1702,7 +1702,7 @@ export function InboxLive({
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0">
           {/* Creator Form */}
-          <div className="lg:col-span-1 p-5 rounded-[22px] border border-violet-200/20 bg-white/20 backdrop-blur-md dark:border-white/5 dark:bg-white/5 space-y-4 shadow-xl lg:overflow-y-auto no-scrollbar h-fit">
+          <div className="lg:col-span-1 p-5 rounded-[22px] border border-violet-200/20 bg-white/20 backdrop-blur-md dark:border-white/5 dark:bg-white/5 space-y-4 shadow-xl lg:max-h-full lg:overflow-y-auto no-scrollbar">
             <div className="flex items-center justify-between border-b border-violet-200/20 pb-3 dark:border-white/5">
               <h4 className="text-xs font-black uppercase tracking-wider text-violet-600 dark:text-violet-400">
                 {editingTemplateId ? "Edit Template" : "Create Template"}
@@ -2019,7 +2019,7 @@ export function InboxLive({
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0">
           {/* Creator Form */}
-          <div className="lg:col-span-1 p-5 rounded-[22px] border border-violet-200/20 bg-white/20 backdrop-blur-md dark:border-white/5 dark:bg-white/5 space-y-4 shadow-xl lg:overflow-y-auto no-scrollbar h-fit">
+          <div className="lg:col-span-1 p-5 rounded-[22px] border border-violet-200/20 bg-white/20 backdrop-blur-md dark:border-white/5 dark:bg-white/5 space-y-4 shadow-xl lg:max-h-full lg:overflow-y-auto no-scrollbar">
             <h4 className="text-xs font-black uppercase tracking-wider text-violet-600 dark:text-violet-400 border-b border-violet-200/20 pb-3 dark:border-white/5">
               {editingLinkId ? "Edit Link" : "Create Link"}
             </h4>
