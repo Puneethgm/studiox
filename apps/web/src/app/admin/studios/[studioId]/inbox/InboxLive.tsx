@@ -738,6 +738,34 @@ export function InboxLive({
         boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.2), 0 8px 40px rgba(139,92,246,0.08)',
       }}
     >
+      {/* ── Top Navigation Tabs ─────────────────── */}
+      <div className="flex items-center justify-between border-b border-white/20 px-6 py-3.5 bg-white/20 backdrop-blur-md dark:border-white/5 dark:bg-neutral-950/20 shrink-0 z-20">
+        <div className="flex gap-2">
+          {(
+            [
+              { id: 'conversations', label: 'Conversations' },
+              { id: 'automated_messages', label: 'Automated Messages' },
+              { id: 'snippets', label: 'Snippets (Templates)' },
+              { id: 'trigger_links', label: 'Trigger Links' },
+            ] as const
+          ).map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setCurrentTab(t.id)}
+              className={cn(
+                "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-300",
+                currentTab === t.id
+                  ? "bg-gradient-to-r from-brand-500 to-violet-500 text-white shadow-md shadow-brand-500/20"
+                  : "text-zinc-500 hover:bg-white/40 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-white/5"
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* ── Tab Content Renderer ─────────────────── */}
       <div className="flex flex-1 min-h-0">
         {currentTab === 'conversations' && (
@@ -1303,7 +1331,7 @@ export function InboxLive({
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0">
           {/* Creator/Edit Form */}
-          <div className="lg:col-span-1 p-5 rounded-[22px] border border-violet-200/20 bg-white/20 backdrop-blur-md dark:border-white/5 dark:bg-white/5 space-y-4 shadow-xl lg:overflow-y-auto lg:h-full">
+          <div className="lg:col-span-1 p-5 rounded-[22px] border border-violet-200/20 bg-white/20 backdrop-blur-md dark:border-white/5 dark:bg-white/5 space-y-4 shadow-xl lg:overflow-y-auto no-scrollbar lg:h-full">
             <h4 className="text-xs font-black uppercase tracking-wider text-violet-600 dark:text-violet-400 border-b border-violet-200/20 pb-3 dark:border-white/5">
               {editingJobId ? "Edit Scheduled Message" : "Schedule Message"}
             </h4>
@@ -1334,7 +1362,7 @@ export function InboxLive({
                     onChange={(e) => setSearchRecipientQuery(e.target.value)}
                     className="w-full rounded-xl border border-white/20 bg-white/30 px-3 py-1.5 text-xs font-semibold text-zinc-900 placeholder:text-zinc-400 dark:border-white/5 dark:bg-zinc-800 dark:text-zinc-100 focus:outline-none"
                   />
-                  <div className="h-36 overflow-y-auto border border-violet-200/20 rounded-xl bg-white/10 dark:border-white/5 dark:bg-white/5 p-2 space-y-1.5">
+                  <div className="h-36 overflow-y-auto no-scrollbar border border-violet-200/20 rounded-xl bg-white/10 dark:border-white/5 dark:bg-white/5 p-2 space-y-1.5">
                     {conversations
                       .filter(c => {
                         const query = searchRecipientQuery.toLowerCase();
@@ -1544,7 +1572,7 @@ export function InboxLive({
                 setTabVisibleJobsCount(prev => prev + 5);
               }
             }}
-            className="lg:col-span-2 space-y-3 lg:overflow-y-auto lg:h-full lg:pr-2"
+            className="lg:col-span-2 space-y-3 lg:overflow-y-auto no-scrollbar lg:h-full lg:pr-2"
           >
             {loadingJobs ? (
               <div className="flex justify-center py-12">
@@ -1674,7 +1702,7 @@ export function InboxLive({
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0">
           {/* Creator Form */}
-          <div className="lg:col-span-1 p-5 rounded-[22px] border border-violet-200/20 bg-white/20 backdrop-blur-md dark:border-white/5 dark:bg-white/5 space-y-4 shadow-xl lg:overflow-y-auto lg:h-full">
+          <div className="lg:col-span-1 p-5 rounded-[22px] border border-violet-200/20 bg-white/20 backdrop-blur-md dark:border-white/5 dark:bg-white/5 space-y-4 shadow-xl lg:overflow-y-auto no-scrollbar lg:h-full">
             <div className="flex items-center justify-between border-b border-violet-200/20 pb-3 dark:border-white/5">
               <h4 className="text-xs font-black uppercase tracking-wider text-violet-600 dark:text-violet-400">
                 {editingTemplateId ? "Edit Template" : "Create Template"}
@@ -1845,7 +1873,7 @@ export function InboxLive({
                 setTabVisibleTemplatesCount(prev => prev + 5);
               }
             }}
-            className="lg:col-span-2 space-y-3 lg:overflow-y-auto lg:h-full lg:pr-2"
+            className="lg:col-span-2 space-y-3 lg:overflow-y-auto no-scrollbar lg:h-full lg:pr-2"
           >
             {loadingTemplates ? (
               <div className="flex justify-center py-12">
@@ -1991,7 +2019,7 @@ export function InboxLive({
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0">
           {/* Creator Form */}
-          <div className="lg:col-span-1 p-5 rounded-[22px] border border-violet-200/20 bg-white/20 backdrop-blur-md dark:border-white/5 dark:bg-white/5 space-y-4 shadow-xl lg:overflow-y-auto lg:h-full">
+          <div className="lg:col-span-1 p-5 rounded-[22px] border border-violet-200/20 bg-white/20 backdrop-blur-md dark:border-white/5 dark:bg-white/5 space-y-4 shadow-xl lg:overflow-y-auto no-scrollbar lg:h-full">
             <h4 className="text-xs font-black uppercase tracking-wider text-violet-600 dark:text-violet-400 border-b border-violet-200/20 pb-3 dark:border-white/5">
               {editingLinkId ? "Edit Link" : "Create Link"}
             </h4>
@@ -2051,7 +2079,7 @@ export function InboxLive({
                 setTabVisibleLinksCount(prev => prev + 5);
               }
             }}
-            className="lg:col-span-2 space-y-3 lg:overflow-y-auto lg:h-full lg:pr-2"
+            className="lg:col-span-2 space-y-3 lg:overflow-y-auto no-scrollbar lg:h-full lg:pr-2"
           >
             {loadingLinks ? (
               <div className="flex justify-center py-12">

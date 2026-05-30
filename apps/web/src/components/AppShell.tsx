@@ -24,7 +24,7 @@ import {
   Sun,
   Moon,
 } from 'lucide-react';
-import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useState, useRef, type CSSProperties, type ReactNode } from 'react';
 import { Button } from '@/components/ui/Button';
 import { api } from '@/lib/api';
 import { brandInitials, withAlpha } from '@/lib/color';
@@ -87,6 +87,20 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
+
+  const mainRef = useRef<HTMLDivElement>(null);
+  const [scrolled, setScrolled] = useState(false);
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    setScrolled(e.currentTarget.scrollTop > 90);
+  };
+
+  useEffect(() => {
+    setScrolled(false);
+    if (mainRef.current) {
+      mainRef.current.scrollTop = 0;
+    }
+  }, [pathname]);
 
   useEffect(() => {
     const val = localStorage.getItem('sidebar-collapsed');
@@ -156,8 +170,12 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
           onToggle={handleToggleSidebar}
         />
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden lg:glass-container">
-          <Topbar me={me} onMenuClick={() => setMobileOpen(true)} />
-          <main className="relative flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+          <Topbar me={me} scrolled={scrolled} onMenuClick={() => setMobileOpen(true)} />
+          <main
+            ref={mainRef}
+            onScroll={handleScroll}
+            className="relative flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8 lg:py-8"
+          >
             {children}
           </main>
         </div>
@@ -372,9 +390,35 @@ function ThemeToggle() {
   );
 }
 
-function Topbar({ me, onMenuClick }: { me: Me; onMenuClick: () => void }) {
+function getPageTitle(pathname: string): string {
+  if (pathname === '/admin/studios') return 'Studios';
+  if (pathname === '/admin/settings') return 'Platform Settings';
+  if (pathname.includes('/inbox')) return 'Inbox';
+  if (pathname.includes('/pipeline')) return 'Pipeline';
+  if (pathname.includes('/campaigns')) return 'Campaigns';
+  if (pathname.includes('/leads')) return 'Leads';
+  if (pathname.includes('/social-planner')) return 'Social Planner';
+  if (pathname.includes('/payments')) return 'Payments';
+  if (pathname.includes('/channels')) return 'Channels';
+  if (pathname.includes('/knowledge-base')) return 'Knowledge Base';
+  if (pathname.includes('/settings')) return 'Settings';
+  return 'Dashboard';
+}
+
+function Topbar({
+  me,
+  scrolled,
+  onMenuClick,
+}: {
+  me: Me;
+  scrolled: boolean;
+  onMenuClick: () => void;
+}) {
+  const pathname = usePathname();
   const router = useRouter();
   const [open, setOpen] = useState(false);
+
+  const pageTitle = getPageTitle(pathname);
 
   async function logout() {
     try {
@@ -386,17 +430,27 @@ function Topbar({ me, onMenuClick }: { me: Me; onMenuClick: () => void }) {
   }
 
   return (
-    <header className="sticky top-0 z-20 flex h-16 items-center justify-between gap-3 border-b border-white/20 bg-white/60 px-4 backdrop-blur-2xl sm:px-6 lg:justify-end lg:px-10 dark:border-white/5 dark:bg-neutral-950/60" style={{ boxShadow: '0 1px 0 rgba(255,255,255,0.1), 0 4px 20px rgba(0,0,0,0.04)' }}>
+    <header className="sticky top-0 z-20 flex h-16 items-center justify-between gap-3 border-b border-white/20 bg-white/60 px-4 backdrop-blur-2xl sm:px-6 lg:px-10 dark:border-white/5 dark:bg-neutral-950/60" style={{ boxShadow: '0 1px 0 rgba(255,255,255,0.1), 0 4px 20px rgba(0,0,0,0.04)' }}>
       {/* Mobile menu button */}
       <button
         type="button"
         onClick={onMenuClick}
-        className="grid h-10 w-10 place-items-center rounded-xl text-slate-700 hover:bg-slate-100 lg:hidden dark:text-slate-200 dark:hover:bg-slate-800"
+        className="grid h-10 w-10 place-items-center rounded-xl text-slate-700 hover:bg-slate-100 lg:hidden dark:text-slate-200 dark:hover:bg-slate-800 shrink-0"
         aria-label="Open menu"
         suppressHydrationWarning
       >
         <Menu className="h-5 w-5" />
       </button>
+
+      {/* Sticky page title details when scrolled */}
+      <div className={cn(
+        "flex items-center gap-2.5 transition-all duration-300 mr-auto",
+        scrolled ? "opacity-100 translate-x-0" : "opacity-0 -translate-x-4 pointer-events-none"
+      )}>
+        <span className="text-xs font-black text-zinc-900 dark:text-white uppercase tracking-wider bg-white/40 dark:bg-white/5 border border-white/30 dark:border-white/5 px-3 py-1.5 rounded-xl backdrop-blur-md shadow-sm">
+          {pageTitle}
+        </span>
+      </div>
 
       <div className="flex items-center gap-3">
         {/* Theme Toggle Button */}
