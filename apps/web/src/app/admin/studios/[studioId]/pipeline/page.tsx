@@ -317,7 +317,7 @@ function PipelineColumn({
       </header>
 
       {/* Cards scroll area */}
-      <div className="flex flex-1 flex-col gap-2 overflow-y-auto px-2.5 pb-3">
+      <div className="flex flex-1 flex-col gap-2 overflow-y-auto no-scrollbar px-2.5 pb-3">
         {leads.length === 0 ? (
           <div
             className={cn(
