@@ -11,6 +11,13 @@ export type AvailabilitySlot = {
   times: string[];
 };
 
+type StudioData = {
+  id: string;
+  slug: string;
+  availabilitySlots?: AvailabilitySlot[];
+  availabilityTimezone?: string;
+};
+
 const daysOfWeek = [
   "Monday",
   "Tuesday",
@@ -39,17 +46,17 @@ export function AvailabilitySettings({
   studio,
   onSaveSuccess,
 }: {
-  studio: any;
+  studio: StudioData;
   onSaveSuccess?: (msg: string) => void;
 }) {
   const [slots, setSlots] = useState<AvailabilitySlot[]>(() => {
-    const raw = studio.availabilitySlots || [];
+    const raw: AvailabilitySlot[] = studio.availabilitySlots || [];
     // Ensure all 7 days of the week are always initialized
     return daysOfWeek.map(day => {
-      const existing = raw.find((s: any) => (s.day || '').toLowerCase() === day.toLowerCase());
+      const existing = raw.find((s) => (s.day || '').toLowerCase() === day.toLowerCase());
       return {
         day,
-        times: existing ? (existing.times || (existing.time ? [existing.time] : [])) : []
+        times: existing ? (existing.times || []) : []
       };
     });
   });

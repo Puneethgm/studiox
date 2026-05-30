@@ -27,7 +27,7 @@ export async function updateStudioSettings(
     logoUrl?: string;
     contactEmail?: string;
     active?: boolean;
-    availabilitySlots?: any;
+    availabilitySlots?: { day: string; times: string[] }[];
     availabilityTimezone?: string;
     geminiApiKey?: string;
     metaAppId?: string;

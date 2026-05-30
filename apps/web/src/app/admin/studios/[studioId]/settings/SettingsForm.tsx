@@ -56,13 +56,14 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
   const [showMetaAppSecret, setShowMetaAppSecret] = useState(false);
 
   useEffect(() => {
-    getSheetsSettings(studio.id).then((res) => {
+    void (async () => {
+      const res = await getSheetsSettings(studio.id);
       if (res.ok && res.data) {
         setSpreadsheetId(res.data.spreadsheetId || '');
         setTabName(res.data.tabName || 'Leads');
         setSheetsActive(res.data.active || false);
       }
-    });
+    })();
   }, [studio.id]);
 
   async function onSaveSheetsSettings(e: React.FormEvent) {

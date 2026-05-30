@@ -47,27 +47,30 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
       setLoading(false);
       return;
     }
-    
+
     setLoading(true);
-    api<{ stripeAccountId: string; stripePublishableKey: string; stripeSecretKey: string; subscriptionTier: string }>(
-      `/api/v1/me/studios/${studioId}/payments`
-    ).then((res) => {
-      setPlan((res.subscriptionTier || 'pro') as any);
-      if (res.stripeAccountId) {
-        setStripeStatus('connected');
-        setStripeAccountId(res.stripeAccountId);
-        setFormStripeAccountId(res.stripeAccountId);
-        setFormPublishableKey(res.stripePublishableKey || '');
-        setFormSecretKey(res.stripeSecretKey || '');
-      } else {
+    void (async () => {
+      try {
+        const res = await api<{ stripeAccountId: string; stripePublishableKey: string; stripeSecretKey: string; subscriptionTier: string }>(
+          `/api/v1/me/studios/${studioId}/payments`
+        );
+        setPlan((res.subscriptionTier || 'pro') as 'starter' | 'pro' | 'enterprise');
+        if (res.stripeAccountId) {
+          setStripeStatus('connected');
+          setStripeAccountId(res.stripeAccountId);
+          setFormStripeAccountId(res.stripeAccountId);
+          setFormPublishableKey(res.stripePublishableKey || '');
+          setFormSecretKey(res.stripeSecretKey || '');
+        } else {
+          setStripeStatus('disconnected');
+        }
+      } catch {
+        // Gracefully fall back — studio may not have Stripe configured yet
         setStripeStatus('disconnected');
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
-    }).catch(() => {
-      // Gracefully fall back — studio may not have Stripe configured yet
-      setStripeStatus('disconnected');
-      setLoading(false);
-    });
+    })();
   }, [studioId]);
 
   const handleLinkStripe = async (e: React.FormEvent) => {

@@ -110,27 +110,26 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
     }
   };
 
-  const fetchPosts = (silent = false) => {
+  const fetchPosts = async (silent = false) => {
     if (!silent) setLoadingPosts(true);
     const targetStudioId = studioId === 'global' ? 'global' : studioId;
-    api<any[]>(`/api/v1/studios/${targetStudioId}/social-posts`)
-      .then((res) => {
-        const mapped = res.map((p: any) => ({
-          id: p.id,
-          campaignName: p.campaign || 'General Promo',
-          platform: p.platform as any,
-          content: p.copy,
-          imageUrl: p.mediaUrl,
-          status: p.status as any,
-          scheduledTime: p.scheduledAt,
-        }));
-        setPosts(mapped);
-        if (!silent) setLoadingPosts(false);
-      })
-      .catch((err) => {
-        console.error('Failed to load social posts:', err);
-        if (!silent) setLoadingPosts(false);
-      });
+    try {
+      const res = await api<{ id: string; campaign: string; platform: string; copy: string; mediaUrl?: string; status: string; scheduledAt: string }[]>(`/api/v1/studios/${targetStudioId}/social-posts`);
+      const mapped = res.map((p) => ({
+        id: p.id,
+        campaignName: p.campaign || 'General Promo',
+        platform: p.platform as SocialPost['platform'],
+        content: p.copy,
+        imageUrl: p.mediaUrl,
+        status: p.status as SocialPost['status'],
+        scheduledTime: p.scheduledAt,
+      }));
+      setPosts(mapped);
+    } catch (err) {
+      console.error('Failed to load social posts:', err);
+    } finally {
+      if (!silent) setLoadingPosts(false);
+    }
   };
 
   const handleQuickAiGenerate = async () => {
@@ -171,19 +170,21 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
   };
 
   useEffect(() => {
-    fetchPosts();
+    void fetchPosts();
 
     // Setup interval to poll for post status updates in the background (every 10s)
     const interval = setInterval(() => {
-      fetchPosts(true);
+      void fetchPosts(true);
     }, 10000);
 
     // Fetch Meta and Google Ads integration state
     if (studioId !== 'global') {
-      Promise.all([
-        api<any>(`/api/v1/me/studios/${studioId}`),
-        api<{channels: any[]}>(`/api/v1/studios/${studioId}/messaging/channels`)
-      ]).then(([studioRes, channelsRes]) => {
+      void (async () => {
+        try {
+          const [studioRes, channelsRes] = await Promise.all([
+            api<{ metaAppId?: string; metaAppSecret?: string; googleClientId?: string; googleClientSecret?: string; googleDeveloperToken?: string }>(`/api/v1/me/studios/${studioId}`),
+            api<{ channels: { kind: string }[] }>(`/api/v1/studios/${studioId}/messaging/channels`)
+          ]);
           const hasMeta = !!(studioRes.metaAppId && studioRes.metaAppSecret);
           const hasGoogleAds = !!(studioRes.googleClientId && studioRes.googleClientSecret && studioRes.googleDeveloperToken);
           const hasX = channelsRes.channels?.some(c => c.kind === 'x_dm');
@@ -193,8 +194,10 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
             googleAds: hasGoogleAds,
             x: !!hasX,
           });
-        })
-        .catch((err) => console.error('Failed to fetch studio integrations:', err));
+        } catch (err) {
+          console.error('Failed to fetch studio integrations:', err);
+        }
+      })();
     } else {
       setConnectedChannels({
         facebook: true,
