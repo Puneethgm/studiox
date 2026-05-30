@@ -61,9 +61,8 @@ export default async function StudiosListPage({
 
       {/* ── Page header ───────────────────────── */}
       <div
-        className="relative overflow-hidden rounded-[26px] border border-white/30 p-6 backdrop-blur-2xl dark:border-white/5"
+        className="relative overflow-hidden rounded-[26px] border border-white/30 p-6 backdrop-blur-2xl dark:border-white/5 bg-white/30 dark:bg-neutral-900/30"
         style={{
-          background: 'linear-gradient(135deg, rgba(255,255,255,0.30) 0%, rgba(237,233,254,0.22) 60%, rgba(219,234,254,0.20) 100%)',
           boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.2), 0 8px 32px rgba(139,92,246,0.07)',
         }}
       >
@@ -269,11 +268,9 @@ function StudioCard({ studio: s, idx }: { studio: Studio; idx: number }) {
       className="group block focus:outline-none"
     >
       <div
-        className="relative h-full overflow-hidden rounded-[24px] backdrop-blur-2xl transition-all duration-500 hover:-translate-y-2 hover:scale-[1.013]"
+        className="relative h-full overflow-hidden rounded-[24px] backdrop-blur-2xl transition-all duration-500 hover:-translate-y-2 hover:scale-[1.013] border border-white/30 bg-white/30 dark:border-white/5 dark:bg-neutral-900/30"
         style={{
-          background: 'linear-gradient(160deg, rgba(255,255,255,0.42) 0%, rgba(248,245,255,0.32) 100%)',
-          border: '1px solid rgba(255,255,255,0.38)',
-          boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.22), 0 8px 32px rgba(0,0,0,0.07)',
+          boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 8px 32px rgba(0,0,0,0.07)',
         }}
       >
         {/* Full-width colored header strip */}

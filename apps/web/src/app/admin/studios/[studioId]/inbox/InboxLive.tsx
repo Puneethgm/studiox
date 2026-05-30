@@ -733,14 +733,13 @@ export function InboxLive({
 
   return (
     <div
-      className="flex flex-col h-[calc(100vh-11rem)] overflow-hidden rounded-[22px] border border-violet-200/30 backdrop-blur-2xl dark:border-violet-500/10"
+      className="flex flex-col h-[calc(100vh-13rem)] lg:h-[calc(100vh-15.5rem)] overflow-hidden rounded-[22px] border border-white/30 bg-white/30 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30"
       style={{
-        background: 'linear-gradient(135deg, rgba(255,255,255,0.22) 0%, rgba(237,233,254,0.18) 50%, rgba(219,234,254,0.18) 100%)',
         boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.2), 0 8px 40px rgba(139,92,246,0.08)',
       }}
     >
       {/* ── Top Navigation Tabs ─────────────────── */}
-      <div className="flex items-center justify-between border-b border-violet-200/20 px-6 py-3.5 bg-white/20 backdrop-blur-md dark:border-violet-500/10 dark:bg-white/5 shrink-0 z-20">
+      <div className="flex items-center justify-between border-b border-white/20 px-6 py-3.5 bg-white/20 backdrop-blur-md dark:border-white/5 dark:bg-neutral-950/20 shrink-0 z-20">
         <div className="flex gap-2">
           {(
             [
@@ -773,11 +772,10 @@ export function InboxLive({
           <>
             {/* Sidebar */}
             <aside
-              className="hidden w-80 shrink-0 flex-col border-r border-violet-200/25 dark:border-violet-500/10 sm:flex"
-              style={{ background: 'linear-gradient(180deg, rgba(237,233,254,0.25) 0%, rgba(219,234,254,0.15) 100%)' }}
+              className="hidden w-80 shrink-0 flex-col border-r border-white/20 sm:flex bg-white/10 dark:border-white/5 dark:bg-neutral-950/10"
             >
               {/* Sidebar Header */}
-              <div className="flex h-14 items-center justify-between border-b border-violet-200/20 px-5 dark:border-violet-500/10">
+              <div className="flex h-14 items-center justify-between border-b border-white/20 px-5 dark:border-white/5">
                 <div className="flex items-center gap-2">
                   <h2 className="text-sm font-black uppercase tracking-[0.15em] text-violet-600 dark:text-violet-400">Messages</h2>
                 </div>
@@ -939,10 +937,7 @@ export function InboxLive({
                   </header>
 
                   <div
-                    className="relative flex-1 overflow-y-auto px-5 py-6"
-                    style={{
-                      background: 'linear-gradient(160deg, rgba(255,255,255,0.08) 0%, rgba(237,233,254,0.06) 50%, rgba(219,234,254,0.08) 100%)',
-                    }}
+                    className="relative flex-1 overflow-y-auto px-5 py-6 bg-white/5 dark:bg-neutral-950/20"
                   >
                     <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(rgba(139,92,246,0.04)_1px,transparent_1px)] [background-size:22px_22px] dark:bg-[radial-gradient(rgba(139,92,246,0.06)_1px,transparent_1px)]" />
                     <div className="pointer-events-none absolute left-1/4 top-1/4 h-48 w-48 rounded-full bg-violet-400/10 blur-3xl" />
@@ -965,10 +960,7 @@ export function InboxLive({
                   </div>
 
                   <footer
-                    className="z-10 border-t border-violet-200/20 p-4 backdrop-blur-xl dark:border-violet-500/10"
-                    style={{
-                      background: 'linear-gradient(to top, rgba(237,233,254,0.35) 0%, rgba(219,234,254,0.25) 100%)',
-                    }}
+                    className="z-10 border-t border-white/20 p-4 backdrop-blur-xl dark:border-white/5 bg-white/20 dark:bg-neutral-950/20"
                   >
                     {/* Hidden file input */}
                     <input
@@ -1251,9 +1243,8 @@ export function InboxLive({
                           }}
                           rows={1}
                           placeholder="Type a message... (Enter to send)"
-                          className="block min-h-[48px] max-h-32 w-full resize-none rounded-2xl border border-violet-200/40 px-5 py-3 text-sm font-medium text-zinc-900 placeholder:text-violet-400/60 backdrop-blur-md focus:border-violet-400/50 focus:outline-none focus:ring-2 focus:ring-violet-400/20 dark:border-violet-500/20 dark:text-zinc-100 dark:placeholder:text-violet-300/30"
+                          className="block min-h-[48px] max-h-32 w-full resize-none rounded-2xl border border-white/20 bg-white/70 px-5 py-3 text-sm font-medium text-zinc-900 placeholder:text-violet-400/60 backdrop-blur-md focus:border-violet-400/50 focus:outline-none focus:ring-2 focus:ring-violet-400/20 dark:border-white/5 dark:bg-neutral-900/60 dark:text-zinc-100 dark:placeholder:text-violet-300/30"
                           style={{
-                            background: 'linear-gradient(135deg, rgba(255,255,255,0.7) 0%, rgba(245,243,255,0.65) 100%)',
                             boxShadow: 'inset 0 1px 3px rgba(139,92,246,0.08), 0 2px 12px rgba(139,92,246,0.06)',
                           }}
                           suppressHydrationWarning
@@ -1275,16 +1266,12 @@ export function InboxLive({
               ) : (
                 /* Empty state */
                 <div
-                  className="grid flex-1 place-items-center px-6 text-center"
-                  style={{
-                    background: 'linear-gradient(160deg, rgba(255,255,255,0.08) 0%, rgba(237,233,254,0.06) 50%, rgba(219,234,254,0.08) 100%)',
-                  }}
+                  className="grid flex-1 place-items-center px-6 text-center bg-white/5 dark:bg-neutral-950/20"
                 >
                   <div
-                    className="max-w-sm rounded-[28px] border border-violet-200/30 p-10 backdrop-blur-2xl dark:border-violet-500/10"
+                    className="max-w-sm rounded-[28px] border border-white/30 p-10 backdrop-blur-2xl dark:border-white/5 bg-white/30 dark:bg-neutral-900/30"
                     style={{
-                      background: 'linear-gradient(135deg, rgba(255,255,255,0.5) 0%, rgba(245,243,255,0.4) 100%)',
-                      boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.3), 0 16px 60px rgba(139,92,246,0.12)',
+                      boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 16px 60px rgba(139,92,246,0.12)',
                     }}
                   >
                     <div className="relative mx-auto mb-6 grid h-20 w-20 place-items-center">

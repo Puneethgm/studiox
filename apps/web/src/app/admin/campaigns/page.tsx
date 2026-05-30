@@ -31,9 +31,8 @@ export default async function GlobalCampaignsPage({
     <div className="space-y-8">
       {/* Premium Glass Header */}
       <div
-        className="relative overflow-hidden rounded-[26px] border border-white/30 p-6 backdrop-blur-2xl dark:border-white/5"
+        className="relative overflow-hidden rounded-[26px] border border-white/30 p-6 backdrop-blur-2xl dark:border-white/5 bg-white/30 dark:bg-neutral-900/30"
         style={{
-          background: 'linear-gradient(135deg, rgba(255,255,255,0.30) 0%, rgba(237,233,254,0.22) 60%, rgba(219,234,254,0.20) 100%)',
           boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.2), 0 8px 32px rgba(139,92,246,0.07)',
         }}
       >
@@ -55,7 +54,7 @@ export default async function GlobalCampaignsPage({
       </div>
 
       {campaigns.length === 0 ? (
-        <Card className="border-none bg-white/40 backdrop-blur-xl dark:bg-slate-900/40">
+        <Card className="border border-white/30 bg-white/30 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30">
           <EmptyState
             icon={<Megaphone className="h-8 w-8 text-slate-400" />}
             title="No campaigns found"
@@ -113,7 +112,7 @@ function CampaignCard({ campaign, index }: { campaign: Campaign; index: number }
     >
       <div className="absolute -inset-1 rounded-[36px] bg-gradient-to-br from-brand-500/20 to-sky-500/20 opacity-0 blur-xl transition duration-500 group-hover:opacity-100" />
       
-      <Card className="relative h-full border-none bg-white/40 shadow-xl backdrop-blur-2xl dark:bg-neutral-900/40" noPadding elevated>
+      <Card className="relative h-full border border-white/30 bg-white/30 shadow-xl backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30" noPadding elevated>
         <div className="flex h-full flex-col p-8">
           <div className="mb-6 flex items-start justify-between">
             <div className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-brand-500 to-brand-600 text-white shadow-lg shadow-brand-500/20">
@@ -147,7 +146,7 @@ function CampaignCard({ campaign, index }: { campaign: Campaign; index: number }
           </p>
 
           <div className="mb-8 grid grid-cols-2 gap-4">
-            <div className="rounded-3xl bg-white/40 p-4 backdrop-blur-md dark:bg-white/5">
+            <div className="rounded-3xl bg-white/40 p-4 backdrop-blur-md dark:bg-neutral-950/40">
               <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-wider text-zinc-400">
                 <Users className="h-3.5 w-3.5" />
                 Leads
@@ -156,7 +155,7 @@ function CampaignCard({ campaign, index }: { campaign: Campaign; index: number }
                 {campaign.leadCount ?? 0}
               </div>
             </div>
-            <div className="rounded-3xl bg-white/40 p-4 backdrop-blur-md dark:bg-white/5">
+            <div className="rounded-3xl bg-white/40 p-4 backdrop-blur-md dark:bg-neutral-950/40">
               <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-wider text-zinc-400">
                 <Zap className="h-3.5 w-3.5" />
                 Plans
@@ -167,7 +166,7 @@ function CampaignCard({ campaign, index }: { campaign: Campaign; index: number }
             </div>
           </div>
 
-          <div className="mt-auto pt-6 border-t border-slate-100 dark:border-slate-800/60">
+          <div className="mt-auto pt-6 border-t border-slate-100 dark:border-white/5">
             <div className="flex items-center gap-3">
               <div className="min-w-0 flex-1">
                 <CopyLink url={campaign.shareUrl} />
@@ -175,7 +174,7 @@ function CampaignCard({ campaign, index }: { campaign: Campaign; index: number }
               <Link 
                 href={campaign.shareUrl} 
                 target="_blank"
-                className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-500 transition-all hover:bg-slate-200 hover:text-slate-900 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white"
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-500 transition-all hover:bg-slate-200 hover:text-slate-900 dark:bg-neutral-800 dark:text-zinc-400 dark:hover:bg-neutral-700 dark:hover:text-white"
                 title="Preview live page"
               >
                 <ExternalLink className="h-4 w-4" />

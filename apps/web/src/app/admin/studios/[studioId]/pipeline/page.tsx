@@ -137,9 +137,8 @@ export default async function PipelinePage({
 
       {/* ── Compact glass header ── */}
       <div
-        className="relative shrink-0 overflow-hidden rounded-[22px] border border-white/30 px-5 py-4 backdrop-blur-2xl dark:border-white/5"
+        className="relative shrink-0 overflow-hidden rounded-[22px] border border-white/30 bg-white/30 px-5 py-4 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30"
         style={{
-          background: 'linear-gradient(135deg, rgba(255,255,255,0.30) 0%, rgba(237,233,254,0.20) 100%)',
           boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.20), 0 4px 16px rgba(139,92,246,0.06)',
         }}
       >
@@ -212,6 +211,57 @@ export default async function PipelinePage({
 }
 
 // ─────────────────────────────────────────────────────
+const STATUS_STYLES: Record<LeadStatus, {
+  bg: string;
+  border: string;
+  pill: string;
+  pillText: string;
+  avatarRing: string;
+}> = {
+  new: {
+    bg: 'bg-sky-500/5 dark:bg-sky-950/20',
+    border: 'border-sky-500/20 dark:border-sky-500/10',
+    pill: 'bg-sky-500/10 dark:bg-sky-400/10',
+    pillText: 'text-sky-600 dark:text-sky-400',
+    avatarRing: 'border-sky-500/30 dark:border-sky-400/20',
+  },
+  contacted: {
+    bg: 'bg-violet-500/5 dark:bg-violet-950/20',
+    border: 'border-violet-500/20 dark:border-violet-500/10',
+    pill: 'bg-violet-500/10 dark:bg-violet-400/10',
+    pillText: 'text-violet-600 dark:text-violet-400',
+    avatarRing: 'border-violet-500/25 dark:border-violet-400/20',
+  },
+  trial_booked: {
+    bg: 'bg-amber-500/5 dark:bg-amber-950/20',
+    border: 'border-amber-500/20 dark:border-amber-500/10',
+    pill: 'bg-amber-500/10 dark:bg-amber-400/10',
+    pillText: 'text-amber-600 dark:text-amber-400',
+    avatarRing: 'border-amber-500/30 dark:border-amber-400/20',
+  },
+  member: {
+    bg: 'bg-emerald-500/5 dark:bg-emerald-950/20',
+    border: 'border-emerald-500/20 dark:border-emerald-500/10',
+    pill: 'bg-emerald-500/10 dark:bg-emerald-400/10',
+    pillText: 'text-emerald-600 dark:text-emerald-400',
+    avatarRing: 'border-emerald-500/25 dark:border-emerald-400/20',
+  },
+  dropped: {
+    bg: 'bg-slate-500/5 dark:bg-slate-950/20',
+    border: 'border-slate-500/20 dark:border-slate-500/10',
+    pill: 'bg-slate-500/10 dark:bg-slate-400/10',
+    pillText: 'text-slate-600 dark:text-slate-400',
+    avatarRing: 'border-slate-500/25 dark:border-slate-400/20',
+  },
+  paused: {
+    bg: 'bg-indigo-500/5 dark:bg-indigo-950/20',
+    border: 'border-indigo-500/20 dark:border-indigo-500/10',
+    pill: 'bg-indigo-500/10 dark:bg-indigo-400/10',
+    pillText: 'text-indigo-600 dark:text-indigo-400',
+    avatarRing: 'border-indigo-500/25 dark:border-indigo-400/20',
+  },
+};
+
 // Column
 // ─────────────────────────────────────────────────────
 
@@ -228,11 +278,13 @@ function PipelineColumn({
 
   return (
     <section
-      className="flex h-full flex-col overflow-hidden rounded-[20px] backdrop-blur-2xl"
+      className={cn(
+        "flex h-full flex-col overflow-hidden rounded-[20px] backdrop-blur-2xl border",
+        STATUS_STYLES[status].bg,
+        STATUS_STYLES[status].border
+      )}
       style={{
-        background: cfg.lightBg,
-        border: `1px solid ${cfg.border}`,
-        boxShadow: `inset 0 0 0 1px rgba(255,255,255,0.20), 0 4px 20px rgba(0,0,0,0.04)`,
+        boxShadow: `inset 0 0 0 1px rgba(255,255,255,0.10), 0 4px 20px rgba(0,0,0,0.04)`,
       }}
       aria-label={LEAD_STATUS_LABELS[status]}
     >
@@ -249,13 +301,16 @@ function PipelineColumn({
             className="h-2 w-2 rounded-full"
             style={{ background: cfg.color, boxShadow: `0 0 0 3px ${cfg.glow}` }}
           />
-          <h3 className="text-xs font-black uppercase tracking-[0.14em] text-zinc-600 dark:text-zinc-300">
+          <h3 className={cn("text-xs font-black uppercase tracking-[0.14em]", STATUS_STYLES[status].pillText)}>
             {LEAD_STATUS_LABELS[status]}
           </h3>
         </div>
         <span
-          className="rounded-full px-2 py-0.5 text-[11px] font-black tabular-nums"
-          style={{ background: cfg.pill, color: cfg.pillText }}
+          className={cn(
+            "rounded-full px-2 py-0.5 text-[11px] font-black tabular-nums",
+            STATUS_STYLES[status].pill,
+            STATUS_STYLES[status].pillText
+          )}
         >
           {count}
         </span>
@@ -265,15 +320,20 @@ function PipelineColumn({
       <div className="flex flex-1 flex-col gap-2 overflow-y-auto px-2.5 pb-3">
         {leads.length === 0 ? (
           <div
-            className="flex flex-1 items-center justify-center rounded-xl border-2 border-dashed py-8 text-center"
-            style={{ borderColor: `${cfg.color}30`, color: '#94a3b8' }}
+            className={cn(
+              "flex flex-1 items-center justify-center rounded-xl border-2 border-dashed py-8 text-center",
+              STATUS_STYLES[status].border,
+              "text-slate-400"
+            )}
           >
             <div>
               <div
-                className="mx-auto mb-2 grid h-8 w-8 place-items-center rounded-xl"
-                style={{ background: cfg.pill }}
+                className={cn(
+                  "mx-auto mb-2 grid h-8 w-8 place-items-center rounded-xl",
+                  STATUS_STYLES[status].pill
+                )}
               >
-                <Inbox className="h-4 w-4" style={{ color: cfg.color }} />
+                <Inbox className={cn("h-4 w-4", STATUS_STYLES[status].pillText)} />
               </div>
               <p className="text-[11px] font-semibold">No leads yet</p>
             </div>
@@ -286,8 +346,10 @@ function PipelineColumn({
             {overflow > 0 && (
               <Link
                 href={`/admin/studios/${studioId}/leads?status=${status}`}
-                className="mt-1 inline-flex items-center justify-center gap-1.5 rounded-2xl border border-white/40 bg-white/40 py-2.5 text-xs font-black backdrop-blur-sm transition-all hover:bg-white/60 dark:border-white/10 dark:bg-white/5"
-                style={{ color: cfg.pillText }}
+                className={cn(
+                  "mt-1 inline-flex items-center justify-center gap-1.5 rounded-2xl border border-white/40 bg-white/40 py-2.5 text-xs font-black backdrop-blur-sm transition-all hover:bg-white/60 dark:border-white/10 dark:bg-white/5",
+                  STATUS_STYLES[status].pillText
+                )}
               >
                 +{overflow} more
                 <ArrowRight className="h-3 w-3" />
@@ -316,18 +378,19 @@ function LeadCard({
   return (
     <Link
       href={`/admin/studios/${studioId}/leads/${lead.id}`}
-      className="group block rounded-[16px] p-3 backdrop-blur-xl transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md"
+      className="group block rounded-[16px] p-3 backdrop-blur-xl transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md border bg-white/70 border-white/45 dark:bg-neutral-900/30 dark:border-white/5"
       style={{
-        background: 'linear-gradient(145deg, rgba(255,255,255,0.70) 0%, rgba(255,255,255,0.55) 100%)',
-        border: '1px solid rgba(255,255,255,0.50)',
-        boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.30), 0 2px 8px rgba(0,0,0,0.04)',
+        boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 2px 8px rgba(0,0,0,0.04)',
       }}
     >
       {/* Avatar + name row */}
       <div className="flex items-center gap-2.5">
         <span
-          className="grid h-8 w-8 shrink-0 place-items-center rounded-xl text-[11px] font-black text-white shadow-sm border-2"
-          style={{ background: av, borderColor: cfg.avatarRing }}
+          className={cn(
+            "grid h-8 w-8 shrink-0 place-items-center rounded-xl text-[11px] font-black text-white shadow-sm border-2",
+            STATUS_STYLES[lead.status].avatarRing
+          )}
+          style={{ background: av }}
           aria-hidden
         >
           {brandInitials(lead.name)}
@@ -345,8 +408,11 @@ function LeadCard({
       {/* Plan + time row */}
       <div className="mt-2.5 flex items-center justify-between gap-2">
         <span
-          className="inline-flex max-w-[70%] truncate rounded-full px-2 py-0.5 text-[10px] font-bold"
-          style={{ background: cfg.pill, color: cfg.pillText }}
+          className={cn(
+            "inline-flex max-w-[70%] truncate rounded-full px-2 py-0.5 text-[10px] font-bold",
+            STATUS_STYLES[lead.status].pill,
+            STATUS_STYLES[lead.status].pillText
+          )}
         >
           {lead.fitnessPlan}
         </span>
@@ -361,8 +427,7 @@ function LeadCard({
       {/* Notes preview */}
       {lead.notes && (
         <div
-          className="mt-2.5 flex items-start gap-1.5 border-t pt-2 text-[10px] leading-snug text-zinc-500"
-          style={{ borderColor: 'rgba(0,0,0,0.06)' }}
+          className="mt-2.5 flex items-start gap-1.5 border-t pt-2 text-[10px] leading-snug text-zinc-500 border-zinc-200 dark:border-white/5"
         >
           <MessageSquareText className="mt-px h-3 w-3 shrink-0 text-zinc-300" />
           <span className="line-clamp-2">{lead.notes.split('\n').filter(Boolean).slice(0, 2).join(' · ')}</span>
