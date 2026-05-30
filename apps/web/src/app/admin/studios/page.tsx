@@ -182,37 +182,55 @@ export default async function StudiosListPage({
 
 type CardColor = 'violet' | 'emerald' | 'sky' | 'amber';
 
-const colorMap: Record<CardColor, {
-  bg: string; border: string; iconBg: string; iconText: string;
-  valueTx: string; hint: string; shadow: string; glow: string;
+const colorClasses: Record<CardColor, {
+  cardBg: string;
+  cardBorder: string;
+  labelText: string;
+  valueText: string;
+  hintText: string;
+  iconBg: string;
+  iconText: string;
+  glowBg: string;
 }> = {
   violet: {
-    bg: 'rgba(245,243,255,0.45)', border: 'rgba(196,181,253,0.40)',
-    iconBg: 'rgba(139,92,246,0.12)', iconText: '#7c3aed',
-    valueTx: '#4c1d95', hint: '#7c3aed',
-    shadow: '0 4px 20px rgba(139,92,246,0.10), inset 0 0 0 1px rgba(221,214,254,0.40)',
-    glow: 'rgba(139,92,246,0.15)',
+    cardBg: 'bg-violet-50/45 dark:bg-violet-950/10',
+    cardBorder: 'border-violet-200/40 dark:border-violet-900/20',
+    labelText: 'text-violet-700 dark:text-violet-400',
+    valueText: 'text-violet-950 dark:text-violet-100',
+    hintText: 'text-violet-600 dark:text-violet-400/80',
+    iconBg: 'bg-violet-500/10 dark:bg-violet-400/10',
+    iconText: 'text-violet-700 dark:text-violet-400',
+    glowBg: 'bg-violet-500/10 dark:bg-violet-400/10',
   },
   emerald: {
-    bg: 'rgba(236,253,245,0.45)', border: 'rgba(110,231,183,0.40)',
-    iconBg: 'rgba(16,185,129,0.12)', iconText: '#059669',
-    valueTx: '#065f46', hint: '#10b981',
-    shadow: '0 4px 20px rgba(16,185,129,0.10), inset 0 0 0 1px rgba(167,243,208,0.40)',
-    glow: 'rgba(16,185,129,0.15)',
+    cardBg: 'bg-emerald-50/45 dark:bg-emerald-950/10',
+    cardBorder: 'border-emerald-200/40 dark:border-emerald-900/20',
+    labelText: 'text-emerald-700 dark:text-emerald-400',
+    valueText: 'text-emerald-950 dark:text-emerald-100',
+    hintText: 'text-emerald-600 dark:text-emerald-400/80',
+    iconBg: 'bg-emerald-500/10 dark:bg-emerald-400/10',
+    iconText: 'text-emerald-700 dark:text-emerald-400',
+    glowBg: 'bg-emerald-500/10 dark:bg-emerald-400/10',
   },
   sky: {
-    bg: 'rgba(240,249,255,0.45)', border: 'rgba(125,211,252,0.40)',
-    iconBg: 'rgba(14,165,233,0.12)', iconText: '#0284c7',
-    valueTx: '#0c4a6e', hint: '#0ea5e9',
-    shadow: '0 4px 20px rgba(14,165,233,0.10), inset 0 0 0 1px rgba(186,230,253,0.40)',
-    glow: 'rgba(14,165,233,0.15)',
+    cardBg: 'bg-sky-50/45 dark:bg-sky-950/10',
+    cardBorder: 'border-sky-200/40 dark:border-sky-900/20',
+    labelText: 'text-sky-700 dark:text-sky-400',
+    valueText: 'text-sky-950 dark:text-sky-100',
+    hintText: 'text-sky-600 dark:text-sky-400/80',
+    iconBg: 'bg-sky-500/10 dark:bg-sky-400/10',
+    iconText: 'text-sky-700 dark:text-sky-400',
+    glowBg: 'bg-sky-500/10 dark:bg-sky-400/10',
   },
   amber: {
-    bg: 'rgba(255,251,235,0.45)', border: 'rgba(252,211,77,0.40)',
-    iconBg: 'rgba(245,158,11,0.12)', iconText: '#d97706',
-    valueTx: '#78350f', hint: '#f59e0b',
-    shadow: '0 4px 20px rgba(245,158,11,0.10), inset 0 0 0 1px rgba(253,230,138,0.40)',
-    glow: 'rgba(245,158,11,0.15)',
+    cardBg: 'bg-amber-50/45 dark:bg-amber-950/10',
+    cardBorder: 'border-amber-200/40 dark:border-amber-900/20',
+    labelText: 'text-amber-700 dark:text-amber-400',
+    valueText: 'text-amber-950 dark:text-amber-100',
+    hintText: 'text-amber-600 dark:text-amber-400/80',
+    iconBg: 'bg-amber-500/10 dark:bg-amber-400/10',
+    iconText: 'text-amber-700 dark:text-amber-400',
+    glowBg: 'bg-amber-500/10 dark:bg-amber-400/10',
   },
 };
 
@@ -221,34 +239,31 @@ function SummaryCard({
 }: {
   label: string; value: number; icon: React.ReactNode; color: CardColor; hint?: string;
 }) {
-  const c = colorMap[color];
+  const c = colorClasses[color];
   return (
     <div
-      className="relative overflow-hidden rounded-[20px] p-5 backdrop-blur-2xl"
-      style={{ background: c.bg, border: `1px solid ${c.border}`, boxShadow: c.shadow }}
+      className={`relative overflow-hidden rounded-[20px] p-5 backdrop-blur-2xl border ${c.cardBg} ${c.cardBorder}`}
     >
       {/* Glow blob */}
       <div
-        className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full blur-2xl"
-        style={{ background: c.glow }}
+        className={`pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full blur-2xl ${c.glowBg}`}
       />
       <div className="relative flex items-start justify-between gap-3">
         <div>
-          <div className="text-[10px] font-black uppercase tracking-[0.18em]" style={{ color: c.iconText }}>
+          <div className={`text-[10px] font-black uppercase tracking-[0.18em] ${c.labelText}`}>
             {label}
           </div>
-          <div className="mt-2 text-3xl font-black tracking-tight" style={{ color: c.valueTx }}>
+          <div className={`mt-2 text-3xl font-black tracking-tight ${c.valueText}`}>
             {value}
           </div>
           {hint && (
-            <div className="mt-1 text-[11px] font-bold" style={{ color: c.hint }}>
+            <div className={`mt-1 text-[11px] font-bold ${c.hintText}`}>
               {hint}
             </div>
           )}
         </div>
         <div
-          className="grid h-10 w-10 shrink-0 place-items-center rounded-xl"
-          style={{ background: c.iconBg, color: c.iconText }}
+          className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${c.iconBg} ${c.iconText}`}
         >
           {icon}
         </div>

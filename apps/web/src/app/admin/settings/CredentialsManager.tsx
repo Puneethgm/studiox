@@ -82,11 +82,7 @@ export function CredentialsManager() {
 
   return (
     <div
-      className="relative overflow-hidden rounded-[26px] border border-white/30 backdrop-blur-2xl dark:border-white/5"
-      style={{
-        background: 'linear-gradient(135deg, rgba(255,255,255,0.40) 0%, rgba(244,244,245,0.30) 100%)',
-        boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.25), 0 8px 32px rgba(9,9,11,0.05)',
-      }}
+      className="relative overflow-hidden rounded-[26px] border border-white/30 bg-white/20 dark:border-white/5 dark:bg-neutral-900/30 backdrop-blur-2xl shadow-xl shadow-neutral-900/5"
     >
       <div className="p-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
