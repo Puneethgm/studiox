@@ -863,7 +863,7 @@ export function InboxLive({
               </div>
 
               {/* Conversation List */}
-              <div className="flex-1 overflow-y-auto px-2 pb-2">
+              <div className="flex-1 overflow-y-auto no-scrollbar px-2 pb-2">
                 {mounted ? (
                   <ul className="space-y-0.5">
                     {conversations.map((c) => (

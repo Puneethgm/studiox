@@ -266,7 +266,7 @@ function Sidebar({
 
       {/* Nav */}
       <nav className={cn(
-        "flex flex-1 flex-col gap-3 overflow-y-auto lg:w-full",
+        "flex flex-1 flex-col gap-3 overflow-y-auto no-scrollbar lg:w-full",
         isCollapsed ? "lg:items-center" : "lg:items-stretch"
       )}>
         {items.map((item, idx) => {

@@ -751,7 +751,7 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
               ) : (
                 <>
                   <div 
-                    className="space-y-4 overflow-y-auto pr-2" 
+                    className="space-y-4 overflow-y-auto no-scrollbar pr-2" 
                     style={{ maxHeight: '540px' }}
                     onScroll={handleQueueScroll}
                   >
