@@ -304,7 +304,7 @@ export default function DashboardClient({
 
           {/* Funnel widgets */}
           <div className="grid gap-4 lg:grid-cols-5">
-            <div className="lg:col-span-3 rounded-[22px] border border-violet-200/40 bg-violet-50/30 p-5 backdrop-blur-2xl dark:border-violet-500/10 dark:bg-violet-950/15" style={{ boxShadow: '0 4px 20px rgba(139,92,246,0.07), inset 0 0 0 1px rgba(221,214,254,0.3)' }}>
+            <div className="lg:col-span-3 rounded-[32px] premium-glass-card p-6" style={{ boxShadow: '0 20px 40px rgba(139,92,246,0.04)' }}>
               <h3 className="mb-4 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Pipeline Overview</h3>
               <FunnelStrip
                 byStatus={initialStats.byStatus}
@@ -312,7 +312,7 @@ export default function DashboardClient({
                 studioId={studio.id}
               />
             </div>
-            <div className="lg:col-span-2 rounded-[22px] border border-sky-200/40 bg-sky-50/30 p-5 backdrop-blur-2xl dark:border-sky-500/10 dark:bg-sky-950/15" style={{ boxShadow: '0 4px 20px rgba(14,165,233,0.07), inset 0 0 0 1px rgba(186,230,253,0.3)' }}>
+            <div className="lg:col-span-2 rounded-[32px] premium-glass-card p-6" style={{ boxShadow: '0 20px 40px rgba(14,165,233,0.04)' }}>
               <h3 className="mb-4 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Lead Distribution</h3>
               <StatusDonut
                 byStatus={initialStats.byStatus}
@@ -334,7 +334,7 @@ export default function DashboardClient({
                     View all <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-1" />
                   </Link>
                 }
-                className="border-sky-200/40 bg-sky-50/30 backdrop-blur-2xl dark:border-sky-500/10 dark:bg-sky-950/15"
+                className="premium-glass-card rounded-[32px] border-0"
                 noPadding
               >
                 {campaigns.length === 0 ? (
@@ -401,7 +401,7 @@ export default function DashboardClient({
                     </Link>
                   )
                 }
-                className="flex-1 border-violet-200/40 bg-violet-50/30 backdrop-blur-2xl dark:border-violet-500/10 dark:bg-violet-950/15"
+                className="flex-1 premium-glass-card rounded-[32px] border-0"
               >
                 {initialLeads.length === 0 ? (
                   <div className="flex h-full flex-col items-center justify-center text-center py-8">

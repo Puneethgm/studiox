@@ -375,14 +375,18 @@ function Sidebar({
 
       {/* Footer hint */}
       <div className={cn(
-        "mt-6 mb-4 animate-in rounded-3xl border border-white/20 bg-white/20 text-xs text-zinc-500 backdrop-blur-md dark:border-white/5 dark:bg-black/20 lg:block lg:transition-all lg:duration-300",
+        "mt-6 mb-4 animate-in rounded-3xl border text-xs backdrop-blur-md lg:block lg:transition-all lg:duration-300",
         isCollapsed ? "lg:max-h-0 lg:overflow-hidden lg:p-0 lg:opacity-0" : "lg:max-h-40 lg:p-4 lg:opacity-100"
-      )} style={{ animationDelay: '500ms' }}>
+      )} style={{ 
+        animationDelay: '500ms',
+        background: `linear-gradient(135deg, var(--brand-soft, rgba(124, 58, 237, 0.05)) 0%, rgba(255, 255, 255, 0.1) 100%)`,
+        borderColor: `var(--brand-softer, rgba(124, 58, 237, 0.1))`
+      }}>
         <div className="flex items-center gap-2 font-black text-zinc-800 dark:text-zinc-200">
-          <Sparkles className="h-3.5 w-3.5 text-brand-500" />
+          <Sparkles className="h-3.5 w-3.5 text-brand-500" style={{ color: `var(--brand)` }} />
           Tip
         </div>
-        <p className="mt-1.5 leading-relaxed font-medium">
+        <p className="mt-1.5 leading-relaxed font-semibold text-zinc-600 dark:text-zinc-400">
           {isStudio
             ? 'Drop your campaign link in your Instagram bio to start collecting leads.'
             : 'Studios sign in at the same /login URL — their account routes them to their own dashboard.'}
@@ -496,12 +500,9 @@ function Topbar({
         <Menu className="h-5 w-5" />
       </button>
 
-      {/* Sticky page title details when scrolled */}
-      <div className={cn(
-        "flex items-center gap-2.5 transition-all duration-300 mr-auto",
-        scrolled ? "opacity-100 translate-x-0" : "opacity-0 -translate-x-4 pointer-events-none"
-      )}>
-        <span className="text-lg sm:text-xl font-black text-zinc-900 dark:text-white tracking-tight">
+      {/* Modern, always-visible premium page title block */}
+      <div className="flex items-center gap-2.5 mr-auto">
+        <span className="text-lg sm:text-xl font-black bg-gradient-to-r from-zinc-900 via-zinc-800 to-zinc-700 dark:from-white dark:via-zinc-200 dark:to-zinc-400 bg-clip-text text-transparent tracking-tight">
           {pageTitle}
         </span>
       </div>
@@ -516,7 +517,13 @@ function Topbar({
             className="flex items-center gap-3 rounded-2xl p-1 pr-3 transition-all duration-300 hover:bg-slate-100 dark:hover:bg-slate-800"
             suppressHydrationWarning
           >
-            <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-brand-400 to-brand-600 text-sm font-bold text-white shadow-lg ring-2 ring-white dark:ring-slate-900">
+            <div 
+              className="grid h-9 w-9 place-items-center rounded-xl text-sm font-extrabold text-white shadow-lg transition-transform duration-300 hover:scale-105"
+              style={{
+                background: `linear-gradient(135deg, var(--brand, #7c3aed) 0%, #a78bfa 100%)`,
+                boxShadow: `0 4px 12px var(--brand-softer)`
+              }}
+            >
               {(me.email[0] ?? '').toUpperCase()}
             </div>
             <div className="hidden flex-col items-start sm:flex">

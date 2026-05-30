@@ -83,6 +83,47 @@
       inset 0 0 0 1px rgba(255, 255, 255, 0.15);
   }
 
+  /* Ultra-Premium Luxury Glassmorphism Extensions */
+  .premium-glass-card {
+    background: linear-gradient(
+      135deg, 
+      rgba(255, 255, 255, 0.45) 0%, 
+      rgba(255, 255, 255, 0.18) 100%
+    );
+    backdrop-filter: blur(40px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.45);
+    box-shadow: 
+      0 12px 40px 0 rgba(31, 38, 135, 0.06),
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.4);
+    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .dark .premium-glass-card {
+    background: linear-gradient(
+      135deg, 
+      rgba(15, 15, 25, 0.55) 0%, 
+      rgba(8, 8, 16, 0.3) 100%
+    );
+    backdrop-filter: blur(40px) saturate(200%);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    box-shadow: 
+      0 24px 68px -12px rgba(0, 0, 0, 0.45),
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+  }
+
+  .premium-glass-card:hover {
+    transform: translateY(-4px) scale(1.005);
+    box-shadow: 
+      0 20px 48px 0 rgba(31, 38, 135, 0.1),
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.5);
+  }
+
+  .dark .premium-glass-card:hover {
+    box-shadow: 
+      0 32px 80px -10px rgba(0, 0, 0, 0.6),
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
+  }
+
   .animate-in {
     animation: animate-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }

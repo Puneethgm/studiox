@@ -3,6 +3,8 @@ import { serverFetch } from '@/lib/auth';
 import type { Campaign, Studio } from '@/lib/types';
 import { SettingsForm } from './SettingsForm';
 
+export const dynamic = 'force-dynamic';
+
 export default async function SettingsPage({
   params,
 }: {
