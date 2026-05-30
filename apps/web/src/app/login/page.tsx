@@ -1,8 +1,8 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState, type CSSProperties } from 'react';
-import { ArrowRight, Building2, Eye, EyeOff, Inbox, Sparkles } from 'lucide-react';
+import { useState, useEffect, type CSSProperties } from 'react';
+import { ArrowRight, Building2, Eye, EyeOff, Inbox, Sparkles, Sun, Moon } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
@@ -21,6 +21,24 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+
+  useEffect(() => {
+    const isDark = document.documentElement.classList.contains('dark');
+    setTheme(isDark ? 'dark' : 'light');
+  }, []);
+
+  const toggleTheme = () => {
+    const next = theme === 'light' ? 'dark' : 'light';
+    setTheme(next);
+    if (next === 'dark') {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
+    }
+  };
   const [postBrand, setPostBrand] = useState<string | null>(null);
 
   async function onSubmit(e: React.FormEvent) {
@@ -64,6 +82,15 @@ export default function LoginPage() {
       className="min-h-screen w-full text-zinc-900 transition-all duration-700 dark:text-zinc-100 bg-slate-50 dark:bg-neutral-950"
       style={themeStyle}
     >
+      {/* Theme Toggle Button */}
+      <button
+        onClick={toggleTheme}
+        className="fixed right-5 top-5 z-50 grid h-10 w-10 place-items-center rounded-xl border border-white/20 bg-white/60 dark:bg-zinc-800/60 dark:border-white/10 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white backdrop-blur-md shadow-sm transition-all duration-300"
+        aria-label="Toggle theme"
+        title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
+      >
+        {theme === 'light' ? <Moon className="h-[18px] w-[18px]" /> : <Sun className="h-[18px] w-[18px]" />}
+      </button>
       <div className="grid min-h-screen w-full grid-cols-1 lg:grid-cols-[1.1fr,1fr] xl:grid-cols-[1.2fr,1fr]">
         {/* Hero */}
         <section className="relative hidden overflow-hidden bg-neutral-950 text-white lg:flex lg:flex-col lg:justify-between lg:px-12 lg:py-12 xl:px-16">
