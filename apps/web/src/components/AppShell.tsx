@@ -447,7 +447,7 @@ function Topbar({
         "flex items-center gap-2.5 transition-all duration-300 mr-auto",
         scrolled ? "opacity-100 translate-x-0" : "opacity-0 -translate-x-4 pointer-events-none"
       )}>
-        <span className="text-sm font-extrabold text-zinc-900 dark:text-white bg-white/40 dark:bg-white/5 border border-white/30 dark:border-white/5 px-3.5 py-1.5 rounded-xl backdrop-blur-md shadow-sm">
+        <span className="text-lg sm:text-xl font-black text-zinc-900 dark:text-white tracking-tight">
           {pageTitle}
         </span>
       </div>
