@@ -133,6 +133,7 @@ func main() {
 	r := chi.NewRouter()
 
 	r.Use(httpx.RequestID)
+	r.Use(httpx.RateLimiter)
 	r.Use(httpx.Recoverer(log))
 	r.Use(httpx.AccessLog(log))
 	r.Use(cors.Handler(cors.Options{

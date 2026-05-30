@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
@@ -200,3 +201,57 @@ func ClientIP(r *http.Request) string {
 func ContextWithTimeout(parent context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(parent, 30*time.Second)
 }
+
+// IP-based Rate Limiter (Token Bucket algorithm).
+// Limits to 10k requests per minute per IP.
+type clientLimiter struct {
+	tokens    float64
+	lastCheck time.Time
+}
+
+var (
+	limiters = make(map[string]*clientLimiter)
+	mu       sync.Mutex
+)
+
+// RateLimiter limits requests per client IP to a specified rate.
+func RateLimiter(next http.Handler) http.Handler {
+	const (
+		ratePerSecond = 10000.0 / 60.0 // ~166.67 tokens per second (10k requests per minute)
+		maxTokens     = 10000.0
+	)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ip := ClientIP(r)
+
+		mu.Lock()
+		client, exists := limiters[ip]
+		now := time.Now()
+
+		if !exists {
+			client = &clientLimiter{
+				tokens:    maxTokens,
+				lastCheck: now,
+			}
+			limiters[ip] = client
+		} else {
+			// Replenish tokens based on elapsed time
+			elapsed := now.Sub(client.lastCheck).Seconds()
+			client.tokens += elapsed * ratePerSecond
+			if client.tokens > maxTokens {
+				client.tokens = maxTokens
+			}
+			client.lastCheck = now
+		}
+
+		if client.tokens >= 1.0 {
+			client.tokens -= 1.0
+			mu.Unlock()
+			next.ServeHTTP(w, r)
+		} else {
+			mu.Unlock()
+			WriteError(w, http.StatusTooManyRequests, "rate_limit_exceeded", "rate limit exceeded. Maximum 10,000 requests per minute allowed.")
+		}
+	})
+}
+
