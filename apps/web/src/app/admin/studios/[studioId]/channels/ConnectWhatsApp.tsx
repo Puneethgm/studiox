@@ -139,11 +139,6 @@ export function ConnectWhatsApp({ studioId, showToast }: { studioId: string; sho
         >
           Connect WhatsApp
         </Button>
-        <p className="text-xs text-center text-slate-500 dark:text-slate-400">
-          <a href="/docs/meta-whatsapp" className="text-blue-600 dark:text-blue-400 hover:underline">
-            Setup guide →
-          </a>
-        </p>
       </form>
     </Card>
   );
