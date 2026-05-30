@@ -21,6 +21,8 @@ import {
   ChevronLeft,
   ChevronRight,
   HelpCircle,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { Button } from '@/components/ui/Button';
@@ -334,6 +336,42 @@ function Sidebar({
   );
 }
 
+function ThemeToggle() {
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+
+  useEffect(() => {
+    const isDark = document.documentElement.classList.contains('dark');
+    setTheme(isDark ? 'dark' : 'light');
+  }, []);
+
+  const toggleTheme = () => {
+    const nextTheme = theme === 'light' ? 'dark' : 'light';
+    setTheme(nextTheme);
+    if (nextTheme === 'dark') {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
+    }
+  };
+
+  return (
+    <button
+      onClick={toggleTheme}
+      className="grid h-10 w-10 place-items-center rounded-xl border border-white/20 bg-white/20 dark:bg-black/20 dark:border-white/5 text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-white transition-all duration-300 shadow-sm shrink-0"
+      aria-label="Toggle theme"
+      title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
+    >
+      {theme === 'light' ? (
+        <Moon className="h-[18px] w-[18px]" />
+      ) : (
+        <Sun className="h-[18px] w-[18px]" />
+      )}
+    </button>
+  );
+}
+
 function Topbar({ me, onMenuClick }: { me: Me; onMenuClick: () => void }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -360,54 +398,59 @@ function Topbar({ me, onMenuClick }: { me: Me; onMenuClick: () => void }) {
         <Menu className="h-5 w-5" />
       </button>
 
-      <div className="relative">
-        <button
-          onClick={() => setOpen(!open)}
-          className="flex items-center gap-3 rounded-2xl p-1 pr-3 transition-all duration-300 hover:bg-slate-100 dark:hover:bg-slate-800"
-          suppressHydrationWarning
-        >
-          <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-brand-400 to-brand-600 text-sm font-bold text-white shadow-lg ring-2 ring-white dark:ring-slate-900">
-            {(me.email[0] ?? '').toUpperCase()}
-          </div>
-          <div className="hidden flex-col items-start sm:flex">
-            <span className="max-w-[150px] truncate text-sm font-bold text-slate-900 dark:text-slate-100">
-              {me.email.split('@')[0]}
-            </span>
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-              {me.role.replace('_', ' ')}
-            </span>
-          </div>
-          <Menu className={cn("h-4 w-4 text-slate-400 transition-transform duration-300", open && "rotate-90")} />
-        </button>
+      <div className="flex items-center gap-3">
+        {/* Theme Toggle Button */}
+        <ThemeToggle />
 
-        {open && (
-          <>
-            <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-            <div className="absolute right-0 top-full mt-3 w-64 animate-in overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/90 z-20">
-              <div className="border-b border-slate-100 p-5 dark:border-slate-800/60">
-                <div className="flex items-center gap-3">
-                  <div className="grid h-12 w-12 place-items-center rounded-2xl bg-brand-500 text-lg font-bold text-white">
-                    {(me.email[0] ?? '').toUpperCase()}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="truncate text-base font-bold text-slate-900 dark:text-slate-100">{me.email.split('@')[0]}</div>
-                    <div className="truncate text-xs text-slate-500">{me.email}</div>
+        <div className="relative">
+          <button
+            onClick={() => setOpen(!open)}
+            className="flex items-center gap-3 rounded-2xl p-1 pr-3 transition-all duration-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+            suppressHydrationWarning
+          >
+            <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-brand-400 to-brand-600 text-sm font-bold text-white shadow-lg ring-2 ring-white dark:ring-slate-900">
+              {(me.email[0] ?? '').toUpperCase()}
+            </div>
+            <div className="hidden flex-col items-start sm:flex">
+              <span className="max-w-[150px] truncate text-sm font-bold text-slate-900 dark:text-slate-100">
+                {me.email.split('@')[0]}
+              </span>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                {me.role.replace('_', ' ')}
+              </span>
+            </div>
+            <Menu className={cn("h-4 w-4 text-slate-400 transition-transform duration-300", open && "rotate-90")} />
+          </button>
+
+          {open && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+              <div className="absolute right-0 top-full mt-3 w-64 animate-in overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/90 z-20">
+                <div className="border-b border-slate-100 p-5 dark:border-slate-800/60">
+                  <div className="flex items-center gap-3">
+                    <div className="grid h-12 w-12 place-items-center rounded-2xl bg-brand-500 text-lg font-bold text-white">
+                      {(me.email[0] ?? '').toUpperCase()}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="truncate text-base font-bold text-slate-900 dark:text-slate-100">{me.email.split('@')[0]}</div>
+                      <div className="truncate text-xs text-slate-500">{me.email}</div>
+                    </div>
                   </div>
                 </div>
+                <div className="p-2">
+                  <button
+                    onClick={logout}
+                    className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-bold text-red-600 transition-colors hover:bg-red-50 dark:hover:bg-red-500/10"
+                    suppressHydrationWarning
+                  >
+                    <LogOut className="h-4 w-4" />
+                    Sign out
+                  </button>
+                </div>
               </div>
-              <div className="p-2">
-                <button
-                  onClick={logout}
-                  className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-bold text-red-600 transition-colors hover:bg-red-50 dark:hover:bg-red-500/10"
-                  suppressHydrationWarning
-                >
-                  <LogOut className="h-4 w-4" />
-                  Sign out
-                </button>
-              </div>
-            </div>
-          </>
-        )}
+            </>
+          )}
+        </div>
       </div>
     </header>
   );
