@@ -738,34 +738,6 @@ export function InboxLive({
         boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.2), 0 8px 40px rgba(139,92,246,0.08)',
       }}
     >
-      {/* ── Top Navigation Tabs ─────────────────── */}
-      <div className="flex items-center justify-between border-b border-white/20 px-6 py-3.5 bg-white/20 backdrop-blur-md dark:border-white/5 dark:bg-neutral-950/20 shrink-0 z-20">
-        <div className="flex gap-2">
-          {(
-            [
-              { id: 'conversations', label: 'Conversations' },
-              { id: 'automated_messages', label: 'Automated Messages' },
-              { id: 'snippets', label: 'Snippets (Templates)' },
-              { id: 'trigger_links', label: 'Trigger Links' },
-            ] as const
-          ).map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setCurrentTab(t.id)}
-              className={cn(
-                "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all duration-300",
-                currentTab === t.id
-                  ? "bg-gradient-to-r from-brand-500 to-violet-500 text-white shadow-md shadow-brand-500/20"
-                  : "text-zinc-500 hover:bg-white/40 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-white/5"
-              )}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
       {/* ── Tab Content Renderer ─────────────────── */}
       <div className="flex flex-1 min-h-0">
         {currentTab === 'conversations' && (
