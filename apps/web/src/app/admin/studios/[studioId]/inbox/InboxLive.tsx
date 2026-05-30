@@ -937,7 +937,7 @@ export function InboxLive({
                   </header>
 
                   <div
-                    className="relative flex-1 overflow-y-auto px-5 py-6 bg-white/5 dark:bg-neutral-950/20"
+                    className="relative flex-1 overflow-y-auto no-scrollbar px-5 py-6 bg-white/5 dark:bg-neutral-950/20"
                   >
                     <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(rgba(139,92,246,0.04)_1px,transparent_1px)] [background-size:22px_22px] dark:bg-[radial-gradient(rgba(139,92,246,0.06)_1px,transparent_1px)]" />
                     <div className="pointer-events-none absolute left-1/4 top-1/4 h-48 w-48 rounded-full bg-violet-400/10 blur-3xl" />
