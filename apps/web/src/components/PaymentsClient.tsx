@@ -159,11 +159,7 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       {/* Top Bar with Currency Selector */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-white/10 pb-4">
-        <div>
-          <h2 className="text-base font-black text-zinc-900 dark:text-white">Billing & Payments Plan</h2>
-          <p className="text-[11px] text-zinc-400">Configure Stripe gateway, change subscription, or select billing currency</p>
-        </div>
+      <div className="flex justify-end border-b border-white/10 pb-4">
         <div className="flex items-center gap-3">
           <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Billing Currency</label>
           <select
