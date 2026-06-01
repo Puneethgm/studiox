@@ -985,3 +985,20 @@ func (r *Repo) GetStudioMetaAppSecret(ctx context.Context, studioID uuid.UUID) (
 	}
 	return secret, nil
 }
+
+func (r *Repo) GetStripeConfig(ctx context.Context, studioID uuid.UUID) (secretKey string, amountSGD, amountINR, amountUSD int, name string, slug string, err error) {
+	var encKey string
+	err = r.pool.QueryRow(ctx, "SELECT stripe_secret_key, trial_amount_sgd, trial_amount_inr, trial_amount_usd, name, slug FROM studios WHERE id = $1", studioID).Scan(&encKey, &amountSGD, &amountINR, &amountUSD, &name, &slug)
+	if err != nil {
+		return "", 0, 0, 0, "", "", err
+	}
+	if encKey != "" && r.cipher != nil {
+		secretKey, err = r.cipher.Decrypt(encKey)
+		if err != nil {
+			return "", 0, 0, 0, "", "", err
+		}
+	} else {
+		secretKey = encKey
+	}
+	return
+}

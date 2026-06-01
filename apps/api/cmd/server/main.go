@@ -46,10 +46,16 @@ func main() {
 	}
 	defer pool.Close()
 
+	cipher, err := secrets.New(cfg.TokenEncryptionKey)
+	if err != nil {
+		log.Error("token encryption init", "err", err)
+		os.Exit(1)
+	}
+
 	// --- repos / services / handlers ---
 	identityRepo := identity.NewRepo(pool)
 	leadsRepo := leads.NewRepo(pool)
-	studiosRepo := studios.NewRepo(pool)
+	studiosRepo := studios.NewRepo(pool, cipher)
 
 	tokens := identity.NewTokenIssuer(cfg.JWT.Secret, cfg.JWT.TTL)
 
@@ -64,7 +70,7 @@ func main() {
 			return nil, err
 		}
 		return &identity.StudioBrand{
-			Slug:       s.Slug,
+			Slug:                 s.Slug,
 			Name:                 s.Name,
 			BrandColor:           s.BrandColor,
 			LogoURL:              s.LogoURL,
@@ -85,11 +91,6 @@ func main() {
 	go sheetsWorker.Run(rootCtx)
 
 	// --- messaging (channels + inbox) ---
-	cipher, err := secrets.New(cfg.TokenEncryptionKey)
-	if err != nil {
-		log.Error("token encryption init", "err", err)
-		os.Exit(1)
-	}
 	msgRepo := messaging.NewRepo(pool, cipher)
 	msgBus := messaging.NewInProcBus()
 	msgSvc := messaging.NewService(msgRepo, msgBus, cfg.PublicFormBaseURL)
@@ -165,6 +166,7 @@ func main() {
 
 		// Google OAuth endpoints (unauthenticated callbacks)
 		r.Get("/auth/google/callback", googleOAuth.CallbackHandler)
+		r.Get("/auth/stripe/callback", studiosHandler.StripeConnectCallback)
 
 		// Meta webhooks (WA, FB, IG)
 		// We provide separate URLs for clarity, though the handler logic handles all types.
@@ -178,6 +180,9 @@ func main() {
 		r.Post("/webhooks/twilio", twilioWebhook.HandleInbound)
 		r.Get("/webhooks/x", xWebhook.HandleInbound)
 		r.Post("/webhooks/x", xWebhook.HandleInbound)
+		
+		stripeWebhook := studios.NewStripeWebhookHandler(studiosSvc, os.Getenv("STRIPE_WEBHOOK_SECRET"))
+		r.Post("/webhooks/stripe", stripeWebhook.HandleInbound)
 
 		r.Get("/webhooks/meta/instagram", metaWebhook.Verify)
 		r.Post("/webhooks/meta/instagram", metaWebhook.Receive)
@@ -207,6 +212,7 @@ func main() {
 			r.Route("/studios/{studioId}", func(r chi.Router) {
 				r.Use(studiosHandler.RequireActiveStudio)
 				r.Get("/google-oauth/login", googleOAuth.LoginHandler)
+				r.Get("/stripe-oauth/login", studiosHandler.StripeConnectRedirect)
 				leadsHandler.AdminRoutes(r)
 				r.Get("/social-posts", studiosHandler.ListSocialPosts)
 				r.Post("/social-posts", studiosHandler.CreateSocialPost)

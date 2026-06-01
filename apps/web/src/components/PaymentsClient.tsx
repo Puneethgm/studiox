@@ -18,19 +18,26 @@ import { api } from '@/lib/api';
 
 interface Invoice {
   id: string;
-  date: string;
-  amountSGD: number;
-  amountINR: number;
-  status: 'paid' | 'pending' | 'failed';
-  plan: string;
+  number: string;
+  amount_due: number;
+  amount_paid: number;
+  currency: string;
+  status: string;
+  created: number;
+  hosted_invoice_url: string;
+  invoice_pdf: string;
+  description?: string;
+  metadata?: Record<string, string>;
 }
 
 export default function PaymentsClient({ studioId }: { studioId: string }) {
-  const [currency, setCurrency] = useState<'SGD' | 'INR'>('SGD');
-  const [plan, setPlan] = useState<'starter' | 'pro' | 'enterprise'>('pro');
+  const [currency, setCurrency] = useState<'SGD' | 'INR' | 'USD'>('SGD');
   const [stripeStatus, setStripeStatus] = useState<'connected' | 'disconnected'>('disconnected');
   const [stripeAccountId, setStripeAccountId] = useState('');
   const [loading, setLoading] = useState(true);
+  
+  const [billingStats, setBillingStats] = useState({ outstandingSGD: 0, outstandingINR: 0, lifetimePaidSGD: 0, lifetimePaidINR: 0, lifetimePaidUSD: 0, lifetimePaid: 0 });
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
   
   // Link Stripe Form state
   const [showForm, setShowForm] = useState(false);
@@ -42,7 +49,6 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
 
   useEffect(() => {
     if (studioId === 'global') {
-      setPlan('pro');
       setStripeStatus('disconnected');
       setLoading(false);
       return;
@@ -51,16 +57,23 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
     setLoading(true);
     void (async () => {
       try {
-        const res = await api<{ stripeAccountId: string; stripePublishableKey: string; stripeSecretKey: string; subscriptionTier: string }>(
+        const res = await api<{ stripeAccountId: string; stripePublishableKey: string; hasStripeSecretKey: boolean; subscriptionTier: string }>(
           `/api/v1/me/studios/${studioId}/payments`
         );
-        setPlan((res.subscriptionTier || 'pro') as 'starter' | 'pro' | 'enterprise');
-        if (res.stripeAccountId) {
+        if (res.stripeAccountId && res.hasStripeSecretKey) {
           setStripeStatus('connected');
           setStripeAccountId(res.stripeAccountId);
           setFormStripeAccountId(res.stripeAccountId);
           setFormPublishableKey(res.stripePublishableKey || '');
-          setFormSecretKey(res.stripeSecretKey || '');
+          setFormSecretKey(''); // Do not pre-fill secret key
+          
+          try {
+            const historyRes = await api<{ invoices: Invoice[], stats: any }>(`/api/v1/me/studios/${studioId}/billing/history`);
+            if (historyRes.invoices) setInvoices(historyRes.invoices);
+            if (historyRes.stats) setBillingStats(historyRes.stats);
+          } catch (e) {
+            console.error('failed to fetch billing history', e);
+          }
         } else {
           setStripeStatus('disconnected');
         }
@@ -117,38 +130,19 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
     }
   };
 
-  const handleUpdatePlan = async (newPlan: 'starter' | 'pro' | 'enterprise') => {
-    if (studioId === 'global') {
-      setPlan(newPlan);
-      return;
-    }
-    try {
-      await api(`/api/v1/me/studios/${studioId}/payments/plan`, {
-        method: 'POST',
-        json: { subscriptionTier: newPlan }
-      });
-      setPlan(newPlan);
-    } catch (err) {
-      console.error('Failed to update plan:', err);
-    }
-  };
-
   const stats = {
-    monthlyFeeSGD: plan === 'starter' ? 149 : plan === 'pro' ? 299 : 599,
-    monthlyFeeINR: plan === 'starter' ? 12900 : plan === 'pro' ? 25900 : 51900,
-    outstandingSGD: 0,
-    outstandingINR: 0,
-    lifetimePaidSGD: 0,
-    lifetimePaidINR: 0,
+    outstandingSGD: billingStats.outstandingSGD / 100,
+    outstandingINR: billingStats.outstandingINR / 100,
+    lifetimePaidSGD: billingStats.lifetimePaidSGD / 100,
+    lifetimePaidINR: billingStats.lifetimePaidINR / 100,
+    lifetimePaidUSD: (billingStats.lifetimePaidUSD ?? 0) / 100,
+    lifetimePaidTotal: (billingStats.lifetimePaid ?? 0) / 100,
   };
 
-  const invoices: Invoice[] = [];
-
-  const formatAmount = (sgdVal: number, inrVal: number) => {
-    if (currency === 'SGD') {
-      return new Intl.NumberFormat('en-SG', { style: 'currency', currency: 'SGD' }).format(sgdVal);
-    }
-    return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(inrVal);
+  const formatAmount = (sgdVal: number, inrVal: number, usdVal: number) => {
+    if (currency === 'INR') return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(inrVal);
+    if (currency === 'USD') return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(usdVal);
+    return new Intl.NumberFormat('en-SG', { style: 'currency', currency: 'SGD' }).format(sgdVal);
   };
 
   if (loading) {
@@ -167,35 +161,23 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
           <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Billing Currency</label>
           <select
             value={currency}
-            onChange={(e) => setCurrency(e.target.value as 'SGD' | 'INR')}
+            onChange={(e) => setCurrency(e.target.value as 'SGD' | 'INR' | 'USD')}
             className="rounded-xl border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-bold text-zinc-800 dark:bg-neutral-800 dark:text-white focus:outline-none"
           >
             <option value="SGD">SGD (S$)</option>
             <option value="INR">INR (₹)</option>
+            <option value="USD">USD ($)</option>
           </select>
         </div>
       </div>
 
       {/* Stats row */}
-      <div className="grid gap-6 sm:grid-cols-3">
-        <Card className="border-white/30 bg-white/20 dark:border-white/5 dark:bg-neutral-900/30 backdrop-blur-2xl p-6">
-          <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400 block">Subscription Fee</span>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-3xl font-black text-zinc-950 dark:text-white">
-              {formatAmount(stats.monthlyFeeSGD, stats.monthlyFeeINR)}
-            </span>
-            <span className="text-xs text-zinc-400">/ month</span>
-          </div>
-          <span className="text-[10px] text-brand-500 font-bold uppercase tracking-wider mt-2 block">
-            Plan: {plan.toUpperCase()}
-          </span>
-        </Card>
-
+      <div className="grid gap-6 sm:grid-cols-2">
         <Card className="border-white/30 bg-white/20 dark:border-white/5 dark:bg-neutral-900/30 backdrop-blur-2xl p-6">
           <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400 block">Outstanding Balance</span>
           <div className="mt-2 flex items-baseline gap-2">
             <span className="text-3xl font-black text-zinc-950 dark:text-white">
-              {formatAmount(stats.outstandingSGD, stats.outstandingINR)}
+              {formatAmount(stats.outstandingSGD, stats.outstandingINR, 0)}
             </span>
           </div>
           <span className="text-[10px] text-emerald-500 font-bold uppercase tracking-wider mt-2 block flex items-center gap-1">
@@ -207,11 +189,11 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
           <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400 block">Lifetime Payments</span>
           <div className="mt-2 flex items-baseline gap-2">
             <span className="text-3xl font-black text-zinc-950 dark:text-white">
-              {formatAmount(stats.lifetimePaidSGD, stats.lifetimePaidINR)}
+              {formatAmount(stats.lifetimePaidSGD, stats.lifetimePaidINR, stats.lifetimePaidUSD)}
             </span>
           </div>
           <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider mt-2 block">
-            Last Paid: {invoices[0]?.date || 'N/A'}
+            Last Paid: {invoices[0] ? new Date(invoices[0].created * 1000).toLocaleDateString() : 'N/A'}
           </span>
         </Card>
       </div>
@@ -302,35 +284,15 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
                 </div>
               </form>
             ) : (
-              <Button className="w-full shadow-lg shadow-brand-500/15" onClick={() => setShowForm(true)}>
-                Link Stripe Account
-              </Button>
-            )}
-          </Card>
-
-          {/* Pricing tier selector */}
-          <Card className="border-white/30 bg-white/20 dark:border-white/5 dark:bg-neutral-900/30 backdrop-blur-2xl">
-            <h3 className="text-sm font-black text-zinc-950 dark:text-white mb-3">Change Tier Plan</h3>
-            <div className="space-y-3">
-              {[
-                { key: 'starter', label: 'Starter Tier', desc: '1 Active Location, basic leads capturing' },
-                { key: 'pro', label: 'Pro Scale Tier', desc: 'Multi-location capabilities, unlimited CRM' },
-                { key: 'enterprise', label: 'Enterprise Tier', desc: 'Full custom integration + developer API support' },
-              ].map(p => (
-                <button
-                  key={p.key}
-                  onClick={() => handleUpdatePlan(p.key as any)}
-                  className={`w-full text-left p-3 rounded-xl border transition-all ${
-                    plan === p.key 
-                      ? 'border-brand-500 bg-brand-500/5' 
-                      : 'border-white/10 bg-white/5 hover:bg-white/10'
-                  }`}
-                >
-                  <span className="text-xs font-bold block text-zinc-900 dark:text-zinc-100">{p.label}</span>
-                  <span className="text-[10px] text-zinc-400 block mt-0.5">{p.desc}</span>
+              <div className="space-y-3">
+                <Button className="w-full shadow-lg shadow-brand-500/15" onClick={() => window.location.href = `/api/v1/studios/${studioId}/stripe-oauth/login`}>
+                  Connect with Stripe Connect (Recommended)
+                </Button>
+                <button type="button" onClick={() => setShowForm(true)} className="w-full text-xs text-zinc-400 hover:text-white transition-colors">
+                  Or enter API keys manually
                 </button>
-              ))}
-            </div>
+              </div>
+            )}
           </Card>
         </div>
 
@@ -348,22 +310,22 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
                 <table className="w-full text-left">
                   <thead>
                     <tr className="border-b border-white/10 text-[9px] font-black uppercase tracking-wider text-zinc-400">
-                      <th className="pb-3">Invoice ID</th>
+                      <th className="pb-3">Ref</th>
                       <th className="pb-3">Date</th>
-                      <th className="pb-3">Plan</th>
+                      <th className="pb-3">Description</th>
                       <th className="pb-3">Amount</th>
                       <th className="pb-3">Status</th>
-                      <th className="pb-3 text-right">Actions</th>
+                      <th className="pb-3 text-right">Receipt</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
                     {invoices.map(inv => (
                       <tr key={inv.id} className="text-xs text-zinc-700 dark:text-zinc-300">
-                        <td className="py-3 font-semibold">{inv.id}</td>
-                        <td className="py-3">{inv.date}</td>
-                        <td className="py-3 font-medium">{inv.plan}</td>
+                        <td className="py-3 font-semibold font-mono text-zinc-500">{inv.number || inv.id.slice(0,12)}</td>
+                        <td className="py-3">{new Date(inv.created * 1000).toLocaleDateString()}</td>
+                        <td className="py-3 text-zinc-400 max-w-[160px] truncate">{inv.description || inv.metadata?.customer_name || 'Trial Session'}</td>
                         <td className="py-3 font-bold text-zinc-950 dark:text-white">
-                          {formatAmount(inv.amountSGD, inv.amountINR)}
+                          {new Intl.NumberFormat('en-US', { style: 'currency', currency: inv.currency.toUpperCase() }).format(inv.amount_paid / 100)}
                         </td>
                         <td className="py-3">
                           <Badge tone={inv.status === 'paid' ? 'success' : 'neutral'}>
@@ -371,9 +333,11 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
                           </Badge>
                         </td>
                         <td className="py-3 text-right">
-                          <button className="p-1 hover:bg-white/15 rounded-lg text-zinc-400 hover:text-white transition-all">
-                            <Download className="h-4 w-4" />
-                          </button>
+                          {inv.hosted_invoice_url ? (
+                            <a href={inv.hosted_invoice_url} target="_blank" rel="noreferrer" className="inline-block p-1 hover:bg-white/15 rounded-lg text-zinc-400 hover:text-white transition-all" title="View Receipt">
+                              <ArrowUpRight className="h-4 w-4" />
+                            </a>
+                          ) : <span className="text-zinc-600 text-[10px]">—</span>}
                         </td>
                       </tr>
                     ))}

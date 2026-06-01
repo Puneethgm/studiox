@@ -39,6 +39,9 @@ export interface Studio {
   leadCount?: number;
   knowledgeBase?: string;
   knowledgeBaseFiles?: { name: string; url: string; text: string }[];
+  trialAmountSgd?: number;
+  trialAmountInr?: number;
+  trialAmountUsd?: number;
 }
 
 export interface Campaign {

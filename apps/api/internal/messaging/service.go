@@ -15,6 +15,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/stripe/stripe-go/v78"
+	"github.com/stripe/stripe-go/v78/client"
 
 	"github.com/projectx/api/internal/leads"
 	"github.com/projectx/api/internal/messaging/channels"
@@ -1350,7 +1352,70 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 		targetNotes = strings.ReplaceAll(targetNotes, "[Selected Trial Date]: "+dateStr, "")
 		targetNotes = strings.TrimSpace(targetNotes + "\n[Selected Trial Slot]: " + dateStr + " " + selectedTime)
 		targetStage = "completed"
-		outboundBody = "Thank you our team will reach u out "
+
+		secretKey, amountSGD, amountINR, amountUSD, studioName, studioSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
+		if errStripe == nil && secretKey != "" {
+			var leadPhone, leadNameStr, leadCurrency string
+			_ = tx.QueryRow(ctx, "SELECT phone, name, currency FROM leads WHERE id = $1", *conv.LeadID).Scan(&leadPhone, &leadNameStr, &leadCurrency)
+			
+			amount := amountSGD
+			cur := "sgd"
+			if strings.ToLower(leadCurrency) == "inr" {
+				amount = amountINR
+				cur = "inr"
+			} else if strings.ToLower(leadCurrency) == "usd" {
+				amount = amountUSD
+				cur = "usd"
+			}
+			if amount == 0 {
+				amount = 2500
+			}
+
+			frontendURL := os.Getenv("FRONTEND_URL")
+			if frontendURL == "" {
+				frontendURL = "http://localhost:3000"
+			}
+
+			sc := &client.API{}
+			sc.Init(secretKey, nil)
+			params := &stripe.CheckoutSessionParams{
+				PaymentMethodTypes: stripe.StringSlice([]string{"card"}),
+				LineItems: []*stripe.CheckoutSessionLineItemParams{
+					{
+						PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{
+							Currency:   stripe.String(cur),
+							UnitAmount: stripe.Int64(int64(amount)),
+							ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
+								Name:        stripe.String(fmt.Sprintf("%s Trial Session", studioName)),
+								Description: stripe.String("Secure your trial workout session at " + studioName),
+							},
+						},
+						Quantity: stripe.Int64(1),
+					},
+				},
+				Mode:       stripe.String("payment"),
+				InvoiceCreation: &stripe.CheckoutSessionInvoiceCreationParams{
+					Enabled: stripe.Bool(true),
+				},
+				SuccessURL: stripe.String(fmt.Sprintf("%s/payment-success?studio=%s&session_id={CHECKOUT_SESSION_ID}", frontendURL, studioSlug)),
+				CancelURL:  stripe.String(fmt.Sprintf("%s/payment-cancelled?studio=%s", frontendURL, studioSlug)),
+			}
+			if leadPhone != "" {
+				params.Metadata = map[string]string{
+					"customer_phone": leadPhone,
+					"customer_name":  leadNameStr,
+					"studio_id":      studioID.String(),
+				}
+			}
+			session, errSess := sc.CheckoutSessions.New(params)
+			if errSess == nil && session != nil && session.URL != "" {
+				outboundBody = fmt.Sprintf("Great! Your trial is booked for %s at %s. To secure your spot, please complete your payment here:\n%s", dateStr, selectedTime, session.URL)
+			} else {
+				outboundBody = "Thank you! Our team will reach out to you shortly."
+			}
+		} else {
+			outboundBody = "Thank you! Our team will reach out to you shortly."
+		}
 	} else if autoContactStage == "awaiting_reason" {
 		targetNotes = strings.TrimSpace(targetNotes + "\n[Dropped Reason]: " + body)
 		targetStage = "completed"

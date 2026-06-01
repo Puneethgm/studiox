@@ -86,6 +86,10 @@ func (w *AutoContactWorker) processItem(ctx context.Context, it leads.OutboxItem
 	if _, err := w.msgRepo.GetActiveChannelByKind(ctx, l.StudioID, KindWhatsAppMeta); err != nil {
 		if _, smsErr := w.msgRepo.GetActiveChannelByKind(ctx, l.StudioID, KindSMS); smsErr == nil {
 			channelKind = KindSMS
+		} else {
+			// No active channel!
+			w.log.Warn("no active whatsapp or sms channel for studio, skipping autocontact", "studio_id", l.StudioID, "lead_id", l.ID)
+			return nil
 		}
 	}
 

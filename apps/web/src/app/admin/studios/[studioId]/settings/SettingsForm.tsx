@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
-import { Eye, EyeOff, Database, Building, Calendar, Cpu, Lock, Save, CheckCircle2, X } from 'lucide-react';
+import { Eye, EyeOff, Database, Building, Calendar, Cpu, Lock, Save, CheckCircle2, X, DollarSign } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { FieldError, FieldHint, Label } from '@/components/ui/Label';
@@ -27,8 +27,17 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   
-  const [activeSection, setActiveSection] = useState<'general' | 'availability' | 'integrations' | 'security'>('general');
+  const [activeSection, setActiveSection] = useState<'general' | 'pricing' | 'availability' | 'integrations' | 'security'>('general');
   
+  // Trial Pricing (stored as cents/paise in the backend)
+  const [trialAmountSgd, setTrialAmountSgd] = useState((studio.trialAmountSgd ?? 2500) / 100);
+  const [trialAmountInr, setTrialAmountInr] = useState((studio.trialAmountInr ?? 150000) / 100);
+  const [trialAmountUsd, setTrialAmountUsd] = useState((studio.trialAmountUsd ?? 2000) / 100);
+  const [pricingSaving, setPricingSaving] = useState(false);
+  // Static approximate rates (refreshed on load from a public API in production)
+  const SGD_TO_INR = 62.5;
+  const SGD_TO_USD = 0.74;
+
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -187,6 +196,7 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
       <div className="w-full lg:w-64 shrink-0 flex flex-row lg:flex-col gap-1 overflow-x-auto lg:overflow-visible pb-2 lg:pb-0 border-b lg:border-b-0 lg:border-r border-white/10 lg:pr-6 scrollbar-none">
         {[
           { id: 'general', label: 'General Info', icon: Building },
+          { id: 'pricing', label: 'Trial Pricing', icon: DollarSign },
           { id: 'availability', label: 'Availability', icon: Calendar },
           { id: 'integrations', label: 'Integrations', icon: Cpu },
           { id: 'security', label: 'Security', icon: Lock },
@@ -368,6 +378,118 @@ export function SettingsForm({ studio, previewHref }: { studio: Studio; previewH
 
         {activeSection === 'availability' && (
           <AvailabilitySettings studio={studio} onSaveSuccess={(msg) => showToast(msg)} />
+        )}
+
+        {activeSection === 'pricing' && (
+          <div className="max-w-xl">
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setPricingSaving(true);
+                try {
+                  const res = await updateStudioSettings(studio.id, studio.slug, {
+                    trialAmountSgd: Math.round(trialAmountSgd * 100),
+                    trialAmountInr: Math.round(trialAmountInr * 100),
+                    trialAmountUsd: Math.round(trialAmountUsd * 100),
+                  });
+                  if (res.ok) showToast('Trial pricing saved!');
+                  else showToast(res.error || 'Failed to save', 'error');
+                } finally {
+                  setPricingSaving(false);
+                }
+              }}
+              className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30 p-6 space-y-6"
+            >
+              <div>
+                <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400 mb-1">Trial Booking Amounts</h3>
+                <p className="text-[10px] text-zinc-500">Set the price charged when a lead books a trial session via WhatsApp. Changing one currency auto-converts the others.</p>
+              </div>
+
+              {/* SGD */}
+              <div>
+                <Label htmlFor="trialSgd">Singapore Dollar (SGD S$)</Label>
+                <div className="relative mt-1">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-zinc-400">S$</span>
+                  <Input
+                    id="trialSgd"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={trialAmountSgd}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value) || 0;
+                      setTrialAmountSgd(val);
+                      setTrialAmountInr(parseFloat((val * SGD_TO_INR).toFixed(2)));
+                      setTrialAmountUsd(parseFloat((val * SGD_TO_USD).toFixed(2)));
+                    }}
+                    className="pl-8"
+                  />
+                </div>
+              </div>
+
+              {/* INR */}
+              <div>
+                <Label htmlFor="trialInr">Indian Rupee (INR ₹)</Label>
+                <div className="relative mt-1">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-zinc-400">₹</span>
+                  <Input
+                    id="trialInr"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={trialAmountInr}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value) || 0;
+                      setTrialAmountInr(val);
+                      const sgd = parseFloat((val / SGD_TO_INR).toFixed(2));
+                      setTrialAmountSgd(sgd);
+                      setTrialAmountUsd(parseFloat((sgd * SGD_TO_USD).toFixed(2)));
+                    }}
+                    className="pl-8"
+                  />
+                </div>
+              </div>
+
+              {/* USD */}
+              <div>
+                <Label htmlFor="trialUsd">US Dollar (USD $)</Label>
+                <div className="relative mt-1">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-zinc-400">$</span>
+                  <Input
+                    id="trialUsd"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={trialAmountUsd}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value) || 0;
+                      setTrialAmountUsd(val);
+                      const sgd = parseFloat((val / SGD_TO_USD).toFixed(2));
+                      setTrialAmountSgd(sgd);
+                      setTrialAmountInr(parseFloat((sgd * SGD_TO_INR).toFixed(2)));
+                    }}
+                    className="pl-8"
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-xl bg-brand-500/10 border border-brand-500/20 p-3">
+                <p className="text-[10px] text-brand-400 font-bold">
+                  💡 Auto-conversion uses approximate rates (1 SGD ≈ ₹{SGD_TO_INR} · $USD {SGD_TO_USD}). You can manually adjust each field after conversion.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end border-t border-white/10 pt-4">
+                <Button
+                  type="submit"
+                  loading={pricingSaving}
+                  className="bg-gradient-to-r from-brand-500 to-violet-600 hover:from-brand-600 hover:to-violet-700 text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-500/25 rounded-xl h-10 px-6"
+                >
+                  Save Pricing
+                </Button>
+              </div>
+            </form>
+          </div>
         )}
 
         {activeSection === 'integrations' && (

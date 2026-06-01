@@ -471,7 +471,7 @@ function Topbar({
   }
 
   return (
-    <header className="sticky top-0 z-20 flex h-16 items-center justify-between gap-3 border-b border-white/20 bg-white/60 px-4 backdrop-blur-2xl sm:px-6 lg:px-10 dark:border-white/5 dark:bg-neutral-950/60" style={{ boxShadow: '0 1px 0 rgba(255,255,255,0.1), 0 4px 20px rgba(0,0,0,0.04)' }}>
+    <header className="sticky top-0 z-20 flex h-16 items-center justify-between gap-3 px-4 sm:px-6 lg:px-10 bg-transparent">
       {/* Mobile menu button */}
       <button
         type="button"

@@ -196,8 +196,15 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	sentiment, confidence, keywords := w.analyzeSentiment(msg.Body)
 	w.log.Debug("sentiment analyzed", "message_id", msg.ID, "sentiment", sentiment, "confidence", confidence, "keywords", keywords)
 
+	// Fetch up to the last 5 messages for conversation context
+	history, err := w.msgRepo.ListMessages(ctx, studioID, conv.ID, 5)
+	if err != nil {
+		w.log.Error("fetch message history for ai context failed", "err", err)
+		history = []Message{*msg} // fallback to just the current message
+	}
+
 	// Generate AI response with context
-	prompt := w.buildPrompt(msg, conv, lead, studio, sentiment, keywords)
+	prompt := w.buildPrompt(history, conv, lead, studio, sentiment, keywords)
 	
 	var resp string
 	var sourceRef string
@@ -240,7 +247,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	return nil
 }
 
-func (w *AIWorker) buildPrompt(msg *Message, conv *Conversation, lead *leads.Lead, studio *studios.Studio, sentiment int, keywords []string) string {
+func (w *AIWorker) buildPrompt(history []Message, conv *Conversation, lead *leads.Lead, studio *studios.Studio, sentiment int, keywords []string) string {
 	context := "You are a helpful AI assistant for a fitness studio. "
 
 	hour := time.Now().UTC().Hour()
@@ -297,9 +304,22 @@ func (w *AIWorker) buildPrompt(msg *Message, conv *Conversation, lead *leads.Lea
 	}
 
 	if lead != nil && lead.Status == leads.StatusTrialBooked {
-		return fmt.Sprintf("%s\nCustomer message: %s\n\nRespond naturally and try to move the conversation toward getting a membership commitment.", context, msg.Body)
+		context += "\nRespond naturally and try to move the conversation toward getting a membership commitment."
+	} else {
+		context += "\nRespond naturally and try to move the conversation toward booking a trial or getting commitment."
 	}
-	return fmt.Sprintf("%s\nCustomer message: %s\n\nRespond naturally and try to move the conversation toward booking a trial or getting commitment.", context, msg.Body)
+
+	context += "\n\n--- CONVERSATION HISTORY ---\n"
+	for _, m := range history {
+		if m.Direction == DirectionInbound {
+			context += fmt.Sprintf("Customer: %s\n", m.Body)
+		} else {
+			context += fmt.Sprintf("Assistant: %s\n", m.Body)
+		}
+	}
+	context += "Assistant: "
+
+	return context
 }
 
 func (w *AIWorker) detectOptionChoice(body string, status leads.LeadStatus) (leads.LeadStatus, bool) {
@@ -445,7 +465,7 @@ func (w *AIWorker) scheduleTrialFollowup(ctx context.Context, studioID uuid.UUID
 		w.log.Warn("could not find conversation for lead to schedule followup", "lead", lead.ID, "err", err)
 	}
 
-	body := "Hi {{contact.first_name}}, we hope you're enjoying your trial! Are you ready to take the next step and become a member? Please select an option:\n1. Book a Trial\n2. Become a Member"
+	body := "Hi {{contact.first_name}}, we hope you're enjoying your trial! Are you ready to take the next step and become a member? Please select an option:\n1. Yes, I am ready to become a member!\n2. Not right now"
 
 	if _, err := w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
 		StudioID:       studioID,
@@ -475,7 +495,11 @@ func (w *AIWorker) generateGeminiReply(ctx context.Context, apiKey string, promp
 		return "", err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(reqBody))
+	// Add a 15-second timeout to prevent goroutine leaks if Gemini hangs
+	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, url, bytes.NewBuffer(reqBody))
 	if err != nil {
 		return "", err
 	}

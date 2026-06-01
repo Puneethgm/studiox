@@ -36,6 +36,9 @@ export async function updateStudioSettings(
     googleClientSecret?: string;
     googleDeveloperToken?: string;
     knowledgeBase?: string;
+    trialAmountSgd?: number;
+    trialAmountInr?: number;
+    trialAmountUsd?: number;
   },
 ): Promise<UpdateStudioResult> {
   const cookieStore = await cookies();
