@@ -47,11 +47,11 @@ SELECT id, 'Basic', 2900, 'monthly', ARRAY['Feature A', 'Feature B', 'Feature C'
 FROM studios;
 
 INSERT INTO plans (studio_id, plan_name, price_sgd, billing_cycle, features)
-SELECT id, 'Pro', 9900, 'monthly', ARRAY['All Basic Features', 'Feature D', 'Feature E']
+SELECT id, 'Pro', 9900, 'monthly', ARRAY['All Basic Features', 'Feature D', 'Feature E', 'Studio Plan']
 FROM studios;
 
 INSERT INTO plans (studio_id, plan_name, price_sgd, billing_cycle, features)
-SELECT id, 'Pro Plus', 19900, 'monthly', ARRAY['All Pro Features', 'Feature F', 'Feature G']
+SELECT id, 'Pro Plus', 19900, 'monthly', ARRAY['All Pro Features', 'Feature F', 'Feature G', 'Studio Plan']
 FROM studios;
 
 -- +goose StatementEnd
