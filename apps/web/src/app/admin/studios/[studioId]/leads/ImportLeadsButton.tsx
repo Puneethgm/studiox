@@ -97,9 +97,10 @@ export function ImportLeadsButton({ studioId, campaigns }: ImportLeadsButtonProp
       <Button
         onClick={() => setIsOpen(true)}
         variant="ghost"
-        className="flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-bold text-zinc-700 hover:bg-white/20 dark:text-zinc-200 dark:hover:bg-neutral-800/50"
+        size="sm"
+        leftIcon={<Upload className="h-3.5 w-3.5" />}
+        className="rounded-xl border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-bold text-zinc-700 hover:bg-white/20 dark:text-zinc-200 dark:hover:bg-neutral-800/50 shadow-sm shrink-0"
       >
-        <Upload className="h-4 w-4" />
         Import Leads
       </Button>
 

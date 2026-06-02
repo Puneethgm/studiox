@@ -102,6 +102,7 @@ export default function LoginPage() {
               backgroundImage: 'linear-gradient(to right, rgba(10, 10, 11, 0.2) 0%, rgba(10, 10, 11, 0.8) 100%), url("/platform-bg.png")',
               backgroundSize: 'cover',
               backgroundPosition: 'center',
+              backgroundRepeat: 'no-repeat',
             }}
           />
           <div
@@ -118,6 +119,7 @@ export default function LoginPage() {
           <div className="pointer-events-none absolute inset-0 overflow-hidden">
             <div className="absolute -left-[10%] top-[20%] h-[40%] w-[40%] rounded-full bg-brand-500/15 blur-[120px] animate-pulse-liquid" />
             <div className="absolute -right-[10%] top-[50%] h-[40%] w-[40%] rounded-full bg-sky-500/10 blur-[120px] animate-pulse-liquid" style={{ animationDelay: '3s' }} />
+            <div className="absolute left-[20%] top-[75%] h-[35%] w-[35%] rounded-full bg-pink-500/12 blur-[100px] animate-pulse-liquid" style={{ animationDelay: '6s' }} />
           </div>
 
           <div className="relative">
@@ -152,6 +154,7 @@ export default function LoginPage() {
           <div className="absolute inset-0 -z-10 overflow-hidden">
             <div className="absolute left-[-20%] top-[-10%] h-[80%] w-[80%] rounded-full bg-violet-400/20 blur-[120px] animate-pulse-liquid" />
             <div className="absolute bottom-[-20%] right-[-10%] h-[80%] w-[80%] rounded-full bg-sky-400/20 blur-[120px] animate-pulse-liquid" style={{ animationDelay: '2s' }} />
+            <div className="absolute right-[15%] top-[30%] h-[60%] w-[60%] rounded-full bg-pink-400/12 blur-[130px] animate-pulse-liquid" style={{ animationDelay: '4.5s' }} />
           </div>
 
           <div className="w-full max-w-md animate-in" style={{ animationDelay: '500ms' }}>

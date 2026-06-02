@@ -31,10 +31,11 @@ export default async function CampaignFormPage({
         backgroundSize: 'cover',
         backgroundPosition: 'center top',
         backgroundAttachment: 'fixed',
+        backgroundRepeat: 'no-repeat',
       }}
     >
       <div aria-hidden className="pointer-events-none absolute inset-0 opacity-60">
-        <div className="absolute -left-[10%] top-[18%] h-[42%] w-[42%] rounded-full bg-brand-500/10 blur-[120px]" />
+        <div className="absolute -left-[10%] top-[18%] h-[42%] w-[42%] rounded-full blur-[120px]" style={{ background: brand, opacity: 0.1 }} />
         <div className="absolute -right-[12%] bottom-[10%] h-[42%] w-[42%] rounded-full bg-sky-400/10 blur-[120px]" />
         <div
           className="absolute inset-0 opacity-[0.04]"

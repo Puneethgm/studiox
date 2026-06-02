@@ -30,10 +30,30 @@ type AIWorker struct {
 	claude      *claude.Client
 	log         *slog.Logger
 	subs        map[uuid.UUID]func()
+	httpClient  *http.Client
 }
 
 func NewAIWorker(bus Bus, msgRepo *Repo, msgSvc *Service, studiosRepo *studios.Repo, leadsRepo *leads.Repo, cl *claude.Client, log *slog.Logger) *AIWorker {
-	return &AIWorker{bus: bus, msgRepo: msgRepo, msgSvc: msgSvc, studiosRepo: studiosRepo, leadsRepo: leadsRepo, claude: cl, log: log, subs: make(map[uuid.UUID]func())}
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+	}
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   30 * time.Second,
+	}
+	return &AIWorker{
+		bus:         bus,
+		msgRepo:     msgRepo,
+		msgSvc:      msgSvc,
+		studiosRepo: studiosRepo,
+		leadsRepo:   leadsRepo,
+		claude:      cl,
+		log:         log,
+		subs:        make(map[uuid.UUID]func()),
+		httpClient:  client,
+	}
 }
 
 func (w *AIWorker) Run(ctx context.Context) {
@@ -183,6 +203,12 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		lead, err = w.leadsRepo.GetLead(ctx, studioID, *conv.LeadID)
 		if err != nil {
 			w.log.Error("fetch lead for ai context", "err", err)
+		} else {
+			// Do not reply if the lead is actively inside the bot automation flow
+			if lead.AutoContactStage != "" && lead.AutoContactStage != "completed" {
+				w.log.Debug("skipping ai reply", "lead", lead.ID, "reason", "lead is in bot automation flow")
+				return nil
+			}
 		}
 	}
 
@@ -190,6 +216,13 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	studio, err := w.studiosRepo.GetByID(ctx, studioID)
 	if err != nil {
 		return fmt.Errorf("fetch studio for ai context: %w", err)
+	}
+
+	// Fetch active plans for this studio
+	plans, err := w.msgRepo.ListActivePlans(ctx, studioID)
+	if err != nil {
+		w.log.Error("fetch plans for ai context failed", "err", err)
+		plans = []Plan{} // fallback to empty
 	}
 
 	// Analyze sentiment and keywords
@@ -204,7 +237,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	}
 
 	// Generate AI response with context
-	prompt := w.buildPrompt(history, conv, lead, studio, sentiment, keywords)
+	prompt := w.buildPrompt(history, conv, lead, studio, plans, sentiment, keywords)
 	
 	var resp string
 	var sourceRef string
@@ -247,7 +280,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	return nil
 }
 
-func (w *AIWorker) buildPrompt(history []Message, conv *Conversation, lead *leads.Lead, studio *studios.Studio, sentiment int, keywords []string) string {
+func (w *AIWorker) buildPrompt(history []Message, conv *Conversation, lead *leads.Lead, studio *studios.Studio, plans []Plan, sentiment int, keywords []string) string {
 	context := "You are a helpful AI assistant for a fitness studio. "
 
 	hour := time.Now().UTC().Hour()
@@ -277,6 +310,14 @@ func (w *AIWorker) buildPrompt(history []Message, conv *Conversation, lead *lead
 
 	if kbText != "" {
 		context += fmt.Sprintf("\nHere are the specific company details and knowledge base you MUST use to answer questions:\n\"\"\"\n%s\n\"\"\"\nDo not invent information outside of this knowledge base.\n\n", kbText)
+	}
+	
+	if len(plans) > 0 {
+		context += "Available Membership Plans (in SGD):\n"
+		for _, p := range plans {
+			context += fmt.Sprintf("- %s: S$ %.2f/%s. Features: %s\n", p.PlanName, float64(p.PriceSGD)/100.0, p.BillingCycle, strings.Join(p.Features, ", "))
+		}
+		context += "\n"
 	}
 
 	if lead != nil {
@@ -495,48 +536,70 @@ func (w *AIWorker) generateGeminiReply(ctx context.Context, apiKey string, promp
 		return "", err
 	}
 
-	// Add a 15-second timeout to prevent goroutine leaks if Gemini hangs
-	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
+	var lastErr error
+	backoff := 500 * time.Millisecond
 
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, url, bytes.NewBuffer(reqBody))
-	if err != nil {
-		return "", err
+	for attempt := 1; attempt <= 3; attempt++ {
+		reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, url, bytes.NewBuffer(reqBody))
+		if err != nil {
+			cancel()
+			return "", err
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := w.httpClient.Do(req)
+		if err != nil {
+			cancel()
+			lastErr = err
+			w.log.Warn("gemini api attempt failed", "attempt", attempt, "err", err)
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+
+		respBytes, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		cancel()
+
+		if err != nil {
+			lastErr = err
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+
+		if resp.StatusCode >= 400 {
+			lastErr = fmt.Errorf("gemini API error (HTTP %d): %s", resp.StatusCode, string(respBytes))
+			if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+				w.log.Warn("gemini api transient response error", "attempt", attempt, "status", resp.StatusCode)
+				time.Sleep(backoff)
+				backoff *= 2
+				continue
+			}
+			return "", lastErr
+		}
+
+		var res struct {
+			Candidates []struct {
+				Content struct {
+					Parts []struct {
+						Text string `json:"text"`
+					} `json:"parts"`
+				} `json:"content"`
+			} `json:"candidates"`
+		}
+
+		if err := json.Unmarshal(respBytes, &res); err != nil {
+			return "", err
+		}
+
+		if len(res.Candidates) == 0 || len(res.Candidates[0].Content.Parts) == 0 {
+			return "", fmt.Errorf("empty response from Gemini API")
+		}
+
+		return res.Candidates[0].Content.Parts[0].Text, nil
 	}
-	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	respBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-
-	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("gemini API error (HTTP %d): %s", resp.StatusCode, string(respBytes))
-	}
-
-	var res struct {
-		Candidates []struct {
-			Content struct {
-				Parts []struct {
-					Text string `json:"text"`
-				} `json:"parts"`
-			} `json:"content"`
-		} `json:"candidates"`
-	}
-
-	if err := json.Unmarshal(respBytes, &res); err != nil {
-		return "", err
-	}
-
-	if len(res.Candidates) == 0 || len(res.Candidates[0].Content.Parts) == 0 {
-		return "", fmt.Errorf("empty response from Gemini API")
-	}
-
-	return res.Candidates[0].Content.Parts[0].Text, nil
+	return "", fmt.Errorf("gemini API call failed after 3 attempts: %w", lastErr)
 }

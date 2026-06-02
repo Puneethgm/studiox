@@ -37,6 +37,8 @@ interface SocialPost {
   content: string;
   imageUrl?: string;
   status: 'published' | 'scheduled' | 'draft' | 'failed';
+  deliveryMode?: 'unknown' | 'mock' | 'live';
+  externalResourceName?: string;
   scheduledTime: string;
 }
 
@@ -114,7 +116,7 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
     if (!silent) setLoadingPosts(true);
     const targetStudioId = studioId === 'global' ? 'global' : studioId;
     try {
-      const res = await api<{ id: string; campaign: string; platform: string; copy: string; mediaUrl?: string; status: string; scheduledAt: string }[]>(`/api/v1/studios/${targetStudioId}/social-posts`);
+      const res = await api<{ id: string; campaign: string; platform: string; copy: string; mediaUrl?: string; status: string; deliveryMode?: 'unknown' | 'mock' | 'live'; externalResourceName?: string; scheduledAt: string }[]>(`/api/v1/studios/${targetStudioId}/social-posts`);
       const mapped = res.map((p) => ({
         id: p.id,
         campaignName: p.campaign || 'General Promo',
@@ -122,6 +124,8 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
         content: p.copy,
         imageUrl: p.mediaUrl,
         status: p.status as SocialPost['status'],
+        deliveryMode: p.deliveryMode,
+        externalResourceName: p.externalResourceName,
         scheduledTime: p.scheduledAt,
       }));
       setPosts(mapped);
@@ -183,15 +187,15 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
         try {
           const [studioRes, channelsRes] = await Promise.all([
             api<{ metaAppId?: string; metaAppSecret?: string; googleClientId?: string; googleClientSecret?: string; googleDeveloperToken?: string }>(`/api/v1/me/studios/${studioId}`),
-            api<{ channels: { kind: string }[] }>(`/api/v1/studios/${studioId}/messaging/channels`)
+            api<{ channels: { kind: string; status?: string }[] }>(`/api/v1/studios/${studioId}/messaging/channels`)
           ]);
           const hasMeta = !!(studioRes.metaAppId && studioRes.metaAppSecret);
-          const hasGoogleAds = !!(studioRes.googleClientId && studioRes.googleClientSecret && studioRes.googleDeveloperToken);
+          const hasGoogleAds = channelsRes.channels?.some(c => c.kind === 'google_ads' && (!c.status || c.status === 'active'));
           const hasX = channelsRes.channels?.some(c => c.kind === 'x_dm');
           setConnectedChannels({
             facebook: hasMeta,
             instagram: hasMeta,
-            googleAds: hasGoogleAds,
+            googleAds: !!hasGoogleAds,
             x: !!hasX,
           });
         } catch (err) {
@@ -781,7 +785,9 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                             <span className="text-[10px] font-bold text-zinc-400">· {post.campaignName}</span>
                             <div className="ml-auto flex items-center gap-2">
                               <Badge tone={post.status === 'published' ? 'success' : post.status === 'scheduled' ? 'warning' : 'neutral'}>
-                                {post.status}
+                                {post.status === 'published' && post.platform === 'Google Ads' && post.deliveryMode !== 'live'
+                                  ? 'published (mock)'
+                                  : post.status}
                               </Badge>
                               <button
                                 onClick={() => handleDeletePost(post.id)}

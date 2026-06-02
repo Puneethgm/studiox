@@ -1243,9 +1243,109 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 			days, _ := getAvailableDays()
 			outboundBody = fmt.Sprintf("Please select a date for your trial:\n1. %s\n2. %s\n3. %s", days[0], days[1], days[2])
 		} else if isMember && !isTrial {
+			plans, errPlans := s.repo.ListActivePlans(ctx, studioID)
+			if errPlans != nil || len(plans) == 0 {
+				targetStage = "completed"
+				targetStatus = "member"
+				outboundBody = "Our team will reach out to you ASAP to discuss membership options."
+			} else {
+				targetStage = "awaiting_plan_selection"
+				targetStatus = "member"
+				var sb strings.Builder
+				sb.WriteString("Awesome! Please select a membership plan:\n")
+				for idx, p := range plans {
+					sb.WriteString(fmt.Sprintf("%d. %s (S$ %.2f/%s)\n", idx+1, p.PlanName, float64(p.PriceSGD)/100.0, p.BillingCycle))
+					if len(p.Features) > 0 {
+						sb.WriteString(fmt.Sprintf("*- %s:* %s\n", p.PlanName, strings.Join(p.Features, ", ")))
+					}
+				}
+				outboundBody = sb.String()
+			}
+		}
+	} else if autoContactStage == "awaiting_plan_selection" {
+		plans, errPlans := s.repo.ListActivePlans(ctx, studioID)
+		if errPlans == nil && len(plans) > 0 {
+			selectedIndex := -1
+			var matchedPlanLength int
+			for idx := range plans {
+				choiceStr := fmt.Sprintf("%d", idx+1)
+				lowerText := strings.ToLower(text)
+				cleanPlanName := strings.TrimSpace(strings.ReplaceAll(strings.ToLower(plans[idx].PlanName), "plan", ""))
+				
+				if text == choiceStr || strings.Contains(text, "choice_"+choiceStr) {
+					selectedIndex = idx
+					break
+				}
+				
+				if strings.Contains(lowerText, strings.ToLower(plans[idx].PlanName)) || (cleanPlanName != "" && strings.Contains(lowerText, cleanPlanName)) {
+					if len(plans[idx].PlanName) > matchedPlanLength {
+						selectedIndex = idx
+						matchedPlanLength = len(plans[idx].PlanName)
+					}
+				}
+			}
+			if selectedIndex == -1 {
+				selectedIndex = 0 // default to first plan if unparseable
+			}
+			selectedPlan := plans[selectedIndex]
+
 			targetStage = "completed"
 			targetStatus = "member"
-			outboundBody = "Our team would reach u ASAP."
+
+			secretKey, _, studioName, studioSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
+			if errStripe == nil && secretKey != "" {
+				var leadPhone, leadNameStr string
+				_ = tx.QueryRow(ctx, "SELECT phone, name FROM leads WHERE id = $1", *conv.LeadID).Scan(&leadPhone, &leadNameStr)
+				
+				frontendURL := os.Getenv("FRONTEND_URL")
+				if frontendURL == "" {
+					frontendURL = "http://localhost:3000"
+				}
+
+				sc := &client.API{}
+				sc.Init(secretKey, nil)
+				params := &stripe.CheckoutSessionParams{
+					PaymentMethodTypes: stripe.StringSlice([]string{"card"}),
+					Mode:               stripe.String("subscription"),
+					LineItems: []*stripe.CheckoutSessionLineItemParams{
+						{
+							PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{
+								Currency:   stripe.String("sgd"),
+								UnitAmount: stripe.Int64(int64(selectedPlan.PriceSGD)),
+								Recurring: &stripe.CheckoutSessionLineItemPriceDataRecurringParams{
+									Interval: stripe.String("month"),
+								},
+								ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
+									Name:        stripe.String(fmt.Sprintf("%s - %s Plan", studioName, selectedPlan.PlanName)),
+								},
+							},
+							Quantity: stripe.Int64(1),
+						},
+					},
+					SuccessURL: stripe.String(fmt.Sprintf("%s/payment-success?studio=%s&session_id={CHECKOUT_SESSION_ID}", frontendURL, studioSlug)),
+					CancelURL:  stripe.String(fmt.Sprintf("%s/payment-cancelled?studio=%s", frontendURL, studioSlug)),
+				}
+				if leadPhone != "" {
+					params.Metadata = map[string]string{
+						"customer_phone": leadPhone,
+						"customer_name":  leadNameStr,
+						"studio_id":      studioID.String(),
+						"plan_id":        selectedPlan.ID.String(),
+					}
+				}
+				session, errSess := sc.CheckoutSessions.New(params)
+				if errSess == nil && session != nil && session.URL != "" {
+					outboundBody = fmt.Sprintf("Great choice! You selected the %s Plan. To complete your membership, please subscribe here:\n%s", selectedPlan.PlanName, session.URL)
+				} else {
+					outboundBody = "Thank you! Our team will reach out to you shortly to finalize your membership."
+				}
+			} else {
+				outboundBody = "Thank you! Our team will reach out to you shortly."
+			}
+		} else {
+			targetStage = "completed"
+			targetStatus = "member"
+			outboundBody = "Thank you! Our team will reach out to you shortly to finalize your membership."
 		}
 	} else if autoContactStage == "awaiting_trial_date" {
 		days, daysWeekdayStr := getAvailableDays()
@@ -1353,20 +1453,13 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 		targetNotes = strings.TrimSpace(targetNotes + "\n[Selected Trial Slot]: " + dateStr + " " + selectedTime)
 		targetStage = "completed"
 
-		secretKey, amountSGD, amountINR, amountUSD, studioName, studioSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
+		secretKey, amountSGD, studioName, studioSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
 		if errStripe == nil && secretKey != "" {
-			var leadPhone, leadNameStr, leadCurrency string
-			_ = tx.QueryRow(ctx, "SELECT phone, name, currency FROM leads WHERE id = $1", *conv.LeadID).Scan(&leadPhone, &leadNameStr, &leadCurrency)
+			var leadPhone, leadNameStr string
+			_ = tx.QueryRow(ctx, "SELECT phone, name FROM leads WHERE id = $1", *conv.LeadID).Scan(&leadPhone, &leadNameStr)
 			
 			amount := amountSGD
 			cur := "sgd"
-			if strings.ToLower(leadCurrency) == "inr" {
-				amount = amountINR
-				cur = "inr"
-			} else if strings.ToLower(leadCurrency) == "usd" {
-				amount = amountUSD
-				cur = "usd"
-			}
 			if amount == 0 {
 				amount = 2500
 			}

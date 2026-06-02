@@ -177,14 +177,28 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 		name = "there"
 	}
 
-	message := fmt.Sprintf(
-		"🎉 Hi %s! Thank you for booking your Trial at *%s*!\n\n"+
-			"Your payment of *%s* was received successfully. We can't wait to see you! 💪\n\n"+
-			"Your session is confirmed. Please arrive 10 minutes early.\n\n"+
-			"📄 *Your Receipt:* %s\n\n"+
-			"See you soon! — The %s Team",
-		name, studio.Name, amountStr, receiptURL, studio.Name,
-	)
+	planIDStr := session.Metadata["plan_id"]
+	isMembership := planIDStr != ""
+
+	var message string
+	if isMembership {
+		message = fmt.Sprintf(
+			"🎉 Hi %s! Welcome to *%s*!\n\n"+
+				"Your membership subscription of *%s* was received successfully. We are excited to have you on board! 💪\n\n"+
+				"📄 *Your Receipt:* %s\n\n"+
+				"See you soon! — The %s Team",
+			name, studio.Name, amountStr, receiptURL, studio.Name,
+		)
+	} else {
+		message = fmt.Sprintf(
+			"🎉 Hi %s! Thank you for booking your Trial at *%s*!\n\n"+
+				"Your payment of *%s* was received successfully. We can't wait to see you! 💪\n\n"+
+				"Your session is confirmed. Please arrive 10 minutes early.\n\n"+
+				"📄 *Your Receipt:* %s\n\n"+
+				"See you soon! — The %s Team",
+			name, studio.Name, amountStr, receiptURL, studio.Name,
+		)
+	}
 
 	cleanPhone := strings.ReplaceAll(strings.ReplaceAll(customerPhone, "+", ""), " ", "")
 
@@ -199,15 +213,51 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 	`, studio.ID, cleanPhone).Scan(&convID, &leadID)
 
 	if leadID != nil {
-		_, updateErr := h.svc.repo.Pool().Exec(ctx, `
-			UPDATE leads 
-			SET trial_purchased = true, status = 'trial_booked', updated_at = now() 
-			WHERE id = $1
-		`, *leadID)
-		if updateErr != nil {
-			fmt.Printf("[Stripe Webhook] Failed to update lead status: %v\n", updateErr)
+		if isMembership {
+			monthlyFee := float64(session.AmountTotal) / 100.0
+
+			var planName string
+			_ = h.svc.repo.Pool().QueryRow(ctx, "SELECT plan_name FROM plans WHERE id = $1", planIDStr).Scan(&planName)
+
+			var err error
+			if planName != "" {
+				_, err = h.svc.repo.Pool().Exec(ctx, `
+					UPDATE leads 
+					SET member_sold = true, status = 'member', monthly_fee = $1, fitness_plan = $2, updated_at = now() 
+					WHERE id = $3
+				`, monthlyFee, planName, *leadID)
+			} else {
+				_, err = h.svc.repo.Pool().Exec(ctx, `
+					UPDATE leads 
+					SET member_sold = true, status = 'member', monthly_fee = $1, updated_at = now() 
+					WHERE id = $2
+				`, monthlyFee, *leadID)
+			}
+
+			if err != nil {
+				fmt.Printf("[Stripe Webhook] Failed to update lead status: %v\n", err)
+			} else {
+				fmt.Printf("[Stripe Webhook] Successfully updated lead status to member for %s\n", customerPhone)
+
+				// Phase 5: Cancel any pending automated follow-ups since the lead became a member
+				_, _ = h.svc.repo.Pool().Exec(ctx, `
+					DELETE FROM outbound_jobs
+					WHERE studio_id = $1 AND conversation_id IN (
+						SELECT id FROM conversations WHERE lead_id = $2
+					) AND source_kind = 'automation' AND status = 'pending'
+				`, studio.ID, *leadID)
+			}
 		} else {
-			fmt.Printf("[Stripe Webhook] Successfully updated lead status for %s\n", customerPhone)
+			_, updateErr := h.svc.repo.Pool().Exec(ctx, `
+				UPDATE leads 
+				SET trial_purchased = true, status = 'trial_booked', updated_at = now() 
+				WHERE id = $1
+			`, *leadID)
+			if updateErr != nil {
+				fmt.Printf("[Stripe Webhook] Failed to update lead status: %v\n", updateErr)
+			} else {
+				fmt.Printf("[Stripe Webhook] Successfully updated lead status to trial_booked for %s\n", customerPhone)
+			}
 		}
 	}
 

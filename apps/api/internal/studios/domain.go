@@ -43,9 +43,7 @@ type Studio struct {
 	SocialPlannerEnabled bool                `json:"socialPlannerEnabled"`
 	KnowledgeBase        string              `json:"knowledgeBase"`
 	KnowledgeBaseFiles   []KnowledgeBaseFile `json:"knowledgeBaseFiles"`
-	TrialAmountSGD       int                 `json:"trialAmountSgd"`
-	TrialAmountINR       int                 `json:"trialAmountInr"`
-	TrialAmountUSD       int                 `json:"trialAmountUsd"`
+	TrialAmountSGD       int    `json:"trialAmountSgd"`
 
 	// Optional summary fields used by list endpoints.
 	CampaignCount int `json:"campaignCount,omitempty"`

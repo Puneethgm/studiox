@@ -64,7 +64,7 @@ func (w *SocialWorker) tick(ctx context.Context) {
 	// Find scheduled posts that are due
 	now := time.Now().UTC()
 	rows, err := w.pool.Query(ctx, `
-		SELECT id, studio_id, campaign, platform, copy, media_url, status, scheduled_at
+		SELECT id, studio_id, campaign, platform, copy, media_url, status, delivery_mode, external_resource_name, scheduled_at
 		FROM social_posts
 		WHERE status = 'scheduled' AND scheduled_at <= $1
 	`, now)
@@ -77,7 +77,7 @@ func (w *SocialWorker) tick(ctx context.Context) {
 	var posts []SocialPost
 	for rows.Next() {
 		var p SocialPost
-		err := rows.Scan(&p.ID, &p.StudioID, &p.Campaign, &p.Platform, &p.Copy, &p.MediaURL, &p.Status, &p.ScheduledAt)
+		err := rows.Scan(&p.ID, &p.StudioID, &p.Campaign, &p.Platform, &p.Copy, &p.MediaURL, &p.Status, &p.DeliveryMode, &p.ExternalResourceName, &p.ScheduledAt)
 		if err != nil {
 			w.log.Error("scan social post", "err", err)
 			continue
@@ -119,12 +119,12 @@ func (w *SocialWorker) publishPost(ctx context.Context, post SocialPost) {
 		if isLocalDev {
 			// In local dev, allow publishing using fallback credentials/mocking
 			w.log.Info("[MOCK PUBLISH] No active Meta integration found. Simulating publish in local dev.", "post_id", post.ID)
-			w.markStatus(ctx, post.ID, "published")
+			w.markStatus(ctx, post.ID, "published", "mock", "")
 			return
 		}
 
 		w.log.Error("no active Facebook page connected for studio", "studio_id", post.StudioID, "post_id", post.ID)
-		w.markStatus(ctx, post.ID, "failed")
+		w.markStatus(ctx, post.ID, "failed", "live", "")
 		return
 	}
 
@@ -138,7 +138,7 @@ func (w *SocialWorker) publishPost(ctx context.Context, post SocialPost) {
 				accessToken = "test"
 			} else {
 				w.log.Error("decrypt meta token", "err", err, "post_id", post.ID)
-				w.markStatus(ctx, post.ID, "failed")
+				w.markStatus(ctx, post.ID, "failed", "live", "")
 				return
 			}
 		} else {
@@ -153,7 +153,7 @@ func (w *SocialWorker) publishPost(ctx context.Context, post SocialPost) {
 			"copy", post.Copy,
 			"media", post.MediaURL,
 		)
-		w.markStatus(ctx, post.ID, "published")
+		w.markStatus(ctx, post.ID, "published", "mock", "")
 		return
 	}
 
@@ -163,23 +163,23 @@ func (w *SocialWorker) publishPost(ctx context.Context, post SocialPost) {
 		w.log.Error("failed to publish to facebook", "err", err, "post_id", post.ID)
 		if isLocalDev {
 			w.log.Warn("[LOCAL DEV FALLBACK] Meta API call failed (likely due to missing App permissions like pages_manage_posts). Marking post as published for local UI testing.", "post_id", post.ID)
-			w.markStatus(ctx, post.ID, "published")
+			w.markStatus(ctx, post.ID, "published", "mock", "")
 			return
 		}
-		w.markStatus(ctx, post.ID, "failed")
+		w.markStatus(ctx, post.ID, "failed", "live", "")
 		return
 	}
 
 	w.log.Info("successfully published to facebook page", "post_id", post.ID)
-	w.markStatus(ctx, post.ID, "published")
+	w.markStatus(ctx, post.ID, "published", "live", "")
 }
 
-func (w *SocialWorker) markStatus(ctx context.Context, postID uuid.UUID, status string) {
+func (w *SocialWorker) markStatus(ctx context.Context, postID uuid.UUID, status, deliveryMode, externalResourceName string) {
 	_, err := w.pool.Exec(ctx, `
 		UPDATE social_posts
-		SET status = $1, updated_at = now()
-		WHERE id = $2
-	`, status, postID)
+		SET status = $1, delivery_mode = $2, external_resource_name = $3, updated_at = now()
+		WHERE id = $4
+	`, status, deliveryMode, externalResourceName, postID)
 	if err != nil {
 		w.log.Error("update social post status", "err", err, "post_id", postID, "status", status)
 	}
@@ -199,11 +199,11 @@ func (w *SocialWorker) publishX(ctx context.Context, post SocialPost) {
 	if err != nil {
 		if isLocalDev {
 			w.log.Info("[MOCK PUBLISH] No active X integration found. Simulating publish in local dev.", "post_id", post.ID)
-			w.markStatus(ctx, post.ID, "published")
+			w.markStatus(ctx, post.ID, "published", "mock", "")
 			return
 		}
 		w.log.Error("no active X account connected for studio", "studio_id", post.StudioID, "post_id", post.ID)
-		w.markStatus(ctx, post.ID, "failed")
+		w.markStatus(ctx, post.ID, "failed", "live", "")
 		return
 	}
 
@@ -215,7 +215,7 @@ func (w *SocialWorker) publishX(ctx context.Context, post SocialPost) {
 				accessTokenStr = "test"
 			} else {
 				w.log.Error("decrypt x token", "err", err, "post_id", post.ID)
-				w.markStatus(ctx, post.ID, "failed")
+				w.markStatus(ctx, post.ID, "failed", "live", "")
 				return
 			}
 		} else {
@@ -225,7 +225,7 @@ func (w *SocialWorker) publishX(ctx context.Context, post SocialPost) {
 
 	if isLocalDev && (accessTokenStr == "" || accessTokenStr == "test") {
 		w.log.Info("[MOCK PUBLISH] Successfully published scheduled post to X", "copy", post.Copy)
-		w.markStatus(ctx, post.ID, "published")
+		w.markStatus(ctx, post.ID, "published", "mock", "")
 		return
 	}
 
@@ -237,7 +237,7 @@ func (w *SocialWorker) publishX(ctx context.Context, post SocialPost) {
 	}
 	if err := json.Unmarshal([]byte(accessTokenStr), &keys); err != nil {
 		w.log.Error("invalid x channel credentials", "err", err, "post_id", post.ID)
-		w.markStatus(ctx, post.ID, "failed")
+		w.markStatus(ctx, post.ID, "failed", "live", "")
 		return
 	}
 
@@ -263,13 +263,13 @@ func (w *SocialWorker) publishX(ctx context.Context, post SocialPost) {
 
 	if err != nil || resp.StatusCode >= 300 {
 		w.log.Error("failed to publish to x", "err", err, "status", resp.StatusCode, "body", string(errBody))
-		w.markStatus(ctx, post.ID, "failed")
+		w.markStatus(ctx, post.ID, "failed", "live", "")
 		return
 	}
 	defer resp.Body.Close()
 
 	w.log.Info("successfully published to x", "post_id", post.ID, "status", resp.StatusCode, "body", string(errBody))
-	w.markStatus(ctx, post.ID, "published")
+	w.markStatus(ctx, post.ID, "published", "live", "")
 }
 
 func (w *SocialWorker) sendToFacebook(ctx context.Context, pageID, accessToken, message, mediaURL string) error {
@@ -346,30 +346,40 @@ func (w *SocialWorker) sendToFacebook(ctx context.Context, pageID, accessToken, 
 }
 
 func (w *SocialWorker) publishGoogleAds(ctx context.Context, post SocialPost) {
-	w.log.Info("publishing social post to Google Ads", "id", post.ID, "campaign", post.Campaign)
-
 	isLocalDev := os.Getenv("API_ENV") == "local"
 
-	// Fetch connected Google Ads Channel Account for Customer ID & Refresh Token
+	// Fetch connected Google Ads Channel Account for Customer ID, optional
+	// manager/login customer ID, and refresh token.
 	var customerID string
+	var loginCustomerID string
 	var refreshTokenEnc string
 	err := w.pool.QueryRow(ctx, `
-		SELECT external_id, access_token_enc
+		SELECT external_id, COALESCE(parent_id, ''), access_token_enc
 		FROM channel_accounts
 		WHERE studio_id = $1 AND kind = 'google_ads' AND status = 'active'
 		LIMIT 1
-	`, post.StudioID).Scan(&customerID, &refreshTokenEnc)
+	`, post.StudioID).Scan(&customerID, &loginCustomerID, &refreshTokenEnc)
 
 	if err != nil {
 		if isLocalDev {
 			w.log.Info("[MOCK GOOGLE ADS PUBLISH] No active Google Ads integration found. Simulating campaign publishing in local dev.", "post_id", post.ID)
-			w.markStatus(ctx, post.ID, "published")
+			w.markStatus(ctx, post.ID, "published", "mock", "")
 			return
 		}
 		w.log.Error("no active Google Ads account connected for studio", "studio_id", post.StudioID, "post_id", post.ID)
-		w.markStatus(ctx, post.ID, "failed")
+		w.markStatus(ctx, post.ID, "failed", "live", "")
 		return
 	}
+
+	loginCustomerID = strings.ReplaceAll(loginCustomerID, "-", "")
+	loginCustomerID = strings.ReplaceAll(loginCustomerID, " ", "")
+
+	w.log.Info("publishing social post to Google Ads",
+		"id", post.ID,
+		"campaign", post.Campaign,
+		"customer_id", customerID,
+		"login_customer_id", loginCustomerID,
+	)
 
 	// Fetch Google Ads API credentials from the studio table
 	var clientID, clientSecret, devToken string
@@ -382,11 +392,11 @@ func (w *SocialWorker) publishGoogleAds(ctx context.Context, post SocialPost) {
 	if err != nil || clientID == "" || clientSecret == "" || devToken == "" {
 		if isLocalDev {
 			w.log.Info("[MOCK GOOGLE ADS PUBLISH] Incomplete studio credentials. Simulating campaign publishing in local dev.", "post_id", post.ID)
-			w.markStatus(ctx, post.ID, "published")
+			w.markStatus(ctx, post.ID, "published", "mock", "")
 			return
 		}
 		w.log.Error("incomplete Google Ads API credentials in studio settings", "studio_id", post.StudioID, "post_id", post.ID, "err", err)
-		w.markStatus(ctx, post.ID, "failed")
+		w.markStatus(ctx, post.ID, "failed", "live", "")
 		return
 	}
 
@@ -400,7 +410,7 @@ func (w *SocialWorker) publishGoogleAds(ctx context.Context, post SocialPost) {
 				refreshToken = "test"
 			} else {
 				w.log.Error("decrypt google ads refresh token", "err", err, "post_id", post.ID)
-				w.markStatus(ctx, post.ID, "failed")
+				w.markStatus(ctx, post.ID, "failed", "live", "")
 				return
 			}
 		} else {
@@ -414,7 +424,7 @@ func (w *SocialWorker) publishGoogleAds(ctx context.Context, post SocialPost) {
 			"campaign_name", post.Campaign,
 			"copy", post.Copy,
 		)
-		w.markStatus(ctx, post.ID, "published")
+		w.markStatus(ctx, post.ID, "published", "mock", "")
 		return
 	}
 
@@ -429,7 +439,12 @@ func (w *SocialWorker) publishGoogleAds(ctx context.Context, post SocialPost) {
 	resp, err := http.PostForm(tokenURL, formValues)
 	if err != nil {
 		w.log.Error("failed to refresh google ads oauth token", "err", err)
-		w.markStatus(ctx, post.ID, "failed")
+		if isLocalDev {
+			w.log.Warn("[LOCAL DEV FALLBACK] Failed to refresh token. Falling back to mock publishing.", "err", err)
+			w.markStatus(ctx, post.ID, "published", "mock", "")
+			return
+		}
+		w.markStatus(ctx, post.ID, "failed", "live", "")
 		return
 	}
 	defer resp.Body.Close()
@@ -437,7 +452,12 @@ func (w *SocialWorker) publishGoogleAds(ctx context.Context, post SocialPost) {
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
 		w.log.Error("google ads oauth refresh error", "status", resp.StatusCode, "body", string(respBody))
-		w.markStatus(ctx, post.ID, "failed")
+		if isLocalDev {
+			w.log.Warn("[LOCAL DEV FALLBACK] Google Ads token refresh status error. Falling back to mock publishing.", "status", resp.StatusCode)
+			w.markStatus(ctx, post.ID, "published", "mock", "")
+			return
+		}
+		w.markStatus(ctx, post.ID, "failed", "live", "")
 		return
 	}
 
@@ -446,7 +466,12 @@ func (w *SocialWorker) publishGoogleAds(ctx context.Context, post SocialPost) {
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&tokenRes); err != nil {
 		w.log.Error("failed to decode google ads oauth token", "err", err)
-		w.markStatus(ctx, post.ID, "failed")
+		if isLocalDev {
+			w.log.Warn("[LOCAL DEV FALLBACK] Failed to decode token JSON. Falling back to mock publishing.", "err", err)
+			w.markStatus(ctx, post.ID, "published", "mock", "")
+			return
+		}
+		w.markStatus(ctx, post.ID, "failed", "live", "")
 		return
 	}
 
@@ -454,45 +479,66 @@ func (w *SocialWorker) publishGoogleAds(ctx context.Context, post SocialPost) {
 
 	// Clean customer ID format (remove hyphens)
 	cleanCustomerID := strings.ReplaceAll(customerID, "-", "")
+	cleanCustomerID = strings.ReplaceAll(cleanCustomerID, " ", "")
 
 	// 2. Create Campaign Budget
-	budgetResourceName, err := w.createGoogleAdsBudget(ctx, cleanCustomerID, accessToken, devToken, post.Campaign)
+	budgetResourceName, err := w.createGoogleAdsBudget(ctx, cleanCustomerID, accessToken, devToken, loginCustomerID, post.Campaign)
 	if err != nil {
 		w.log.Error("failed to create google ads budget", "err", err)
-		w.markStatus(ctx, post.ID, "failed")
+		if isLocalDev {
+			w.log.Warn("[LOCAL DEV FALLBACK] Failed to create Google Ads budget. Falling back to mock publishing.", "err", err)
+			w.markStatus(ctx, post.ID, "published", "mock", "")
+			return
+		}
+		w.markStatus(ctx, post.ID, "failed", "live", "")
 		return
 	}
 
 	// 3. Create Campaign
-	campaignResourceName, err := w.createGoogleAdsCampaign(ctx, cleanCustomerID, accessToken, devToken, post.Campaign, budgetResourceName)
+	campaignResourceName, err := w.createGoogleAdsCampaign(ctx, cleanCustomerID, accessToken, devToken, loginCustomerID, post.Campaign, budgetResourceName)
 	if err != nil {
 		w.log.Error("failed to create google ads campaign", "err", err)
-		w.markStatus(ctx, post.ID, "failed")
+		if isLocalDev {
+			w.log.Warn("[LOCAL DEV FALLBACK] Failed to create Google Ads campaign. Falling back to mock publishing.", "err", err)
+			w.markStatus(ctx, post.ID, "published", "mock", "")
+			return
+		}
+		w.markStatus(ctx, post.ID, "failed", "live", "")
 		return
 	}
 
 	// 4. Create Ad Group
-	adGroupResourceName, err := w.createGoogleAdsAdGroup(ctx, cleanCustomerID, accessToken, devToken, post.Campaign, campaignResourceName)
+	adGroupResourceName, err := w.createGoogleAdsAdGroup(ctx, cleanCustomerID, accessToken, devToken, loginCustomerID, post.Campaign, campaignResourceName)
 	if err != nil {
 		w.log.Error("failed to create google ads ad group", "err", err)
-		w.markStatus(ctx, post.ID, "failed")
+		if isLocalDev {
+			w.log.Warn("[LOCAL DEV FALLBACK] Failed to create Google Ads ad group. Falling back to mock publishing.", "err", err)
+			w.markStatus(ctx, post.ID, "published", "mock", "")
+			return
+		}
+		w.markStatus(ctx, post.ID, "failed", "live", "")
 		return
 	}
 
 	// 5. Create Responsive Search Ad (Ad Group Ad)
-	err = w.createGoogleAdsResponsiveSearchAd(ctx, cleanCustomerID, accessToken, devToken, post.Copy, adGroupResourceName)
+	err = w.createGoogleAdsResponsiveSearchAd(ctx, cleanCustomerID, accessToken, devToken, loginCustomerID, post.Copy, adGroupResourceName)
 	if err != nil {
 		w.log.Error("failed to create google ads responsive search ad", "err", err)
-		w.markStatus(ctx, post.ID, "failed")
+		if isLocalDev {
+			w.log.Warn("[LOCAL DEV FALLBACK] Failed to create Google Ads responsive search ad. Falling back to mock publishing.", "err", err)
+			w.markStatus(ctx, post.ID, "published", "mock", "")
+			return
+		}
+		w.markStatus(ctx, post.ID, "failed", "live", "")
 		return
 	}
 
 	w.log.Info("successfully published Google Ads campaign hierarchy", "post_id", post.ID, "campaign", post.Campaign)
-	w.markStatus(ctx, post.ID, "published")
+	w.markStatus(ctx, post.ID, "published", "live", campaignResourceName)
 }
 
-func (w *SocialWorker) createGoogleAdsBudget(ctx context.Context, customerID, accessToken, devToken, campaignName string) (string, error) {
-	apiURL := fmt.Sprintf("https://googleads.googleapis.com/v17/customers/%s/campaignBudgets:mutate", customerID)
+func (w *SocialWorker) createGoogleAdsBudget(ctx context.Context, customerID, accessToken, devToken, loginCustomerID, campaignName string) (string, error) {
+	apiURL := fmt.Sprintf("https://googleads.googleapis.com/v22/customers/%s/campaignBudgets:mutate", customerID)
 	payload := map[string]any{
 		"operations": []map[string]any{
 			{
@@ -511,6 +557,9 @@ func (w *SocialWorker) createGoogleAdsBudget(ctx context.Context, customerID, ac
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("developer-token", devToken)
+	if loginCustomerID != "" {
+		req.Header.Set("login-customer-id", loginCustomerID)
+	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
@@ -537,17 +586,23 @@ func (w *SocialWorker) createGoogleAdsBudget(ctx context.Context, customerID, ac
 	return mutateRes.Results[0].ResourceName, nil
 }
 
-func (w *SocialWorker) createGoogleAdsCampaign(ctx context.Context, customerID, accessToken, devToken, campaignName, budgetResourceName string) (string, error) {
-	apiURL := fmt.Sprintf("https://googleads.googleapis.com/v17/customers/%s/campaigns:mutate", customerID)
+func (w *SocialWorker) createGoogleAdsCampaign(ctx context.Context, customerID, accessToken, devToken, loginCustomerID, campaignName, budgetResourceName string) (string, error) {
+	apiURL := fmt.Sprintf("https://googleads.googleapis.com/v22/customers/%s/campaigns:mutate", customerID)
 	payload := map[string]any{
 		"operations": []map[string]any{
 			{
 				"create": map[string]any{
-					"name":               fmt.Sprintf("%s %d", campaignName, time.Now().Unix()),
+					"name":                  fmt.Sprintf("%s %d", campaignName, time.Now().Unix()),
 					"advertisingChannelType": "SEARCH",
-					"status":             "PAUSED",
-					"campaignBudget":     budgetResourceName,
-					"manualCpc":          map[string]any{},
+					"status":                "PAUSED",
+					"campaignBudget":        budgetResourceName,
+					"manualCpc":             map[string]any{},
+					"networkSettings": map[string]any{
+						"targetGoogleSearch":      true,
+						"targetSearchNetwork":      true,
+						"targetContentNetwork":     true,
+						"targetPartnerSearchNetwork": false,
+					},
 				},
 			},
 		},
@@ -559,6 +614,9 @@ func (w *SocialWorker) createGoogleAdsCampaign(ctx context.Context, customerID, 
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("developer-token", devToken)
+	if loginCustomerID != "" {
+		req.Header.Set("login-customer-id", loginCustomerID)
+	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
@@ -585,8 +643,8 @@ func (w *SocialWorker) createGoogleAdsCampaign(ctx context.Context, customerID, 
 	return mutateRes.Results[0].ResourceName, nil
 }
 
-func (w *SocialWorker) createGoogleAdsAdGroup(ctx context.Context, customerID, accessToken, devToken, campaignName, campaignResourceName string) (string, error) {
-	apiURL := fmt.Sprintf("https://googleads.googleapis.com/v17/customers/%s/adGroups:mutate", customerID)
+func (w *SocialWorker) createGoogleAdsAdGroup(ctx context.Context, customerID, accessToken, devToken, loginCustomerID, campaignName, campaignResourceName string) (string, error) {
+	apiURL := fmt.Sprintf("https://googleads.googleapis.com/v22/customers/%s/adGroups:mutate", customerID)
 	payload := map[string]any{
 		"operations": []map[string]any{
 			{
@@ -607,6 +665,9 @@ func (w *SocialWorker) createGoogleAdsAdGroup(ctx context.Context, customerID, a
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("developer-token", devToken)
+	if loginCustomerID != "" {
+		req.Header.Set("login-customer-id", loginCustomerID)
+	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
@@ -633,8 +694,8 @@ func (w *SocialWorker) createGoogleAdsAdGroup(ctx context.Context, customerID, a
 	return mutateRes.Results[0].ResourceName, nil
 }
 
-func (w *SocialWorker) createGoogleAdsResponsiveSearchAd(ctx context.Context, customerID, accessToken, devToken, copyText, adGroupResourceName string) error {
-	apiURL := fmt.Sprintf("https://googleads.googleapis.com/v17/customers/%s/adGroupAds:mutate", customerID)
+func (w *SocialWorker) createGoogleAdsResponsiveSearchAd(ctx context.Context, customerID, accessToken, devToken, loginCustomerID, copyText, adGroupResourceName string) error {
+	apiURL := fmt.Sprintf("https://googleads.googleapis.com/v22/customers/%s/adGroupAds:mutate", customerID)
 
 	// Build headlines & descriptions
 	headline1 := "Join Our Premium Studio"
@@ -679,6 +740,9 @@ func (w *SocialWorker) createGoogleAdsResponsiveSearchAd(ctx context.Context, cu
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("developer-token", devToken)
+	if loginCustomerID != "" {
+		req.Header.Set("login-customer-id", loginCustomerID)
+	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)

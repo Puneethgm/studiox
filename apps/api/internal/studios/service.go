@@ -161,8 +161,8 @@ type UpdateStudioInput struct {
 	KnowledgeBase        string             `json:"knowledgeBase"`
 	KnowledgeBaseFiles   []KnowledgeBaseFile `json:"knowledgeBaseFiles"`
 	TrialAmountSGD       int                 `json:"trialAmountSgd"`
-	TrialAmountINR       int                 `json:"trialAmountInr"`
-	TrialAmountUSD       int                 `json:"trialAmountUsd"`
+	
+	
 }
 
 func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput) (map[string]string, error) {
@@ -192,7 +192,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput
 	if len(errs) > 0 {
 		return errs, nil
 	}
-	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.Active, in.AvailabilitySlots, in.AvailabilityTimezone, in.GeminiAPIKey, in.MetaAppID, in.MetaAppSecret, in.GoogleClientID, in.GoogleClientSecret, in.GoogleDeveloperToken, in.SocialPlannerEnabled, in.KnowledgeBase, in.KnowledgeBaseFiles, in.TrialAmountSGD, in.TrialAmountINR, in.TrialAmountUSD); err != nil {
+	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.Active, in.AvailabilitySlots, in.AvailabilityTimezone, in.GeminiAPIKey, in.MetaAppID, in.MetaAppSecret, in.GoogleClientID, in.GoogleClientSecret, in.GoogleDeveloperToken, in.SocialPlannerEnabled, in.KnowledgeBase, in.KnowledgeBaseFiles, in.TrialAmountSGD); err != nil {
 		return nil, err
 	}
 	return nil, nil
@@ -242,4 +242,12 @@ func isPgUnique(err error) bool {
 
 func (s *Service) UpdatePayments(ctx context.Context, id uuid.UUID, stripeAccountId, stripeSecretKey, stripePublishableKey, subscriptionTier string) error {
 	return s.repo.UpdatePayments(ctx, id, stripeAccountId, stripeSecretKey, stripePublishableKey, subscriptionTier)
+}
+
+func (s *Service) ListPlans(ctx context.Context, studioID uuid.UUID) ([]Plan, error) {
+	return s.repo.ListPlans(ctx, studioID)
+}
+
+func (s *Service) UpdatePlan(ctx context.Context, studioID, planID uuid.UUID, in UpdatePlanInput) error {
+	return s.repo.UpdatePlan(ctx, studioID, planID, in)
 }

@@ -525,13 +525,19 @@ func (r *Repo) ListMessages(ctx context.Context, studioID, conversationID uuid.U
 		limit = 100
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, conversation_id, studio_id, direction, source_kind, source_user_id,
-		       source_ref, body, attachments, external_id, in_reply_to, status,
-		       failure_reason, sent_at, delivered_at, read_at, created_at
-		FROM messages
-		WHERE studio_id = $1 AND conversation_id = $2
-		ORDER BY sent_at ASC
-		LIMIT $3
+		SELECT sub.id, sub.conversation_id, sub.studio_id, sub.direction, sub.source_kind, sub.source_user_id,
+		       sub.source_ref, sub.body, sub.attachments, sub.external_id, sub.in_reply_to, sub.status,
+		       sub.failure_reason, sub.sent_at, sub.delivered_at, sub.read_at, sub.created_at
+		FROM (
+			SELECT id, conversation_id, studio_id, direction, source_kind, source_user_id,
+			       source_ref, body, attachments, external_id, in_reply_to, status,
+			       failure_reason, sent_at, delivered_at, read_at, created_at
+			FROM messages
+			WHERE studio_id = $1 AND conversation_id = $2
+			ORDER BY sent_at DESC, created_at DESC
+			LIMIT $3
+		) sub
+		ORDER BY sub.sent_at ASC, sub.created_at ASC
 	`, studioID, conversationID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list messages: %w", err)
@@ -986,19 +992,51 @@ func (r *Repo) GetStudioMetaAppSecret(ctx context.Context, studioID uuid.UUID) (
 	return secret, nil
 }
 
-func (r *Repo) GetStripeConfig(ctx context.Context, studioID uuid.UUID) (secretKey string, amountSGD, amountINR, amountUSD int, name string, slug string, err error) {
+func (r *Repo) GetStripeConfig(ctx context.Context, studioID uuid.UUID) (secretKey string, amountSGD int, name string, slug string, err error) {
 	var encKey string
-	err = r.pool.QueryRow(ctx, "SELECT stripe_secret_key, trial_amount_sgd, trial_amount_inr, trial_amount_usd, name, slug FROM studios WHERE id = $1", studioID).Scan(&encKey, &amountSGD, &amountINR, &amountUSD, &name, &slug)
+	err = r.pool.QueryRow(ctx, "SELECT stripe_secret_key, trial_amount_sgd, name, slug FROM studios WHERE id = $1", studioID).Scan(&encKey, &amountSGD, &name, &slug)
 	if err != nil {
-		return "", 0, 0, 0, "", "", err
+		return "", 0, "", "", err
 	}
 	if encKey != "" && r.cipher != nil {
 		secretKey, err = r.cipher.Decrypt(encKey)
 		if err != nil {
-			return "", 0, 0, 0, "", "", err
+			return "", 0, "", "", err
 		}
 	} else {
 		secretKey = encKey
 	}
 	return
+}
+
+type Plan struct {
+	ID           uuid.UUID
+	StudioID     uuid.UUID
+	PlanName     string
+	PriceSGD     int
+	BillingCycle string
+	Features     []string
+}
+
+func (r *Repo) ListActivePlans(ctx context.Context, studioID uuid.UUID) ([]Plan, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, studio_id, plan_name, price_sgd, billing_cycle, features
+		FROM plans
+		WHERE studio_id = $1 AND is_active = true AND plan_name != 'Trial'
+		ORDER BY price_sgd ASC
+	`, studioID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Plan
+	for rows.Next() {
+		var p Plan
+		if err := rows.Scan(&p.ID, &p.StudioID, &p.PlanName, &p.PriceSGD, &p.BillingCycle, &p.Features); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }

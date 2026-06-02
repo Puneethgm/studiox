@@ -17,11 +17,12 @@ const (
 	KindMessengerMeta ChannelKind = "messenger_meta"
 	KindXDM           ChannelKind = "x_dm"
 	KindSMS           ChannelKind = "sms"
+	KindGoogleAds     ChannelKind = "google_ads"
 )
 
 func (k ChannelKind) Valid() bool {
 	switch k {
-	case KindWhatsAppMeta, KindInstagramMeta, KindMessengerMeta, KindXDM, KindSMS:
+	case KindWhatsAppMeta, KindInstagramMeta, KindMessengerMeta, KindXDM, KindSMS, KindGoogleAds:
 		return true
 	}
 	return false

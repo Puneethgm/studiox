@@ -97,11 +97,13 @@ export function InboxLive({
 }) {
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
-  const [currentTab, setCurrentTab] = useState<InboxTab>('conversations');
+  const [currentTab, _setCurrentTab] = useState<InboxTab>('conversations');
+  const setCurrentTab = useCallback((tab: InboxTab) => { currentTabRef.current = tab; _setCurrentTab(tab); }, []);
   const [activeChannel, setActiveChannel] = useState<ChannelKind>('whatsapp_meta');
   const [unrespondedOnly, setUnrespondedOnly] = useState(initialUnresponded);
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, _setSelectedId] = useState<string | null>(null);
+  const setSelectedId = useCallback((id: string | null) => { selectedIdRef.current = id; _setSelectedId(id); }, []);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [draft, setDraft] = useState('');
@@ -110,6 +112,8 @@ export function InboxLive({
   const [creatingConversation, setCreatingConversation] = useState(false);
   const [authError, setAuthError] = useState(false);
   const messagesEndRef = useRef<HTMLLIElement>(null);
+  const selectedIdRef = useRef<string | null>(null);
+  const currentTabRef = useRef<InboxTab>('conversations');
 
   // templates, links, jobs state
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -210,7 +214,7 @@ export function InboxLive({
       if (!unrespondedOnly) {
         url += `&channelKind=${activeChannel}`;
       }
-      const res = await api<{ conversations: Conversation[] }>(url);
+      const res = await api<{ conversations: Conversation[] }>(url, { cache: 'no-store' });
       let filtered = res.conversations;
       if (unrespondedOnly) {
         filtered = filtered.filter(c => c.status === 'open' && c.lastMessageDirection === 'inbound');
@@ -231,6 +235,7 @@ export function InboxLive({
       try {
         const res = await api<{ messages: Message[] }>(
           `/api/v1/studios/${studioId}/messaging/conversations/${convId}/messages?limit=200`,
+          { cache: 'no-store' }
         );
         setMessages(res.messages);
       } catch (error) {
@@ -250,7 +255,7 @@ export function InboxLive({
   const fetchTemplates = useCallback(async () => {
     setLoadingTemplates(true);
     try {
-      const res = await api<{ templates: Template[] }>(`/api/v1/studios/${studioId}/messaging/templates`);
+      const res = await api<{ templates: Template[] }>(`/api/v1/studios/${studioId}/messaging/templates`, { cache: 'no-store' });
       setTemplates(res.templates);
     } catch (err) {
       console.error(err);
@@ -262,7 +267,7 @@ export function InboxLive({
   const fetchTriggerLinks = useCallback(async () => {
     setLoadingLinks(true);
     try {
-      const res = await api<{ triggerLinks: TriggerLink[] }>(`/api/v1/studios/${studioId}/messaging/trigger-links`);
+      const res = await api<{ triggerLinks: TriggerLink[] }>(`/api/v1/studios/${studioId}/messaging/trigger-links`, { cache: 'no-store' });
       setTriggerLinks(res.triggerLinks);
     } catch (err) {
       console.error(err);
@@ -274,7 +279,7 @@ export function InboxLive({
   const fetchJobs = useCallback(async () => {
     setLoadingJobs(true);
     try {
-      const res = await api<{ jobs: PendingJob[] }>(`/api/v1/studios/${studioId}/messaging/jobs`);
+      const res = await api<{ jobs: PendingJob[] }>(`/api/v1/studios/${studioId}/messaging/jobs`, { cache: 'no-store' });
       setJobs(res.jobs);
     } catch (err) {
       console.error(err);
@@ -321,10 +326,10 @@ export function InboxLive({
         const evt: SSEEvent = JSON.parse(e.data);
         if (evt.studioId !== studioId) return;
         refreshConversations();
-        if (evt.conversationId === selectedId) {
+        if (evt.conversationId === selectedIdRef.current) {
           refreshMessages(evt.conversationId);
         }
-        if (currentTab === 'automated_messages') {
+        if (currentTabRef.current === 'automated_messages') {
           fetchJobs();
         }
       } catch {
@@ -338,7 +343,7 @@ export function InboxLive({
     return () => {
       es.close();
     };
-  }, [studioId, selectedId, currentTab, refreshConversations, refreshMessages, fetchJobs]);
+  }, [studioId, refreshConversations, refreshMessages, fetchJobs]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -733,7 +738,7 @@ export function InboxLive({
 
   return (
     <div
-      className="flex flex-col h-[calc(100vh-13rem)] lg:h-[calc(100vh-15.5rem)] overflow-hidden rounded-[22px] border border-white/30 bg-white/30 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30"
+      className="flex flex-col h-[calc(100vh-10rem)] lg:h-[calc(100vh-11rem)] overflow-hidden rounded-[22px] border border-white/30 bg-white/30 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30"
       style={{
         boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.2), 0 8px 40px rgba(139,92,246,0.08)',
       }}

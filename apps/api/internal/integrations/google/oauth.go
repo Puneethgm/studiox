@@ -69,14 +69,25 @@ func (h *OAuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	customerID := normalizeCustomerID(r.URL.Query().Get("customerId"))
+	if !validCustomerID(customerID) {
+		httpx.WriteError(w, http.StatusBadRequest, "missing_customer_id", "Google Ads Customer ID must contain digits only")
+		return
+	}
+	loginCustomerID := normalizeCustomerID(r.URL.Query().Get("loginCustomerId"))
+	if loginCustomerID != "" && !validCustomerID(loginCustomerID) {
+		httpx.WriteError(w, http.StatusBadRequest, "missing_login_customer_id", "Google Ads Login Customer ID must contain digits only")
+		return
+	}
+
 	// Generate random state
 	b := make([]byte, 16)
 	rand.Read(b)
 	stateToken := base64.URLEncoding.EncodeToString(b)
-	
+
 	// In a real app, we would save stateToken -> studioID in redis or db with a TTL.
-	// For simplicity, we can pass the studioID inside the state as well: stateToken|studioID
-	state := fmt.Sprintf("%s|%s", stateToken, studioID.String())
+	// For simplicity, we pass the studioID and customerID inside the state too.
+	state := fmt.Sprintf("%s|%s|%s|%s", stateToken, studioID.String(), customerID, loginCustomerID)
 
 	// Build OAuth URL
 	u, _ := url.Parse("https://accounts.google.com/o/oauth2/v2/auth")
@@ -111,7 +122,7 @@ func (h *OAuthHandler) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Extract studio ID from state
 	parts := strings.Split(state, "|")
-	if len(parts) != 2 {
+	if len(parts) != 3 && len(parts) != 4 {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_state", "Malformed state parameter")
 		return
 	}
@@ -119,6 +130,19 @@ func (h *OAuthHandler) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_state", "Invalid studio ID in state")
 		return
+	}
+	customerID := normalizeCustomerID(parts[2])
+	if !validCustomerID(customerID) {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_state", "Invalid Google Ads Customer ID in state")
+		return
+	}
+	loginCustomerID := ""
+	if len(parts) == 4 {
+		loginCustomerID = normalizeCustomerID(parts[3])
+		if loginCustomerID != "" && !validCustomerID(loginCustomerID) {
+			httpx.WriteError(w, http.StatusBadRequest, "invalid_state", "Invalid Google Ads Login Customer ID in state")
+			return
+		}
 	}
 
 	// Fetch studio for client secret
@@ -136,32 +160,84 @@ func (h *OAuthHandler) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Save refresh token to channel_accounts
-	_, err = h.msgRepo.CreateChannel(r.Context(), messaging.CreateChannelInput{
-		StudioID:      studioID,
-		Kind:          "google_ads",
-		BSP:           "google",
-		ExternalID:    studio.GoogleClientID,
-		DisplayHandle: "Google Ads",
-		AccessToken:   tokenRes.RefreshToken, // We save the refresh token since it's long-lived
-	})
+	channels, err := h.msgRepo.ListChannels(r.Context(), studioID)
 	if err != nil {
-		// If it's already connected, we could update it. For now just handle the error.
-		if strings.Contains(err.Error(), "already connected") {
-			// Ignore or update
-		} else {
-			httpx.WriteError(w, http.StatusInternalServerError, "internal", "Failed to save Google Ads channel: "+err.Error())
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "Failed to load existing Google Ads channels: "+err.Error())
+		return
+	}
+
+	displayHandle := "Google Ads " + customerID
+	for _, ch := range channels {
+		if ch.Kind == messaging.KindGoogleAds {
+			parentID := loginCustomerID
+			if parentID == "" {
+				parentID = ch.ParentID
+			}
+			_, err = h.msgRepo.UpdateChannel(r.Context(), messaging.UpdateChannelInput{
+				ID:            ch.ID,
+				StudioID:      studioID,
+				ExternalID:    customerID,
+				ParentID:      parentID,
+				DisplayHandle: displayHandle,
+				AccessToken:   tokenRes.RefreshToken,
+			})
+			if err != nil {
+				httpx.WriteError(w, http.StatusInternalServerError, "internal", "Failed to update Google Ads channel: "+err.Error())
+				return
+			}
+			writeOAuthSuccess(w)
 			return
 		}
 	}
 
+	_, err = h.msgRepo.CreateChannel(r.Context(), messaging.CreateChannelInput{
+		StudioID:      studioID,
+		Kind:          messaging.KindGoogleAds,
+		BSP:           "google",
+		ExternalID:    customerID,
+		ParentID:      loginCustomerID,
+		DisplayHandle: displayHandle,
+		AccessToken:   tokenRes.RefreshToken, // We save the refresh token since it's long-lived
+	})
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "Failed to save Google Ads channel: "+err.Error())
+		return
+	}
+
+	writeOAuthSuccess(w)
+}
+
+func normalizeCustomerID(customerID string) string {
+	customerID = strings.TrimSpace(customerID)
+	customerID = strings.ReplaceAll(customerID, "-", "")
+	customerID = strings.ReplaceAll(customerID, " ", "")
+	return customerID
+}
+
+func validCustomerID(customerID string) bool {
+	if customerID == "" {
+		return false
+	}
+	for _, ch := range customerID {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func writeOAuthSuccess(w http.ResponseWriter) {
 	// Success response. The popup can be closed via a simple HTML script.
 	w.Header().Set("Content-Type", "text/html")
 	w.Write([]byte(`
 		<html>
 		<body>
 			<script>
-				window.opener && window.opener.location.reload();
-				window.close();
+				if (window.opener) {
+					window.opener.postMessage({ type: 'google_ads_oauth_success' }, '*');
+					window.opener.location.reload();
+				}
+				setTimeout(function () { window.close(); }, 300);
 			</script>
 			<h2>OAuth Successful!</h2>
 			<p>You can close this window.</p>

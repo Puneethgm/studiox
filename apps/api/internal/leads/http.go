@@ -415,6 +415,7 @@ type patchLeadReq struct {
 	ContactMade    *bool       `json:"contactMade"`
 	HotLead        *bool       `json:"hotLead"`
 	TrialPurchased *bool       `json:"trialPurchased"`
+	FitnessPlan    *string     `json:"fitnessPlan"`
 	FirstName      *string     `json:"firstName"`
 	LastName       *string     `json:"lastName"`
 	AssignedTo     *string     `json:"assignedTo"`
@@ -454,6 +455,7 @@ func (h *Handler) patchLead(w http.ResponseWriter, r *http.Request) {
 	contactMade := current.ContactMade
 	hotLead := current.HotLead
 	trialPurchased := current.TrialPurchased
+	fitnessPlan := current.FitnessPlan
 	firstName := current.FirstName
 	lastName := current.LastName
 	assignedTo := current.AssignedTo
@@ -478,6 +480,9 @@ func (h *Handler) patchLead(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.TrialPurchased != nil {
 		trialPurchased = *req.TrialPurchased
+	}
+	if req.FitnessPlan != nil {
+		fitnessPlan = *req.FitnessPlan
 	}
 	if req.FirstName != nil {
 		firstName = *req.FirstName
@@ -507,7 +512,7 @@ func (h *Handler) patchLead(w http.ResponseWriter, r *http.Request) {
 		furtherNotes = *req.FurtherNotes
 	}
 
-	if err := h.svc.UpdateLead(r.Context(), studioID, id, status, currency, notes, contactMade, hotLead, trialPurchased, firstName, lastName, assignedTo, trialAttended, memberSold, monthlyFee, offer, furtherNotes); err != nil {
+	if err := h.svc.UpdateLead(r.Context(), studioID, id, status, currency, notes, contactMade, hotLead, trialPurchased, firstName, lastName, fitnessPlan, assignedTo, trialAttended, memberSold, monthlyFee, offer, furtherNotes); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
 		return
 	}

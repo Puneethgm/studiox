@@ -22,6 +22,7 @@ export async function updateLeadStatus(
     notes: string;
     firstName?: string;
     lastName?: string;
+    fitnessPlan?: string;
     contactMade?: boolean;
     hotLead?: boolean;
     trialPurchased?: boolean;

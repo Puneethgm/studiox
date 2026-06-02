@@ -21,10 +21,11 @@ export default async function ThankYouPage({
         backgroundSize: 'cover',
         backgroundPosition: 'center top',
         backgroundAttachment: 'fixed',
+        backgroundRepeat: 'no-repeat',
       }}
     >
       <div aria-hidden className="pointer-events-none absolute inset-0 opacity-60">
-        <div className="absolute -left-[12%] top-[22%] h-[46%] w-[46%] rounded-full bg-brand-500/10 blur-[120px]" />
+        <div className="absolute -left-[12%] top-[22%] h-[46%] w-[46%] rounded-full blur-[120px]" style={{ background: brand, opacity: 0.1 }} />
         <div className="absolute -right-[10%] bottom-[8%] h-[46%] w-[46%] rounded-full bg-sky-400/10 blur-[120px]" />
         <div
           className="absolute inset-0 opacity-[0.04]"

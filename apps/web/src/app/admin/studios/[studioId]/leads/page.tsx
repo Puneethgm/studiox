@@ -10,6 +10,8 @@ import type { Lead, LeadStatus, Campaign } from '@/lib/types';
 import { LEAD_STATUSES, LEAD_STATUS_LABELS } from '@/lib/types';
 import { LeadFilters } from './LeadFilters';
 import { ImportLeadsButton } from './ImportLeadsButton';
+import { AutoRefresh } from '@/components/AutoRefresh';
+import { HeaderActions } from '@/components/HeaderActions';
 
 interface ListResp {
   leads: Lead[];
@@ -91,42 +93,30 @@ export default async function LeadsPage({
 
   return (
     <div className="space-y-5 pb-10">
+      <AutoRefresh intervalMs={5000} />
 
-      {/* Header */}
-      <div
-        className="relative overflow-hidden rounded-[24px] border border-white/30 bg-white/30 px-6 py-4 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30"
-        style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 4px 16px rgba(0,0,0,0.05)' }}
-      >
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <div className="grid h-10 w-10 place-items-center rounded-2xl bg-gradient-to-br from-violet-500/20 to-purple-600/10 text-violet-600 dark:text-violet-400">
-              <Users className="h-5 w-5" />
-            </div>
-            <div>
-              <h1 className="text-lg font-black tracking-tight text-zinc-900 dark:text-white">Leads</h1>
-              <p className="text-[11px] font-semibold text-zinc-400">{data.total} submissions captured</p>
-            </div>
-          </div>
-          
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-emerald-600 dark:text-emerald-400">
-              <TrendingUp className="h-3 w-3" />
-              Live
-            </div>
-
-            <ImportLeadsButton studioId={studioId} campaigns={campaigns} />
-
-            <Link href={`/admin/studios/${studioId}/settings`}>
-              <Button
-                variant="ghost"
-                className="flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-2 text-xs font-bold text-zinc-700 hover:bg-white/20 dark:text-zinc-200 dark:hover:bg-neutral-800/50"
-              >
-                <Database className="h-4 w-4" />
-                Sheets Connection
-              </Button>
-            </Link>
-          </div>
+      <HeaderActions>
+        <div className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-emerald-600 dark:text-emerald-400">
+          <TrendingUp className="h-3 w-3" />
+          Live
         </div>
+
+        <ImportLeadsButton studioId={studioId} campaigns={campaigns} />
+
+        <Link href={`/admin/studios/${studioId}/settings`}>
+          <Button
+            variant="ghost"
+            size="sm"
+            leftIcon={<Database className="h-3.5 w-3.5" />}
+            className="rounded-xl border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-bold text-zinc-700 hover:bg-white/20 dark:text-zinc-200 dark:hover:bg-neutral-800/50 shadow-sm shrink-0"
+          >
+            Sheets Connection
+          </Button>
+        </Link>
+      </HeaderActions>
+
+      <div className="text-[11px] font-semibold text-zinc-400 dark:text-zinc-500 px-2">
+        {data.total} submissions captured
       </div>
 
       {/* Filters */}

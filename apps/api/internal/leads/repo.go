@@ -465,23 +465,23 @@ func (r *Repo) Stats(ctx context.Context, studioID uuid.UUID) (*LeadStats, error
 	return out, rows.Err()
 }
 
-func (r *Repo) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status LeadStatus, currency string, notes string, contactMade, hotLead, trialPurchased bool, firstName, lastName string, assignedTo string, trialAttended, memberSold bool, monthlyFee float64, offer, furtherNotes string) error {
+func (r *Repo) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status LeadStatus, currency string, notes string, contactMade, hotLead, trialPurchased bool, firstName, lastName, fitnessPlan, assignedTo string, trialAttended, memberSold bool, monthlyFee float64, offer, furtherNotes string) error {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var oldStatus, oldNotes, oldFirstName, oldLastName, oldAssignedTo, oldOffer, oldFurtherNotes, oldCurrency string
+	var oldStatus, oldNotes, oldFirstName, oldLastName, oldFitnessPlan, oldAssignedTo, oldOffer, oldFurtherNotes, oldCurrency string
 	var oldContactMade, oldHotLead, oldTrialPurchased, oldTrialAttended, oldMemberSold bool
 	var oldMonthlyFee float64
 	err = tx.QueryRow(ctx, `
-		SELECT status, COALESCE(notes, ''), COALESCE(first_name, ''), COALESCE(last_name, ''),
+		SELECT status, COALESCE(notes, ''), COALESCE(first_name, ''), COALESCE(last_name, ''), COALESCE(fitness_plan, ''),
 		       contact_made, hot_lead, trial_purchased,
 		       COALESCE(assigned_to, ''), trial_attended, member_sold, monthly_fee, currency,
 		       COALESCE(offer, ''), COALESCE(further_notes, '')
 		FROM leads WHERE studio_id = $1 AND id = $2
-	`, studioID, id).Scan(&oldStatus, &oldNotes, &oldFirstName, &oldLastName,
+	`, studioID, id).Scan(&oldStatus, &oldNotes, &oldFirstName, &oldLastName, &oldFitnessPlan,
 		&oldContactMade, &oldHotLead, &oldTrialPurchased,
 		&oldAssignedTo, &oldTrialAttended, &oldMemberSold, &oldMonthlyFee, &oldCurrency,
 		&oldOffer, &oldFurtherNotes)
@@ -500,11 +500,11 @@ func (r *Repo) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status Le
 	tag, err := tx.Exec(ctx, `
 		UPDATE leads 
 		SET status = $3, notes = $4, contact_made = $5, hot_lead = $6, trial_purchased = $7,
-		    first_name = $8, last_name = $9, name = $10,
-		    assigned_to = $11, trial_attended = $12, member_sold = $13, monthly_fee = $14,
-		    currency = $15, offer = $16, further_notes = $17, updated_at = now()
+		    first_name = $8, last_name = $9, fitness_plan = $10, name = $11,
+		    assigned_to = $12, trial_attended = $13, member_sold = $14, monthly_fee = $15,
+		    currency = $16, offer = $17, further_notes = $18, updated_at = now()
 		WHERE studio_id = $1 AND id = $2
-	`, studioID, id, string(status), notes, contactMade, hotLead, trialPurchased, firstName, lastName, name,
+	`, studioID, id, string(status), notes, contactMade, hotLead, trialPurchased, firstName, lastName, fitnessPlan, name,
 		assignedTo, trialAttended, memberSold, monthlyFee, currency, offer, furtherNotes)
 	if err != nil {
 		return fmt.Errorf("update lead: %w", err)
@@ -513,7 +513,7 @@ func (r *Repo) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status Le
 		return ErrLeadNotFound
 	}
 
-	changed := string(status) != oldStatus || notes != oldNotes || firstName != oldFirstName || lastName != oldLastName ||
+	changed := string(status) != oldStatus || notes != oldNotes || firstName != oldFirstName || lastName != oldLastName || fitnessPlan != oldFitnessPlan ||
 		contactMade != oldContactMade || hotLead != oldHotLead || trialPurchased != oldTrialPurchased ||
 		assignedTo != oldAssignedTo || trialAttended != oldTrialAttended || memberSold != oldMemberSold ||
 		monthlyFee != oldMonthlyFee || currency != oldCurrency || offer != oldOffer || furtherNotes != oldFurtherNotes
@@ -554,7 +554,34 @@ func (r *Repo) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status Le
 			if err != nil {
 				return fmt.Errorf("enqueue trial followup: %w", err)
 			}
+
+			// Enqueue future reminders for Phase 5
+			delays := []time.Duration{24 * time.Hour, 72 * time.Hour}
+			for i, d := range delays {
+				body := "Hi {{contact.first_name}}, just checking in! Are you still interested in becoming a member at {{studio.name}}? Let us know if you have any questions!"
+				if i == 1 {
+					body = "Hi {{contact.first_name}}, we'd love to have you back at {{studio.name}}! Our membership spots are filling up fast. Ready to join us?"
+				}
+				_, err = tx.Exec(ctx, `
+					INSERT INTO outbound_jobs (studio_id, conversation_id, body, attachments,
+					                           source_kind, source_ref, scheduled_for, next_attempt_at)
+					VALUES ($1, $2, $3, '[]'::jsonb, 'automation', $4, now() + ($5 * INTERVAL '1 second'), now() + ($5 * INTERVAL '1 second'))
+				`, studioID, convID, body, fmt.Sprintf("lead:%s:trial_reminder:%d", id.String(), i+1), d.Seconds())
+				if err != nil {
+					return fmt.Errorf("enqueue trial reminder %d: %w", i, err)
+				}
+			}
 		}
+	}
+
+	// Cancel any pending automated follow-ups if the lead became a member
+	if string(status) == "member" && oldStatus != "member" {
+		_, _ = tx.Exec(ctx, `
+			DELETE FROM outbound_jobs
+			WHERE studio_id = $1 AND conversation_id IN (
+				SELECT id FROM conversations WHERE lead_id = $2
+			) AND source_kind = 'automation' AND status = 'pending'
+		`, studioID, id)
 	}
 
 	return tx.Commit(ctx)

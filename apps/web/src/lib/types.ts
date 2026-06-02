@@ -40,8 +40,18 @@ export interface Studio {
   knowledgeBase?: string;
   knowledgeBaseFiles?: { name: string; url: string; text: string }[];
   trialAmountSgd?: number;
-  trialAmountInr?: number;
-  trialAmountUsd?: number;
+}
+
+export interface Plan {
+  id: string;
+  studioId: string;
+  planName: string;
+  priceSgd: number;
+  billingCycle: string;
+  features: string[];
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Campaign {

@@ -7,12 +7,9 @@ export default async function StudioPaymentsPage({
 }) {
   const { studioId } = await params;
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-black tracking-tight text-zinc-900 dark:text-white">Billing & Payments</h1>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 font-semibold mt-0.5">Manage subscription invoices and link Stripe for your studio location</p>
-        </div>
+    <div className="space-y-4">
+      <div className="text-[11px] font-semibold text-zinc-400 dark:text-zinc-500 px-2 leading-relaxed">
+        Manage subscription invoices and link Stripe for your studio location. Payments are securely routed to your connected Stripe account. Subscriptions are billed automatically.
       </div>
       <PaymentsClient studioId={studioId} />
     </div>

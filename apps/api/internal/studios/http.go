@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -47,6 +47,10 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 func (h *Handler) SelfRoutes(r chi.Router) {
 	r.Get("/studios/{id}", h.getScoped)
 	r.Patch("/studios/{id}", h.updateScoped)
+	
+	// Plans routes
+	r.Get("/studios/{id}/plans", h.listPlans)
+	r.Put("/studios/{id}/plans/{planId}", h.updatePlan)
 	r.Get("/studios/{id}/payments", h.getPayments)
 	r.Post("/studios/{id}/payments/stripe", h.linkStripe)
 	r.Get("/studios/{id}/billing/history", h.getBillingHistory)
@@ -227,8 +231,6 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		KnowledgeBase:        existing.KnowledgeBase,
 		KnowledgeBaseFiles:   existing.KnowledgeBaseFiles,
 		TrialAmountSGD:       existing.TrialAmountSGD,
-		TrialAmountINR:       existing.TrialAmountINR,
-		TrialAmountUSD:       existing.TrialAmountUSD,
 	}
 	if req.Name != nil {
 		input.Name = *req.Name
@@ -280,12 +282,6 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.TrialAmountSGD != nil {
 		input.TrialAmountSGD = *req.TrialAmountSGD
-	}
-	if req.TrialAmountINR != nil {
-		input.TrialAmountINR = *req.TrialAmountINR
-	}
-	if req.TrialAmountUSD != nil {
-		input.TrialAmountUSD = *req.TrialAmountUSD
 	}
 
 	errs, err := h.svc.Update(r.Context(), id, input)
@@ -394,8 +390,6 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 		KnowledgeBase:        existing.KnowledgeBase,
 		KnowledgeBaseFiles:   existing.KnowledgeBaseFiles,
 		TrialAmountSGD:       existing.TrialAmountSGD,
-		TrialAmountINR:       existing.TrialAmountINR,
-		TrialAmountUSD:       existing.TrialAmountUSD,
 	}
 	if req.Name != nil {
 		input.Name = *req.Name
@@ -447,12 +441,6 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.TrialAmountSGD != nil {
 		input.TrialAmountSGD = *req.TrialAmountSGD
-	}
-	if req.TrialAmountINR != nil {
-		input.TrialAmountINR = *req.TrialAmountINR
-	}
-	if req.TrialAmountUSD != nil {
-		input.TrialAmountUSD = *req.TrialAmountUSD
 	}
 
 	errs, err := h.svc.Update(r.Context(), studioID, input)
@@ -625,8 +613,6 @@ func (h *Handler) getPayments(w http.ResponseWriter, r *http.Request) {
 		"hasStripeSecretKey":   hasSecretKey,
 		"subscriptionTier":     s.SubscriptionTier,
 		"trialAmountSgd":       s.TrialAmountSGD,
-		"trialAmountInr":       s.TrialAmountINR,
-		"trialAmountUsd":       s.TrialAmountUSD,
 	})
 }
 
@@ -643,7 +629,6 @@ func (h *Handler) createTrialCheckout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Currency    string `json:"currency"`    // "sgd", "inr", "usd"
 		CustomerPhone string `json:"customerPhone"` // E.164 format e.g. 6591234567
 		CustomerName  string `json:"customerName"`
 	}
@@ -664,17 +649,8 @@ func (h *Handler) createTrialCheckout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Determine amount and currency
-	var amount int64
-	cur := strings.ToLower(req.Currency)
-	switch cur {
-	case "inr":
-		amount = int64(s.TrialAmountINR)
-	case "usd":
-		amount = int64(s.TrialAmountUSD)
-	default:
-		cur = "sgd"
-		amount = int64(s.TrialAmountSGD)
-	}
+	amount := int64(s.TrialAmountSGD)
+	cur := "sgd"
 	if amount == 0 {
 		amount = 2500 // default 25.00 SGD in cents
 	}
@@ -793,7 +769,31 @@ func (h *Handler) getBillingHistory(w http.ResponseWriter, r *http.Request) {
 	// Checkout Sessions create PaymentIntents (not Invoices).
 	// Query PaymentIntents to show all trial booking payments.
 	piParams := &stripe.PaymentIntentListParams{}
-	piParams.Limit = stripe.Int64(20)
+	
+	// Read optional date filters
+	startDateStr := r.URL.Query().Get("startDate")
+	endDateStr := r.URL.Query().Get("endDate")
+	
+	if startDateStr != "" || endDateStr != "" {
+		createdParams := &stripe.RangeQueryParams{}
+		if startDateStr != "" {
+			if startUnix, err := strconv.ParseInt(startDateStr, 10, 64); err == nil {
+				createdParams.GreaterThanOrEqual = startUnix
+			}
+		}
+		if endDateStr != "" {
+			if endUnix, err := strconv.ParseInt(endDateStr, 10, 64); err == nil {
+				createdParams.LesserThanOrEqual = endUnix
+			}
+		}
+		piParams.CreatedRange = createdParams
+		piParams.Limit = stripe.Int64(100) // Increase limit when filtering
+	} else {
+		piParams.Limit = stripe.Int64(20) // Default limit
+	}
+
+	piParams.AddExpand("data.latest_charge")
+	piParams.AddExpand("data.invoice")
 	piIter := sc.PaymentIntents.List(piParams)
 
 	var invoices []map[string]any
@@ -807,28 +807,48 @@ func (h *Handler) getBillingHistory(w http.ResponseWriter, r *http.Request) {
 		}
 
 		receiptURL := ""
+		buyerName := "Guest"
 		description := pi.Description
-		if description == "" {
+
+		if pi.Invoice != nil {
+			if pi.Invoice.Lines != nil && len(pi.Invoice.Lines.Data) > 0 {
+				description = pi.Invoice.Lines.Data[0].Description
+			}
+			if pi.Invoice.CustomerName != "" {
+				buyerName = pi.Invoice.CustomerName
+			} else if pi.Invoice.CustomerEmail != "" {
+				buyerName = pi.Invoice.CustomerEmail
+			}
+		}
+
+		if description == "" || description == "Subscription creation" {
 			description = "Trial Session Payment"
 		}
-		// Try to get receipt from latest charge
+
+		// Try to get receipt and buyer from latest charge
 		if pi.LatestCharge != nil {
 			receiptURL = pi.LatestCharge.ReceiptURL
+			if pi.LatestCharge.BillingDetails != nil && pi.LatestCharge.BillingDetails.Name != "" {
+				buyerName = pi.LatestCharge.BillingDetails.Name
+			} else if pi.LatestCharge.BillingDetails != nil && pi.LatestCharge.BillingDetails.Email != "" {
+				buyerName = pi.LatestCharge.BillingDetails.Email
+			}
 		}
 
 		cur := string(pi.Currency)
 		invoices = append(invoices, map[string]any{
-			"id":          pi.ID,
-			"number":      pi.ID[3:11], // short reference
-			"amount_due":  pi.Amount,
-			"amount_paid": pi.AmountReceived,
-			"currency":    cur,
-			"status":      "paid",
-			"created":     pi.Created,
+			"id":                 pi.ID,
+			"number":             pi.ID[3:11], // short reference
+			"amount_due":         pi.Amount,
+			"amount_paid":        pi.AmountReceived,
+			"currency":           cur,
+			"status":             "paid",
+			"created":            pi.Created,
 			"hosted_invoice_url": receiptURL,
-			"invoice_pdf": receiptURL,
-			"description": description,
-			"metadata":    pi.Metadata,
+			"invoice_pdf":        receiptURL,
+			"description":        description,
+			"buyer_name":         buyerName,
+			"metadata":           pi.Metadata,
 		})
 
 		lifetimePaidByCurrency[cur] += pi.AmountReceived
@@ -839,11 +859,8 @@ func (h *Handler) getBillingHistory(w http.ResponseWriter, r *http.Request) {
 		"invoices": invoices,
 		"stats": map[string]any{
 			"outstandingSGD":  int64(0),
-			"outstandingINR":  int64(0),
 			"lifetimePaidSGD": lifetimePaidByCurrency["sgd"],
-			"lifetimePaidINR": lifetimePaidByCurrency["inr"],
-			"lifetimePaidUSD": lifetimePaidByCurrency["usd"],
-			"lifetimePaid":    lifetimePaid,
+			"lifetimePaidTotal":    lifetimePaid,
 		},
 	})
 }
@@ -914,3 +931,55 @@ func (h *Handler) StripeConnectCallback(w http.ResponseWriter, r *http.Request) 
 	http.Redirect(w, r, fmt.Sprintf("%s/admin/studios/%s/settings?tab=integrations", frontendURL, studioID), http.StatusTemporaryRedirect)
 }
 
+func (h *Handler) listPlans(w http.ResponseWriter, r *http.Request) {
+	studioID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid studio id")
+		return
+	}
+	plans, err := h.svc.ListPlans(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to list plans")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"plans": plans})
+}
+
+type updatePlanReq struct {
+	PriceSGD *int      `json:"priceSgd"`
+	Features *[]string `json:"features"`
+	IsActive *bool     `json:"isActive"`
+}
+
+func (h *Handler) updatePlan(w http.ResponseWriter, r *http.Request) {
+	studioID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid studio id")
+		return
+	}
+	planID, err := uuid.Parse(chi.URLParam(r, "planId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_plan_id", "invalid plan id")
+		return
+	}
+	var req updatePlanReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	
+	err = h.svc.UpdatePlan(r.Context(), studioID, planID, UpdatePlanInput{
+		PriceSGD: req.PriceSGD,
+		Features: req.Features,
+		IsActive: req.IsActive,
+	})
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "plan not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to update plan")
+		return
+	}
+	
+	httpx.JSON(w, http.StatusOK, map[string]string{"status": "success"})
+}

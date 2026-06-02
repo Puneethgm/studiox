@@ -22,6 +22,8 @@ type SocialPost struct {
 	Copy        string    `json:"copy"`
 	MediaURL    string    `json:"mediaUrl"`
 	Status      string    `json:"status"` // draft, scheduled, published, failed
+	DeliveryMode string    `json:"deliveryMode,omitempty"`
+	ExternalResourceName string `json:"externalResourceName,omitempty"`
 	ScheduledAt time.Time `json:"scheduledAt"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
@@ -32,7 +34,7 @@ func (r *Repo) ListSocialPosts(ctx context.Context, studioID string) ([]SocialPo
 	var err error
 	if studioID == "global" {
 		rows, err = r.pool.Query(ctx, `
-			SELECT id, studio_id, campaign, platform, copy, media_url, status, scheduled_at, created_at, updated_at
+			SELECT id, studio_id, campaign, platform, copy, media_url, status, delivery_mode, external_resource_name, scheduled_at, created_at, updated_at
 			FROM social_posts
 			ORDER BY CASE WHEN status = 'published' THEN 1 ELSE 0 END, scheduled_at DESC
 		`)
@@ -42,7 +44,7 @@ func (r *Repo) ListSocialPosts(ctx context.Context, studioID string) ([]SocialPo
 			return nil, fmt.Errorf("invalid studio ID: %w", errParse)
 		}
 		rows, err = r.pool.Query(ctx, `
-			SELECT id, studio_id, campaign, platform, copy, media_url, status, scheduled_at, created_at, updated_at
+			SELECT id, studio_id, campaign, platform, copy, media_url, status, delivery_mode, external_resource_name, scheduled_at, created_at, updated_at
 			FROM social_posts
 			WHERE studio_id = $1
 			ORDER BY CASE WHEN status = 'published' THEN 1 ELSE 0 END, scheduled_at DESC
@@ -56,7 +58,7 @@ func (r *Repo) ListSocialPosts(ctx context.Context, studioID string) ([]SocialPo
 	posts := make([]SocialPost, 0)
 	for rows.Next() {
 		var p SocialPost
-		if err := rows.Scan(&p.ID, &p.StudioID, &p.Campaign, &p.Platform, &p.Copy, &p.MediaURL, &p.Status, &p.ScheduledAt, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.StudioID, &p.Campaign, &p.Platform, &p.Copy, &p.MediaURL, &p.Status, &p.DeliveryMode, &p.ExternalResourceName, &p.ScheduledAt, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan social post: %w", err)
 		}
 		posts = append(posts, p)

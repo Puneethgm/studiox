@@ -18,6 +18,7 @@ export function LeadEditor({ studioId, lead }: { studioId: string; lead: Lead })
   const [notes, setNotes] = useState(lead.notes);
   const [firstName, setFirstName] = useState(lead.firstName || '');
   const [lastName, setLastName] = useState(lead.lastName || '');
+  const [fitnessPlan, setFitnessPlan] = useState(lead.fitnessPlan || '');
   const [contactMade, setContactMade] = useState(lead.contactMade || false);
   const [hotLead, setHotLead] = useState(lead.hotLead || false);
   const [trialPurchased, setTrialPurchased] = useState(lead.trialPurchased || false);
@@ -36,6 +37,7 @@ export function LeadEditor({ studioId, lead }: { studioId: string; lead: Lead })
     notes !== lead.notes ||
     firstName !== (lead.firstName || '') ||
     lastName !== (lead.lastName || '') ||
+    fitnessPlan !== (lead.fitnessPlan || '') ||
     contactMade !== (lead.contactMade || false) ||
     hotLead !== (lead.hotLead || false) ||
     trialPurchased !== (lead.trialPurchased || false) ||
@@ -62,6 +64,7 @@ export function LeadEditor({ studioId, lead }: { studioId: string; lead: Lead })
         notes,
         firstName,
         lastName,
+        fitnessPlan,
         contactMade,
         hotLead,
         trialPurchased,
@@ -136,6 +139,15 @@ export function LeadEditor({ studioId, lead }: { studioId: string; lead: Lead })
               value={offer}
               onChange={(e) => setOffer(e.target.value)}
               placeholder="e.g. 20% off"
+            />
+          </div>
+          <div>
+            <Label htmlFor="fitnessPlan">Plan Name</Label>
+            <Input
+              id="fitnessPlan"
+              value={fitnessPlan}
+              onChange={(e) => setFitnessPlan(e.target.value)}
+              placeholder="e.g. Pro Plan, Trial Class"
             />
           </div>
         </div>

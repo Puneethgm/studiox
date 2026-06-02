@@ -227,7 +227,7 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
             <Button
               onClick={handleSave}
               loading={saving}
-              className="w-full text-center py-3"
+              className="w-full text-center py-3 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white font-black uppercase tracking-wider text-xs shadow-lg shadow-violet-500/15 active:scale-[0.98] hover:scale-[1.02] hover:-translate-y-0.5 transition-all rounded-xl border-0"
             >
               Save Knowledge Base
             </Button>

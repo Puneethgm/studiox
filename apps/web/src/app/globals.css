@@ -20,6 +20,7 @@
       linear-gradient(rgba(238, 240, 245, 0.55), rgba(238, 240, 245, 0.55)),
       url('/admin-bg-light.png');
     background-size: cover;
+    background-repeat: no-repeat;
     background-position: center top;
     background-attachment: fixed;
     overflow-x: hidden;
@@ -32,6 +33,7 @@
       linear-gradient(rgba(8, 8, 16, 0.72), rgba(8, 8, 16, 0.72)),
       url('/admin-bg-dark.png');
     background-size: cover;
+    background-repeat: no-repeat;
     background-position: center top;
     background-attachment: fixed;
   }

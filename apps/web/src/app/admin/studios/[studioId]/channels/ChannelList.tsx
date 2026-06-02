@@ -99,6 +99,9 @@ export function ChannelList({ studioId, channels, showToast }: { studioId: strin
             access_token_secret: xAccessTokenSecret,
           });
         }
+      } else if (editingChannel.kind === 'google_ads') {
+        finalExternalId = externalId.trim().replace(/[\s-]/g, '');
+        finalParentId = parentId.trim().replace(/[\s-]/g, '');
       }
 
       await api(`/api/v1/studios/${studioId}/messaging/channels/${editingChannel.id}`, {
@@ -406,16 +409,27 @@ export function ChannelList({ studioId, channels, showToast }: { studioId: strin
               {editingChannel.kind === 'google_ads' && (
                 <>
                   <div>
-                    <Label htmlFor="edit-googleClientId">Google Ads Client ID</Label>
+                    <Label htmlFor="edit-googleCustomerId">Google Ads Customer ID</Label>
                     <Input
-                      id="edit-googleClientId"
-                      placeholder="e.g. 123456789-abc.apps.googleusercontent.com"
+                      id="edit-googleCustomerId"
+                      placeholder="e.g. 123-456-7890"
                       required
                       value={externalId}
                       onChange={(e) => setExternalId(e.target.value)}
                       className="font-mono text-xs"
                     />
-                    <FieldHint>The OAuth 2.0 Web Client ID registered in Google Developer Console.</FieldHint>
+                    <FieldHint>The account ID that should receive campaigns. Hyphens are optional.</FieldHint>
+                  </div>
+                  <div>
+                    <Label htmlFor="edit-googleLoginCustomerId">Google Ads Login Customer ID</Label>
+                    <Input
+                      id="edit-googleLoginCustomerId"
+                      placeholder="e.g. 987-654-3210 (manager account, optional)"
+                      value={parentId}
+                      onChange={(e) => setParentId(e.target.value)}
+                      className="font-mono text-xs"
+                    />
+                    <FieldHint>Only needed when the connected customer is accessed through a manager account.</FieldHint>
                   </div>
                 </>
               )}

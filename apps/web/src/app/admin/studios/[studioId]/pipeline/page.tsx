@@ -7,6 +7,7 @@ import { cn } from '@/lib/cn';
 import { relativeTime } from '@/lib/datetime';
 import type { Lead, LeadStatus } from '@/lib/types';
 import { LEAD_STATUSES, LEAD_STATUS_LABELS } from '@/lib/types';
+import { AutoRefresh } from '@/components/AutoRefresh';
 
 interface ListResp {
   leads: Lead[];
@@ -133,49 +134,35 @@ export default async function PipelinePage({
     stats.total > 0 ? Math.round((memberCount / stats.total) * 100) : 0;
 
   return (
-    <div className="flex h-[calc(100vh-8rem)] flex-col gap-5">
+    <div className="flex h-[calc(100vh-10rem)] lg:h-[calc(100vh-11rem)] flex-col gap-4">
+      <AutoRefresh intervalMs={4000} />
 
-      {/* ── Compact glass header ── */}
-      <div
-        className="relative shrink-0 overflow-hidden rounded-[22px] border border-white/30 bg-white/30 px-5 py-4 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30"
-        style={{
-          boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.20), 0 4px 16px rgba(139,92,246,0.06)',
-        }}
-      >
-        <div className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-brand-500/10 blur-3xl" />
-        <div className="relative flex items-center justify-between gap-6">
-          <div className="flex items-center gap-3">
-            <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-brand-500 to-violet-600 text-white shadow-md shadow-brand-500/25">
-              <GitBranch className="h-4 w-4" />
-            </div>
-            <div>
-              <h1 className="text-lg font-black tracking-tight text-zinc-900 dark:text-white">Pipeline</h1>
-              <p className="text-[11px] font-semibold text-zinc-400">
-                {stats.total} leads · {activeCount} active · {conversionPct}% conversion
-              </p>
-            </div>
-          </div>
-          {/* Stage count pills */}
-          <div className="hidden items-center gap-2 sm:flex">
-            {LEAD_STATUSES.map((status) => {
-              const cfg = COLUMN_CONFIG[status];
-              const n = stats.byStatus[status] ?? 0;
-              if (!n) return null;
-              return (
-                <div
-                  key={status}
-                  className="flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-wider"
-                  style={{ background: cfg.pill, color: cfg.pillText }}
-                >
-                  <span
-                    className="h-1.5 w-1.5 rounded-full"
-                    style={{ background: cfg.color }}
-                  />
-                  {n}
-                </div>
-              );
-            })}
-          </div>
+      {/* Sleek inline stats bar */}
+      <div className="flex flex-wrap items-center justify-between gap-4 px-2">
+        <div className="text-[11px] font-semibold text-zinc-400 dark:text-zinc-500">
+          Total: <span className="font-extrabold text-zinc-800 dark:text-zinc-200">{stats.total} leads</span> · Active: <span className="font-extrabold text-zinc-800 dark:text-zinc-200">{activeCount} active</span> · Conversion: <span className="font-extrabold text-zinc-800 dark:text-zinc-200">{conversionPct}%</span>
+        </div>
+
+        {/* Stage count pills */}
+        <div className="flex flex-wrap items-center gap-2">
+          {LEAD_STATUSES.map((status) => {
+            const cfg = COLUMN_CONFIG[status];
+            const n = stats.byStatus[status] ?? 0;
+            if (!n) return null;
+            return (
+              <div
+                key={status}
+                className="flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[9px] font-black uppercase tracking-wider"
+                style={{ background: cfg.pill, color: cfg.pillText }}
+              >
+                <span
+                  className="h-1.5 w-1.5 rounded-full"
+                  style={{ background: cfg.color }}
+                />
+                {n}
+              </div>
+            );
+          })}
         </div>
       </div>
 

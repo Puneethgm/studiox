@@ -25,6 +25,8 @@ import {
   Moon,
   CheckCircle2,
   AlertCircle,
+  Zap,
+  GitBranch,
 } from 'lucide-react';
 import { useEffect, useState, useRef, type CSSProperties, type ReactNode } from 'react';
 import { Button } from '@/components/ui/Button';
@@ -62,7 +64,7 @@ function navItemsFor(me: Me): NavItem[] {
   const links: NavItem[] = [
     { href: base,                 label: 'Dashboard', icon: <Home className="h-[18px] w-[18px]" />,           match: (p) => p === base },
     { href: `${base}/inbox`,      label: 'Inbox',     icon: <MessagesSquare className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/inbox`) },
-    { href: `${base}/pipeline`,   label: 'Pipeline',  icon: <KanbanSquare className="h-[18px] w-[18px]" />,   match: (p) => p.startsWith(`${base}/pipeline`) },
+    { href: `${base}/pipeline`,   label: 'Pipeline',  icon: <GitBranch className="h-[18px] w-[18px]" />,   match: (p) => p.startsWith(`${base}/pipeline`) },
     { href: `${base}/campaigns`,  label: 'Campaigns', icon: <Megaphone className="h-[18px] w-[18px]" />,      match: (p) => p.startsWith(`${base}/campaigns`) },
     { href: `${base}/leads`,      label: 'Leads',     icon: <Inbox className="h-[18px] w-[18px]" />,          match: (p) => p.startsWith(`${base}/leads`) },
   ];
@@ -470,8 +472,69 @@ function Topbar({
     }
   }
 
+  // Determine page title & indicators dynamically based on route path
+  let pageTitle = '';
+  let pageIcon = null;
+  let pageSubtitle = null;
+
+  if (pathname.includes('/inbox')) {
+    pageTitle = 'Inbox';
+    pageIcon = <MessagesSquare className="h-[18px] w-[18px] text-blue-600 dark:text-blue-400" />;
+    pageSubtitle = (
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+          <span className="relative flex h-1.5 w-1.5">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          </span>
+          Live
+        </div>
+        <div className="flex items-center gap-1.5 rounded-full bg-violet-500/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-violet-600 dark:text-violet-400">
+          <Zap className="h-3 w-3" />
+          Stream
+        </div>
+      </div>
+    );
+  } else if (pathname.includes('/pipeline')) {
+    pageTitle = 'Pipeline';
+    pageIcon = <GitBranch className="h-[18px] w-[18px] text-violet-600 dark:text-violet-400" />;
+  } else if (pathname.includes('/campaigns/new')) {
+    pageTitle = 'Create Campaign';
+    pageIcon = <Megaphone className="h-[18px] w-[18px] text-pink-550 dark:text-pink-400" />;
+  } else if (pathname.includes('/campaigns/')) {
+    pageTitle = 'Campaign Details';
+    pageIcon = <Megaphone className="h-[18px] w-[18px] text-pink-550 dark:text-pink-400" />;
+  } else if (pathname.includes('/campaigns')) {
+    pageTitle = 'Campaigns';
+    pageIcon = <Megaphone className="h-[18px] w-[18px] text-pink-550 dark:text-pink-400" />;
+  } else if (pathname.includes('/leads')) {
+    pageTitle = 'Leads';
+    pageIcon = <Inbox className="h-[18px] w-[18px] text-emerald-500" />;
+  } else if (pathname.includes('/social-planner')) {
+    pageTitle = 'Social Planner';
+    pageIcon = <Sparkles className="h-[18px] w-[18px] text-amber-500" />;
+  } else if (pathname.includes('/payments')) {
+    pageTitle = 'Payments';
+    pageIcon = <CreditCard className="h-[18px] w-[18px] text-violet-500" />;
+  } else if (pathname.includes('/channels')) {
+    pageTitle = 'Channels';
+    pageIcon = <Plug className="h-[18px] w-[18px] text-teal-500" />;
+  } else if (pathname.includes('/knowledge-base')) {
+    pageTitle = 'Knowledge Base';
+    pageIcon = <Database className="h-[18px] w-[18px] text-indigo-500" />;
+  } else if (pathname.includes('/settings')) {
+    pageTitle = 'Settings';
+    pageIcon = <Settings className="h-[18px] w-[18px] text-slate-500" />;
+  } else if (pathname === '/admin/studios' || pathname === '/admin') {
+    pageTitle = 'Studios';
+    pageIcon = <Building2 className="h-[18px] w-[18px] text-brand-500" style={{ color: `var(--brand)` }} />;
+  } else {
+    pageTitle = 'Dashboard';
+    pageIcon = <Home className="h-[18px] w-[18px] text-slate-600 dark:text-slate-400" />;
+  }
+
   return (
-    <header className="sticky top-0 z-20 flex h-16 items-center justify-between gap-3 px-4 sm:px-6 lg:px-10 bg-transparent">
+    <header className="sticky top-0 z-20 flex h-20 items-end pb-3.5 justify-between gap-3 px-4 sm:px-6 lg:px-10 bg-transparent pt-3.5">
       {/* Mobile menu button */}
       <button
         type="button"
@@ -483,10 +546,28 @@ function Topbar({
         <Menu className="h-5 w-5" />
       </button>
 
+      {/* Dynamic Page Header Title & Status Badges */}
+      <div className="flex items-center gap-3">
+        {pageIcon && (
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 border border-slate-200/50 shadow-sm dark:bg-slate-800/60 dark:border-slate-700/30">
+            {pageIcon}
+          </div>
+        )}
+        {pageTitle && (
+          <h1 className="text-lg font-black tracking-tight text-zinc-900 dark:text-white sm:text-xl lg:text-2xl">
+            {pageTitle}
+          </h1>
+        )}
+        {pageSubtitle}
+      </div>
+
       {/* Spacer to push controls to the right */}
       <div className="mr-auto" />
 
       <div className="flex items-center gap-3">
+        {/* Dynamic Page Header Actions Portal */}
+        <div id="topbar-actions" className="flex items-center gap-2.5 empty:hidden" />
+
         {/* Theme Toggle Button */}
         <ThemeToggle />
 
