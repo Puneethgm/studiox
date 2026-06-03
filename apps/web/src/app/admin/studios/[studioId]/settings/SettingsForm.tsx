@@ -698,7 +698,7 @@ function PlatformBillingManager({ studio }: { studio: Studio }) {
         }
         setSyncedTier(data.tier || studio.subscriptionTier);
       } catch {
-        setSyncedTier(studio.subscriptionTier);
+        setSyncedTier(studio.subscriptionTier || null);
       } finally {
         setSyncing(false);
       }
@@ -842,7 +842,7 @@ function PlatformBillingManager({ studio }: { studio: Studio }) {
                   ))}
                 </div>
                 <Button
-                  variant={isCurrent ? 'outline' : 'default'}
+                  variant={isCurrent ? 'outline' : 'primary'}
                   onClick={() => handleAction(plan.name, hasSubscription)}
                   loading={actionLoading === plan.name}
                   disabled={isCurrent}

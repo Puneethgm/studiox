@@ -153,7 +153,7 @@ export function LeadFilters({
               onChange={(e) => setCampaign(e.target.value)}
             >
               <option value="">All Campaigns</option>
-              {campaigns.map((c) => (
+              {(campaigns || []).map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
                 </option>
@@ -190,7 +190,7 @@ export function LeadFilters({
               onChange={(e) => setSource(e.target.value)}
             >
               <option value="">All Sources</option>
-              {sources.map((src) => (
+              {(sources || []).map((src) => (
                 <option key={src} value={src}>
                   {src}
                 </option>

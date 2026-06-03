@@ -236,8 +236,32 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		history = []Message{*msg} // fallback to just the current message
 	}
 
+	// Fetch relevant knowledge base chunks via vector similarity search
+	var kbChunks []string
+	apiKey := studio.GeminiAPIKey
+	if apiKey == "" {
+		if platformKey, err := w.studiosRepo.GetPlatformSetting(ctx, "gemini_api_key"); err == nil && platformKey != "" {
+			apiKey = platformKey
+		}
+	}
+
+	if apiKey != "" && msg.Body != "" {
+		queryVec, err := studios.GetGeminiEmbedding(ctx, apiKey, msg.Body)
+		if err == nil {
+			matched, err := w.studiosRepo.SearchKnowledgeChunks(ctx, studioID, queryVec, 4)
+			if err == nil && len(matched) > 0 {
+				kbChunks = matched
+				w.log.Info("retrieved relevant knowledge chunks", "studio_id", studioID, "count", len(matched))
+			} else if err != nil {
+				w.log.Warn("failed to search knowledge chunks", "studio_id", studioID, "err", err)
+			}
+		} else {
+			w.log.Warn("failed to get message embedding for rag", "studio_id", studioID, "err", err)
+		}
+	}
+
 	// Generate AI response with context
-	prompt := w.buildPrompt(history, conv, lead, studio, plans, sentiment, keywords)
+	prompt := w.buildPrompt(history, conv, lead, studio, plans, sentiment, keywords, kbChunks)
 	
 	var resp string
 	var sourceRef string
@@ -280,7 +304,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	return nil
 }
 
-func (w *AIWorker) buildPrompt(history []Message, conv *Conversation, lead *leads.Lead, studio *studios.Studio, plans []Plan, sentiment int, keywords []string) string {
+func (w *AIWorker) buildPrompt(history []Message, conv *Conversation, lead *leads.Lead, studio *studios.Studio, plans []Plan, sentiment int, keywords []string, kbChunks []string) string {
 	context := "You are a helpful AI assistant for a fitness studio. "
 
 	hour := time.Now().UTC().Hour()
@@ -299,7 +323,9 @@ func (w *AIWorker) buildPrompt(history []Message, conv *Conversation, lead *lead
 	context += fmt.Sprintf("Always start your reply with the appropriate greeting ('%s') based on the current local time. ", greeting)
 
 	kbText := ""
-	if studio != nil {
+	if len(kbChunks) > 0 {
+		kbText = strings.Join(kbChunks, "\n\n")
+	} else if studio != nil {
 		kbText = studio.KnowledgeBase
 		for _, f := range studio.KnowledgeBaseFiles {
 			if f.Text != "" {

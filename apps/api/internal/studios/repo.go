@@ -241,3 +241,66 @@ func (r *Repo) GetPlatformSetting(ctx context.Context, key string) (string, erro
 	}
 	return value, nil
 }
+
+// ── RAG / Knowledge Chunks ──────────────────────────────────
+
+type ChunkData struct {
+	SourceType string
+	SourceName string
+	Index      int
+	Content    string
+	Embedding  []float32
+}
+
+// SaveKnowledgeChunks atomically replaces all chunks for a studio.
+func (r *Repo) SaveKnowledgeChunks(ctx context.Context, studioID uuid.UUID, chunks []ChunkData) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err = tx.Exec(ctx, "DELETE FROM studio_knowledge_chunks WHERE studio_id = $1", studioID); err != nil {
+		return fmt.Errorf("delete old chunks: %w", err)
+	}
+
+	for _, c := range chunks {
+		embStr := FormatVectorAsString(c.Embedding)
+		_, err = tx.Exec(ctx, `
+			INSERT INTO studio_knowledge_chunks (studio_id, source_type, source_name, chunk_index, content, embedding)
+			VALUES ($1, $2, $3, $4, $5, $6::vector)
+		`, studioID, c.SourceType, c.SourceName, c.Index, c.Content, embStr)
+		if err != nil {
+			return fmt.Errorf("insert chunk: %w", err)
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// SearchKnowledgeChunks returns the top-K most relevant chunks for a query embedding,
+// strictly scoped to the given studio_id.
+func (r *Repo) SearchKnowledgeChunks(ctx context.Context, studioID uuid.UUID, queryEmbedding []float32, limit int) ([]string, error) {
+	embStr := FormatVectorAsString(queryEmbedding)
+	rows, err := r.pool.Query(ctx, `
+		SELECT content
+		FROM studio_knowledge_chunks
+		WHERE studio_id = $1
+		ORDER BY embedding <=> $2::vector
+		LIMIT $3
+	`, studioID, embStr, limit)
+	if err != nil {
+		return nil, fmt.Errorf("search chunks: %w", err)
+	}
+	defer rows.Close()
+
+	var results []string
+	for rows.Next() {
+		var content string
+		if err := rows.Scan(&content); err != nil {
+			return nil, fmt.Errorf("scan chunk: %w", err)
+		}
+		results = append(results, content)
+	}
+	return results, rows.Err()
+}
+
