@@ -96,13 +96,14 @@ export default function PricingPage() {
                   /{tier.cycle}
                 </span>
               </p>
-              <Button
-                variant={tier.highlight ? 'secondary' : 'default'}
-                className="mt-6 w-full"
-                onClick={() => alert('Stripe checkout integration pending backend webhook routing.')}
-              >
-                Select Plan
-              </Button>
+              <Link href="/login" className="mt-6 block w-full">
+                <Button
+                  variant={tier.highlight ? 'secondary' : 'default'}
+                  className="w-full"
+                >
+                  Select Plan
+                </Button>
+              </Link>
               <ul className={`mt-8 space-y-3 text-sm leading-6 ${tier.highlight ? 'text-brand-50' : 'text-slate-600 dark:text-slate-400'}`}>
                 {tier.features.map((feature) => (
                   <li key={feature} className="flex gap-x-3">
