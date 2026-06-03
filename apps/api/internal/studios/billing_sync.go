@@ -3,6 +3,7 @@ package studios
 import (
 	"fmt"
 	"net/http"
+	"os"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -47,11 +48,18 @@ func (h *Handler) SyncBillingStatus(w http.ResponseWriter, r *http.Request) {
 	iter := sc.Customers.List(custParams)
 	if !iter.Next() {
 		// No customer at all — they've never paid, mark as canceled if they have a non-free tier
-		if studio.SubscriptionTier != "" && studio.SubscriptionTier != "Trial Pass" {
+		if os.Getenv("API_ENV") != "local" && studio.SubscriptionTier != "" && studio.SubscriptionTier != "Trial Pass" {
 			_ = h.svc.UpdatePayments(r.Context(), parsedID, "", "", "", "canceled")
 			fmt.Printf("[BillingSync] No Stripe customer found for studio %s, marking canceled\n", studioID)
 		}
-		httpx.JSON(w, http.StatusOK, map[string]any{"synced": true, "tier": "canceled"})
+		tier := "canceled"
+		if os.Getenv("API_ENV") == "local" {
+			tier = studio.SubscriptionTier
+			if tier == "" {
+				tier = "Trial Pass"
+			}
+		}
+		httpx.JSON(w, http.StatusOK, map[string]any{"synced": true, "tier": tier})
 		return
 	}
 	customerID := iter.Customer().ID
@@ -75,11 +83,18 @@ func (h *Handler) SyncBillingStatus(w http.ResponseWriter, r *http.Request) {
 
 	if activeSub == nil {
 		// No active subscription → mark canceled
-		if currentTier != "canceled" && currentTier != "" {
+		if os.Getenv("API_ENV") != "local" && currentTier != "canceled" && currentTier != "" {
 			_ = h.svc.UpdatePayments(r.Context(), parsedID, "", "", "", "canceled")
 			fmt.Printf("[BillingSync] No active sub found for studio %s, marking canceled\n", studioID)
 		}
-		httpx.JSON(w, http.StatusOK, map[string]any{"synced": true, "tier": "canceled"})
+		tier := "canceled"
+		if os.Getenv("API_ENV") == "local" {
+			tier = currentTier
+			if tier == "" {
+				tier = "Trial Pass"
+			}
+		}
+		httpx.JSON(w, http.StatusOK, map[string]any{"synced": true, "tier": tier})
 		return
 	}
 

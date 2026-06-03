@@ -1246,11 +1246,9 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 			plans, errPlans := s.repo.ListActivePlans(ctx, studioID)
 			if errPlans != nil || len(plans) == 0 {
 				targetStage = "completed"
-				targetStatus = "member"
 				outboundBody = "Our team will reach out to you ASAP to discuss membership options."
 			} else {
 				targetStage = "awaiting_plan_selection"
-				targetStatus = "member"
 				var sb strings.Builder
 				sb.WriteString("Awesome! Please select a membership plan:\n")
 				for idx, p := range plans {
@@ -1290,7 +1288,6 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 			selectedPlan := plans[selectedIndex]
 
 			targetStage = "completed"
-			targetStatus = "member"
 
 			secretKey, _, studioName, studioSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
 			if errStripe == nil && secretKey != "" {
@@ -1344,7 +1341,6 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 			}
 		} else {
 			targetStage = "completed"
-			targetStatus = "member"
 			outboundBody = "Thank you! Our team will reach out to you shortly to finalize your membership."
 		}
 	} else if autoContactStage == "awaiting_trial_date" {

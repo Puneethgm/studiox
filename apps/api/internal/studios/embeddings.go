@@ -46,18 +46,19 @@ func ChunkText(text string, maxChars int, overlap int) []string {
 	return chunks
 }
 
-// GetGeminiEmbedding calls Gemini text-embedding-004 and returns a 768-dim vector.
+// GetGeminiEmbedding calls Gemini gemini-embedding-2 and returns a 768-dim vector.
 func GetGeminiEmbedding(ctx context.Context, apiKey string, text string) ([]float32, error) {
 	url := fmt.Sprintf(
-		"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=%s",
+		"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key=%s",
 		apiKey,
 	)
 
 	reqBody, err := json.Marshal(map[string]any{
-		"model": "models/text-embedding-004",
+		"model": "models/gemini-embedding-2",
 		"content": map[string]any{
 			"parts": []map[string]any{{"text": text}},
 		},
+		"outputDimensionality": 768,
 	})
 	if err != nil {
 		return nil, err

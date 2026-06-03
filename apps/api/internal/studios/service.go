@@ -240,6 +240,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput
 // asyncSyncKnowledgeChunks runs in a background goroutine so the HTTP
 // response is not blocked by embedding API calls.
 func (s *Service) asyncSyncKnowledgeChunks(studioID uuid.UUID, kbText string, kbFiles []KnowledgeBaseFile, geminiAPIKey string) {
+	fmt.Printf("[RAG-DEBUG] asyncSyncKnowledgeChunks started for studio %s\n", studioID)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
@@ -251,8 +252,10 @@ func (s *Service) asyncSyncKnowledgeChunks(studioID uuid.UUID, kbText string, kb
 			}
 		}
 		if apiKey == "" {
-			return // no key → skip
+			fmt.Println("[RAG-DEBUG] No Gemini API key found. Skipping embedding sync.")
+			return
 		}
+		fmt.Printf("[RAG-DEBUG] Resolved Gemini API Key (starts with %s)\n", apiKey[:8])
 
 		type rawChunk struct{ sourceType, sourceName, content string }
 		var raw []rawChunk
@@ -266,15 +269,23 @@ func (s *Service) asyncSyncKnowledgeChunks(studioID uuid.UUID, kbText string, kb
 			}
 		}
 
+		fmt.Printf("[RAG-DEBUG] Prepared %d raw chunks to process.\n", len(raw))
+
 		if len(raw) == 0 {
-			_ = s.repo.SaveKnowledgeChunks(ctx, studioID, nil)
+			fmt.Println("[RAG-DEBUG] 0 chunks prepared. Clearing existing chunks.")
+			err := s.repo.SaveKnowledgeChunks(ctx, studioID, nil)
+			if err != nil {
+				fmt.Printf("[RAG-DEBUG] SaveKnowledgeChunks error (clear): %v\n", err)
+			}
 			return
 		}
 
 		var chunks []ChunkData
 		for i, rc := range raw {
+			fmt.Printf("[RAG-DEBUG] Getting embedding for chunk %d (source: %s)...\n", i, rc.sourceName)
 			vec, err := GetGeminiEmbedding(ctx, apiKey, rc.content)
 			if err != nil {
+				fmt.Printf("[RAG-DEBUG] GetGeminiEmbedding error on chunk %d: %v\n", i, err)
 				continue
 			}
 			chunks = append(chunks, ChunkData{
@@ -287,8 +298,15 @@ func (s *Service) asyncSyncKnowledgeChunks(studioID uuid.UUID, kbText string, kb
 			time.Sleep(100 * time.Millisecond) // rate-limit courtesy
 		}
 
+		fmt.Printf("[RAG-DEBUG] Successfully generated %d embeddings out of %d chunks.\n", len(chunks), len(raw))
+
 		if len(chunks) > 0 {
-			_ = s.repo.SaveKnowledgeChunks(ctx, studioID, chunks)
+			err := s.repo.SaveKnowledgeChunks(ctx, studioID, chunks)
+			if err != nil {
+				fmt.Printf("[RAG-DEBUG] SaveKnowledgeChunks error: %v\n", err)
+			} else {
+				fmt.Println("[RAG-DEBUG] Successfully saved chunks and embeddings to database!")
+			}
 		}
 	}()
 }

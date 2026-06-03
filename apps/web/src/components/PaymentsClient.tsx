@@ -341,7 +341,7 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
           {/* Stripe Connect Card */}
           <div ref={leftCardRef}>
             <Card className="border-white/30 bg-white/20 dark:border-white/5 dark:bg-neutral-900/30 backdrop-blur-2xl">
-              <h3 className="text-sm font-black text-zinc-955 dark:text-white mb-3">Stripe Gateway</h3>
+              <h3 className="text-sm font-black text-zinc-950 dark:text-white mb-3">Stripe Gateway</h3>
               <p className="text-xs text-zinc-400 mb-4 leading-relaxed">
                 Connect your studio Stripe account to handle client billing, memberships, and automated invoices.
               </p>
@@ -490,7 +490,7 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
                   <Button className="w-full shadow-lg shadow-brand-500/15" onClick={() => window.location.href = `/api/v1/studios/${studioId}/stripe-oauth/login`}>
                     Connect with Stripe Connect (Recommended)
                   </Button>
-                  <button type="button" onClick={() => setShowForm(true)} className="w-full text-xs text-zinc-400 hover:text-white transition-colors">
+                  <button type="button" onClick={() => setShowForm(true)} className="w-full text-xs text-zinc-400 hover:text-zinc-900 dark:hover:text-white transition-colors">
                     Or enter API keys manually
                   </button>
                 </div>
@@ -565,7 +565,7 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
                 >
                   <table className="w-full text-left min-w-[500px]">
                     <thead>
-                      <tr className="border-b border-white/10 text-[9px] font-black uppercase tracking-wider text-zinc-400 sticky top-0 bg-white/95 dark:bg-neutral-900/95 backdrop-blur z-10">
+                      <tr className="border-b border-zinc-200 dark:border-white/10 text-[9px] font-black uppercase tracking-wider text-zinc-400 sticky top-0 bg-white/95 dark:bg-neutral-900/95 backdrop-blur z-10">
                         <th className="pb-3">Ref</th>
                         <th className="pb-3">Date</th>
                         <th className="pb-3">Buyer</th>
@@ -575,7 +575,7 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
                         <th className="pb-3 text-right">Receipt</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-white/5">
+                    <tbody className="divide-y divide-zinc-200 dark:divide-white/5">
                       {invoices.slice(0, visibleCount).map(inv => (
                         <tr key={inv.id} className="text-xs text-zinc-700 dark:text-zinc-300">
                           <td className="py-3 font-semibold font-mono text-zinc-555 dark:text-zinc-500">{inv.number || inv.id.slice(0,12)}</td>
@@ -592,7 +592,7 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
                           </td>
                           <td className="py-3 text-right">
                             {inv.hosted_invoice_url ? (
-                              <a href={inv.hosted_invoice_url} target="_blank" rel="noreferrer" className="inline-block p-1 hover:bg-white/15 rounded-lg text-zinc-400 hover:text-white transition-all" title="View Receipt">
+                              <a href={inv.hosted_invoice_url} target="_blank" rel="noreferrer" className="inline-block p-1 hover:bg-zinc-100 dark:hover:bg-white/15 rounded-lg text-zinc-400 hover:text-zinc-900 dark:hover:text-white transition-all" title="View Receipt">
                                 <ArrowUpRight className="h-4 w-4" />
                               </a>
                             ) : <span className="text-zinc-600 text-[10px]">—</span>}
@@ -604,7 +604,7 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
                 </div>
                 
                 {/* Fixed footer indicator showing current visible counts */}
-                <div className="pt-3 flex items-center justify-between border-t border-white/10 mt-2 text-[10px] font-semibold text-zinc-400 dark:text-zinc-500">
+                <div className="pt-3 flex items-center justify-between border-t border-zinc-200 dark:border-white/10 mt-2 text-[10px] font-semibold text-zinc-400 dark:text-zinc-500">
                   <span>
                     Showing {Math.min(visibleCount, invoices.length)} of {invoices.length} entries
                   </span>
