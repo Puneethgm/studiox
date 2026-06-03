@@ -353,12 +353,77 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
               </p>
               
               {studioId === 'global' ? (
-                <div className="rounded-xl border border-white/10 bg-white/10 p-4 text-center dark:bg-neutral-800/20">
-                  <AlertCircle className="h-5 w-5 mx-auto mb-2 text-zinc-400" />
-                  <span className="text-xs font-bold text-zinc-500 dark:text-zinc-400 block">
-                    Stripe connections are managed per studio location.
-                  </span>
-                </div>
+                showForm ? (
+                  <form onSubmit={handleLinkStripe} className="space-y-3.5 animate-in fade-in slide-in-from-top-2 duration-300">
+                    <div>
+                      <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block mb-1">Platform Stripe Account ID</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="acct_..."
+                        value={formStripeAccountId}
+                        onChange={(e) => setFormStripeAccountId(e.target.value)}
+                        className="w-full rounded-xl border border-brand-500/30 bg-white/10 px-3 py-2 text-xs font-bold text-zinc-800 dark:bg-neutral-800 dark:text-white focus:outline-none focus:border-brand-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block mb-1">Platform Publishable Key</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="pk_test_..."
+                        value={formPublishableKey}
+                        onChange={(e) => setFormPublishableKey(e.target.value)}
+                        className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs font-bold text-zinc-800 dark:bg-neutral-800 dark:text-white focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block mb-1">Platform Secret Key</label>
+                      <input
+                        type="password"
+                        required
+                        placeholder="sk_test_..."
+                        value={formSecretKey}
+                        onChange={(e) => setFormSecretKey(e.target.value)}
+                        className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs font-bold text-zinc-800 dark:bg-neutral-800 dark:text-white focus:outline-none"
+                      />
+                    </div>
+                    {formError && (
+                      <p className="text-[10px] text-red-500 font-bold">{formError}</p>
+                    )}
+                    <div className="flex gap-2 pt-1">
+                      <Button type="button" variant="ghost" className="flex-1 text-xs" onClick={() => setShowForm(false)}>
+                        Cancel
+                      </Button>
+                      <Button type="submit" className="flex-1 text-xs" loading={submitting}>
+                        Save Platform Gateway
+                      </Button>
+                    </div>
+                  </form>
+                ) : stripeStatus === 'connected' ? (
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-3 rounded-xl bg-emerald-500/10 p-3 text-emerald-600 dark:text-emerald-400">
+                      <ShieldCheck className="h-5 w-5 shrink-0" />
+                      <div className="min-w-0">
+                        <span className="text-xs font-bold block">Platform Gateway Connected</span>
+                        <span className="text-[10px] text-emerald-500/80 block truncate">Routing all Studio subscriptions</span>
+                      </div>
+                    </div>
+                    <Button variant="ghost" className="w-full text-xs text-brand-500 border border-brand-500/20 hover:bg-brand-500/10" onClick={() => setShowForm(true)}>
+                      Edit Credentials
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-brand-500/20 bg-brand-500/5 p-4 text-center dark:bg-brand-500/10">
+                    <ShieldCheck className="h-5 w-5 mx-auto mb-2 text-brand-500" />
+                    <span className="text-xs font-bold text-zinc-700 dark:text-zinc-200 block mb-3">
+                      Configure the Global Platform Gateway to collect monthly recurring subscriptions from Studios.
+                    </span>
+                    <Button className="w-full text-xs shadow-lg shadow-brand-500/20" onClick={() => setShowForm(true)}>
+                      Configure Platform Gateway
+                    </Button>
+                  </div>
+                )
               ) : stripeStatus === 'connected' ? (
                 <div className="space-y-4">
                   <div className="flex items-center gap-3 rounded-xl bg-emerald-500/10 p-3 text-emerald-600 dark:text-emerald-400">
