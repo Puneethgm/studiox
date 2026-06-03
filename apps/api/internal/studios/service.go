@@ -123,6 +123,17 @@ func (s *Service) CreateStudioWithAdmin(ctx context.Context, in CreateStudioInpu
 		return nil, nil, fmt.Errorf("create studio admin: %w", err)
 	}
 
+	_, err = tx.Exec(ctx, `
+		INSERT INTO plans (studio_id, plan_name, price_sgd, billing_cycle, features) VALUES 
+		($1, 'Trial', 0, 'one_time', ARRAY['Free', 'Limited features', 'Valid for 7 days']),
+		($1, 'Basic', 2900, 'monthly', ARRAY['Feature A', 'Feature B', 'Feature C']),
+		($1, 'Pro', 9900, 'monthly', ARRAY['All Basic Features', 'Feature D', 'Feature E']),
+		($1, 'Pro Plus', 19900, 'monthly', ARRAY['All Pro Features', 'Feature F', 'Feature G'])
+	`, studio.ID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create default plans: %w", err)
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, nil, fmt.Errorf("commit: %w", err)
 	}
@@ -250,4 +261,12 @@ func (s *Service) ListPlans(ctx context.Context, studioID uuid.UUID) ([]Plan, er
 
 func (s *Service) UpdatePlan(ctx context.Context, studioID, planID uuid.UUID, in UpdatePlanInput) error {
 	return s.repo.UpdatePlan(ctx, studioID, planID, in)
+}
+
+func (s *Service) GetPlatformSetting(ctx context.Context, key string) (string, error) {
+	return s.repo.GetPlatformSetting(ctx, key)
+}
+
+func (s *Service) UpdatePlatformSetting(ctx context.Context, key, value string) error {
+	return s.repo.UpdatePlatformSetting(ctx, key, value)
 }

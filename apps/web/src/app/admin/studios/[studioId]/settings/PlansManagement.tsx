@@ -98,7 +98,7 @@ export function PlansManagement({
   };
 
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="space-y-6">
       <div>
         <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400 mb-1">
           Membership Plans

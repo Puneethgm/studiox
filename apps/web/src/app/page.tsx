@@ -1,78 +1,299 @@
 import Link from 'next/link';
-import { ArrowRight, Sparkles } from 'lucide-react';
-import { Button } from '@/components/ui/Button';
+import { ArrowRight, Sparkles, Building2, MessageSquare, Users, BarChart3, Zap, Globe, CheckCircle, Star } from 'lucide-react';
 
 export const metadata = {
-  title: '1herosocial.ai | The Ultimate Platform for Studios',
+  title: '1herosocial.ai | Multi-Studio Management Platform',
+  description: 'Run multiple fitness & wellness studios from one powerful AI platform. Automate leads, messaging, bookings, and billing across all your locations.',
 };
 
 export default function Home() {
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100">
-      {/* ── Navigation Bar ──────────────────────── */}
-      <header className="sticky top-0 z-50 w-full border-b border-slate-200/50 bg-white/70 backdrop-blur-xl dark:border-slate-800/50 dark:bg-slate-950/70">
-        <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-6 lg:px-8">
-          <div className="flex items-center gap-2">
-            <div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-brand-500 to-violet-600 text-white shadow-lg shadow-brand-500/20">
-              <Sparkles className="h-5 w-5" />
+    <div className="min-h-screen bg-[#FAF9F7] font-sans text-[#1A1A1A]">
+
+      {/* ── Navigation ──────────────────────────────── */}
+      <header className="sticky top-0 z-50 w-full border-b border-[#EAE8E2] bg-[#FAF9F7]/90 backdrop-blur-xl">
+        <div className="mx-auto flex h-18 max-w-7xl items-center justify-between px-6 lg:px-8 py-4">
+          <div className="flex items-center gap-2.5">
+            <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-violet-600 to-indigo-700 text-white shadow-md">
+              <Sparkles className="h-4 w-4" />
             </div>
-            <span className="text-xl font-black tracking-tight text-slate-900 dark:text-white">1herosocial.ai</span>
+            <span className="text-lg font-black tracking-tight text-[#1A1A1A]">1herosocial.ai</span>
           </div>
-          
-          <nav className="hidden md:flex gap-8">
-            <Link href="#features" className="text-sm font-semibold text-slate-600 hover:text-brand-600 dark:text-slate-300 dark:hover:text-brand-400 transition-colors">
-              Features
-            </Link>
-            <Link href="/pricing" className="text-sm font-semibold text-slate-600 hover:text-brand-600 dark:text-slate-300 dark:hover:text-brand-400 transition-colors">
-              Plans & Pricing
-            </Link>
+
+          <nav className="hidden md:flex items-center gap-8">
+            <a href="#features" className="text-sm font-medium text-[#525252] hover:text-[#1A1A1A] transition-colors">Features</a>
+            <a href="#how-it-works" className="text-sm font-medium text-[#525252] hover:text-[#1A1A1A] transition-colors">How it works</a>
+            <Link href="/pricing" className="text-sm font-medium text-[#525252] hover:text-[#1A1A1A] transition-colors">Pricing</Link>
           </nav>
 
           <div className="flex items-center gap-4">
-            <Link href="/login">
-              <Button variant="ghost" className="hidden sm:inline-flex text-sm font-bold">
-                Log in
-              </Button>
+            <Link href="/login" className="hidden sm:inline-flex text-sm font-medium text-[#525252] hover:text-[#1A1A1A] transition-colors">
+              Log in
             </Link>
             <Link href="/pricing">
-              <Button className="shadow-lg shadow-brand-500/25 text-sm font-bold">
-                Get Started
-                <ArrowRight className="ml-2 h-4 w-4" />
-              </Button>
+              <button className="flex items-center gap-2 bg-[#1A1A1A] text-white hover:bg-black px-4 py-2 rounded-lg text-sm font-medium transition-all shadow-sm">
+                Get Started <ArrowRight className="h-3.5 w-3.5" />
+              </button>
             </Link>
           </div>
         </div>
       </header>
 
-      {/* ── Hero Section ────────────────────────── */}
-      <main>
-        <div className="relative isolate overflow-hidden pt-14">
-          <div className="absolute inset-x-0 -top-40 -z-10 transform-gpu overflow-hidden blur-3xl sm:-top-80" aria-hidden="true">
-            <div className="relative left-[calc(50%-11rem)] aspect-[1155/678] w-[36.125rem] -translate-x-1/2 rotate-[30deg] bg-gradient-to-tr from-brand-200 to-brand-600 opacity-20 sm:left-[calc(50%-30rem)] sm:w-[72.1875rem]" style={{ clipPath: 'polygon(74.1% 44.1%, 100% 61.6%, 97.5% 26.9%, 85.5% 0.1%, 80.7% 2%, 72.5% 32.5%, 60.2% 62.4%, 52.4% 68.1%, 47.5% 58.3%, 45.2% 34.5%, 27.5% 76.7%, 0.1% 64.9%, 17.9% 100%, 27.6% 76.8%, 76.1% 97.7%, 74.1% 44.1%)' }}></div>
+      {/* ── Hero ────────────────────────────────────── */}
+      <section className="relative overflow-hidden">
+        {/* Subtle gradient blob */}
+        <div className="absolute inset-0 -z-10">
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[900px] h-[500px] bg-gradient-to-b from-violet-100/60 via-indigo-50/40 to-transparent rounded-full blur-3xl" />
+        </div>
+
+        <div className="mx-auto max-w-7xl px-6 lg:px-8 pt-24 pb-20 text-center">
+          <div className="inline-flex items-center gap-2 bg-violet-50 border border-violet-200 text-violet-700 text-xs font-semibold px-3 py-1.5 rounded-full mb-8">
+            <Star className="h-3 w-3 fill-violet-500" />
+            Built for fitness & wellness studios
           </div>
-          
-          <div className="mx-auto max-w-7xl px-6 py-24 sm:py-32 lg:px-8">
-            <div className="mx-auto max-w-3xl text-center">
-              <h1 className="text-4xl font-black tracking-tight text-slate-900 dark:text-white sm:text-6xl">
-                Scale your studio with AI-powered engagement
-              </h1>
-              <p className="mt-6 text-lg leading-8 text-slate-600 dark:text-slate-400">
-                Automate your messaging, manage leads seamlessly across platforms, and grow your revenue with our all-in-one studio operating system.
-              </p>
-              <div className="mt-10 flex items-center justify-center gap-x-6">
-                <Link href="/pricing">
-                  <Button size="lg" className="shadow-xl shadow-brand-500/20 text-base font-bold px-8 h-14">
-                    View Pricing Plans
-                  </Button>
-                </Link>
-                <Link href="#features" className="text-sm font-semibold leading-6 text-slate-900 dark:text-slate-100 flex items-center gap-1 group">
-                  Learn more <span aria-hidden="true" className="group-hover:translate-x-1 transition-transform">→</span>
-                </Link>
-              </div>
+
+          <h1 className="text-5xl sm:text-7xl font-black tracking-tight text-[#1A1A1A] max-w-4xl mx-auto leading-[1.05]">
+            One platform.
+            <span className="block text-transparent bg-clip-text bg-gradient-to-r from-violet-600 to-indigo-600">
+              All your studios.
+            </span>
+          </h1>
+
+          <p className="mt-8 text-xl text-[#525252] max-w-2xl mx-auto leading-relaxed">
+            Manage multiple studio locations from a single dashboard. Automate lead follow-ups, WhatsApp messaging, member billing, and AI conversations — all in one place.
+          </p>
+
+          <div className="mt-12 flex flex-col sm:flex-row items-center justify-center gap-4">
+            <Link href="/pricing">
+              <button className="flex items-center gap-2 bg-[#1A1A1A] text-white hover:bg-black px-8 py-4 rounded-xl text-base font-semibold transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5">
+                Get Started <ArrowRight className="h-4 w-4" />
+              </button>
+            </Link>
+            <a href="#how-it-works" className="flex items-center gap-2 text-sm font-semibold text-[#1A1A1A] hover:text-violet-600 transition-colors">
+              See how it works <ArrowRight className="h-3.5 w-3.5" />
+            </a>
+          </div>
+
+          {/* Social proof */}
+          <div className="mt-14 flex items-center justify-center gap-8 text-sm text-[#737373]">
+            <div className="flex items-center gap-2">
+              <CheckCircle className="h-4 w-4 text-emerald-500" />
+              No credit card required
+            </div>
+            <div className="flex items-center gap-2">
+              <CheckCircle className="h-4 w-4 text-emerald-500" />
+              Setup in minutes
+            </div>
+            <div className="flex items-center gap-2">
+              <CheckCircle className="h-4 w-4 text-emerald-500" />
+              Cancel anytime
             </div>
           </div>
         </div>
-      </main>
+      </section>
+
+      {/* ── Multi-Studio Visual ─────────────────────── */}
+      <section className="mx-auto max-w-7xl px-6 lg:px-8 pb-24">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {[
+            { name: 'Downtown Gym', members: 142, leads: 23, color: 'from-violet-500 to-indigo-600' },
+            { name: 'Westside Yoga', members: 89, leads: 11, color: 'from-rose-500 to-pink-600' },
+            { name: 'North Boxing Club', members: 210, leads: 38, color: 'from-amber-500 to-orange-600' },
+          ].map((studio) => (
+            <div key={studio.name} className="bg-white border border-[#EAE8E2] rounded-2xl p-6 shadow-sm hover:shadow-md transition-all hover:-translate-y-1">
+              <div className={`h-10 w-10 rounded-xl bg-gradient-to-br ${studio.color} mb-4 flex items-center justify-center text-white font-black text-sm`}>
+                {studio.name[0]}
+              </div>
+              <h3 className="font-bold text-[#1A1A1A] mb-3">{studio.name}</h3>
+              <div className="flex gap-4 text-sm">
+                <div>
+                  <div className="text-2xl font-black text-[#1A1A1A]">{studio.members}</div>
+                  <div className="text-[#737373] text-xs mt-0.5">Members</div>
+                </div>
+                <div>
+                  <div className="text-2xl font-black text-violet-600">{studio.leads}</div>
+                  <div className="text-[#737373] text-xs mt-0.5">Active Leads</div>
+                </div>
+              </div>
+              <div className="mt-4 h-1.5 bg-[#F0EDE8] rounded-full overflow-hidden">
+                <div className={`h-full bg-gradient-to-r ${studio.color} rounded-full`} style={{ width: `${(studio.leads / studio.members) * 100 * 3}%` }} />
+              </div>
+            </div>
+          ))}
+        </div>
+        <p className="text-center text-sm text-[#737373] mt-4">↑ Manage all your locations from one unified dashboard</p>
+      </section>
+
+      {/* ── Features ────────────────────────────────── */}
+      <section id="features" className="bg-white border-y border-[#EAE8E2]">
+        <div className="mx-auto max-w-7xl px-6 lg:px-8 py-24">
+          <div className="text-center mb-16">
+            <h2 className="text-4xl font-black text-[#1A1A1A] tracking-tight">Everything your studios need</h2>
+            <p className="mt-4 text-lg text-[#525252] max-w-xl mx-auto">From first contact to loyal member — automate the entire journey.</p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[
+              {
+                icon: Building2,
+                color: 'bg-violet-50 text-violet-600',
+                title: 'Multi-Studio Management',
+                desc: 'Run unlimited studio locations from one account. Each studio has its own leads, members, billing, and AI settings.'
+              },
+              {
+                icon: MessageSquare,
+                color: 'bg-blue-50 text-blue-600',
+                title: 'WhatsApp AI Automation',
+                desc: 'AI-powered auto-replies handle lead enquiries 24/7. Intelligent follow-ups that feel personal, not robotic.'
+              },
+              {
+                icon: Users,
+                color: 'bg-emerald-50 text-emerald-600',
+                title: 'Lead Pipeline & CRM',
+                desc: 'Track every lead from first message to signed member. Never let a hot lead go cold again.'
+              },
+              {
+                icon: Zap,
+                color: 'bg-amber-50 text-amber-600',
+                title: 'Automated Follow-Ups',
+                desc: 'Set up drip sequences that automatically nurture leads over days and weeks without manual effort.'
+              },
+              {
+                icon: BarChart3,
+                color: 'bg-rose-50 text-rose-600',
+                title: 'Social Media Planner',
+                desc: 'Schedule and publish content across Facebook, Instagram, and more — all from one calendar view.'
+              },
+              {
+                icon: Globe,
+                color: 'bg-indigo-50 text-indigo-600',
+                title: 'Stripe Billing & Plans',
+                desc: 'Sell memberships and trial passes directly. Automated receipts, subscription management, and payment tracking.'
+              },
+            ].map((f) => (
+              <div key={f.title} className="p-6 rounded-2xl border border-[#EAE8E2] hover:border-[#D0CDC5] hover:shadow-md transition-all group">
+                <div className={`h-11 w-11 rounded-xl ${f.color} flex items-center justify-center mb-5`}>
+                  <f.icon className="h-5 w-5" />
+                </div>
+                <h3 className="text-base font-bold text-[#1A1A1A] mb-2">{f.title}</h3>
+                <p className="text-sm text-[#525252] leading-relaxed">{f.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── How it works ────────────────────────────── */}
+      <section id="how-it-works" className="mx-auto max-w-7xl px-6 lg:px-8 py-24">
+        <div className="text-center mb-16">
+          <h2 className="text-4xl font-black text-[#1A1A1A] tracking-tight">Up and running in 3 steps</h2>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          {[
+            { step: '01', title: 'Create your studios', desc: 'Add each location, set your brand colors, and connect your WhatsApp business number.' },
+            { step: '02', title: 'Connect your channels', desc: 'Link Facebook, Instagram, Google Ads, and Stripe. Your leads flow in automatically.' },
+            { step: '03', title: 'Let AI do the work', desc: 'AI handles first responses, follow-ups, and bookings while you focus on running great classes.' },
+          ].map((s) => (
+            <div key={s.step} className="flex gap-5">
+              <div className="text-4xl font-black text-[#EAE8E2] leading-none shrink-0 w-12">{s.step}</div>
+              <div>
+                <h3 className="font-bold text-[#1A1A1A] mb-2">{s.title}</h3>
+                <p className="text-sm text-[#525252] leading-relaxed">{s.desc}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── CTA ─────────────────────────────────────── */}
+      <section className="relative overflow-hidden border-t border-[#EAE8E2]">
+        <div className="absolute inset-0 -z-10 bg-gradient-to-br from-violet-50 via-indigo-50 to-[#FAF9F7]" />
+        <div className="absolute -top-32 left-1/2 -translate-x-1/2 w-[700px] h-[400px] bg-violet-200/40 rounded-full blur-3xl -z-10" />
+        <div className="mx-auto max-w-4xl px-6 lg:px-8 py-24 text-center">
+          <h2 className="text-4xl sm:text-5xl font-black tracking-tight text-[#1A1A1A] mb-6">
+            Ready to scale your studios?
+          </h2>
+          <p className="text-lg text-[#525252] mb-10 max-w-xl mx-auto">
+            Join studio owners using 1herosocial.ai to convert more leads, retain more members, and grow faster.
+          </p>
+          <Link href="/pricing">
+            <button className="inline-flex items-center gap-2 bg-[#1A1A1A] text-white hover:bg-black px-8 py-4 rounded-xl text-base font-semibold transition-all shadow-lg hover:-translate-y-0.5">
+              View Plans & Pricing <ArrowRight className="h-4 w-4" />
+            </button>
+          </Link>
+        </div>
+      </section>
+
+      {/* ── Footer ──────────────────────────────────── */}
+      <footer className="border-t border-[#EAE8E2] bg-[#FAF9F7]">
+        <div className="mx-auto max-w-7xl px-6 lg:px-8 py-16">
+          {/* Top row */}
+          <div className="flex flex-col md:flex-row justify-between gap-12 mb-12">
+            {/* Brand */}
+            <div className="max-w-xs">
+              <div className="flex items-center gap-2.5 mb-4">
+                <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-violet-600 to-indigo-700 text-white shadow-md">
+                  <Sparkles className="h-4 w-4" />
+                </div>
+                <span className="text-base font-black text-[#1A1A1A]">1herosocial.ai</span>
+              </div>
+              <p className="text-sm text-[#737373] leading-relaxed">
+                The all-in-one platform for fitness & wellness studio owners to manage leads, automate messaging, and grow faster.
+              </p>
+              {/* Social icons */}
+              <div className="flex items-center gap-3 mt-6">
+                {/* Instagram */}
+                <a href="#" aria-label="Instagram" className="h-9 w-9 flex items-center justify-center rounded-xl border border-[#EAE8E2] bg-white text-[#525252] hover:text-[#E1306C] hover:border-[#E1306C]/30 hover:bg-[#E1306C]/5 transition-all">
+                  <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>
+                </a>
+                {/* Facebook */}
+                <a href="#" aria-label="Facebook" className="h-9 w-9 flex items-center justify-center rounded-xl border border-[#EAE8E2] bg-white text-[#525252] hover:text-[#1877F2] hover:border-[#1877F2]/30 hover:bg-[#1877F2]/5 transition-all">
+                  <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+                </a>
+                {/* X / Twitter */}
+                <a href="#" aria-label="X (Twitter)" className="h-9 w-9 flex items-center justify-center rounded-xl border border-[#EAE8E2] bg-white text-[#525252] hover:text-[#1A1A1A] hover:border-[#1A1A1A]/30 hover:bg-[#1A1A1A]/5 transition-all">
+                  <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.737-8.835L1.254 2.25H8.08l4.259 5.631 5.905-5.631zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+                </a>
+                {/* YouTube */}
+                <a href="#" aria-label="YouTube" className="h-9 w-9 flex items-center justify-center rounded-xl border border-[#EAE8E2] bg-white text-[#525252] hover:text-[#FF0000] hover:border-[#FF0000]/30 hover:bg-[#FF0000]/5 transition-all">
+                  <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+                </a>
+              </div>
+            </div>
+
+            {/* Links */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-8 text-sm">
+              <div>
+                <h4 className="font-bold text-[#1A1A1A] mb-4">Platform</h4>
+                <ul className="space-y-3 text-[#737373]">
+                  <li><a href="#features" className="hover:text-[#1A1A1A] transition-colors">Features</a></li>
+                  <li><Link href="/pricing" className="hover:text-[#1A1A1A] transition-colors">Pricing</Link></li>
+                  <li><a href="#how-it-works" className="hover:text-[#1A1A1A] transition-colors">How it works</a></li>
+                </ul>
+              </div>
+              <div>
+                <h4 className="font-bold text-[#1A1A1A] mb-4">Account</h4>
+                <ul className="space-y-3 text-[#737373]">
+                  <li><Link href="/login" className="hover:text-[#1A1A1A] transition-colors">Log in</Link></li>
+                </ul>
+              </div>
+              <div>
+                <h4 className="font-bold text-[#1A1A1A] mb-4">Legal</h4>
+                <ul className="space-y-3 text-[#737373]">
+                  <li><a href="#" className="hover:text-[#1A1A1A] transition-colors">Privacy Policy</a></li>
+                  <li><a href="#" className="hover:text-[#1A1A1A] transition-colors">Terms of Service</a></li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          {/* Bottom bar */}
+          <div className="border-t border-[#EAE8E2] pt-8 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <p className="text-xs text-[#A3A3A3]">© 2025 1herosocial.ai. All rights reserved.</p>
+            <p className="text-xs text-[#A3A3A3]">Built for fitness & wellness studios worldwide 🌏</p>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }

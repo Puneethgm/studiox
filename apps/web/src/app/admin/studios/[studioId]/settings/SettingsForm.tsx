@@ -28,7 +28,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   
-  const [activeSection, setActiveSection] = useState<'general' | 'plans' | 'availability' | 'integrations' | 'security'>('general');
+  const [activeSection, setActiveSection] = useState<'general' | 'plans' | 'availability' | 'integrations' | 'security' | 'billing'>('general');
   
   // Trial Pricing (stored as cents/paise in the backend)
   const [trialAmountSgd, setTrialAmountSgd] = useState((studio.trialAmountSgd ?? 2500) / 100);
@@ -196,6 +196,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
           { id: 'availability', label: 'Availability', icon: Calendar },
           { id: 'integrations', label: 'Integrations', icon: Cpu },
           { id: 'security', label: 'Security', icon: Lock },
+          { id: 'billing', label: 'Platform Billing', icon: DollarSign },
         ].map((item) => {
           const Icon = item.icon;
           const isActive = activeSection === item.id;
@@ -659,6 +660,201 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
           </button>
         </div>
       )}
+
+      {activeSection === 'billing' && (
+        <PlatformBillingManager studio={studio} />
+      )}
+    </div>
+  );
+}
+
+function PlatformBillingManager({ studio }: { studio: Studio }) {
+  const [plans, setPlans] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncedTier, setSyncedTier] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Sync billing status from Stripe on page load (fallback when webhooks don't fire locally)
+    // Always sync if returning from Stripe with upgrade=success
+    const urlParams = new URLSearchParams(window.location.search);
+    const justUpgraded = urlParams.get('upgrade') === 'success';
+
+    const syncBilling = async () => {
+      setSyncing(true);
+      try {
+        const res = await fetch(`/api/v1/me/studios/${studio.id}/billing/sync`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+        });
+        const data = await res.json();
+        if (data.synced && (data.tier !== studio.subscriptionTier || justUpgraded)) {
+          // Tier changed — clean up URL and reload so AppShell picks up the new state
+          const newUrl = window.location.pathname;
+          window.history.replaceState({}, '', newUrl);
+          window.location.reload();
+          return;
+        }
+        setSyncedTier(data.tier || studio.subscriptionTier);
+      } catch {
+        setSyncedTier(studio.subscriptionTier);
+      } finally {
+        setSyncing(false);
+      }
+    };
+    syncBilling();
+
+    fetch('/api/v1/public/platform/plans')
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) setPlans(data);
+      })
+      .catch(err => console.error(err))
+      .finally(() => setLoading(false));
+  }, [studio.id]);
+
+
+  const handleAction = async (planName: string, isUpgrade: boolean) => {
+    setActionLoading(planName);
+    try {
+      const endpoint = 'billing/upgrade';
+      const res = await fetch(`/api/v1/me/studios/${studio.id}/${endpoint}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('token')}`,
+        },
+        body: JSON.stringify({ tier: planName }),
+      });
+      const data = await res.json();
+      if (data.url) {
+        window.open(data.url, '_blank');
+      } else {
+        alert(data.error || 'Failed to initialize checkout');
+      }
+    } catch (e) {
+      console.error(e);
+      alert('Network error initializing billing flow');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  if (loading) {
+    return <div className="p-8 text-center text-sm font-bold text-zinc-500">Loading plans...</div>;
+  }
+
+  const currentTier = studio.subscriptionTier || 'Trial Pass';
+  const isCanceledOrPastDue = currentTier === 'past_due' || currentTier === 'canceled';
+  const hasSubscription = currentTier !== 'Trial Pass' && !isCanceledOrPastDue && !!studio.subscriptionTier;
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400 mb-1">
+          Platform Billing
+        </h3>
+        <p className="text-[10px] text-zinc-500">
+          Manage your studio's platform subscription. Upgrade or downgrade your plan to unlock more features.
+        </p>
+      </div>
+
+      <div className={`relative overflow-hidden rounded-[24px] border border-brand-500/30 bg-white/20 dark:bg-brand-950/20 backdrop-blur-2xl p-6 transition-all duration-300 shadow-lg shadow-brand-500/10`}>
+        <div className="flex justify-between items-start mb-2">
+          <div>
+            <h4 className="text-xl font-black text-zinc-900 dark:text-white">Current Plan</h4>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mt-1">
+              {isCanceledOrPastDue ? 'Subscription Paused' : 'Currently Active'}
+            </p>
+          </div>
+          <span className={`text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider transition-colors ${isCanceledOrPastDue ? 'bg-red-500/10 text-red-600 dark:text-red-400' : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'}`}>
+            {currentTier}
+          </span>
+        </div>
+        {isCanceledOrPastDue && (
+          <div className="mt-4 rounded-xl bg-red-500/20 p-4 border border-red-500/30 text-red-700 dark:text-red-400 font-bold text-xs">
+            Warning: Your subscription payment is past due or canceled. Your access to other pages has been paused until the issue is resolved. Please select a plan below to re-activate your workspace!
+          </div>
+        )}
+        {hasSubscription && (
+          <div className="mt-6 border-t border-brand-500/20 pt-4">
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full text-xs font-bold"
+              onClick={async () => {
+                const res = await fetch(`/api/v1/me/studios/${studio.id}/billing/portal`, { method: 'POST' });
+                const data = await res.json();
+                if (data.url) window.open(data.url, '_blank');
+              }}
+            >
+              Manage Billing Methods & Invoices
+            </Button>
+          </div>
+        )}
+      </div>
+
+      <div className="grid gap-6 sm:grid-cols-2">
+        {plans.map((plan, idx) => {
+          const isCurrent = currentTier === plan.name;
+          return (
+            <div
+              key={plan.name || idx}
+              className={`relative overflow-hidden rounded-[24px] border ${
+                isCurrent
+                  ? 'border-brand-500/30 shadow-lg shadow-brand-500/10 bg-white/20 dark:bg-brand-950/20'
+                  : 'border-white/10 bg-white/5 dark:bg-white/5 opacity-80'
+              } backdrop-blur-2xl p-6 transition-all duration-300 flex flex-col`}
+            >
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h4 className="text-xl font-black text-zinc-900 dark:text-white flex items-center gap-2">
+                    {plan.name}
+                    {isCurrent && <CheckCircle2 className="h-4 w-4 text-brand-500" />}
+                  </h4>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mt-1">
+                    {plan.cycle?.toLowerCase() === 'one-time' ? 'One Time' : 'Monthly'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-4 flex-1 flex flex-col">
+                <p className="text-[11px] font-medium text-zinc-500 min-h-[32px] leading-relaxed">
+                  {plan.description}
+                </p>
+                <div className="flex items-baseline gap-1 my-2">
+                  <span className="text-3xl font-black tracking-tight text-zinc-900 dark:text-white">
+                    S$ {plan.price}
+                  </span>
+                  {plan.cycle?.toLowerCase() !== 'one-time' && (
+                    <span className="text-sm font-semibold text-zinc-500">
+                      /mo
+                    </span>
+                  )}
+                </div>
+                <div className="space-y-2 flex-1">
+                  {plan.features?.map((f: string, i: number) => (
+                    <div key={i} className="flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+                      <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500 mt-0.5" />
+                      <span>{f}</span>
+                    </div>
+                  ))}
+                </div>
+                <Button
+                  variant={isCurrent ? 'outline' : 'default'}
+                  onClick={() => handleAction(plan.name, hasSubscription)}
+                  loading={actionLoading === plan.name}
+                  disabled={isCurrent}
+                  className="w-full mt-4 rounded-xl border-white/20 hover:bg-white/10 text-xs font-bold uppercase tracking-wider"
+                >
+                  {isCurrent ? 'Current Plan' : (hasSubscription ? 'Change Plan' : 'Select Plan')}
+                </Button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

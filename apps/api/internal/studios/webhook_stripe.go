@@ -102,9 +102,51 @@ func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Requ
 	case "invoice.paid":
 		// Existing invoice handling (platform billing)
 	case "invoice.payment_failed":
-		// Handle failed payment
-	case "customer.subscription.updated":
-		// Handle subscription update
+		var invoice stripe.Invoice
+		rawBytes := event.Data.Raw
+		if len(rawBytes) == 0 {
+			rawBytes, _ = json.Marshal(event.Data.Object)
+		}
+		if err := json.Unmarshal(rawBytes, &invoice); err == nil {
+			if invoice.Subscription != nil {
+				secretKey, _ := h.svc.GetPlatformSetting(context.Background(), "stripe_secret_key")
+				if secretKey != "" {
+					sc := &client.API{}
+					sc.Init(secretKey, nil)
+					sub, err := sc.Subscriptions.Get(invoice.Subscription.ID, nil)
+					if err == nil && sub.Metadata["studio_id"] != "" {
+						id, err := uuid.Parse(sub.Metadata["studio_id"])
+						if err == nil {
+							// Set the studio tier to 'past_due'
+							_ = h.svc.UpdatePayments(context.Background(), id, "", "", "", "past_due")
+							fmt.Printf("[Stripe Webhook] Marked studio %s as past_due\n", sub.Metadata["studio_id"])
+						}
+					}
+				}
+			}
+		}
+	case "customer.subscription.updated", "customer.subscription.deleted":
+		var sub stripe.Subscription
+		rawBytes := event.Data.Raw
+		if len(rawBytes) == 0 {
+			rawBytes, _ = json.Marshal(event.Data.Object)
+		}
+		if err := json.Unmarshal(rawBytes, &sub); err == nil {
+			if sub.Metadata["studio_id"] != "" {
+				id, err := uuid.Parse(sub.Metadata["studio_id"])
+				if err == nil {
+					if sub.Status == "canceled" || sub.CancelAtPeriodEnd {
+						_ = h.svc.UpdatePayments(context.Background(), id, "", "", "", "canceled")
+						fmt.Printf("[Stripe Webhook] Marked studio %s as canceled\n", sub.Metadata["studio_id"])
+					} else {
+						// If they un-cancel, or upgrade
+						// Wait, if it's updated and NOT canceled, we shouldn't necessarily override unless we know the tier.
+						// The tier is stored in sub.Metadata["plan_tier"] usually, but we set it on checkout.
+						// We can ignore updates that aren't cancellations to avoid overwriting state unnecessarily.
+					}
+				}
+			}
+		}
 	default:
 		// Unhandled event type
 	}
@@ -127,6 +169,39 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 	customerPhone := session.Metadata["customer_phone"]
 	customerName := session.Metadata["customer_name"]
 	studioIDStr := session.Metadata["studio_id"]
+
+	if session.Metadata["is_upgrade"] == "true" {
+		tier := session.Metadata["plan_tier"]
+		id, err := uuid.Parse(studioIDStr)
+		if err == nil {
+			_ = h.svc.UpdatePayments(ctx, id, "", "", "", tier)
+			fmt.Printf("[Stripe Webhook] Successfully upgraded studio %s to %s\n", studioIDStr, tier)
+			
+			// Cancel old subscriptions
+			secretKey, _ := h.svc.GetPlatformSetting(ctx, "stripe_secret_key")
+			if secretKey != "" {
+				sc := &client.API{}
+				sc.Init(secretKey, nil)
+				if session.Customer != nil {
+					params := &stripe.SubscriptionListParams{
+						Customer: stripe.String(session.Customer.ID),
+						Status:   stripe.String("active"),
+					}
+					iter := sc.Subscriptions.List(params)
+					for iter.Next() {
+						sub := iter.Subscription()
+						// Don't cancel the newly created subscription!
+						if session.Subscription != nil && sub.ID == session.Subscription.ID {
+							continue
+						}
+						_, _ = sc.Subscriptions.Cancel(sub.ID, nil)
+						fmt.Printf("[Stripe Webhook] Canceled old subscription %s for studio %s\n", sub.ID, studioIDStr)
+					}
+				}
+			}
+		}
+		return
+	}
 
 	if customerPhone == "" || studioIDStr == "" {
 		fmt.Printf("[Stripe Webhook] customerPhone or studioIDStr is empty! Phone: '%s', Studio: '%s'\n", customerPhone, studioIDStr)

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Settings as SettingsIcon, Plug, CheckCircle2 } from 'lucide-react';
 import { CredentialsManager } from './CredentialsManager';
 import { Button } from '@/components/ui/Button';
@@ -9,13 +9,20 @@ export function SettingsTabs() {
   const [activeTab, setActiveTab] = useState<'credentials' | 'plans'>('credentials');
   const [saving, setSaving] = useState(false);
   
-  // Local state to simulate editing plans
-  const [plans, setPlans] = useState([
-    { id: 'trial', name: 'Trial Plan', channels: 1, aiLimit: 200, socialPlanner: false },
-    { id: 'growth', name: 'Growth Plan', channels: 3, aiLimit: 2000, socialPlanner: false },
-    { id: 'pro', name: 'Pro Plan', channels: 8, aiLimit: 10000, socialPlanner: true },
-    { id: 'enterprise', name: 'Enterprise Plan', channels: 999, aiLimit: 999999, socialPlanner: true },
-  ]);
+  const [plans, setPlans] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch('/api/v1/public/platform/plans')
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          setPlans(data);
+        }
+      })
+      .catch(err => console.error('Failed to load plans:', err))
+      .finally(() => setLoading(false));
+  }, []);
 
   const handlePlanChange = (index: number, field: string, value: any) => {
     const updated = [...plans];
@@ -23,12 +30,21 @@ export function SettingsTabs() {
     setPlans(updated);
   };
 
-  const handleSavePlans = () => {
+  const handleSavePlans = async () => {
     setSaving(true);
-    setTimeout(() => {
-      setSaving(false);
+    try {
+      const res = await fetch('/api/v1/me/studios/global/plans', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(plans)
+      });
+      if (!res.ok) throw new Error('Failed to save plans');
       alert('Platform plans successfully updated.');
-    }, 800);
+    } catch (e) {
+      alert('Error saving plans');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -79,45 +95,34 @@ export function SettingsTabs() {
             
             <div className="grid gap-6 md:grid-cols-2">
               {plans.map((plan, idx) => (
-                <div key={plan.id} className="rounded-2xl border border-white/20 bg-white/40 p-5 shadow-sm dark:border-white/5 dark:bg-neutral-800/40">
+                <div key={plan.name || idx} className="rounded-2xl border border-white/20 bg-white/40 p-5 shadow-sm dark:border-white/5 dark:bg-neutral-800/40">
                   <h3 className="mb-4 text-base font-black text-zinc-900 dark:text-white flex items-center justify-between">
                     {plan.name}
-                    {plan.socialPlanner && <CheckCircle2 className="h-4 w-4 text-brand-500" />}
+                    {plan.highlight && <CheckCircle2 className="h-4 w-4 text-brand-500" />}
                   </h3>
                   
                   <div className="space-y-4">
-                    <div>
-                      <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-zinc-500">
-                        Max Allowed Channels
-                      </label>
-                      <input
-                        type="number"
-                        className="w-full rounded-xl border border-white/40 bg-white/50 px-3 py-2 text-sm font-semibold text-zinc-900 shadow-sm focus:border-brand-500 focus:outline-none dark:border-white/10 dark:bg-neutral-900/50 dark:text-white"
-                        value={plan.channels}
-                        onChange={(e) => handlePlanChange(idx, 'channels', parseInt(e.target.value))}
-                      />
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-zinc-500">Plan Name</label>
+                        <input type="text" className="w-full rounded-xl border border-white/40 bg-white/50 px-3 py-2 text-sm font-semibold text-zinc-900 focus:border-brand-500 focus:outline-none dark:border-white/10 dark:bg-neutral-900/50 dark:text-white" value={plan.name} onChange={(e) => handlePlanChange(idx, 'name', e.target.value)} />
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-zinc-500">Price (USD)</label>
+                        <input type="number" className="w-full rounded-xl border border-white/40 bg-white/50 px-3 py-2 text-sm font-semibold text-zinc-900 focus:border-brand-500 focus:outline-none dark:border-white/10 dark:bg-neutral-900/50 dark:text-white" value={plan.price} onChange={(e) => handlePlanChange(idx, 'price', parseInt(e.target.value))} />
+                      </div>
                     </div>
                     <div>
-                      <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-zinc-500">
-                        Max AI Replies (Monthly)
-                      </label>
-                      <input
-                        type="number"
-                        className="w-full rounded-xl border border-white/40 bg-white/50 px-3 py-2 text-sm font-semibold text-zinc-900 shadow-sm focus:border-brand-500 focus:outline-none dark:border-white/10 dark:bg-neutral-900/50 dark:text-white"
-                        value={plan.aiLimit}
-                        onChange={(e) => handlePlanChange(idx, 'aiLimit', parseInt(e.target.value))}
-                      />
+                      <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-zinc-500">Description</label>
+                      <input type="text" className="w-full rounded-xl border border-white/40 bg-white/50 px-3 py-2 text-sm font-semibold text-zinc-900 focus:border-brand-500 focus:outline-none dark:border-white/10 dark:bg-neutral-900/50 dark:text-white" value={plan.description} onChange={(e) => handlePlanChange(idx, 'description', e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-zinc-500">Features (Comma Separated)</label>
+                      <textarea className="w-full rounded-xl border border-white/40 bg-white/50 px-3 py-2 text-sm font-semibold text-zinc-900 focus:border-brand-500 focus:outline-none dark:border-white/10 dark:bg-neutral-900/50 dark:text-white" rows={3} value={plan.features ? plan.features.join(', ') : ''} onChange={(e) => handlePlanChange(idx, 'features', e.target.value.split(',').map((s: string) => s.trim()))} />
                     </div>
                     <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-white/40 bg-white/30 p-3 hover:bg-white/50 dark:border-white/10 dark:bg-neutral-800/30 dark:hover:bg-neutral-800/50">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 dark:border-slate-600"
-                        checked={plan.socialPlanner}
-                        onChange={(e) => handlePlanChange(idx, 'socialPlanner', e.target.checked)}
-                      />
-                      <span className="text-xs font-bold text-zinc-700 dark:text-zinc-200">
-                        Enable Social Planner Module
-                      </span>
+                      <input type="checkbox" className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 dark:border-slate-600" checked={plan.highlight || false} onChange={(e) => handlePlanChange(idx, 'highlight', e.target.checked)} />
+                      <span className="text-xs font-bold text-zinc-700 dark:text-zinc-200">Highlight Plan (e.g. Most Popular)</span>
                     </label>
                   </div>
                 </div>

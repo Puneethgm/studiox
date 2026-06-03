@@ -29,12 +29,13 @@ type Handler struct {
 // the frontend to render branded chrome immediately after login. The `Active`
 // flag drives the inactive-studio lockout in the AppShell.
 type StudioBrand struct {
-	Slug       string `json:"slug"`
-	Name       string `json:"name"`
-	BrandColor string `json:"brandColor"`
+	Slug                 string `json:"slug"`
+	Name                 string `json:"name"`
+	BrandColor           string `json:"brandColor"`
 	LogoURL              string `json:"logoUrl"`
 	Active               bool   `json:"active"`
 	SocialPlannerEnabled bool   `json:"socialPlannerEnabled"`
+	SubscriptionTier     string `json:"subscriptionTier"`
 }
 
 // StudioBrandLookup resolves a studio's brand info by id. Implemented in main

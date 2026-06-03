@@ -123,8 +123,8 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
         url += `?${params.toString()}`;
       }
 
-      const historyRes = await api<{ invoices: Invoice[], stats: any }>(url);
-      if (historyRes.invoices) setInvoices(historyRes.invoices);
+      const historyRes = await api<{ invoices: Invoice[] | null, stats: any }>(url);
+      setInvoices(historyRes.invoices || []);
       if (historyRes.stats) setBillingStats(historyRes.stats);
 
       // Populate or update local cache
@@ -138,7 +138,7 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
           fetchedAt: Date.now()
         };
       } else {
-        if (historyRes.invoices) paymentsCache[studioIdStr].invoices = historyRes.invoices;
+        paymentsCache[studioIdStr].invoices = historyRes.invoices || [];
         if (historyRes.stats) paymentsCache[studioIdStr].billingStats = historyRes.stats;
         paymentsCache[studioIdStr].fetchedAt = Date.now();
       }
@@ -152,12 +152,6 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
   };
 
   useEffect(() => {
-    if (studioId === 'global') {
-      setStripeStatus('disconnected');
-      setLoading(false);
-      return;
-    }
-
     const cachedInfo = paymentsCache[studioId];
     if (cachedInfo) {
       // Instant mount from cache
@@ -212,7 +206,7 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
 
   // Effect to refetch invoices when filter changes
   useEffect(() => {
-    if (stripeStatus !== 'connected' || studioId === 'global') return;
+    if (stripeStatus !== 'connected') return;
 
     let startUnix: number | undefined;
     let endUnix: number | undefined;
@@ -331,7 +325,7 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
           <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400 block">Lifetime Payments</span>
           <div className="mt-2 flex items-baseline gap-2">
             <span className="text-3xl font-black text-zinc-950 dark:text-white">
-              {formatAmount(stats.lifetimePaidSGD)}
+              {formatAmount(stats.lifetimePaidTotal || stats.lifetimePaidSGD)}
             </span>
           </div>
           <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider mt-2 block">

@@ -181,11 +181,16 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
     return <StudioInactiveScreen me={me} />;
   }
 
+  // If the studio's payment is past due or canceled, block access to everything except settings.
+  const isPastDueOrCanceled = isStudio && (me.studio!.subscriptionTier === 'past_due' || me.studio!.subscriptionTier === 'canceled');
+  const showPastDueModal = isPastDueOrCanceled && !pathname.endsWith('/settings');
+
   return (
     <div
       className="min-h-screen text-zinc-900 dark:text-zinc-100"
       style={themeStyle}
     >
+      {showPastDueModal && <StudioPastDueModal me={me} />}
       {/* Mobile backdrop */}
       <div
         className={cn(
@@ -674,5 +679,34 @@ function StudioInactiveScreen({ me }: { me: Me }) {
         </div>
       </div>
     </main>
+  );
+}
+
+function StudioPastDueModal({ me }: { me: Me }) {
+  const router = useRouter();
+  const studio = me.studio!;
+
+  return (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/60 backdrop-blur-md p-4 animate-in fade-in duration-300">
+      <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[28px] shadow-2xl p-8 text-center animate-in zoom-in-95 duration-300">
+        <div className="mx-auto mb-6 grid h-16 w-16 place-items-center rounded-2xl bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-500 shadow-inner">
+          <CreditCard className="h-8 w-8" />
+        </div>
+        <h2 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white mb-3">
+          Subscription Paused
+        </h2>
+        <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mb-8">
+          Your studio's subscription is either past due or canceled. Please update your billing details or select a new plan to restore access to the platform.
+        </p>
+        <div className="mt-8 flex justify-center gap-4">
+          <Button 
+            className="w-full h-12 text-sm font-bold shadow-lg"
+            onClick={() => router.push(`/admin/studios/${me.studioId}/settings`)}
+          >
+            Manage Billing & Plans
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }

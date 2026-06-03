@@ -76,6 +76,7 @@ func main() {
 			LogoURL:              s.LogoURL,
 			Active:               s.Active,
 			SocialPlannerEnabled: s.SocialPlannerEnabled,
+			SubscriptionTier:     s.SubscriptionTier,
 		}, nil
 	})
 	identityHandler := identity.NewHandler(identityRepo, tokens, cfg.Cookie, brandLookup)
@@ -161,6 +162,8 @@ func main() {
 
 		// Public, unauthenticated endpoints
 		studiosHandler.PublicRoutes(r)
+		r.Post("/public/platform/checkout", studiosHandler.CreatePlatformCheckout)
+		r.Post("/public/platform/provision", studiosHandler.ProvisionPlatformStudio)
 		leadsHandler.PublicRoutes(r)
 		msgHandler.PublicRoutes(r)
 

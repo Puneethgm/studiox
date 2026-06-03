@@ -220,3 +220,24 @@ func (r *Repo) evict(id uuid.UUID) {
 	}
 	r.cache.Evict(idKey)
 }
+
+func (r *Repo) UpdatePlatformSetting(ctx context.Context, key, value string) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO platform_settings (key, value, updated_at)
+		VALUES ($1, $2, now())
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+	`, key, value)
+	return err
+}
+
+func (r *Repo) GetPlatformSetting(ctx context.Context, key string) (string, error) {
+	var value string
+	err := r.pool.QueryRow(ctx, "SELECT value FROM platform_settings WHERE key = $1", key).Scan(&value)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	return value, nil
+}

@@ -53,13 +53,20 @@ func (h *Handler) SelfRoutes(r chi.Router) {
 	r.Put("/studios/{id}/plans/{planId}", h.updatePlan)
 	r.Get("/studios/{id}/payments", h.getPayments)
 	r.Post("/studios/{id}/payments/stripe", h.linkStripe)
+	// Platform Plans route
+	r.Put("/studios/global/plans", h.UpdatePlatformPlans)
+
 	r.Get("/studios/{id}/billing/history", h.getBillingHistory)
+	r.Post("/studios/{id}/billing/upgrade", h.UpgradeStudioPlan)
+	r.Post("/studios/{id}/billing/portal", h.CreatePortalSession)
+	r.Post("/studios/{id}/billing/sync", h.SyncBillingStatus)
 	r.Post("/studios/{id}/trial-checkout", h.createTrialCheckout)
 }
 
 // PublicRoutes expose the studio's brand info for the public form to render.
 func (h *Handler) PublicRoutes(r chi.Router) {
 	r.Get("/public/studios/{slug}", h.publicGet)
+	r.Get("/public/platform/plans", h.GetPlatformPlans)
 }
 
 // RequireActiveStudio blocks studio_admins whose studio has been marked
@@ -583,13 +590,18 @@ func (h *Handler) uploadGoogleCredentials(w http.ResponseWriter, r *http.Request
 
 func (h *Handler) getPayments(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
-	// If id is 'global', return empty config
+	// If id is 'global', return platform settings
 	if idStr == "global" {
+		accountId, _ := h.svc.GetPlatformSetting(r.Context(), "stripe_account_id")
+		publishableKey, _ := h.svc.GetPlatformSetting(r.Context(), "stripe_publishable_key")
+		secretKey, _ := h.svc.GetPlatformSetting(r.Context(), "stripe_secret_key")
+		
 		httpx.JSON(w, http.StatusOK, map[string]any{
-			"stripeAccountId":      "",
-			"stripePublishableKey": "",
-			"stripeSecretKey":      "",
-			"subscriptionTier":     "pro",
+			"stripeAccountId":      accountId,
+			"stripePublishableKey": publishableKey,
+			"hasStripeSecretKey":   secretKey != "",
+			"subscriptionTier":     "platform",
+			"trialAmountSgd":       0,
 		})
 		return
 	}
@@ -704,17 +716,180 @@ func (h *Handler) createTrialCheckout(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) CreatePlatformCheckout(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Tier string `json:"tier"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "failed to decode request body")
+		return
+	}
+
+	secretKey, _ := h.svc.GetPlatformSetting(r.Context(), "stripe_secret_key")
+	if secretKey == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "platform_not_configured", "Platform Stripe account is not configured")
+		return
+	}
+
+	// Fetch dynamic platform plans
+	val, err := h.svc.GetPlatformSetting(r.Context(), "platform_plans")
+	if err != nil || val == "" {
+		val = `[{"name":"Trial Pass","price":300,"cycle":"One-time","description":"Entry-level setup to validate AI integration and lead generation.","features":["1 Connected Channel","Basic AI Auto-Replies (200/mo)","1-day automated follow-up","Google Sheets contact sync"]},{"name":"Growth Tier","price":999,"cycle":"Monthly","description":"Automate workflows, payments, and client acquisition.","features":["3 Connected Channels","Full AI Auto-Replies (2,000/mo)","Dedicated Knowledge Base","Visual drag-and-drop Pipeline","Stripe account integration"]},{"name":"Pro Tier","price":1299,"cycle":"Monthly","description":"For active studios looking to scale reach via social media and paid advertising.","features":["8 Connected Channels","Extended AI Auto-Replies (10,000/mo)","Dual model routing (Gemini + Claude)","Advanced Social Planner","Google Ads Channel Integration","Studio Plan Option (Scheduling)"],"highlight":true},{"name":"Enterprise Tier","price":1599,"cycle":"Monthly","description":"Maximum scale, custom branding, and multi-location management.","features":["Unlimited Connected Channels","Unlimited AI Auto-Replies","Multi-Location Hub","Whitelabel Dashboard","Enterprise Studio Plan Option","Priority Support SLA"]}]`
+	}
+	var plans []map[string]any
+	json.Unmarshal([]byte(val), &plans)
+
+	var amount int64 = -1
+	for _, p := range plans {
+		if p["name"] == req.Tier {
+			amount = int64(p["price"].(float64)) * 100 // Convert to cents
+			break
+		}
+	}
+
+	if amount == -1 {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_tier", "Invalid subscription tier")
+		return
+	}
+
+	sc := &client.API{}
+	sc.Init(secretKey, nil)
+
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "http://localhost:3000"
+	}
+
+	params := &stripe.CheckoutSessionParams{
+		PaymentMethodTypes: stripe.StringSlice([]string{"card"}),
+		LineItems: []*stripe.CheckoutSessionLineItemParams{
+			{
+				PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{
+					Currency:   stripe.String("sgd"),
+					UnitAmount: stripe.Int64(amount),
+					ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
+						Name: stripe.String(fmt.Sprintf("1herosocial.ai - %s", req.Tier)),
+					},
+					Recurring: &stripe.CheckoutSessionLineItemPriceDataRecurringParams{
+						Interval: stripe.String("month"),
+					},
+				},
+				Quantity: stripe.Int64(1),
+			},
+		},
+		Mode:       stripe.String("subscription"),
+		SuccessURL: stripe.String(fmt.Sprintf("%s/onboarding?session_id={CHECKOUT_SESSION_ID}", frontendURL)),
+		CancelURL:  stripe.String(fmt.Sprintf("%s/pricing", frontendURL)),
+		Metadata: map[string]string{
+			"plan_tier": req.Tier,
+		},
+	}
+
+	// For Trial Pass, it's one-time
+	if req.Tier == "Trial Pass" {
+		params.Mode = stripe.String("payment")
+		params.LineItems[0].PriceData.Recurring = nil
+	}
+
+	session, err := sc.CheckoutSessions.New(params)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "stripe_error", fmt.Sprintf("Failed to create checkout session: %v", err))
+		return
+	}
+
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"url": session.URL,
+	})
+}
+
+func (h *Handler) ProvisionPlatformStudio(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionId     string `json:"sessionId"`
+		StudioName    string `json:"studioName"`
+		AdminPassword string `json:"adminPassword"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	secretKey, err := h.svc.GetPlatformSetting(r.Context(), "stripe_secret_key")
+	if err != nil || secretKey == "" {
+		httpx.WriteError(w, http.StatusInternalServerError, "not_configured", "Platform Stripe is not configured")
+		return
+	}
+
+	sc := &client.API{}
+	sc.Init(secretKey, nil)
+
+	session, err := sc.CheckoutSessions.Get(req.SessionId, nil)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_session", "Failed to retrieve checkout session")
+		return
+	}
+
+	if session.PaymentStatus != "paid" {
+		httpx.WriteError(w, http.StatusBadRequest, "unpaid_session", "Checkout session is not paid")
+		return
+	}
+
+	customerEmail := ""
+	if session.CustomerDetails != nil && session.CustomerDetails.Email != "" {
+		customerEmail = session.CustomerDetails.Email
+	} else if session.CustomerEmail != "" {
+		customerEmail = session.CustomerEmail
+	}
+
+	if customerEmail == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "missing_email", "Checkout session does not have an associated email")
+		return
+	}
+
+	tier := ""
+	if session.Metadata != nil {
+		tier = session.Metadata["plan_tier"]
+	}
+	if tier == "" {
+		tier = "Growth Tier" // fallback
+	}
+
+	// Try to create the studio
+	res, errs, err := h.svc.CreateStudioWithAdmin(r.Context(), CreateStudioInput{
+		Slug:                 "", // will auto-generate from Name
+		Name:                 req.StudioName,
+		BrandColor:           "#7c3aed",
+		LogoURL:              "",
+		ContactEmail:         customerEmail,
+		AdminEmail:           customerEmail,
+		AdminPassword:        req.AdminPassword,
+		SocialPlannerEnabled: true,
+	})
+
+	if errs != nil {
+		// If the admin email is already in use, or slug taken
+		if _, ok := errs["adminEmail"]; ok {
+			// This email is already registered. They should probably just link it, but for now we error.
+			httpx.WriteError(w, http.StatusBadRequest, "email_taken", "An account with this email already exists.")
+			return
+		}
+		httpx.WriteValidationError(w, errs)
+		return
+	}
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+
+	// Assign the subscription tier based on the payment
+	if res != nil && res.Studio != nil {
+		// Just update the tier via direct DB update or service wrapper
+		_ = h.svc.UpdatePayments(r.Context(), res.Studio.ID, "", "", "", tier)
+	}
+
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true, "studioId": res.Studio.ID})
+}
+
 func (h *Handler) linkStripe(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
-	if idStr == "global" {
-		httpx.WriteError(w, http.StatusBadRequest, "forbidden", "cannot link stripe on global scope")
-		return
-	}
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "invalid studio ID")
-		return
-	}
 
 	var req struct {
 		StripeAccountId      string `json:"stripeAccountId"`
@@ -723,6 +898,29 @@ func (h *Handler) linkStripe(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "failed to decode request body")
+		return
+	}
+
+	if idStr == "global" {
+		if err := h.svc.UpdatePlatformSetting(r.Context(), "stripe_account_id", req.StripeAccountId); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to update stripe_account_id")
+			return
+		}
+		if err := h.svc.UpdatePlatformSetting(r.Context(), "stripe_publishable_key", req.StripePublishableKey); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to update stripe_publishable_key")
+			return
+		}
+		if err := h.svc.UpdatePlatformSetting(r.Context(), "stripe_secret_key", req.StripeSecretKey); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to update stripe_secret_key")
+			return
+		}
+		httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "invalid studio ID")
 		return
 	}
 
@@ -741,30 +939,42 @@ func (h *Handler) linkStripe(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 func (h *Handler) getBillingHistory(w http.ResponseWriter, r *http.Request) {
+	var stripeSecretKey string
+
 	idStr := chi.URLParam(r, "id")
 	if idStr == "global" {
-		httpx.JSON(w, http.StatusOK, map[string]any{"invoices": []any{}, "stats": map[string]any{}})
-		return
-	}
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "invalid studio ID")
-		return
+		var err error
+		stripeSecretKey, err = h.svc.GetPlatformSetting(r.Context(), "stripe_secret_key")
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "db_error", err.Error())
+			return
+		}
+		if stripeSecretKey == "" {
+			httpx.WriteError(w, http.StatusInternalServerError, "wtf", "key is empty for global")
+			return
+		}
+	} else {
+		id, err := uuid.Parse(idStr)
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "invalid studio ID")
+			return
+		}
+
+		s, err := h.svc.GetByID(r.Context(), id)
+		if err != nil {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "studio not found")
+			return
+		}
+		stripeSecretKey = s.StripeSecretKey
 	}
 
-	s, err := h.svc.GetByID(r.Context(), id)
-	if err != nil {
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "studio not found")
-		return
-	}
-
-	if s.StripeSecretKey == "" {
+	if stripeSecretKey == "" {
 		httpx.JSON(w, http.StatusOK, map[string]any{"invoices": []any{}, "stats": map[string]any{}})
 		return
 	}
 
 	sc := &client.API{}
-	sc.Init(s.StripeSecretKey, nil)
+	sc.Init(stripeSecretKey, nil)
 
 	// Checkout Sessions create PaymentIntents (not Invoices).
 	// Query PaymentIntents to show all trial booking payments.
@@ -796,7 +1006,7 @@ func (h *Handler) getBillingHistory(w http.ResponseWriter, r *http.Request) {
 	piParams.AddExpand("data.invoice")
 	piIter := sc.PaymentIntents.List(piParams)
 
-	var invoices []map[string]any
+	invoices := make([]map[string]any, 0)
 	var lifetimePaid int64
 	var lifetimePaidByCurrency = map[string]int64{}
 

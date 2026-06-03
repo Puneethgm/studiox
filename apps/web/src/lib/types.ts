@@ -7,6 +7,7 @@ export interface StudioBrand {
   logoUrl: string;
   active: boolean;
   socialPlannerEnabled?: boolean;
+  subscriptionTier?: string;
 }
 
 export interface Me {
@@ -40,6 +41,7 @@ export interface Studio {
   knowledgeBase?: string;
   knowledgeBaseFiles?: { name: string; url: string; text: string }[];
   trialAmountSgd?: number;
+  subscriptionTier?: string;
 }
 
 export interface Plan {
