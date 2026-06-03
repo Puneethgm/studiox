@@ -52,6 +52,12 @@ function navItemsFor(me: Me): NavItem[] {
         match: (p) => p === '/admin' || p === '/admin/studios' || (p.startsWith('/admin/studios/') && !p.includes('/inbox') && !p.includes('/pipeline') && !p.includes('/campaigns') && !p.includes('/leads') && !p.includes('/channels') && !p.includes('/settings')),
       },
       {
+        href: '/admin/payments',
+        label: 'Payments',
+        icon: <CreditCard className="h-[18px] w-[18px]" />,
+        match: (p) => p.startsWith('/admin/payments'),
+      },
+      {
         href: '/admin/settings',
         label: 'Settings',
         icon: <Settings className="h-[18px] w-[18px]" />,
