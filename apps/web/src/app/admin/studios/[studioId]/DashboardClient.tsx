@@ -127,12 +127,12 @@ export default function DashboardClient({
   const memberLeads = initialStats.byStatus.member ?? 0;
   const conversionHealth = formatConversionHealth(totalLeads, trialBookedLeads + memberLeads);
 
-  // ROI calculation based on platform analytics
-  const paidPlatformData = analytics?.byPlatform?.find(
-    (p) => p.platform === 'Paid Ads',
-  );
-  const paidLeads = paidPlatformData?.totalLeads ?? 0;
-  const paidConversions = paidPlatformData?.convertedLeads ?? 0;
+  // ROI calculation based on platform analytics (aggregating Facebook, Instagram, TikTok, and specific Paid Ads channels)
+  const paidPlatformList = analytics?.byPlatform?.filter(
+    (p) => p.platform === 'Paid Ads' || p.platform === 'Facebook' || p.platform === 'Instagram' || p.platform === 'TikTok'
+  ) || [];
+  const paidLeads = paidPlatformList.reduce((sum, p) => sum + p.totalLeads, 0);
+  const paidConversions = paidPlatformList.reduce((sum, p) => sum + p.convertedLeads, 0);
   const costPerLead = paidLeads > 0 ? adSpend / paidLeads : 0;
   const costPerAcquisition = paidConversions > 0 ? adSpend / paidConversions : 0;
   const revenueGenerated = paidConversions * memberLtv;

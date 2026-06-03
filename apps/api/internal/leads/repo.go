@@ -993,7 +993,7 @@ func (r *Repo) GetAnalytics(ctx context.Context, studioID uuid.UUID, durationDay
 				WHEN lower(l.source) LIKE '%%youtube%%' OR lower(l.referrer) LIKE '%%youtube.com%%' OR lower(l.referrer) LIKE '%%youtu.be%%' THEN 'YouTube'
 				WHEN lower(l.source) LIKE '%%facebook%%' OR lower(l.referrer) LIKE '%%facebook.com%%' OR lower(l.source) LIKE '%%messenger%%' OR lower(l.referrer) LIKE '%%m.me%%' THEN 'Facebook'
 				WHEN lower(l.source) LIKE '%%google%%' OR lower(l.referrer) LIKE '%%google.com%%' OR lower(l.source) LIKE '%%seo%%' THEN 'Google / SEO'
-				WHEN lower(l.source) LIKE '%%ad%%' OR lower(l.referrer) LIKE '%%ad%%' OR lower(l.referrer) LIKE '%%gclid%%' THEN 'Paid Ads'
+				WHEN lower(l.source) LIKE '%%ad%%' OR lower(l.referrer) LIKE '%%ad%%' OR lower(l.referrer) LIKE '%%gclid%%' OR l.source = 'public_form' THEN 'Paid Ads'
 				ELSE 'Direct / Organic'
 			END as platform,
 			COUNT(l.id) as total_leads,
