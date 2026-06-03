@@ -7,6 +7,7 @@ import (
 	"net/mail"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -177,6 +178,11 @@ type UpdateStudioInput struct {
 }
 
 func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput) (map[string]string, error) {
+	oldStudio, err := s.repo.GetByID(ctx, id)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+
 	in.Name = strings.TrimSpace(in.Name)
 	in.BrandColor = normalizeHex(in.BrandColor)
 	in.LogoURL = strings.TrimSpace(in.LogoURL)
@@ -206,8 +212,117 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput
 	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.Active, in.AvailabilitySlots, in.AvailabilityTimezone, in.GeminiAPIKey, in.MetaAppID, in.MetaAppSecret, in.GoogleClientID, in.GoogleClientSecret, in.GoogleDeveloperToken, in.SocialPlannerEnabled, in.KnowledgeBase, in.KnowledgeBaseFiles, in.TrialAmountSGD); err != nil {
 		return nil, err
 	}
+
+	// Trigger RAG chunking if knowledge base, files, or key changed
+	kbChanged := oldStudio == nil ||
+		oldStudio.KnowledgeBase != in.KnowledgeBase ||
+		oldStudio.GeminiAPIKey != in.GeminiAPIKey ||
+		len(oldStudio.KnowledgeBaseFiles) != len(in.KnowledgeBaseFiles)
+
+	if !kbChanged && oldStudio != nil {
+		for idx, file := range oldStudio.KnowledgeBaseFiles {
+			if file.Name != in.KnowledgeBaseFiles[idx].Name ||
+				file.URL != in.KnowledgeBaseFiles[idx].URL ||
+				file.Text != in.KnowledgeBaseFiles[idx].Text {
+				kbChanged = true
+				break
+			}
+		}
+	}
+
+	if kbChanged {
+		s.AsyncSyncKnowledgeChunks(id, in.KnowledgeBase, in.KnowledgeBaseFiles, in.GeminiAPIKey)
+	}
+
 	return nil, nil
 }
+
+func (s *Service) AsyncSyncKnowledgeChunks(studioID uuid.UUID, kbText string, kbFiles []KnowledgeBaseFile, geminiAPIKey string) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+
+		apiKey := geminiAPIKey
+		if apiKey == "" {
+			var err error
+			apiKey, err = s.repo.GetPlatformSetting(ctx, "gemini_api_key")
+			if err != nil || apiKey == "" {
+				// No Gemini API key available; skip chunk embedding generation
+				return
+			}
+		}
+
+		var rawChunks []struct {
+			sourceType string
+			sourceName string
+			content    string
+		}
+
+		// 1. Chunk raw knowledge base text
+		if kbText != "" {
+			chunks := ChunkText(kbText, 800, 150)
+			for _, content := range chunks {
+				rawChunks = append(rawChunks, struct {
+					sourceType string
+					sourceName string
+					content    string
+				}{
+					sourceType: "text",
+					sourceName: "knowledge_base",
+					content:    content,
+				})
+			}
+		}
+
+		// 2. Chunk knowledge base files
+		for _, f := range kbFiles {
+			if f.Text != "" {
+				chunks := ChunkText(f.Text, 800, 150)
+				for _, content := range chunks {
+					rawChunks = append(rawChunks, struct {
+						sourceType string
+						sourceName string
+						content    string
+					}{
+						sourceType: "file",
+						sourceName: f.Name,
+						content:    content,
+					})
+				}
+			}
+		}
+
+		if len(rawChunks) == 0 {
+			// Clear all chunks if no knowledge exists anymore
+			_ = s.repo.SaveKnowledgeChunks(ctx, studioID, nil)
+			return
+		}
+
+		var finalChunks []ChunkData
+		for i, rc := range rawChunks {
+			// Fetch embedding via Gemini API
+			vec, err := GetGeminiEmbedding(ctx, apiKey, rc.content)
+			if err != nil {
+				// Continue to other chunks on transient error
+				continue
+			}
+			finalChunks = append(finalChunks, ChunkData{
+				SourceType: rc.sourceType,
+				SourceName: rc.sourceName,
+				Index:      i,
+				Content:    rc.content,
+				Embedding:  vec,
+			})
+			// Slight rate limit delay
+			time.Sleep(100 * time.Millisecond)
+		}
+
+		if len(finalChunks) > 0 {
+			_ = s.repo.SaveKnowledgeChunks(ctx, studioID, finalChunks)
+		}
+	}()
+}
+
 
 // ----- helpers -----
 
