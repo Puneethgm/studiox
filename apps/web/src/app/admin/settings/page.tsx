@@ -2,7 +2,7 @@ import { Settings as SettingsIcon } from 'lucide-react';
 import { SettingsTabs } from './SettingsTabs';
 
 export const metadata = {
-  title: 'Platform Settings | StudioX',
+  title: 'Platform Settings | 1herosocial.ai',
 };
 
 export default function SettingsPage() {

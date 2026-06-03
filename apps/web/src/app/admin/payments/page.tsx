@@ -1,5 +1,9 @@
 import PaymentsClient from '@/components/PaymentsClient';
 
+export const metadata = {
+  title: 'Platform Payments | 1herosocial.ai',
+};
+
 export default function SuperAdminPaymentsPage() {
   return (
     <div className="space-y-6">

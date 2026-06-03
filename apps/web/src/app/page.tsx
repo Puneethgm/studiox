@@ -3,7 +3,7 @@ import { ArrowRight, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 
 export const metadata = {
-  title: 'StudioX | The Ultimate Platform for Studios',
+  title: '1herosocial.ai | The Ultimate Platform for Studios',
 };
 
 export default function Home() {
@@ -16,7 +16,7 @@ export default function Home() {
             <div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-brand-500 to-violet-600 text-white shadow-lg shadow-brand-500/20">
               <Sparkles className="h-5 w-5" />
             </div>
-            <span className="text-xl font-black tracking-tight text-slate-900 dark:text-white">StudioX</span>
+            <span className="text-xl font-black tracking-tight text-slate-900 dark:text-white">1herosocial.ai</span>
           </div>
           
           <nav className="hidden md:flex gap-8">
