@@ -23,6 +23,8 @@ fi
 # Load variables from .env to read POSTGRES_HOST
 if [ -f "${DEPLOY_DIR}/.env" ]; then
   while IFS= read -r line || [ -n "$line" ]; do
+    # Strip carriage returns (CRLF) to prevent export errors
+    line="${line//$'\r'/}"
     if [[ ! "$line" =~ ^# ]] && [[ ! -z "$line" ]]; then
       export "$line"
     fi
