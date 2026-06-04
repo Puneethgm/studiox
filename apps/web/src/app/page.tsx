@@ -211,7 +211,7 @@ export default function Home() {
       </section>
 
       {/* ── Live Lead Stream Simulator ──────────────── */}
-      <section id="simulator" className="mx-auto max-w-6xl px-6 lg:px-8 pb-28">
+      <section id="simulator" className="mx-auto max-w-7xl px-6 lg:px-8 pb-28">
         <div className="text-center mb-10">
           <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight">Real-Time Lead & AI Activity</h2>
           <p className="mt-2 text-slate-600 max-w-xl mx-auto">Watch how incoming queries across social platforms are automatically processed by our AI pipeline.</p>
@@ -275,7 +275,7 @@ export default function Home() {
       </section>
 
       {/* ── Interactive ROI & Pipeline Calculator ────── */}
-      <section id="calculator" className="mx-auto max-w-6xl px-6 lg:px-8 pb-28">
+      <section id="calculator" className="mx-auto max-w-7xl px-6 lg:px-8 pb-28">
         <div className="text-center mb-12">
           <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight">Interactive Pipeline ROI Calculator</h2>
           <p className="mt-2 text-slate-600 max-w-xl mx-auto">Adjust the sliders to estimate how much revenue your studios can recover by optimizing lead conversions.</p>
@@ -496,7 +496,7 @@ export default function Home() {
       </section>
 
       {/* ── Interactive FAQ Section ─────────────────── */}
-      <section className="mx-auto max-w-4xl px-6 lg:px-8 pb-28">
+      <section className="mx-auto max-w-5xl px-6 lg:px-8 pb-28">
         <div className="text-center mb-12">
           <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight">Frequently Asked Questions</h2>
           <p className="mt-2 text-slate-600">Everything you need to know about the platform and deployment.</p>
