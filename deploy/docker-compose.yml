@@ -17,12 +17,12 @@ x-api-env: &api_env
   API_ENV: production
   API_LOG_LEVEL: info
   API_CORS_ORIGINS: ${PUBLIC_FORM_BASE_URL}
-  POSTGRES_HOST: postgres
-  POSTGRES_PORT: "5432"
+  POSTGRES_HOST: ${POSTGRES_HOST}
+  POSTGRES_PORT: ${POSTGRES_PORT}
   POSTGRES_USER: ${POSTGRES_USER}
   POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
   POSTGRES_DB: ${POSTGRES_DB}
-  POSTGRES_SSLMODE: disable
+  POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:-disable}
   JWT_SECRET: ${JWT_SECRET}
   JWT_TTL_HOURS: "24"
   SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL}
@@ -63,15 +63,12 @@ services:
       dockerfile: deploy/api.Dockerfile
     image: projectx-api:local
     profiles: ["tools"]
-    depends_on:
-      postgres:
-        condition: service_healthy
     entrypoint: ["/usr/local/bin/goose"]
     command:
       - "-dir"
       - "/migrations"
       - "postgres"
-      - "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
+      - "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}?sslmode=${POSTGRES_SSLMODE:-disable}"
       - "up"
     restart: "no"
 
@@ -82,9 +79,6 @@ services:
       dockerfile: deploy/api.Dockerfile
     image: projectx-api:local
     profiles: ["tools"]
-    depends_on:
-      postgres:
-        condition: service_healthy
     environment: *api_env
     entrypoint: ["/usr/local/bin/seed"]
     restart: "no"
@@ -106,8 +100,6 @@ services:
     image: projectx-api:local
     restart: always
     depends_on:
-      postgres:
-        condition: service_healthy
       init-uploads:
         condition: service_completed_successfully
     environment: *api_env
