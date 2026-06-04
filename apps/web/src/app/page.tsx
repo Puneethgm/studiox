@@ -38,7 +38,7 @@ interface SimulatedLead {
 const INITIAL_SIMULATED_LEADS: SimulatedLead[] = [
   {
     id: '1',
-    name: 'Sarah Jenkins',
+    name: 'Jia Min',
     source: 'Instagram',
     time: 'Just now',
     status: 'Member Sold',
@@ -46,7 +46,7 @@ const INITIAL_SIMULATED_LEADS: SimulatedLead[] = [
   },
   {
     id: '2',
-    name: 'Marcus Chen',
+    name: 'Marcus Tan',
     source: 'Facebook',
     time: '2m ago',
     status: 'Trial Booked',
@@ -54,7 +54,7 @@ const INITIAL_SIMULATED_LEADS: SimulatedLead[] = [
   },
   {
     id: '3',
-    name: 'Aisha Rahman',
+    name: 'Nurul Huda',
     source: 'WhatsApp',
     time: '5m ago',
     status: 'AI Responding',
@@ -62,7 +62,7 @@ const INITIAL_SIMULATED_LEADS: SimulatedLead[] = [
   }
 ];
 
-const LEAD_NAMES = ['Chloe Smith', 'David Miller', 'Emily Davis', 'James Wilson', 'Jessica Taylor', 'Ryan Garcia', 'Sophia Martinez', 'Daniel Kim'];
+const LEAD_NAMES = ['Marcus Tan', 'Siti Aminah', 'Shermin Lim', 'Arjun Prasad', 'Jia Min', 'Ryan Teo', 'Nurul Huda', 'Farhan Rahim', 'Wei Jie', 'Priya Devi'];
 const LEAD_SOURCES = ['Facebook', 'Instagram', 'TikTok', 'WhatsApp'] as const;
 const LEAD_MESSAGES = [
   'How much is the 10-class trial pass?',
