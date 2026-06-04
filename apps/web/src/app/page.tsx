@@ -138,12 +138,12 @@ export default function Home() {
 
       {/* ── Navigation (Full Width) ─────────────────── */}
       <header className="sticky top-0 z-50 w-full border-b border-slate-200/50 bg-[#FAF9F6]/75 backdrop-blur-md">
-        <div className="mx-auto flex h-18 w-full max-w-[1600px] items-center justify-between px-6 md:px-12 py-4">
-          <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 text-white shadow-lg shadow-violet-600/10">
-              <Sparkles className="h-5 w-5" />
+        <div className="mx-auto flex w-full max-w-[1600px] items-center justify-between px-4 md:px-12 py-3 md:py-4">
+          <div className="flex items-center gap-2 md:gap-3">
+            <div className="grid h-9 w-9 md:h-10 md:w-10 place-items-center rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 text-white shadow-lg shadow-violet-600/10">
+              <Sparkles className="h-4.5 w-4.5 md:h-5 md:w-5" />
             </div>
-            <span className="text-xl font-black tracking-tight text-slate-900">1herosocial.ai</span>
+            <span className="text-lg md:text-xl font-black tracking-tight text-slate-900">1herosocial.ai</span>
           </div>
 
           <nav className="hidden lg:flex items-center gap-10">
@@ -153,11 +153,11 @@ export default function Home() {
             <Link href="/pricing" className="text-sm font-semibold text-slate-600 hover:text-violet-600 transition-colors">Pricing Plans</Link>
           </nav>
 
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-4 md:gap-6">
             <Link href="/login" className="text-sm font-semibold text-slate-600 hover:text-violet-600 transition-colors">
               Log in
             </Link>
-            <Link href="/pricing">
+            <Link href="/pricing" className="hidden sm:inline-block">
               <button className="flex items-center gap-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white px-5 py-2.5 rounded-xl text-sm font-bold transition-all shadow-md shadow-violet-600/10 hover:shadow-violet-600/20 hover:scale-[1.02] active:scale-[0.98]">
                 Get Started <ArrowRight className="h-4 w-4" />
               </button>
@@ -167,24 +167,24 @@ export default function Home() {
       </header>
 
       {/* ── Hero Split Layout (Wide Viewport) ───────── */}
-      <section className="relative pt-20 pb-24 md:pt-28 md:pb-32 px-6 md:px-12 max-w-[1600px] mx-auto">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center">
+      <section className="relative pt-12 pb-16 md:pt-28 md:pb-32 px-4 md:px-12 max-w-[1600px] mx-auto">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-8 items-center">
           
           {/* Left Text Column */}
-          <div className="lg:col-span-7 space-y-8 text-left">
-            <div className="inline-flex items-center gap-2 bg-violet-600/5 border border-violet-600/10 text-violet-700 text-xs font-bold px-4.5 py-2 rounded-full backdrop-blur-sm">
+          <div className="lg:col-span-7 space-y-6 md:space-y-8 text-left">
+            <div className="inline-flex items-center gap-2 bg-violet-600/5 border border-violet-600/10 text-violet-700 text-xs font-bold px-4 py-2 rounded-full backdrop-blur-sm">
               <Star className="h-3.5 w-3.5 fill-violet-600 text-violet-600" />
               Empowering Multi-Studio Gym Owners Worldwide
             </div>
 
-            <h1 className="text-4xl sm:text-6xl xl:text-7xl font-extrabold tracking-tight text-slate-900 leading-[1.05]">
+            <h1 className="text-3xl sm:text-5xl lg:text-6xl xl:text-7xl font-extrabold tracking-tight text-slate-900 leading-[1.1] lg:leading-[1.05]">
               One Command Center.
-              <span className="block mt-2 text-transparent bg-clip-text bg-gradient-to-r from-violet-600 via-fuchsia-600 to-indigo-600">
+              <span className="block mt-1 md:mt-2 text-transparent bg-clip-text bg-gradient-to-r from-violet-600 via-fuchsia-600 to-indigo-600">
                 Every Studio Location.
               </span>
             </h1>
 
-            <p className="text-lg sm:text-xl text-slate-600 max-w-2xl leading-relaxed">
+            <p className="text-base sm:text-lg md:text-xl text-slate-600 max-w-2xl leading-relaxed">
               Stop switching between tabs. Centralize lead pipelines, automate cross-channel messaging, manage member billing, and trigger instant AI replies across all locations.
             </p>
 
@@ -200,7 +200,7 @@ export default function Home() {
             </div>
 
             {/* Benefit Checkmarks */}
-            <div className="flex flex-wrap gap-x-8 gap-y-3 pt-4 text-sm text-slate-500 font-semibold">
+            <div className="flex flex-wrap gap-x-8 gap-y-3 pt-2 md:pt-4 text-sm text-slate-500 font-semibold">
               <div className="flex items-center gap-2">
                 <CheckCircle className="h-4.5 w-4.5 text-violet-600" />
                 No credit card required
@@ -219,7 +219,7 @@ export default function Home() {
           {/* Right Hero Image/Graphic Column */}
           <div className="lg:col-span-5 relative">
             <div className="absolute inset-0 bg-gradient-to-br from-violet-600/10 to-indigo-600/10 rounded-3xl blur-2xl -z-10" />
-            <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-2xl relative overflow-hidden">
+            <div className="bg-white border border-slate-200 rounded-3xl p-4 sm:p-6 shadow-2xl relative overflow-hidden">
               <div className="flex justify-between items-center border-b border-slate-100 pb-4 mb-4">
                 <div className="flex items-center gap-2">
                   <span className="h-3 w-3 rounded-full bg-red-400" />
@@ -286,8 +286,8 @@ export default function Home() {
       </section>
 
       {/* ── Live Lead Stream Simulator (Split Column) ── */}
-      <section id="simulator" className="border-t border-slate-200/60 bg-white py-24 px-6 md:px-12">
-        <div className="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-12 items-start">
+      <section id="simulator" className="border-t border-slate-200/60 bg-white py-16 md:py-24 px-4 md:px-12">
+        <div className="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-12 items-start">
           
           {/* Left Text Column */}
           <div className="lg:col-span-4 text-left space-y-6 lg:sticky lg:top-24">
@@ -313,7 +313,7 @@ export default function Home() {
           </div>
 
           {/* Right Simulator Card Column */}
-          <div className="lg:col-span-8 bg-slate-50 border border-slate-200/60 rounded-3xl p-6 shadow-sm relative">
+          <div className="lg:col-span-8 bg-slate-50 border border-slate-200/60 rounded-3xl p-4 sm:p-6 shadow-sm relative">
             <div className="absolute top-4 right-4 flex items-center gap-2 bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs px-3.5 py-1.5 rounded-full font-bold">
               <span className="h-2 w-2 rounded-full bg-emerald-500 animate-ping" />
               Live Feed Simulating
@@ -328,7 +328,7 @@ export default function Home() {
               {simulatedLeads.map((lead) => (
                 <div 
                   key={lead.id} 
-                  className="bg-white border border-slate-200/60 rounded-2xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all hover:border-violet-300 hover:shadow-md hover:shadow-violet-600/[0.02]"
+                  className="bg-white border border-slate-200/60 rounded-2xl p-4 sm:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all hover:border-violet-300 hover:shadow-md hover:shadow-violet-600/[0.02]"
                 >
                   <div className="flex items-start gap-4">
                     <div className={`h-11 w-11 rounded-xl flex items-center justify-center font-black text-white shadow-sm bg-gradient-to-br ${
@@ -372,8 +372,8 @@ export default function Home() {
       </section>
 
       {/* ── Interactive ROI & Pipeline Calculator (Split Column) ── */}
-      <section id="calculator" className="border-t border-slate-200/60 py-24 px-6 md:px-12">
-        <div className="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-12 items-start">
+      <section id="calculator" className="border-t border-slate-200/60 py-16 md:py-24 px-4 md:px-12">
+        <div className="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-12 items-start">
           
           {/* Left Text Column */}
           <div className="lg:col-span-4 text-left space-y-6 lg:sticky lg:top-24">
@@ -402,7 +402,7 @@ export default function Home() {
           <div className="lg:col-span-8 grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch">
             
             {/* Controls */}
-            <div className="md:col-span-2 bg-white border border-slate-200 rounded-3xl p-6 flex flex-col justify-between gap-6 shadow-sm">
+            <div className="md:col-span-2 bg-white border border-slate-200 rounded-3xl p-4 sm:p-6 flex flex-col justify-between gap-6 shadow-sm">
               <div>
                 <div className="flex justify-between items-center mb-3">
                   <label className="text-sm font-bold text-slate-700">Monthly Ad Spend</label>
@@ -471,7 +471,7 @@ export default function Home() {
             </div>
 
             {/* Results Display */}
-            <div className="bg-gradient-to-br from-violet-500 to-indigo-600 text-white rounded-3xl p-6 flex flex-col justify-between shadow-xl relative overflow-hidden">
+            <div className="bg-gradient-to-br from-violet-500 to-indigo-600 text-white rounded-3xl p-4 sm:p-6 flex flex-col justify-between shadow-xl relative overflow-hidden">
               <div className="absolute top-0 right-0 -translate-y-4 translate-x-4 h-24 w-24 rounded-full bg-white/10 blur-xl pointer-events-none" />
               
               <div>
@@ -511,7 +511,7 @@ export default function Home() {
       </section>
 
       {/* ── Platform Features (Extreme Bento Grid Layout) ──── */}
-      <section id="features" className="border-t border-slate-200/60 bg-white py-24 px-6 md:px-12">
+      <section id="features" className="border-t border-slate-200/60 bg-white py-16 md:py-24 px-4 md:px-12">
         <div className="max-w-[1600px] mx-auto space-y-16">
           <div className="text-left space-y-4">
             <span className="text-violet-600 font-bold uppercase tracking-wider text-xs bg-violet-50 border border-violet-100 px-3.5 py-1.5 rounded-full inline-block">
@@ -529,7 +529,7 @@ export default function Home() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             
             {/* Box 1 (Span 2 columns) */}
-            <div className="md:col-span-2 p-8 rounded-3xl bg-slate-50 border border-slate-200 hover:border-violet-400 transition-all group flex flex-col justify-between">
+            <div className="md:col-span-2 p-5 sm:p-8 rounded-3xl bg-slate-50 border border-slate-200 hover:border-violet-400 transition-all group flex flex-col justify-between">
               <div>
                 <div className="h-12 w-12 rounded-xl bg-violet-600/5 text-violet-600 border border-violet-600/10 flex items-center justify-center mb-6 group-hover:scale-105 transition-transform duration-200">
                   <Building2 className="h-6 w-6" />
@@ -546,7 +546,7 @@ export default function Home() {
             </div>
 
             {/* Box 2 (Span 1 column) */}
-            <div className="p-8 rounded-3xl bg-slate-50 border border-slate-200 hover:border-violet-400 transition-all group flex flex-col justify-between">
+            <div className="p-5 sm:p-8 rounded-3xl bg-slate-50 border border-slate-200 hover:border-violet-400 transition-all group flex flex-col justify-between">
               <div>
                 <div className="h-12 w-12 rounded-xl bg-indigo-600/5 text-indigo-600 border border-indigo-600/10 flex items-center justify-center mb-6 group-hover:scale-105 transition-transform duration-200">
                   <MessageSquare className="h-6 w-6" />
@@ -562,7 +562,7 @@ export default function Home() {
             </div>
 
             {/* Box 3 (Span 1 column) */}
-            <div className="p-8 rounded-3xl bg-slate-50 border border-slate-200 hover:border-violet-400 transition-all group flex flex-col justify-between">
+            <div className="p-5 sm:p-8 rounded-3xl bg-slate-50 border border-slate-200 hover:border-violet-400 transition-all group flex flex-col justify-between">
               <div>
                 <div className="h-12 w-12 rounded-xl bg-fuchsia-600/5 text-fuchsia-600 border border-fuchsia-600/10 flex items-center justify-center mb-6 group-hover:scale-105 transition-transform duration-200">
                   <Users className="h-6 w-6" />
@@ -578,7 +578,7 @@ export default function Home() {
             </div>
 
             {/* Box 4 (Span 2 columns) */}
-            <div className="md:col-span-2 p-8 rounded-3xl bg-slate-50 border border-slate-200 hover:border-violet-400 transition-all group flex flex-col justify-between">
+            <div className="md:col-span-2 p-5 sm:p-8 rounded-3xl bg-slate-50 border border-slate-200 hover:border-violet-400 transition-all group flex flex-col justify-between">
               <div>
                 <div className="h-12 w-12 rounded-xl bg-emerald-600/5 text-emerald-600 border border-emerald-600/10 flex items-center justify-center mb-6 group-hover:scale-105 transition-transform duration-200">
                   <Globe className="h-6 w-6" />
@@ -598,7 +598,7 @@ export default function Home() {
       </section>
 
       {/* ── Testimonials (3-Column Layout) ──────────── */}
-      <section className="border-t border-slate-200/60 py-24 px-6 md:px-12">
+      <section className="border-t border-slate-200/60 py-16 md:py-24 px-4 md:px-12">
         <div className="max-w-[1600px] mx-auto space-y-16">
           <div className="text-left space-y-4">
             <span className="text-indigo-600 font-bold uppercase tracking-wider text-xs bg-indigo-50 border border-indigo-100 px-3.5 py-1.5 rounded-full inline-block">
@@ -627,7 +627,7 @@ export default function Home() {
                 role: "Director, Prana Yoga Collective"
               }
             ].map((t, idx) => (
-              <div key={idx} className="bg-white border border-slate-200 rounded-3xl p-6 flex flex-col justify-between shadow-sm hover:shadow-md transition-shadow">
+              <div key={idx} className="bg-white border border-slate-200 rounded-3xl p-5 sm:p-6 flex flex-col justify-between shadow-sm hover:shadow-md transition-shadow">
                 <div>
                   <div className="flex gap-1 mb-5 text-amber-400">
                     {[...Array(5)].map((_, i) => (
@@ -647,8 +647,8 @@ export default function Home() {
       </section>
 
       {/* ── FAQ Section (Split Column Layout) ───────── */}
-      <section className="border-t border-slate-200/60 bg-white py-24 px-6 md:px-12">
-        <div className="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-12 items-start">
+      <section className="border-t border-slate-200/60 bg-white py-16 md:py-24 px-4 md:px-12">
+        <div className="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-12 items-start">
           
           {/* Left Text Column */}
           <div className="lg:col-span-4 text-left space-y-6 lg:sticky lg:top-24">
@@ -689,7 +689,7 @@ export default function Home() {
               >
                 <button 
                   onClick={() => toggleFaq(idx)}
-                  className="w-full py-5 px-6 flex items-center justify-between text-left focus:outline-none"
+                  className="w-full py-4 px-5 sm:py-5 sm:px-6 flex items-center justify-between text-left focus:outline-none"
                 >
                   <span className="font-bold text-slate-900 text-sm sm:text-base">{faq.q}</span>
                   <ChevronDown className={`h-4.5 w-4.5 text-slate-400 transition-transform duration-300 ${openFaqIndex === idx ? 'rotate-180 text-violet-600' : ''}`} />
@@ -700,7 +700,7 @@ export default function Home() {
                     openFaqIndex === idx ? 'max-h-48 border-t border-slate-200/60 bg-white' : 'max-h-0'
                   }`}
                 >
-                  <p className="p-6 text-sm sm:text-base text-slate-600 leading-relaxed text-left">{faq.a}</p>
+                  <p className="p-5 sm:p-6 text-sm sm:text-base text-slate-600 leading-relaxed text-left">{faq.a}</p>
                 </div>
               </div>
             ))}
@@ -709,7 +709,7 @@ export default function Home() {
       </section>
 
       {/* ── Premium High-Impact CTA (Full Width) ────── */}
-      <section className="relative overflow-hidden bg-gradient-to-br from-violet-950 to-indigo-900 py-32 text-center text-white">
+      <section className="relative overflow-hidden bg-gradient-to-br from-violet-950 to-indigo-900 py-20 sm:py-32 px-4 sm:px-6 text-center text-white">
         <div className="absolute inset-0 z-0 opacity-10">
           <img 
             src="https://images.unsplash.com/photo-1540497077202-7c8a3999166f?q=80&w=2000&auto=format&fit=crop" 
@@ -720,7 +720,7 @@ export default function Home() {
         <div className="absolute inset-0 z-0 bg-gradient-to-b from-transparent via-[#09070F]/20 to-[#09070F]/50" />
         
         <div className="relative z-10 mx-auto max-w-4xl px-6">
-          <h2 className="text-4xl sm:text-6xl font-black mb-6 leading-tight">
+          <h2 className="text-3xl sm:text-5xl lg:text-6xl font-black mb-6 leading-tight">
             Supercharge Your Lead Pipeline
           </h2>
           <p className="text-lg md:text-xl text-violet-200 mb-10 max-w-2xl mx-auto leading-relaxed">

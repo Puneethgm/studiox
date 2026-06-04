@@ -144,8 +144,8 @@ export default function PricingPage() {
       </header>
 
       {/* ── Pricing Hero Split Layout (Wide Viewport) ── */}
-      <section className="relative pt-20 pb-12 md:pt-28 md:pb-16 px-6 md:px-12 max-w-[1600px] mx-auto">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center">
+      <section className="relative pt-12 pb-10 md:pt-28 md:pb-16 px-4 md:px-12 max-w-[1600px] mx-auto">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-8 items-center">
           
           {/* Left Text Column */}
           <div className="lg:col-span-7 space-y-6 text-left">
@@ -154,26 +154,26 @@ export default function PricingPage() {
               Flexible Subscription Plans
             </div>
 
-            <h1 className="text-4xl sm:text-6xl xl:text-7xl font-extrabold tracking-tight text-slate-900 leading-[1.05]">
+            <h1 className="text-3xl sm:text-5xl lg:text-6xl xl:text-7xl font-extrabold tracking-tight text-slate-900 leading-[1.1] lg:leading-[1.05]">
               Transparent Pricing.
-              <span className="block mt-2 text-transparent bg-clip-text bg-gradient-to-r from-violet-600 via-fuchsia-600 to-indigo-600">
+              <span className="block mt-1 md:mt-2 text-transparent bg-clip-text bg-gradient-to-r from-violet-600 via-fuchsia-600 to-indigo-600">
                 Built to Scale Networks.
               </span>
             </h1>
 
-            <p className="text-lg sm:text-xl text-slate-600 max-w-2xl leading-relaxed">
+            <p className="text-base sm:text-lg md:text-xl text-slate-600 max-w-2xl leading-relaxed">
               No hidden fees. Scale operations across physical studios while utilizing custom RAG knowledge bases, Stripe integrations, and visual messaging pipelines.
             </p>
           </div>
 
           {/* Right Column Badge Grid */}
-          <div className="lg:col-span-5 relative grid grid-cols-2 gap-4">
-            <div className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm text-left">
+          <div className="lg:col-span-5 relative grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-sm text-left">
               <div className="h-10 w-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold mb-4">L</div>
               <h3 className="font-bold text-slate-900 text-sm">Flexible Billing</h3>
               <p className="text-xs text-slate-500 mt-1">Upgrade, downgrade, or cancel your subscription plan at any time.</p>
             </div>
-            <div className="bg-white border border-slate-200 p-6 rounded-2xl shadow-sm text-left">
+            <div className="bg-white border border-slate-200 p-5 rounded-2xl shadow-sm text-left">
               <div className="h-10 w-10 rounded-lg bg-violet-50 text-violet-600 flex items-center justify-center font-bold mb-4">V</div>
               <h3 className="font-bold text-slate-900 text-sm">Vector Processing</h3>
               <p className="text-xs text-slate-500 mt-1">Included FAQ uploads are embedded instantly to power your studio agents.</p>
@@ -183,7 +183,7 @@ export default function PricingPage() {
       </section>
 
       {/* ── Pricing Cards Grid (Single Row, Full Width) ── */}
-      <section className="px-6 md:px-12 pb-28 max-w-[1600px] mx-auto">
+      <section className="px-4 md:px-12 pb-20 md:pb-28 max-w-[1600px] mx-auto">
         <div className={`grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch ${
           tiers.length === 4 ? 'xl:grid-cols-4' :
           tiers.length === 3 ? 'lg:grid-cols-3' :
@@ -192,7 +192,7 @@ export default function PricingPage() {
           {tiers.map((tier, idx) => (
             <div
               key={tier.name}
-              className={`rounded-[32px] p-8 flex flex-col justify-between transition-all duration-300 relative text-left ${
+              className={`rounded-[32px] p-5 sm:p-8 flex flex-col justify-between transition-all duration-300 relative text-left ${
                 tier.highlight
                   ? 'bg-white border-2 border-violet-500 shadow-xl shadow-violet-900/[0.04] lg:scale-105 z-10'
                   : 'bg-white border border-slate-200 hover:border-violet-300 hover:shadow-lg'
