@@ -2,8 +2,32 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: '1herosocial.ai',
-  description: 'AI-run marketing & studio operations platform for fitness studios.',
+  title: '1herosocial.ai — Multi-Studio Gym Marketing & AI Operations',
+  description: 'Automate lead streams, cross-channel messaging, member billing, and instant AI replies for fitness studios and gyms. Manage all your locations from a single dashboard.',
+  keywords: [
+    '1herosocial',
+    '1herosocial.ai',
+    'studio operations',
+    'fitness studio software',
+    'gym marketing automation',
+    'Instagram auto-replies gym',
+    'multi-studio management',
+    'lead pipeline fitness',
+    'gym owner CRM'
+  ],
+  openGraph: {
+    title: '1herosocial.ai — Multi-Studio Gym Marketing & AI Operations',
+    description: 'Automate lead streams, cross-channel messaging, member billing, and instant AI replies for fitness studios.',
+    url: 'https://1herosocial.ai',
+    siteName: '1herosocial.ai',
+    locale: 'en_US',
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: '1herosocial.ai — Gym Marketing & AI Operations',
+    description: 'Automate lead streams, cross-channel messaging, member billing, and instant AI replies.',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
