@@ -186,6 +186,7 @@ func main() {
 		
 		stripeWebhook := studios.NewStripeWebhookHandler(studiosSvc, os.Getenv("STRIPE_WEBHOOK_SECRET"))
 		r.Post("/webhooks/stripe", stripeWebhook.HandleInbound)
+		r.Post("/webhooks/stripe/{studioId}", stripeWebhook.HandleInbound)
 
 		r.Get("/webhooks/meta/instagram", metaWebhook.Verify)
 		r.Post("/webhooks/meta/instagram", metaWebhook.Receive)

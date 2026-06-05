@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/projectx/api/internal/platform/httpx"
@@ -37,7 +38,20 @@ func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	endpointSecret := h.webhookSecret
+	// Try to resolve the specific studio's webhook secret first if isolated routing is used
+	var endpointSecret string
+	studioIDStr := chi.URLParam(r, "studioId")
+	if studioIDStr != "" {
+		if id, err := uuid.Parse(studioIDStr); err == nil {
+			studio, err := h.svc.GetByID(r.Context(), id)
+			if err == nil && studio != nil && studio.StripeWebhookSecret != "" {
+				endpointSecret = studio.StripeWebhookSecret
+			}
+		}
+	}
+	if endpointSecret == "" {
+		endpointSecret = h.webhookSecret
+	}
 
 	var event stripe.Event
 
@@ -118,7 +132,7 @@ func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Requ
 						id, err := uuid.Parse(sub.Metadata["studio_id"])
 						if err == nil {
 							// Set the studio tier to 'past_due'
-							_ = h.svc.UpdatePayments(context.Background(), id, "", "", "", "past_due")
+							_ = h.svc.UpdatePayments(context.Background(), id, "", "", "", "", "past_due")
 							fmt.Printf("[Stripe Webhook] Marked studio %s as past_due\n", sub.Metadata["studio_id"])
 						}
 					}
@@ -136,7 +150,7 @@ func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Requ
 				id, err := uuid.Parse(sub.Metadata["studio_id"])
 				if err == nil {
 					if sub.Status == "canceled" || sub.CancelAtPeriodEnd {
-						_ = h.svc.UpdatePayments(context.Background(), id, "", "", "", "canceled")
+						_ = h.svc.UpdatePayments(context.Background(), id, "", "", "", "", "canceled")
 						fmt.Printf("[Stripe Webhook] Marked studio %s as canceled\n", sub.Metadata["studio_id"])
 					} else {
 						// If they un-cancel, or upgrade
@@ -174,7 +188,7 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 		tier := session.Metadata["plan_tier"]
 		id, err := uuid.Parse(studioIDStr)
 		if err == nil {
-			_ = h.svc.UpdatePayments(ctx, id, "", "", "", tier)
+			_ = h.svc.UpdatePayments(ctx, id, "", "", "", "", tier)
 			fmt.Printf("[Stripe Webhook] Successfully upgraded studio %s to %s\n", studioIDStr, tier)
 			
 			// Cancel old subscriptions

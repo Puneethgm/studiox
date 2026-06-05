@@ -335,7 +335,7 @@ func (w *AIWorker) buildPrompt(history []Message, conv *Conversation, lead *lead
 	}
 
 	if kbText != "" {
-		context += fmt.Sprintf("\nHere are the specific company details and knowledge base you MUST use to answer questions:\n\"\"\"\n%s\n\"\"\"\nDo not invent information outside of this knowledge base.\n\n", kbText)
+		context += fmt.Sprintf("\nHere are the specific company details and knowledge base you MUST use to answer questions:\n\"\"\"\n%s\n\"\"\"\nDo not invent information outside of this knowledge base. If the answer cannot be found in these details, politely state that you do not have that information and a member of the team will contact them shortly. Do not hallucinate or make up facts.\n\n", kbText)
 	}
 	
 	if len(plans) > 0 {
@@ -462,7 +462,7 @@ func (w *AIWorker) updateLeadStatus(ctx context.Context, studioID uuid.UUID, lea
 	}
 
 	// 2. Only update if confidence is high enough
-	if confidence < 0.6 {
+	if confidence < 0.7 {
 		return
 	}
 

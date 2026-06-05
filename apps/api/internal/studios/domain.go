@@ -39,6 +39,7 @@ type Studio struct {
 	StripeAccountID string `json:"stripeAccountId"`
 	StripeSecretKey string `json:"stripeSecretKey"`
 	StripePublishableKey string `json:"stripePublishableKey"`
+	StripeWebhookSecret string `json:"stripeWebhookSecret"`
 	SubscriptionTier string `json:"subscriptionTier"`
 	SocialPlannerEnabled bool                `json:"socialPlannerEnabled"`
 	KnowledgeBase        string              `json:"knowledgeBase"`

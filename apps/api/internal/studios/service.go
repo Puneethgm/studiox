@@ -353,8 +353,8 @@ func isPgUnique(err error) bool {
 	return false
 }
 
-func (s *Service) UpdatePayments(ctx context.Context, id uuid.UUID, stripeAccountId, stripeSecretKey, stripePublishableKey, subscriptionTier string) error {
-	return s.repo.UpdatePayments(ctx, id, stripeAccountId, stripeSecretKey, stripePublishableKey, subscriptionTier)
+func (s *Service) UpdatePayments(ctx context.Context, id uuid.UUID, stripeAccountId, stripeSecretKey, stripePublishableKey, stripeWebhookSecret, subscriptionTier string) error {
+	return s.repo.UpdatePayments(ctx, id, stripeAccountId, stripeSecretKey, stripePublishableKey, stripeWebhookSecret, subscriptionTier)
 }
 
 func (s *Service) ListPlans(ctx context.Context, studioID uuid.UUID) ([]Plan, error) {

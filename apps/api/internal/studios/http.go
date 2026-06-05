@@ -595,13 +595,15 @@ func (h *Handler) getPayments(w http.ResponseWriter, r *http.Request) {
 		accountId, _ := h.svc.GetPlatformSetting(r.Context(), "stripe_account_id")
 		publishableKey, _ := h.svc.GetPlatformSetting(r.Context(), "stripe_publishable_key")
 		secretKey, _ := h.svc.GetPlatformSetting(r.Context(), "stripe_secret_key")
+		webhookSecret, _ := h.svc.GetPlatformSetting(r.Context(), "stripe_webhook_secret")
 		
 		httpx.JSON(w, http.StatusOK, map[string]any{
-			"stripeAccountId":      accountId,
-			"stripePublishableKey": publishableKey,
-			"hasStripeSecretKey":   secretKey != "",
-			"subscriptionTier":     "platform",
-			"trialAmountSgd":       0,
+			"stripeAccountId":        accountId,
+			"stripePublishableKey":   publishableKey,
+			"hasStripeSecretKey":     secretKey != "",
+			"hasStripeWebhookSecret": webhookSecret != "",
+			"subscriptionTier":       "platform",
+			"trialAmountSgd":         0,
 		})
 		return
 	}
@@ -618,13 +620,15 @@ func (h *Handler) getPayments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hasSecretKey := s.StripeSecretKey != ""
+	hasWebhookSecret := s.StripeWebhookSecret != ""
 	
 	httpx.JSON(w, http.StatusOK, map[string]any{
-		"stripeAccountId":      s.StripeAccountID,
-		"stripePublishableKey": s.StripePublishableKey,
-		"hasStripeSecretKey":   hasSecretKey,
-		"subscriptionTier":     s.SubscriptionTier,
-		"trialAmountSgd":       s.TrialAmountSGD,
+		"stripeAccountId":        s.StripeAccountID,
+		"stripePublishableKey":   s.StripePublishableKey,
+		"hasStripeSecretKey":     hasSecretKey,
+		"hasStripeWebhookSecret": hasWebhookSecret,
+		"subscriptionTier":       s.SubscriptionTier,
+		"trialAmountSgd":         s.TrialAmountSGD,
 	})
 }
 
@@ -882,7 +886,7 @@ func (h *Handler) ProvisionPlatformStudio(w http.ResponseWriter, r *http.Request
 	// Assign the subscription tier based on the payment
 	if res != nil && res.Studio != nil {
 		// Just update the tier via direct DB update or service wrapper
-		_ = h.svc.UpdatePayments(r.Context(), res.Studio.ID, "", "", "", tier)
+		_ = h.svc.UpdatePayments(r.Context(), res.Studio.ID, "", "", "", "", tier)
 	}
 
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true, "studioId": res.Studio.ID})
@@ -895,6 +899,7 @@ func (h *Handler) linkStripe(w http.ResponseWriter, r *http.Request) {
 		StripeAccountId      string `json:"stripeAccountId"`
 		StripePublishableKey string `json:"stripePublishableKey"`
 		StripeSecretKey      string `json:"stripeSecretKey"`
+		StripeWebhookSecret  string `json:"stripeWebhookSecret"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "failed to decode request body")
@@ -914,6 +919,12 @@ func (h *Handler) linkStripe(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to update stripe_secret_key")
 			return
 		}
+		if req.StripeWebhookSecret != "" {
+			if err := h.svc.UpdatePlatformSetting(r.Context(), "stripe_webhook_secret", req.StripeWebhookSecret); err != nil {
+				httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to update stripe_webhook_secret")
+				return
+			}
+		}
 		httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
@@ -930,7 +941,7 @@ func (h *Handler) linkStripe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.svc.UpdatePayments(r.Context(), id, req.StripeAccountId, req.StripeSecretKey, req.StripePublishableKey, s.SubscriptionTier)
+	err = h.svc.UpdatePayments(r.Context(), id, req.StripeAccountId, req.StripeSecretKey, req.StripePublishableKey, req.StripeWebhookSecret, s.SubscriptionTier)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
@@ -1130,7 +1141,7 @@ func (h *Handler) StripeConnectCallback(w http.ResponseWriter, r *http.Request) 
 	// Update the studio's payment configuration with the connected account ID
 	s, err := h.svc.GetByID(r.Context(), studioID)
 	if err == nil {
-		_ = h.svc.UpdatePayments(r.Context(), studioID, token.StripeUserID, "", "", s.SubscriptionTier)
+		_ = h.svc.UpdatePayments(r.Context(), studioID, token.StripeUserID, "", "", "", s.SubscriptionTier)
 	}
 
 	// Redirect back to frontend

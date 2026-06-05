@@ -34,11 +34,19 @@ func NewRepo(pool *pgxpool.Pool, cipher *secrets.Cipher) *Repo {
 func (r *Repo) Pool() *pgxpool.Pool { return r.pool }
 
 func (r *Repo) Create(ctx context.Context, tx pgx.Tx, s *Studio) error {
+	var err error
+	encWebhookSecret := s.StripeWebhookSecret
+	if encWebhookSecret != "" && r.cipher != nil {
+		encWebhookSecret, err = r.cipher.Encrypt(encWebhookSecret)
+		if err != nil {
+			return fmt.Errorf("encrypt stripe webhook secret: %w", err)
+		}
+	}
 	row := tx.QueryRow(ctx, `
-		INSERT INTO studios (slug, name, brand_color, logo_url, contact_email, active, gemini_api_key, meta_app_id, meta_app_secret, google_client_id, google_client_secret, google_developer_token, stripe_account_id, stripe_secret_key, stripe_publishable_key, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files, trial_amount_sgd)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+		INSERT INTO studios (slug, name, brand_color, logo_url, contact_email, active, gemini_api_key, meta_app_id, meta_app_secret, google_client_id, google_client_secret, google_developer_token, stripe_account_id, stripe_secret_key, stripe_publishable_key, stripe_webhook_secret, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files, trial_amount_sgd)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
 		RETURNING id, created_at, updated_at
-	`, s.Slug, s.Name, s.BrandColor, s.LogoURL, s.ContactEmail, s.Active, s.GeminiAPIKey, s.MetaAppID, s.MetaAppSecret, s.GoogleClientID, s.GoogleClientSecret, s.GoogleDeveloperToken, s.StripeAccountID, s.StripeSecretKey, s.StripePublishableKey, s.SubscriptionTier, s.SocialPlannerEnabled, s.KnowledgeBase, s.KnowledgeBaseFiles, s.TrialAmountSGD)
+	`, s.Slug, s.Name, s.BrandColor, s.LogoURL, s.ContactEmail, s.Active, s.GeminiAPIKey, s.MetaAppID, s.MetaAppSecret, s.GoogleClientID, s.GoogleClientSecret, s.GoogleDeveloperToken, s.StripeAccountID, s.StripeSecretKey, s.StripePublishableKey, encWebhookSecret, s.SubscriptionTier, s.SocialPlannerEnabled, s.KnowledgeBase, s.KnowledgeBaseFiles, s.TrialAmountSGD)
 	if err := row.Scan(&s.ID, &s.CreatedAt, &s.UpdatedAt); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -54,7 +62,7 @@ func (r *Repo) List(ctx context.Context) ([]Studio, error) {
 		SELECT s.id, s.slug, s.name, s.brand_color, s.logo_url, s.contact_email,
 		       s.active, s.created_at, s.updated_at, s.availability_slots, s.availability_timezone, s.gemini_api_key, s.meta_app_id, s.meta_app_secret,
 		       s.google_client_id, s.google_client_secret, s.google_developer_token,
-		       s.stripe_account_id, s.stripe_secret_key, s.stripe_publishable_key, s.subscription_tier, s.social_planner_enabled, s.knowledge_base, s.knowledge_base_files,
+		       s.stripe_account_id, s.stripe_secret_key, s.stripe_publishable_key, s.stripe_webhook_secret, s.subscription_tier, s.social_planner_enabled, s.knowledge_base, s.knowledge_base_files,
 		       s.trial_amount_sgd,
 		       COALESCE(c.cnt, 0), COALESCE(l.cnt, 0)
 		FROM studios s
@@ -74,7 +82,7 @@ func (r *Repo) List(ctx context.Context) ([]Studio, error) {
 		if err := rows.Scan(&s.ID, &s.Slug, &s.Name, &s.BrandColor, &s.LogoURL, &s.ContactEmail,
 			&s.Active, &s.CreatedAt, &s.UpdatedAt, &s.AvailabilitySlots, &s.AvailabilityTimezone, &s.GeminiAPIKey, &s.MetaAppID, &s.MetaAppSecret,
 			&s.GoogleClientID, &s.GoogleClientSecret, &s.GoogleDeveloperToken,
-			&s.StripeAccountID, &s.StripeSecretKey, &s.StripePublishableKey, &s.SubscriptionTier, &s.SocialPlannerEnabled, &s.KnowledgeBase, &s.KnowledgeBaseFiles, 
+			&s.StripeAccountID, &s.StripeSecretKey, &s.StripePublishableKey, &s.StripeWebhookSecret, &s.SubscriptionTier, &s.SocialPlannerEnabled, &s.KnowledgeBase, &s.KnowledgeBaseFiles, 
 			&s.TrialAmountSGD, &s.CampaignCount, &s.LeadCount); err != nil {
 			return nil, fmt.Errorf("scan studio: %w", err)
 		}
@@ -82,6 +90,12 @@ func (r *Repo) List(ctx context.Context) ([]Studio, error) {
 			dec, err := r.cipher.Decrypt(s.StripeSecretKey)
 			if err == nil {
 				s.StripeSecretKey = dec
+			}
+		}
+		if s.StripeWebhookSecret != "" && r.cipher != nil {
+			dec, err := r.cipher.Decrypt(s.StripeWebhookSecret)
+			if err == nil {
+				s.StripeWebhookSecret = dec
 			}
 		}
 		out = append(out, s)
@@ -101,7 +115,7 @@ func (r *Repo) GetByID(ctx context.Context, id uuid.UUID) (*Studio, error) {
 		SELECT id, slug, name, brand_color, logo_url, contact_email, active, created_at, updated_at,
 		       availability_slots, availability_timezone, gemini_api_key, meta_app_id, meta_app_secret,
 		       google_client_id, google_client_secret, google_developer_token,
-		       stripe_account_id, stripe_secret_key, stripe_publishable_key, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files,
+		       stripe_account_id, stripe_secret_key, stripe_publishable_key, stripe_webhook_secret, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files,
 		       trial_amount_sgd
 		FROM studios WHERE id = $1
 	`, id)
@@ -125,7 +139,7 @@ func (r *Repo) GetBySlug(ctx context.Context, slug string) (*Studio, error) {
 		SELECT id, slug, name, brand_color, logo_url, contact_email, active, created_at, updated_at,
 		       availability_slots, availability_timezone, gemini_api_key, meta_app_id, meta_app_secret,
 		       google_client_id, google_client_secret, google_developer_token,
-		       stripe_account_id, stripe_secret_key, stripe_publishable_key, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files,
+		       stripe_account_id, stripe_secret_key, stripe_publishable_key, stripe_webhook_secret, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files,
 		       trial_amount_sgd
 		FROM studios WHERE slug = $1
 	`, slug)
@@ -167,7 +181,7 @@ func scanStudio(row pgx.Row, cipher *secrets.Cipher) (*Studio, error) {
 	if err := row.Scan(&s.ID, &s.Slug, &s.Name, &s.BrandColor, &s.LogoURL, &s.ContactEmail,
 		&s.Active, &s.CreatedAt, &s.UpdatedAt, &s.AvailabilitySlots, &s.AvailabilityTimezone, &s.GeminiAPIKey, &s.MetaAppID, &s.MetaAppSecret,
 		&s.GoogleClientID, &s.GoogleClientSecret, &s.GoogleDeveloperToken,
-		&s.StripeAccountID, &s.StripeSecretKey, &s.StripePublishableKey, &s.SubscriptionTier, &s.SocialPlannerEnabled, &s.KnowledgeBase, &s.KnowledgeBaseFiles,
+		&s.StripeAccountID, &s.StripeSecretKey, &s.StripePublishableKey, &s.StripeWebhookSecret, &s.SubscriptionTier, &s.SocialPlannerEnabled, &s.KnowledgeBase, &s.KnowledgeBaseFiles,
 		&s.TrialAmountSGD); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -181,11 +195,17 @@ func scanStudio(row pgx.Row, cipher *secrets.Cipher) (*Studio, error) {
 			s.StripeSecretKey = dec
 		}
 	}
+	if s.StripeWebhookSecret != "" && cipher != nil {
+		dec, err := cipher.Decrypt(s.StripeWebhookSecret)
+		if err == nil {
+			s.StripeWebhookSecret = dec
+		}
+	}
 
 	return &s, nil
 }
 
-func (r *Repo) UpdatePayments(ctx context.Context, id uuid.UUID, stripeAccountId, stripeSecretKey, stripePublishableKey, subscriptionTier string) error {
+func (r *Repo) UpdatePayments(ctx context.Context, id uuid.UUID, stripeAccountId, stripeSecretKey, stripePublishableKey, stripeWebhookSecret, subscriptionTier string) error {
 	var err error
 	if stripeSecretKey != "" && r.cipher != nil {
 		stripeSecretKey, err = r.cipher.Encrypt(stripeSecretKey)
@@ -193,12 +213,18 @@ func (r *Repo) UpdatePayments(ctx context.Context, id uuid.UUID, stripeAccountId
 			return fmt.Errorf("encrypt stripe secret: %w", err)
 		}
 	}
+	if stripeWebhookSecret != "" && r.cipher != nil {
+		stripeWebhookSecret, err = r.cipher.Encrypt(stripeWebhookSecret)
+		if err != nil {
+			return fmt.Errorf("encrypt stripe webhook secret: %w", err)
+		}
+	}
 
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE studios
-		SET stripe_account_id = $2, stripe_secret_key = $3, stripe_publishable_key = $4, subscription_tier = $5, updated_at = now()
+		SET stripe_account_id = $2, stripe_secret_key = $3, stripe_publishable_key = $4, stripe_webhook_secret = $5, subscription_tier = $6, updated_at = now()
 		WHERE id = $1`,
-		id, stripeAccountId, stripeSecretKey, stripePublishableKey, subscriptionTier)
+		id, stripeAccountId, stripeSecretKey, stripePublishableKey, stripeWebhookSecret, subscriptionTier)
 	if err != nil {
 		return fmt.Errorf("update payments: %w", err)
 	}

@@ -73,6 +73,7 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
     cached ? cached.formPublishableKey : ''
   );
   const [formSecretKey, setFormSecretKey] = useState('');
+  const [formWebhookSecret, setFormWebhookSecret] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -162,7 +163,7 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
 
     void (async () => {
       try {
-        const res = await api<{ stripeAccountId: string; stripePublishableKey: string; hasStripeSecretKey: boolean; subscriptionTier: string }>(
+        const res = await api<{ stripeAccountId: string; stripePublishableKey: string; hasStripeSecretKey: boolean; hasStripeWebhookSecret: boolean; subscriptionTier: string }>(
           `/api/v1/me/studios/${studioId}/payments`
         );
         const isConnected = !!(res.stripeAccountId && res.hasStripeSecretKey);
@@ -173,6 +174,7 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
           setStripeAccountId(res.stripeAccountId);
           setFormStripeAccountId(res.stripeAccountId);
           setFormPublishableKey(res.stripePublishableKey || '');
+          setFormWebhookSecret(res.hasStripeWebhookSecret ? '••••••••••••••••' : '');
 
           if (!paymentsCache[studioId]) {
             paymentsCache[studioId] = {
@@ -254,6 +256,7 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
           stripeAccountId: formStripeAccountId,
           stripePublishableKey: formPublishableKey,
           stripeSecretKey: formSecretKey,
+          stripeWebhookSecret: formWebhookSecret,
         }
       });
       setStripeAccountId(formStripeAccountId);
@@ -275,6 +278,7 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
           stripeAccountId: '',
           stripePublishableKey: '',
           stripeSecretKey: '',
+          stripeWebhookSecret: '',
         }
       });
       setStripeAccountId('');
@@ -282,6 +286,7 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
       setFormStripeAccountId('');
       setFormPublishableKey('');
       setFormSecretKey('');
+      setFormWebhookSecret('');
     } catch (err) {
       console.error('Failed to disconnect Stripe account:', err);
     }
@@ -382,6 +387,17 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
                         className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs font-bold text-zinc-800 dark:bg-neutral-800 dark:text-white focus:outline-none"
                       />
                     </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block mb-1">Platform Webhook Secret</label>
+                      <input
+                        type="password"
+                        required
+                        placeholder="whsec_..."
+                        value={formWebhookSecret}
+                        onChange={(e) => setFormWebhookSecret(e.target.value)}
+                        className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs font-bold text-zinc-800 dark:bg-neutral-800 dark:text-white focus:outline-none"
+                      />
+                    </div>
                     {formError && (
                       <p className="text-[10px] text-red-500 font-bold">{formError}</p>
                     )}
@@ -434,6 +450,14 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
                       <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200">Visa ending in 4242</span>
                     </div>
                   </div>
+                  {studioId !== 'global' && (
+                    <div className="rounded-xl border border-white/10 bg-white/10 p-3 dark:bg-neutral-800/20 text-[10.5px]">
+                      <span className="text-[10px] font-bold text-zinc-400 uppercase block mb-1">Webhook Endpoint URL</span>
+                      <code className="block select-all rounded bg-white/40 dark:bg-neutral-900/40 p-1.5 font-mono break-all font-bold text-zinc-700 dark:text-zinc-300">
+                        {`${typeof window !== 'undefined' ? window.location.origin : ''}/api/v1/webhooks/stripe/${studioId}`}
+                      </code>
+                    </div>
+                  )}
                   <Button variant="ghost" className="w-full text-xs text-red-500 border border-red-500/20 hover:bg-red-500/10" onClick={handleDisconnect}>
                     Disconnect Account
                   </Button>
@@ -473,6 +497,28 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
                       className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs font-bold text-zinc-800 dark:bg-neutral-800 dark:text-white focus:outline-none"
                     />
                   </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block mb-1">Webhook Secret</label>
+                    <input
+                      type="password"
+                      required
+                      placeholder="whsec_..."
+                      value={formWebhookSecret}
+                      onChange={(e) => setFormWebhookSecret(e.target.value)}
+                      className="w-full rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs font-bold text-zinc-800 dark:bg-neutral-800 dark:text-white focus:outline-none"
+                    />
+                  </div>
+                  {studioId !== 'global' && (
+                    <div className="rounded-xl border border-brand-500/10 bg-brand-500/5 p-3 dark:bg-brand-500/10 text-[10.5px]">
+                      <span className="font-bold text-zinc-700 dark:text-zinc-200 block mb-1">Your Isolated Webhook Endpoint URL:</span>
+                      <code className="block select-all rounded bg-white/40 dark:bg-neutral-900/40 p-1.5 font-mono break-all font-black text-brand-600 dark:text-brand-400">
+                        {`${typeof window !== 'undefined' ? window.location.origin : ''}/api/v1/webhooks/stripe/${studioId}`}
+                      </code>
+                      <span className="text-[9px] text-zinc-400 block mt-1 leading-normal">
+                        Configure this URL in your Stripe Dashboard under Developers &gt; Webhooks to receive payment events.
+                      </span>
+                    </div>
+                  )}
                   {formError && (
                     <p className="text-[10px] text-red-500 font-bold">{formError}</p>
                   )}
