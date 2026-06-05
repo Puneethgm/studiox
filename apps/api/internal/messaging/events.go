@@ -21,6 +21,7 @@ const (
 	EvtMessageReceived     EventKind = "message.received" // inbound from customer
 	EvtMessageSent         EventKind = "message.sent"     // outbound delivered to channel
 	EvtConversationUpdated EventKind = "conversation.updated"
+	EvtOutboundJobEnqueued EventKind = "outbound_job.enqueued"
 )
 
 type Event struct {
@@ -57,8 +58,12 @@ func NewInProcBus() *InProcBus {
 func (b *InProcBus) Publish(_ context.Context, evt Event) {
 	b.mu.RLock()
 	chans := b.subs[evt.StudioID]
-	pending := make([]chan Event, 0, len(chans))
+	globalChans := b.subs[uuid.Nil]
+	pending := make([]chan Event, 0, len(chans)+len(globalChans))
 	for _, c := range chans {
+		pending = append(pending, c)
+	}
+	for _, c := range globalChans {
 		pending = append(pending, c)
 	}
 	b.mu.RUnlock()

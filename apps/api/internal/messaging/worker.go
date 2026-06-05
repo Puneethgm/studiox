@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/projectx/api/internal/messaging/channels"
@@ -49,6 +50,10 @@ func (w *OutboundWorker) Run(ctx context.Context) {
 	w.log.Info("outbound worker started", "poll", workerPollInterval, "batch", workerBatchSize)
 	t := time.NewTicker(workerPollInterval)
 	defer t.Stop()
+
+	eventsCh, unsub := w.bus.Subscribe(uuid.Nil)
+	defer unsub()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -56,6 +61,13 @@ func (w *OutboundWorker) Run(ctx context.Context) {
 			return
 		case <-t.C:
 			w.tick(ctx)
+		case evt, ok := <-eventsCh:
+			if !ok {
+				return
+			}
+			if evt.Kind == EvtOutboundJobEnqueued {
+				w.tick(ctx)
+			}
 		}
 	}
 }

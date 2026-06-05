@@ -284,16 +284,23 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	w.log.Info("ai response generated", "message_id", msg.ID, "response_len", len(resp), "channel", channel.Kind, "model", sourceRef)
 
 	// Enqueue outbound reply
-	if _, err := w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
+	_, err = w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
 		StudioID:       studioID,
 		ConversationID: msg.ConversationID,
 		Body:           resp,
 		SourceKind:     SourceAI,
 		SourceRef:      sourceRef,
 		ScheduledFor:   time.Now().UTC(),
-	}); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("enqueue ai outbound: %w", err)
 	}
+
+	w.bus.Publish(ctx, Event{
+		Kind:           EvtOutboundJobEnqueued,
+		StudioID:       studioID,
+		ConversationID: msg.ConversationID,
+	})
 
 	// Update lead status based on sentiment or explicit choices
 	// Update for ALL leads, not just new ones - helps track progression through pipeline

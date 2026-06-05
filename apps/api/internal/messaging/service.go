@@ -911,7 +911,7 @@ func (s *Service) EnqueueReply(ctx context.Context, in SendInput) (int64, error)
 	if conv.Status == ConvClosed {
 		return 0, errors.New("conversation is closed")
 	}
-	return s.repo.EnqueueOutbound(ctx, OutboundJob{
+	id, err := s.repo.EnqueueOutbound(ctx, OutboundJob{
 		StudioID:       in.StudioID,
 		ConversationID: in.ConversationID,
 		Body:           in.Body,
@@ -920,6 +920,17 @@ func (s *Service) EnqueueReply(ctx context.Context, in SendInput) (int64, error)
 		SourceUserID:   &in.UserID,
 		ScheduledFor:   time.Now().UTC(),
 	})
+	if err != nil {
+		return 0, err
+	}
+
+	s.bus.Publish(ctx, Event{
+		Kind:           EvtOutboundJobEnqueued,
+		StudioID:       in.StudioID,
+		ConversationID: in.ConversationID,
+	})
+
+	return id, nil
 }
 
 // ============================================================
