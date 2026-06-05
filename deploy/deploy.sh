@@ -43,6 +43,10 @@ echo "==> Checking Postgres Host"
 if [ "${POSTGRES_HOST:-localhost}" = "localhost" ] || [ "${POSTGRES_HOST:-postgres}" = "postgres" ]; then
   echo "==> Bringing up local Postgres container"
   docker compose up -d postgres
+  echo "==> Waiting for Postgres to be ready..."
+  until docker exec projectx-postgres-1 pg_isready -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" >/dev/null 2>&1; do
+    sleep 1
+  done
 else
   echo "==> Using remote Postgres host: ${POSTGRES_HOST}"
 fi
