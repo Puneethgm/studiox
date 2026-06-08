@@ -84,7 +84,7 @@ export default async function BookingPage({
                 <span>Schedule Appointment</span>
               </div>
               <span className="text-sm" style={{ color: brand }}>
-                {studio.trialAmountSgd === 0 ? 'FREE Trial' : `S$ ${(studio.trialAmountSgd / 100).toFixed(2)}`}
+                {(studio.trialAmountSgd ?? 0) === 0 ? 'FREE Trial' : `S$ ${((studio.trialAmountSgd ?? 0) / 100).toFixed(2)}`}
               </span>
             </div>
           }

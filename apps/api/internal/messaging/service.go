@@ -1201,33 +1201,20 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 	getAvailableDays := func() ([]string, []string) {
 		var days []string
 		var daysWeekdayStr []string
+
+		// Only show dates if availability is configured
+		if len(slotsMap) == 0 {
+			return days, daysWeekdayStr // Return empty if no availability configured
+		}
+
 		t := now
 		for i := 0; i < 30 && len(days) < 3; i++ {
 			weekdayStr := strings.ToLower(t.Weekday().String())
-			hasSlots := false
-			if len(slotsMap) > 0 {
-				_, hasSlots = slotsMap[weekdayStr]
-			} else {
-				hasSlots = t.Weekday() != time.Sunday
-			}
-
-			if hasSlots {
+			if _, hasSlots := slotsMap[weekdayStr]; hasSlots {
 				days = append(days, t.Format("Mon, Jan 02"))
 				daysWeekdayStr = append(daysWeekdayStr, weekdayStr)
 			}
 			t = t.Add(24 * time.Hour)
-		}
-		if len(days) < 3 {
-			days = nil
-			daysWeekdayStr = nil
-			t = now
-			for len(days) < 3 {
-				if t.Weekday() != time.Sunday {
-					days = append(days, t.Format("Mon, Jan 02"))
-					daysWeekdayStr = append(daysWeekdayStr, strings.ToLower(t.Weekday().String()))
-				}
-				t = t.Add(24 * time.Hour)
-			}
 		}
 		return days, daysWeekdayStr
 	}
@@ -1252,7 +1239,12 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 			targetStage = "awaiting_trial_date"
 			targetStatus = "trial_booked"
 			days, _ := getAvailableDays()
-			outboundBody = fmt.Sprintf("Please select a date for your trial:\n1. %s\n2. %s\n3. %s", days[0], days[1], days[2])
+			if len(days) == 0 {
+				targetStage = "completed"
+				outboundBody = "Sorry! No trial classes are available at this time. Please check back later or contact us directly."
+			} else {
+				outboundBody = fmt.Sprintf("Please select a date for your trial:\n1. %s\n2. %s\n3. %s", days[0], days[1], days[2])
+			}
 		} else if isMember && !isTrial {
 			plans, errPlans := s.repo.ListActivePlans(ctx, studioID)
 			if errPlans != nil || len(plans) == 0 {
