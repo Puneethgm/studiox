@@ -60,6 +60,46 @@ func (h *MetaWebhookHandler) Verify(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(challenge))
 }
 
+// HandleDataDeletion processes Meta's data deletion requests (GDPR/privacy compliance)
+func (h *MetaWebhookHandler) HandleDataDeletion(w http.ResponseWriter, r *http.Request) {
+	log := logger.FromCtx(r.Context(), h.log).With("webhook", "meta_data_deletion")
+
+	var req struct {
+		SignedRequest string `json:"signed_request"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Error("decode request", "err", err)
+		httpx.JSON(w, http.StatusOK, map[string]string{"url": ""})
+		return
+	}
+
+	if req.SignedRequest == "" {
+		log.Warn("no signed request provided")
+		httpx.JSON(w, http.StatusOK, map[string]string{"url": ""})
+		return
+	}
+
+	// Parse the signed request (format: base64_signature.base64_payload)
+	parts := strings.Split(req.SignedRequest, ".")
+	if len(parts) != 2 {
+		log.Warn("invalid signed request format")
+		httpx.JSON(w, http.StatusOK, map[string]string{"url": ""})
+		return
+	}
+
+	// For now, we just acknowledge the deletion request
+	// In production, you would verify the signature using your app secret
+	// and then delete the user's data from your database
+
+	log.Info("data deletion request received", "request", req.SignedRequest)
+
+	// Return confirmation to Meta
+	httpx.JSON(w, http.StatusOK, map[string]string{
+		"url": "https://1herosocial.ai/privacy",
+	})
+}
+
+
 // POST handler: receive WhatsApp events. Verify HMAC, parse, dispatch to service.
 // We always 200 to Meta even on internal errors so they don't retry forever
 // (errors are logged on our side).

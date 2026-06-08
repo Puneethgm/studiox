@@ -682,8 +682,8 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                 <FieldError message={passwordErrors._} />
 
                 <div className="flex items-center justify-end border-t border-white/10 pt-4">
-                  <Button 
-                    type="submit" 
+                  <Button
+                    type="submit"
                     loading={changingPassword}
                     className="bg-gradient-to-r from-brand-500 to-violet-600 hover:from-brand-600 hover:to-violet-700 text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-500/25 rounded-xl h-10 px-6"
                   >
@@ -692,6 +692,9 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                 </div>
               </form>
             </div>
+
+            {/* Delete Account Section */}
+            <DeleteAccountForm studioId={studio.id} studioName={studio.name} />
           </div>
         )}
       </div>
@@ -718,6 +721,120 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
       {activeSection === 'billing' && (
         <PlatformBillingManager studio={studio} />
       )}
+    </div>
+  );
+}
+
+function DeleteAccountForm({ studioId, studioName }: { studioId: string; studioName: string }) {
+  const [showDeleteForm, setShowDeleteForm] = useState(false);
+  const [deleteEmail, setDeleteEmail] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleDelete = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+
+    if (!deleteEmail) {
+      setError('Please enter your email to confirm');
+      return;
+    }
+
+    if (!window.confirm('⚠️ WARNING: This action cannot be undone. Your account and all data will be permanently deleted. Are you sure?')) {
+      return;
+    }
+
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/v1/me/studios/${studioId}/delete-account`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        },
+        body: JSON.stringify({ email: deleteEmail }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || 'Failed to delete account');
+        return;
+      }
+
+      alert('✅ Account deleted successfully. You will be logged out.');
+      localStorage.removeItem('token');
+      window.location.href = '/';
+    } catch (err: any) {
+      setError(err.message || 'Error deleting account');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <div className="mt-6 max-w-xl">
+      <div className="overflow-hidden rounded-[24px] border border-red-500/30 bg-red-500/5 backdrop-blur-2xl dark:border-red-900/30 dark:bg-red-950/10">
+        <div className="border-b border-red-500/20 px-6 py-4 dark:border-red-900/20">
+          <h3 className="text-xs font-black uppercase tracking-wider text-red-600 dark:text-red-400">Delete Account</h3>
+          <p className="text-[10px] text-red-600/70 dark:text-red-400/70 mt-1">Permanently delete your account and all data</p>
+        </div>
+
+        {!showDeleteForm ? (
+          <div className="p-6">
+            <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
+              Once you delete your account, there is no going back. Please be certain.
+            </p>
+            <Button
+              onClick={() => setShowDeleteForm(true)}
+              className="bg-red-600 hover:bg-red-700 text-white text-xs font-black uppercase tracking-widest rounded-xl h-10 px-6"
+            >
+              Delete Account Permanently
+            </Button>
+          </div>
+        ) : (
+          <form onSubmit={handleDelete} className="p-6 space-y-4">
+            <div>
+              <Label htmlFor="deleteEmail">Confirm your email</Label>
+              <Input
+                id="deleteEmail"
+                type="email"
+                placeholder="Enter your email to confirm"
+                value={deleteEmail}
+                onChange={(e) => setDeleteEmail(e.target.value)}
+                className="mt-1"
+              />
+              <FieldHint>This is {studioName}'s account email</FieldHint>
+              {error && <FieldError message={error} />}
+            </div>
+
+            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-xs text-red-700 dark:text-red-400">
+              ⚠️ <strong>Warning:</strong> This will permanently delete your account, all conversations, and all data associated with {studioName}. This action cannot be undone.
+            </div>
+
+            <div className="flex items-center gap-2 border-t border-red-500/20 pt-4">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  setShowDeleteForm(false);
+                  setDeleteEmail('');
+                  setError('');
+                }}
+                className="flex-1 text-xs"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                loading={deleting}
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white text-xs font-black"
+              >
+                Permanently Delete
+              </Button>
+            </div>
+          </form>
+        )}
+      </div>
     </div>
   );
 }

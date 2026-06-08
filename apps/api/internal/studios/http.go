@@ -65,6 +65,9 @@ func (h *Handler) SelfRoutes(r chi.Router) {
 	r.Post("/studios/{id}/billing/portal", h.CreatePortalSession)
 	r.Post("/studios/{id}/billing/sync", h.SyncBillingStatus)
 	r.Post("/studios/{id}/trial-checkout", h.createTrialCheckout)
+
+	// Account deletion
+	r.Delete("/studios/{id}/delete-account", h.deleteAccount)
 }
 
 // PublicRoutes expose the studio's brand info for the public form to render.
@@ -1404,4 +1407,51 @@ func (h *Handler) updatePlan(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	httpx.JSON(w, http.StatusOK, map[string]string{"status": "success"})
+}
+
+func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request) {
+	studioID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid studio id")
+		return
+	}
+
+	// Get authenticated user claims
+	claims := identity.MustClaims(r.Context())
+	if claims.StudioID == nil || claims.StudioID.String() != studioID.String() {
+		httpx.WriteError(w, http.StatusForbidden, "forbidden", "you do not have permission to delete this studio")
+		return
+	}
+
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "failed to decode request")
+		return
+	}
+
+	// Verify email matches
+	studio, err := h.svc.GetByID(r.Context(), studioID)
+	if err != nil || studio == nil {
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "studio not found")
+		return
+	}
+
+	if studio.ContactEmail != req.Email {
+		httpx.WriteError(w, http.StatusBadRequest, "email_mismatch", "email does not match studio contact email")
+		return
+	}
+
+	// Delete the studio and all associated data
+	_, err = h.svc.repo.Pool().Exec(r.Context(), `
+		DELETE FROM studios WHERE id = $1
+	`, studioID)
+
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "delete_failed", "failed to delete studio")
+		return
+	}
+
+	httpx.JSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }

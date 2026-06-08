@@ -217,6 +217,9 @@ func main() {
 		r.Get("/webhooks/meta/instagram", metaWebhook.Verify)
 		r.Post("/webhooks/meta/instagram", metaWebhook.Receive)
 
+		// Meta data deletion (GDPR/privacy compliance)
+		r.Post("/webhooks/meta/data-deletion", metaWebhook.HandleDataDeletion)
+
 		// Authenticated
 		r.Group(func(r chi.Router) {
 			r.Use(identityHandler.RequireAuth)
