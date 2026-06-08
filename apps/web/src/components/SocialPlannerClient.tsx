@@ -1,25 +1,26 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { 
-  Sparkles, 
-  Calendar as CalendarIcon, 
-  Plus, 
-  Facebook, 
-  Instagram, 
-  CheckCircle2, 
-  AlertCircle, 
-  TrendingUp, 
-  Image as ImageIcon, 
+import {
+  Sparkles,
+  Calendar as CalendarIcon,
+  Plus,
+  Facebook,
+  Instagram,
+  CheckCircle2,
+  AlertCircle,
+  TrendingUp,
+  Image as ImageIcon,
   Megaphone,
-  Clock, 
-  Share2, 
-  Globe, 
+  Clock,
+  Share2,
+  Globe,
   Lightbulb,
   Trash2,
   Paperclip,
   X as XIcon,
-  Twitter
+  Twitter,
+  Pencil
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -33,6 +34,7 @@ import Link from 'next/link';
 interface SocialPost {
   id: string;
   campaignName: string;
+  campaignShareUrl?: string;
   platform: 'Facebook' | 'Instagram' | 'Google Ads' | 'X (Twitter)';
   content: string;
   imageUrl?: string;
@@ -49,7 +51,7 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
 
   // AI Form states
   const [campaign, setCampaign] = useState('');
-  const [tone, setTone] = useState('energetic');
+  const [campaigns, setCampaigns] = useState<Array<{ id: string; name: string; slug: string; shareUrl: string }>>([]);
   const [platform, setPlatform] = useState<'Facebook' | 'Instagram' | 'Google Ads' | 'X (Twitter)'>('Instagram');
   const [prompt, setPrompt] = useState('');
   const [generating, setGenerating] = useState(false);
@@ -70,8 +72,8 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
 
   // Scheduler Form states
   const [newPostContent, setNewPostContent] = useState('');
-  const [newPostDate, setNewPostDate] = useState('2026-05-28');
-  const [newPostTime, setNewPostTime] = useState('09:00');
+  const [newPostDate, setNewPostDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [newPostTime, setNewPostTime] = useState(() => new Date().toTimeString().slice(0, 5));
   const [newPostCampaign, setNewPostCampaign] = useState('');
   const [newPostPlatform, setNewPostPlatform] = useState<'Facebook' | 'Instagram' | 'Google Ads' | 'X (Twitter)'>('Instagram');
 
@@ -97,6 +99,9 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
   const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
   const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
 
+  // Edit states
+  const [editingPostId, setEditingPostId] = useState<string | null>(null);
+
   const [visibleQueueCount, setVisibleQueueCount] = useState(4);
 
   useEffect(() => {
@@ -116,10 +121,11 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
     if (!silent) setLoadingPosts(true);
     const targetStudioId = studioId === 'global' ? 'global' : studioId;
     try {
-      const res = await api<{ id: string; campaign: string; platform: string; copy: string; mediaUrl?: string; status: string; deliveryMode?: 'unknown' | 'mock' | 'live'; externalResourceName?: string; scheduledAt: string }[]>(`/api/v1/studios/${targetStudioId}/social-posts`);
+      const res = await api<{ id: string; campaign: string; campaignShareUrl?: string; platform: string; copy: string; mediaUrl?: string; status: string; deliveryMode?: 'unknown' | 'mock' | 'live'; externalResourceName?: string; scheduledAt: string }[]>(`/api/v1/studios/${targetStudioId}/social-posts`);
       const mapped = res.map((p) => ({
         id: p.id,
         campaignName: p.campaign || 'General Promo',
+        campaignShareUrl: p.campaignShareUrl,
         platform: p.platform as SocialPost['platform'],
         content: p.copy,
         imageUrl: p.mediaUrl,
@@ -146,7 +152,7 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
       const res = await api<{ text?: string }>(`/api/v1/studios/${studioId === 'global' ? '759b1ee2-5a68-4a5c-8fa0-5b2a64d5cc35' : studioId}/messaging/ai/generate`, {
         method: 'POST',
         json: {
-          prompt: `Create a professional marketing social media post copy for platform: ${activePlatform}. Campaign Context: ${activeCampaign || 'General Promo'}. Tone: energetic. Main topic / message details: ${quickAiPrompt}. Do not include placeholder brackets or system variables. Format with appropriate paragraph spacing and emojis.`,
+          prompt: `Create a professional marketing social media post copy for platform: ${activePlatform}. Campaign Context: ${activeCampaign || 'General Promo'}. Main topic / message details: ${quickAiPrompt}. IMPORTANT: Do not include any template variables, placeholders, or brackets like {{contact.first_name}}, {{studio.name}}, or similar. Do not include automation message formatting. This is for direct social media posting on ${activePlatform}. Format with appropriate paragraph spacing and emojis.`,
           type: 'social'
         }
       });
@@ -181,14 +187,16 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
       void fetchPosts(true);
     }, 10000);
 
-    // Fetch Meta and Google Ads integration state
+    // Fetch campaigns and integrations
     if (studioId !== 'global') {
       void (async () => {
         try {
-          const [studioRes, channelsRes] = await Promise.all([
+          const [campaignsRes, studioRes, channelsRes] = await Promise.all([
+            api<{ campaigns: Array<{ id: string; name: string; slug: string; shareUrl: string }>; total: number }>(`/api/v1/studios/${studioId}/campaigns`),
             api<{ metaAppId?: string; metaAppSecret?: string; googleClientId?: string; googleClientSecret?: string; googleDeveloperToken?: string }>(`/api/v1/me/studios/${studioId}`),
             api<{ channels: { kind: string; status?: string }[] }>(`/api/v1/studios/${studioId}/messaging/channels`)
           ]);
+          setCampaigns(campaignsRes.campaigns || []);
           const hasMeta = !!(studioRes.metaAppId && studioRes.metaAppSecret);
           const hasGoogleAds = channelsRes.channels?.some(c => c.kind === 'google_ads' && (!c.status || c.status === 'active'));
           const hasX = channelsRes.channels?.some(c => c.kind === 'x_dm');
@@ -199,7 +207,7 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
             x: !!hasX,
           });
         } catch (err) {
-          console.error('Failed to fetch studio integrations:', err);
+          console.error('Failed to fetch campaigns and integrations:', err);
         }
       })();
     } else {
@@ -248,19 +256,19 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
   const handleAiGenerate = async () => {
     if (!prompt) return;
     setGenerating(true);
-    
+
     try {
       const res = await api<{ text?: string }>(`/api/v1/studios/${studioId === 'global' ? '759b1ee2-5a68-4a5c-8fa0-5b2a64d5cc35' : studioId}/messaging/ai/generate`, {
         method: 'POST',
         json: {
-          prompt: `Create a professional marketing social media post copy for platform: ${platform}. Campaign Context: ${campaign}. Tone: ${tone}. Main topic / message details: ${prompt}.${mediaName ? ` An attachment named "${mediaName}" is included with this post.` : ''} Do not include placeholder brackets or system variables. Format with appropriate paragraph spacing and emojis.`
+          prompt: `Create a professional and engaging marketing social media post copy for platform: ${platform}. Campaign Context: ${campaign}. Main topic / message details: ${prompt}.${mediaName ? ` An attachment named "${mediaName}" is included with this post.` : ''} IMPORTANT: Do not include any template variables, placeholders, or brackets like {{contact.first_name}}, {{studio.name}}, or similar. Do not include automation message formatting. This is for direct social media posting. Format with appropriate paragraph spacing and emojis. Write for ${platform === 'Facebook' ? 'Facebook feed' : platform === 'Instagram' ? 'Instagram caption' : 'social media'}.`
         }
       });
 
       if (res?.text) {
         setAiOutput({
           text: res.text,
-          hashtags: ['#fitness', tone, platform.toLowerCase().replace(' ', '')],
+          hashtags: ['#fitness', '#marketing', platform.toLowerCase().replace(' ', '')],
           headline: `Join ${campaign || 'our fitness journey'}`,
           cta: 'Book your trial now'
         });
@@ -268,22 +276,14 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
         throw new Error('Fallback to local AI simulator');
       }
     } catch (e) {
-      // High fidelity local fallback simulation using premium templates
+      // High fidelity local fallback simulation
       setTimeout(() => {
-        const generatedOptions: Record<string, string> = {
-          energetic: `🚨 GAME CHANGER ALERT! 🚨\n\nAre you tired of routine workouts? Get ready to supercharge your routine with ${campaign || 'our premium sessions'}! 💥\n\nEvery class is high-intensity, high-energy, and custom built to deliver results fast. Let's make today count!`,
-          professional: `Achieve sustainable results with our structured training methodologies. We combine evidence-based fitness regimes with expert coaching to help you scale your health goals.\n\nSchedule a complimentary consultation session with our head trainers today.`,
-          bold: `NO EXCUSES. JUST RESULTS. 🔥\n\nIf you want something you never had, you have to do something you never did. Join the next cohort of our ${campaign || 'signature bootcamp'} starting this week. Slots are disappearing fast.`,
-          humorous: `We promise we won't make you do burpees... okay maybe just a few. 😅\n\nSeriously though, fitness is supposed to be fun! Come check out ${campaign || 'our group plans'} and find out why our members actually look forward to Mondays.`,
-          motivational: `Your mind will quit 100 times before your body does. Push past the limit. ✨\n\nOur certified fitness community is here to support you at every milestone. Let us help you unlock your full potential.`
-        };
-
-        const localText = generatedOptions[tone] || generatedOptions.energetic;
+        const localText = `🚨 NEW OFFER ALERT! 🚨\n\nGet ready to transform your fitness journey with ${campaign || 'our premium sessions'}! 💥\n\nOur expert-led classes are designed to deliver real results fast. ${prompt}\n\nDon't miss out—book your spot today!`;
         setAiOutput({
-          text: localText + `\n\n👉 ${prompt}`,
-          hashtags: [`#${tone}fitness`, `#${platform.replace(' ', '')}`, '#healthylifestyle'],
+          text: localText,
+          hashtags: ['#fitness', `#${platform.replace(' ', '')}`, '#healthylifestyle'],
           headline: `Transform with ${campaign || 'us'}`,
-          cta: 'Sign Up Today'
+          cta: 'Book Now'
         });
       }, 1200);
     } finally {
@@ -301,34 +301,81 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
     setShowConfirmModal(false);
     try {
       const targetStudioId = studioId === 'global' ? '759b1ee2-5a68-4a5c-8fa0-5b2a64d5cc35' : studioId;
-      await api(`/api/v1/studios/${targetStudioId}/social-posts`, {
-        method: 'POST',
-        json: {
-          campaign: newPostCampaign || 'General Promo',
-          platform: newPostPlatform,
-          copy: newPostContent,
-          mediaUrl: mediaUrl,
-          status: 'scheduled',
-          scheduledAt: new Date(`${newPostDate}T${newPostTime}`).toISOString(),
-        }
-      });
+      const selectedCampaign = campaigns.find(c => c.name === newPostCampaign);
+      const campaignShareUrl = selectedCampaign?.shareUrl || '';
+
+      if (editingPostId) {
+        // Update existing post
+        await api(`/api/v1/studios/${targetStudioId}/social-posts/${editingPostId}`, {
+          method: 'PATCH',
+          json: {
+            campaign: newPostCampaign || 'General Promo',
+            campaignShareUrl: campaignShareUrl,
+            platform: newPostPlatform,
+            copy: newPostContent,
+            mediaUrl: mediaUrl,
+            status: 'scheduled',
+            scheduledAt: new Date(`${newPostDate}T${newPostTime}`).toISOString(),
+          }
+        });
+        setNotificationStatus('success');
+        setNotificationMessage(`Post updated successfully for ${new Date(`${newPostDate}T${newPostTime}`).toLocaleString()} on ${newPostPlatform}!`);
+      } else {
+        // Create new post
+        await api(`/api/v1/studios/${targetStudioId}/social-posts`, {
+          method: 'POST',
+          json: {
+            campaign: newPostCampaign || 'General Promo',
+            campaignShareUrl: campaignShareUrl,
+            platform: newPostPlatform,
+            copy: newPostContent,
+            mediaUrl: mediaUrl,
+            status: 'scheduled',
+            scheduledAt: new Date(`${newPostDate}T${newPostTime}`).toISOString(),
+          }
+        });
+        setNotificationStatus('success');
+        setNotificationMessage(`Your campaign post has been successfully scheduled for ${new Date(`${newPostDate}T${newPostTime}`).toLocaleString()} on ${newPostPlatform}!`);
+      }
+
       setNewPostContent('');
       setNewPostCampaign('');
       setMediaUrl('');
       setMediaName('');
+      setEditingPostId(null);
       fetchPosts();
-      
-      setNotificationStatus('success');
-      setNotificationMessage(`Your campaign post has been successfully scheduled for ${new Date(`${newPostDate}T${newPostTime}`).toLocaleString()} on ${newPostPlatform}!`);
       setShowNotificationModal(true);
-      
       setActiveTab('scheduler');
     } catch (err) {
       console.error('Failed to schedule post:', err);
       setNotificationStatus('error');
-      setNotificationMessage('Failed to schedule campaign post. Please verify backend service and connection configuration.');
+      setNotificationMessage('Failed to save post. Please verify backend service and connection configuration.');
       setShowNotificationModal(true);
     }
+  };
+
+  const handleEditPost = (post: SocialPost) => {
+    setEditingPostId(post.id);
+    setNewPostContent(post.content);
+    setNewPostPlatform(post.platform);
+    setNewPostCampaign(post.campaignName || '');
+    setMediaUrl(post.imageUrl || '');
+    setMediaName(post.imageUrl ? post.imageUrl.split('/').pop() || 'Attachment' : '');
+
+    const scheduledDate = new Date(post.scheduledTime);
+    const year = scheduledDate.getFullYear();
+    const month = String(scheduledDate.getMonth() + 1).padStart(2, '0');
+    const day = String(scheduledDate.getDate()).padStart(2, '0');
+    const hours = String(scheduledDate.getHours()).padStart(2, '0');
+    const minutes = String(scheduledDate.getMinutes()).padStart(2, '0');
+    setNewPostDate(`${year}-${month}-${day}`);
+    setNewPostTime(`${hours}:${minutes}`);
+
+    // Scroll to the scheduler
+    setTimeout(() => {
+      const element = document.querySelector('.lg\\:col-span-1');
+      element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
   };
 
   const handleDeletePost = (postId: string) => {
@@ -570,34 +617,58 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
         <div className="grid gap-8 lg:grid-cols-3">
           {/* Quick Schedule Form */}
           <div className="lg:col-span-1 space-y-6">
-            <Card className="overflow-hidden rounded-[28px] border border-violet-100/50 bg-white/40 shadow-2xl backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/35 p-6 transition-all hover:shadow-brand-500/5 duration-300">
+            <Card className={`overflow-hidden rounded-[28px] border shadow-2xl backdrop-blur-2xl dark:bg-neutral-900/35 p-6 transition-all hover:shadow-brand-500/5 duration-300 ${editingPostId ? 'border-blue-200/50 bg-blue-50/40 dark:border-blue-900/50 dark:bg-blue-950/20' : 'border-violet-100/50 bg-white/40 dark:border-white/5'}`}>
               <div className="flex items-center gap-2 mb-6">
-                <Plus className="h-4 w-4 text-brand-500" />
-                <h2 className="text-sm font-black uppercase tracking-wider text-zinc-955 dark:text-white">Quick Scheduler</h2>
+                {editingPostId ? <Pencil className="h-4 w-4 text-blue-500" /> : <Plus className="h-4 w-4 text-brand-500" />}
+                <div className="flex-1">
+                  <h2 className="text-sm font-black uppercase tracking-wider text-zinc-955 dark:text-white">{editingPostId ? 'Edit Post' : 'Quick Scheduler'}</h2>
+                  {editingPostId && (
+                    <p className="text-[10px] text-blue-600 dark:text-blue-400 font-bold mt-0.5">Editing mode - changes will update the scheduled post</p>
+                  )}
+                </div>
+                {editingPostId && (
+                  <button
+                    onClick={() => {
+                      setEditingPostId(null);
+                      setNewPostContent('');
+                      setNewPostCampaign('');
+                      setMediaUrl('');
+                      setMediaName('');
+                    }}
+                    className="text-xs font-black text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 uppercase"
+                  >
+                    Cancel Edit
+                  </button>
+                )}
               </div>
               <form onSubmit={handleSchedulePost} className="space-y-5">
                 <div>
-                  <Label htmlFor="campaign" className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Campaign Target</Label>
-                  <Input
-                    id="campaign"
+                  <Label htmlFor="scheduler-campaign" className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Campaign Target</Label>
+                  <select
+                    id="scheduler-campaign"
                     value={newPostCampaign}
                     onChange={(e) => setNewPostCampaign(e.target.value)}
-                    placeholder="e.g. Spring Promo 2026"
-                    className="mt-1.5 focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all rounded-xl"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="platform" className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Target Platform</Label>
-                  <select
-                    id="platform"
-                    value={newPostPlatform}
-                    onChange={(e) => setNewPostPlatform(e.target.value as any)}
                     className="mt-1.5 block w-full rounded-xl border border-zinc-200/60 dark:border-white/10 bg-white/10 dark:bg-neutral-800/40 px-3.5 py-2.5 text-xs font-semibold text-zinc-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all"
                   >
-                    <option value="Instagram">Instagram</option>
-                    <option value="Facebook">Facebook</option>
-                    <option value="Google Ads">Google Ads</option>
-                    <option value="X (Twitter)">X (Twitter)</option>
+                    <option value="">Select a campaign...</option>
+                    {campaigns.map((c) => (
+                      <option key={c.id} value={c.name}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <Label htmlFor="scheduler-platform" className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Target Platform</Label>
+                  <select
+                    id="scheduler-platform"
+                    value={newPostPlatform}
+                    onChange={(e) => setNewPostPlatform(e.target.value as any)}
+                    className="mt-1.5 block w-full rounded-xl border border-zinc-200/60 dark:border-white/10 bg-white/10 dark:bg-neutral-800/40 px-3.5 py-2.5 text-xs font-semibold text-zinc-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <option value="">Select a platform...</option>
+                    <option value="Instagram" disabled={!connectedChannels.instagram}>Instagram {!connectedChannels.instagram && '(not connected)'}</option>
+                    <option value="Facebook" disabled={!connectedChannels.facebook}>Facebook {!connectedChannels.facebook && '(not connected)'}</option>
+                    <option value="Google Ads" disabled={!connectedChannels.googleAds}>Google Ads {!connectedChannels.googleAds && '(not connected)'}</option>
+                    <option value="X (Twitter)" disabled={!connectedChannels.x}>X (Twitter) {!connectedChannels.x && '(not connected)'}</option>
                   </select>
                 </div>
                 <div>
@@ -727,12 +798,12 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                   )}
                 </div>
 
-                <Button 
-                  type="submit" 
-                  className="w-full h-11 bg-gradient-to-r from-brand-500 to-indigo-600 hover:from-brand-600 hover:to-indigo-700 text-white shadow-xl shadow-brand-500/10 hover:shadow-brand-500/20 transition-all font-black uppercase tracking-widest text-[11px] rounded-2xl mt-4" 
+                <Button
+                  type="submit"
+                  className={`w-full h-11 text-white shadow-xl transition-all font-black uppercase tracking-widest text-[11px] rounded-2xl mt-4 ${editingPostId ? 'bg-gradient-to-r from-blue-500 to-cyan-600 hover:from-blue-600 hover:to-cyan-700 shadow-blue-500/10 hover:shadow-blue-500/20' : 'bg-gradient-to-r from-brand-500 to-indigo-600 hover:from-brand-600 hover:to-indigo-700 shadow-brand-500/10 hover:shadow-brand-500/20'}`}
                   disabled={uploadingFile}
                 >
-                  Schedule Post
+                  {editingPostId ? 'Update Post' : 'Schedule Post'}
                 </Button>
               </form>
             </Card>
@@ -789,9 +860,18 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                                   ? 'published (mock)'
                                   : post.status}
                               </Badge>
+                              {post.status === 'scheduled' && (
+                                <button
+                                  onClick={() => handleEditPost(post)}
+                                  className="p-1.5 text-zinc-400 hover:text-brand-500 hover:bg-brand-500/10 rounded-lg transition-all"
+                                  title="Edit Post"
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </button>
+                              )}
                               <button
                                 onClick={() => handleDeletePost(post.id)}
-                                className="p-1.5 text-zinc-400 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all ml-1.5"
+                                className="p-1.5 text-zinc-400 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all"
                                 title="Delete Post"
                               >
                                 <Trash2 className="h-4 w-4" />
@@ -810,6 +890,19 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                                 className="text-[10px] font-bold text-brand-500 hover:underline truncate max-w-[240px]"
                               >
                                 {post.imageUrl.split('/').pop() || 'Attachment'}
+                              </a>
+                            </div>
+                          )}
+                          {post.campaignShareUrl && (
+                            <div className="mt-3 flex items-center gap-2 rounded-xl border border-emerald-200/50 bg-emerald-50/10 dark:border-emerald-900/30 dark:bg-emerald-950/20 p-2 w-fit">
+                              <Share2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                              <a
+                                href={post.campaignShareUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline truncate max-w-[240px]"
+                              >
+                                Registration Link
                               </a>
                             </div>
                           )}
@@ -853,72 +946,33 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
             <div className="space-y-5">
               <div>
                 <Label htmlFor="ai-campaign" className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Target Fitness Plan / Campaign</Label>
-                <Input
+                <select
                   id="ai-campaign"
                   value={campaign}
                   onChange={(e) => setCampaign(e.target.value)}
-                  placeholder="e.g. 6-Week Summer BootCamp Offer"
-                  className="mt-1.5 focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all rounded-xl"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="ai-platform" className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Destination Platform</Label>
-                  <select
-                    id="ai-platform"
-                    value={platform}
-                    onChange={(e) => setPlatform(e.target.value as any)}
-                    className="mt-1.5 block w-full rounded-xl border border-zinc-200/60 dark:border-white/10 bg-white/10 dark:bg-neutral-800/40 px-3.5 py-2.5 text-xs font-semibold text-zinc-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all"
-                  >
-                    <option value="Instagram">Instagram Post</option>
-                    <option value="Facebook">Facebook Ad</option>
-                    <option value="Google Ads">Google Search Ad</option>
-                    <option value="X (Twitter)">X (Twitter) Post</option>
-                  </select>
-                </div>
-                <div>
-                  <Label htmlFor="ai-tone" className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Ad Tone / Style</Label>
-                  <select
-                    id="ai-tone"
-                    value={tone}
-                    onChange={(e) => setTone(e.target.value)}
-                    className="mt-1.5 block w-full rounded-xl border border-zinc-200/60 dark:border-white/10 bg-white/10 dark:bg-neutral-800/40 px-3.5 py-2.5 text-xs font-semibold text-zinc-800 dark:text-white focus:outline-none"
-                  >
-                    <option value="energetic">High Energy & Fun</option>
-                    <option value="professional">Professional & Informative</option>
-                    <option value="bold">Bold & Challenging</option>
-                    <option value="motivational">Inspirational & Soft</option>
-                    <option value="humorous">Lighthearted & Humorous</option>
-                  </select>
-                </div>
+                  className="mt-1.5 block w-full rounded-xl border border-zinc-200/60 dark:border-white/10 bg-white/10 dark:bg-neutral-800/40 px-3.5 py-2.5 text-xs font-semibold text-zinc-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all"
+                >
+                  <option value="">Select a campaign...</option>
+                  {campaigns.map((c) => (
+                    <option key={c.id} value={c.name}>{c.name}</option>
+                  ))}
+                </select>
               </div>
 
               <div>
-                <Label className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Quick Tone Selection</Label>
-                <div className="flex flex-wrap gap-2 mt-1.5">
-                  {[
-                    { id: 'energetic', label: 'High Energy', emoji: '⚡' },
-                    { id: 'professional', label: 'Professional', emoji: '💼' },
-                    { id: 'bold', label: 'Bold', emoji: '🔥' },
-                    { id: 'motivational', label: 'Inspirational', emoji: '🌱' },
-                    { id: 'humorous', label: 'Humorous', emoji: '🎭' },
-                  ].map((t) => (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => setTone(t.id)}
-                      className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-black tracking-wider uppercase border transition-all duration-300 active:scale-95 ${
-                        tone === t.id
-                          ? 'bg-brand-500 border-brand-500 text-white shadow-lg shadow-brand-500/25 scale-105'
-                          : 'bg-white/5 border-zinc-200/60 dark:border-white/10 text-zinc-500 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-white/20 hover:text-zinc-800 dark:hover:text-zinc-200'
-                      }`}
-                    >
-                      <span>{t.emoji}</span>
-                      <span>{t.label}</span>
-                    </button>
-                  ))}
-                </div>
+                <Label htmlFor="ai-platform" className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Destination Platform</Label>
+                <select
+                  id="ai-platform"
+                  value={platform}
+                  onChange={(e) => setPlatform(e.target.value as any)}
+                  className="mt-1.5 block w-full rounded-xl border border-zinc-200/60 dark:border-white/10 bg-white/10 dark:bg-neutral-800/40 px-3.5 py-2.5 text-xs font-semibold text-zinc-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <option value="">Select a platform...</option>
+                  <option value="Instagram" disabled={!connectedChannels.instagram}>Instagram Post {!connectedChannels.instagram && '(not connected)'}</option>
+                  <option value="Facebook" disabled={!connectedChannels.facebook}>Facebook Ad {!connectedChannels.facebook && '(not connected)'}</option>
+                  <option value="Google Ads" disabled={!connectedChannels.googleAds}>Google Search Ad {!connectedChannels.googleAds && '(not connected)'}</option>
+                  <option value="X (Twitter)" disabled={!connectedChannels.x}>X (Twitter) Post {!connectedChannels.x && '(not connected)'}</option>
+                </select>
               </div>
 
               <div>
@@ -1326,6 +1380,7 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                     type="date"
                     value={newPostDate}
                     onChange={(e) => setNewPostDate(e.target.value)}
+                    min={new Date().toISOString().split('T')[0]}
                     className="mt-1.5 focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all rounded-xl text-xs font-semibold"
                     required
                   />
@@ -1445,6 +1500,7 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
           </div>
         </div>
       )}
+
     </div>
   );
 }
