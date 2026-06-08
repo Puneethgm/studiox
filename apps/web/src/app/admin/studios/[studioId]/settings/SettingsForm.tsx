@@ -432,49 +432,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
         )}
 
         {activeSection === 'plans' && (
-          <div className="space-y-6">
-            {/* Trial Amount Card */}
-            <form onSubmit={async (e) => {
-              e.preventDefault();
-              setPricingSaving(true);
-              try {
-                const result = await updateStudioSettings(studio.id, studio.slug, {
-                  trialAmountSgd: Math.round(trialAmountSgd * 100),
-                });
-                if (result.ok) {
-                  showToast('Trial pricing saved successfully.');
-                } else {
-                  showToast(result.error || 'Failed to save trial pricing', 'error');
-                }
-              } finally {
-                setPricingSaving(false);
-              }
-            }} className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30 p-6 space-y-5">
-              <div>
-                <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Trial Pricing</h3>
-                <p className="text-[10px] text-zinc-500 mt-1">Set the one-time price for trial sessions.</p>
-              </div>
-              <div>
-                <Label htmlFor="trialAmount">Trial Amount (SGD)</Label>
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-sm font-bold text-zinc-500">S$</span>
-                  <Input
-                    id="trialAmount"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={trialAmountSgd}
-                    onChange={(e) => setTrialAmountSgd(parseFloat(e.target.value) || 0)}
-                    className="flex-1"
-                  />
-                </div>
-              </div>
-              <Button type="submit" loading={pricingSaving} className="w-full">
-                Save Trial Pricing
-              </Button>
-            </form>
-            <PlansManagement studioId={studio.id} initialPlans={initialPlans} onSaveSuccess={(msg) => showToast(msg)} />
-          </div>
+          <PlansManagement studioId={studio.id} initialPlans={initialPlans} onSaveSuccess={(msg) => showToast(msg)} />
         )}
 
         {activeSection === 'integrations' && (

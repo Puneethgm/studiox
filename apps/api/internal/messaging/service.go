@@ -1455,11 +1455,17 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 		secretKey, _, studioName, studioSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
 		if errStripe == nil && secretKey != "" {
 			var leadPhone, leadNameStr string
-			var trialAmount int
+			var trialPrice int64
 			_ = tx.QueryRow(ctx, "SELECT phone, name FROM leads WHERE id = $1", *conv.LeadID).Scan(&leadPhone, &leadNameStr)
-			_ = tx.QueryRow(ctx, "SELECT COALESCE(trial_amount_sgd, 0) FROM studios WHERE id = $1", studioID).Scan(&trialAmount)
 
-			amount := int64(trialAmount)
+			// Get Trial plan price from the studio's plans
+			_ = tx.QueryRow(ctx, `
+				SELECT COALESCE(price_sgd, 0) FROM studio_plans
+				WHERE studio_id = $1 AND plan_name = 'Trial' AND is_active = true
+				LIMIT 1
+			`, studioID).Scan(&trialPrice)
+
+			amount := trialPrice
 			cur := "sgd"
 			if amount == 0 {
 				amount = 2500
