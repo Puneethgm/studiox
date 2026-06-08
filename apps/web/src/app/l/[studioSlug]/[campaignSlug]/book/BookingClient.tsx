@@ -9,9 +9,11 @@ interface BookingClientProps {
   brandColor: string;
   studioName: string;
   campaignName: string;
+  trialAmountSgd: number;
+  availabilitySlots: Record<string, string[]>;
 }
 
-export function BookingClient({ leadId, brandColor, studioName, campaignName }: BookingClientProps) {
+export function BookingClient({ leadId, brandColor, studioName, campaignName, trialAmountSgd, availabilitySlots }: BookingClientProps) {
   const [dates, setDates] = useState<{ dayName: string; dateStr: string; label: string }[]>([]);
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [selectedTime, setSelectedTime] = useState<string>('');
@@ -77,15 +79,14 @@ export function BookingClient({ leadId, brandColor, studioName, campaignName }: 
     return () => clearInterval(timer);
   }, [submitLocked, lockSecondsLeft]);
 
-  const timeSlots = [
-    '09:00 AM',
-    '10:30 AM',
-    '12:00 PM',
-    '02:30 PM',
-    '04:00 PM',
-    '05:30 PM',
-    '07:00 PM'
-  ];
+  // Get time slots for selected date
+  const getTimeSlots = () => {
+    if (!selectedDate || !availabilitySlots) return [];
+    const dayOfWeek = new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'long' });
+    return availabilitySlots[dayOfWeek] || [];
+  };
+
+  const timeSlots = getTimeSlots();
 
   async function handleBook() {
     if (!selectedDate || !selectedTime || loading || submitLocked) return;
@@ -198,27 +199,33 @@ export function BookingClient({ leadId, brandColor, studioName, campaignName }: 
           <Clock className="h-4 w-4" style={{ color: brandColor }} />
           <span>2. Select Time Slot</span>
         </label>
-        
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {timeSlots.map((time) => {
-            const isSelected = selectedTime === time;
-            return (
-              <button
-                key={time}
-                type="button"
-                onClick={() => setSelectedTime(time)}
-                className={`flex items-center justify-center rounded-xl border py-3 text-xs font-bold transition-all duration-300 ${
-                  isSelected
-                    ? 'border-transparent bg-white text-slate-900 shadow-lg'
-                    : 'border-slate-200 bg-white/40 text-slate-500 hover:border-slate-300 dark:border-white/5 dark:bg-white/5 dark:text-slate-400'
-                }`}
-                style={isSelected ? { outline: `2px solid ${brandColor}` } : {}}
-              >
-                {time}
-              </button>
-            );
-          })}
-        </div>
+
+        {timeSlots.length === 0 ? (
+          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-center text-sm font-medium text-amber-800 dark:border-amber-900/30 dark:bg-amber-900/10 dark:text-amber-400">
+            ❌ No trial classes available on this date
+          </div>
+        ) : (
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {timeSlots.map((time: string) => {
+              const isSelected = selectedTime === time;
+              return (
+                <button
+                  key={time}
+                  type="button"
+                  onClick={() => setSelectedTime(time)}
+                  className={`flex items-center justify-center rounded-xl border py-3 text-xs font-bold transition-all duration-300 ${
+                    isSelected
+                      ? 'border-transparent bg-white text-slate-900 shadow-lg'
+                      : 'border-slate-200 bg-white/40 text-slate-500 hover:border-slate-300 dark:border-white/5 dark:bg-white/5 dark:text-slate-400'
+                  }`}
+                  style={isSelected ? { outline: `2px solid ${brandColor}` } : {}}
+                >
+                  {time}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Submit */}

@@ -76,14 +76,19 @@ export default async function BookingPage({
           </p>
         </div>
 
-        <Card 
+        <Card
           title={
-            <div className="flex items-center gap-2 text-lg font-bold">
-              <CalendarRange className="h-5 w-5" style={{ color: brand }} />
-              <span>Schedule Appointment</span>
+            <div className="flex items-center justify-between text-lg font-bold">
+              <div className="flex items-center gap-2">
+                <CalendarRange className="h-5 w-5" style={{ color: brand }} />
+                <span>Schedule Appointment</span>
+              </div>
+              <span className="text-sm" style={{ color: brand }}>
+                {studio.trialAmountSgd === 0 ? 'FREE Trial' : `S$ ${(studio.trialAmountSgd / 100).toFixed(2)}`}
+              </span>
             </div>
-          } 
-          elevated 
+          }
+          elevated
           className="overflow-hidden border-none shadow-2xl shadow-slate-200/50 dark:shadow-none"
         >
           <BookingClient
@@ -91,6 +96,8 @@ export default async function BookingPage({
             brandColor={brand}
             studioName={studio.name}
             campaignName={campaign.name}
+            trialAmountSgd={studio.trialAmountSgd || 0}
+            availabilitySlots={studio.availabilitySlots || {}}
           />
         </Card>
 

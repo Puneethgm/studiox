@@ -1247,7 +1247,7 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 			targetStatus = "dropped"
 			outboundBody = "We would like to know why are u not interested."
 		}
-	} else if autoContactStage == "awaiting_options" || (leadStatus == "trial_booked" && autoContactStage != "awaiting_trial_date" && autoContactStage != "awaiting_trial_time" && (isTrial || isMember)) {
+	} else if autoContactStage == "awaiting_options" {
 		if isTrial && !isMember {
 			targetStage = "awaiting_trial_date"
 			targetStatus = "trial_booked"
@@ -1460,12 +1460,14 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 		targetNotes = strings.TrimSpace(targetNotes + "\n[Selected Trial Slot]: " + dateStr + " " + selectedTime)
 		targetStage = "completed"
 
-		secretKey, amountSGD, studioName, studioSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
+		secretKey, _, studioName, studioSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
 		if errStripe == nil && secretKey != "" {
 			var leadPhone, leadNameStr string
+			var trialAmount int
 			_ = tx.QueryRow(ctx, "SELECT phone, name FROM leads WHERE id = $1", *conv.LeadID).Scan(&leadPhone, &leadNameStr)
-			
-			amount := amountSGD
+			_ = tx.QueryRow(ctx, "SELECT COALESCE(trial_amount_sgd, 0) FROM studios WHERE id = $1", studioID).Scan(&trialAmount)
+
+			amount := int64(trialAmount)
 			cur := "sgd"
 			if amount == 0 {
 				amount = 2500

@@ -7,6 +7,8 @@ export interface PublicStudio {
   name: string;
   brandColor: string;
   logoUrl: string;
+  trialAmountSgd?: number;
+  availabilitySlots?: Record<string, string[]>;
 }
 
 export interface PublicCampaign {

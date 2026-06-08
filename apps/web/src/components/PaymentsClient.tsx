@@ -532,13 +532,14 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
                   </div>
                 </form>
               ) : (
-                <div className="space-y-3">
-                  <Button className="w-full shadow-lg shadow-brand-500/15" onClick={() => window.location.href = `/api/v1/studios/${studioId}/stripe-oauth/login`}>
-                    Connect with Stripe Connect (Recommended)
+                <div className="rounded-xl border border-brand-500/20 bg-brand-500/5 p-4 text-center dark:bg-brand-500/10">
+                  <ShieldCheck className="h-5 w-5 mx-auto mb-2 text-brand-500" />
+                  <span className="text-xs font-bold text-zinc-700 dark:text-zinc-200 block mb-3">
+                    Enter your Stripe API keys to enable payment processing.
+                  </span>
+                  <Button className="w-full text-xs shadow-lg shadow-brand-500/20" onClick={() => setShowForm(true)}>
+                    Connect Stripe Account
                   </Button>
-                  <button type="button" onClick={() => setShowForm(true)} className="w-full text-xs text-zinc-400 hover:text-zinc-900 dark:hover:text-white transition-colors">
-                    Or enter API keys manually
-                  </button>
                 </div>
               )}
             </Card>
