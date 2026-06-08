@@ -784,6 +784,24 @@ function PlatformBillingManager({ studio }: { studio: Studio }) {
       const data = await res.json();
       if (data.url) {
         window.open(data.url, '_blank');
+        // Poll for updated tier every 2 seconds after opening Stripe
+        const pollInterval = setInterval(async () => {
+          try {
+            const syncRes = await fetch(`/api/v1/me/studios/${studio.id}/billing/sync`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+            });
+            const syncData = await syncRes.json();
+            if (syncData.synced && syncData.tier && syncData.tier !== studio.subscriptionTier) {
+              clearInterval(pollInterval);
+              window.location.reload();
+            }
+          } catch (err) {
+            console.error('Sync poll error:', err);
+          }
+        }, 2000);
+        // Stop polling after 5 minutes
+        setTimeout(() => clearInterval(pollInterval), 5 * 60 * 1000);
       } else {
         alert(data.error || 'Failed to initialize checkout');
       }
