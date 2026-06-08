@@ -104,7 +104,7 @@ export default function PrivacyPolicy() {
               <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">10. Contact Us</h2>
               <p>If you have any questions about this Privacy Policy, please contact us:</p>
               <div className="mt-4 space-y-2">
-                <p><strong>Email:</strong> govind.infaira@gmail.com</p>
+                <p><strong>Email:</strong> support@1herosocial.ai</p>
                 <p><strong>Website:</strong> https://1herosocial.ai</p>
               </div>
             </section>

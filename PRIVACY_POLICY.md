@@ -10,7 +10,7 @@
 
 1herosocial.ai ("Company", "we", "us", "our") operates the 1herosocial.ai website and application ("Service"). This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use our Service.
 
-**Contact:** govind.infaira@gmail.com
+**Contact:** support@1herosocial.ai
 
 ---
 
@@ -143,7 +143,7 @@ When a user requests deletion via Meta's privacy center:
 ### 6.1 Right to Access
 - Request a copy of your personal data
 - Export data in portable format
-- **How:** Contact govind.infaira@gmail.com
+- **How:** Contact support@1herosocial.ai
 
 ### 6.2 Right to Rectification
 - Correct inaccurate or incomplete data
@@ -158,7 +158,7 @@ When a user requests deletion via Meta's privacy center:
 ### 6.4 Right to Restrict Processing
 - Prevent certain types of processing
 - Pause automated decision-making
-- **How:** Contact govind.infaira@gmail.com
+- **How:** Contact support@1herosocial.ai
 
 ### 6.5 Right to Data Portability
 - Get data in machine-readable format
@@ -228,7 +228,7 @@ When a user requests deletion via Meta's privacy center:
 - **Minimum Age:** 18 years old
 - **Policy:** We do not knowingly collect data from minors
 - **Action:** If discovered, we will delete immediately
-- **Contact:** govind.infaira@gmail.com if concerned
+- **Contact:** support@1herosocial.ai if concerned
 
 ---
 
@@ -245,7 +245,7 @@ When a user requests deletion via Meta's privacy center:
 
 ### 11.1 Data Subject Requests
 To exercise any rights, contact:
-- **Email:** govind.infaira@gmail.com
+- **Email:** support@1herosocial.ai
 - **Response Time:** 30 days (GDPR requirement)
 - **Verification:** We may request ID verification
 
@@ -255,7 +255,7 @@ EU users can file complaints with local data protection authorities:
 - **Your Country:** National Data Protection Authority
 
 ### 11.3 Support
-- **Email:** govind.infaira@gmail.com
+- **Email:** support@1herosocial.ai
 - **Hours:** Business hours, response within 24 hours
 - **Privacy Concerns:** Flag with "PRIVACY" in subject line
 
@@ -297,7 +297,7 @@ EU users can file complaints with local data protection authorities:
 ## 14. Data Protection Officer (DPO)
 
 - **Role:** Oversees privacy compliance
-- **Contact:** govind.infaira@gmail.com
+- **Contact:** support@1herosocial.ai
 - **Available:** For data subject rights requests
 
 ---

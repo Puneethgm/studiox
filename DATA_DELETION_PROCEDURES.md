@@ -168,7 +168,7 @@ When Meta deletion request arrives:
 ### 4.1 Right to Access (GDPR Article 15)
 
 **Request:**
-- Email: govind.infaira@gmail.com
+- Email: support@1herosocial.ai
 - Subject: "GDPR Data Subject Access Request"
 - Include: Your email/user ID
 
@@ -185,7 +185,7 @@ When Meta deletion request arrives:
 
 **How to Exercise:**
 - Go to Settings and update your information
-- OR contact: govind.infaira@gmail.com
+- OR contact: support@1herosocial.ai
 - OR submit form at: https://1herosocial.ai/privacy
 
 **Response Timeline:** 30 days maximum
@@ -199,7 +199,7 @@ When Meta deletion request arrives:
 
 **How to Request:**
 - Settings → Security → Delete Account
-- OR email: govind.infaira@gmail.com
+- OR email: support@1herosocial.ai
 - Subject: "GDPR Right to Erasure Request"
 
 **Timeline:** 24 hours for most data
@@ -212,7 +212,7 @@ When Meta deletion request arrives:
 ### 4.4 Right to Restrict Processing (GDPR Article 18)
 
 **Request to:**
-- Email: govind.infaira@gmail.com
+- Email: support@1herosocial.ai
 - Subject: "GDPR Restrict Processing Request"
 
 **We Will:**
@@ -224,7 +224,7 @@ When Meta deletion request arrives:
 ### 4.5 Right to Data Portability (GDPR Article 20)
 
 **Request to:**
-- Email: govind.infaira@gmail.com
+- Email: support@1herosocial.ai
 - Subject: "GDPR Data Portability Request"
 
 **Format Provided:**
@@ -245,7 +245,7 @@ When Meta deletion request arrives:
 **How:**
 - Unsubscribe link in emails
 - Settings → Communications preferences
-- Email: govind.infaira@gmail.com
+- Email: support@1herosocial.ai
 
 ---
 
@@ -287,7 +287,7 @@ What was retained (legal requirement):
 You can no longer log in with these credentials. If this was a mistake,
 please contact us within 30 days for recovery assistance.
 
-Questions? Contact: govind.infaira@gmail.com
+Questions? Contact: support@1herosocial.ai
 
 Best regards,
 The 1herosocial.ai Privacy Team
@@ -443,7 +443,7 @@ Every deletion is logged with:
 ## 11. Contact & Support
 
 ### Deletion Requests & Privacy Inquiries
-- **Email:** govind.infaira@gmail.com
+- **Email:** support@1herosocial.ai
 - **Subject:** Start with "PRIVACY:" or "GDPR:"
 - **Response Time:** 5 business days
 
@@ -481,7 +481,7 @@ A: No one. Data is permanently deleted except legal records.
 A: No. We do not sell, trade, or share personal data.
 
 **Q: How do I get a copy of my data?**  
-A: Email govind.infaira@gmail.com with subject "Data Export Request".
+A: Email support@1herosocial.ai with subject "Data Export Request".
 
 ---
 
