@@ -517,12 +517,8 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 func studioIDFromPath(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	c := identity.MustClaims(r.Context())
 	if c.IsSuper() {
-		id, err := uuid.Parse(chi.URLParam(r, "studioId"))
-		if err != nil {
-			httpx.WriteError(w, http.StatusBadRequest, "bad_studio_id", "invalid studio id")
-			return uuid.Nil, false
-		}
-		return id, true
+		httpx.WriteError(w, http.StatusForbidden, "forbidden", "super admins cannot view or manage studio-specific messaging data")
+		return uuid.Nil, false
 	}
 	if c.StudioID == nil {
 		httpx.WriteError(w, http.StatusForbidden, "forbidden", "no studio bound to this user")

@@ -220,6 +220,7 @@ func main() {
 				leadsHandler.AdminRoutes(r)
 				r.Get("/social-posts", studiosHandler.ListSocialPosts)
 				r.Post("/social-posts", studiosHandler.CreateSocialPost)
+				r.Put("/social-posts/{postId}", studiosHandler.UpdateSocialPost)
 				r.Delete("/social-posts/{postId}", studiosHandler.DeleteSocialPost)
 				r.Route("/messaging", func(r chi.Router) {
 					msgHandler.AdminRoutes(r)

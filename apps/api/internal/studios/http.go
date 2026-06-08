@@ -47,7 +47,8 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 func (h *Handler) SelfRoutes(r chi.Router) {
 	r.Get("/studios/{id}", h.getScoped)
 	r.Patch("/studios/{id}", h.updateScoped)
-	
+	r.Post("/studios/{id}/logo", h.uploadLogo)
+
 	// Plans routes
 	r.Get("/studios/{id}/plans", h.listPlans)
 	r.Put("/studios/{id}/plans/{planId}", h.updatePlan)
@@ -469,6 +470,96 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, updated)
+}
+
+func (h *Handler) uploadLogo(w http.ResponseWriter, r *http.Request) {
+	c := identity.MustClaims(r.Context())
+	// Super admins use the URL param; studio_admins always update their own studio.
+	var studioID uuid.UUID
+	if c.IsSuper() {
+		id, err := uuid.Parse(chi.URLParam(r, "id"))
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+			return
+		}
+		studioID = id
+	} else {
+		if c.StudioID == nil {
+			httpx.WriteError(w, http.StatusForbidden, "forbidden", "no studio bound to this user")
+			return
+		}
+		studioID = *c.StudioID
+	}
+
+	// 5MB max for logo image
+	if err := r.ParseMultipartForm(5 << 20); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "failed to parse multipart form")
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "file field is required")
+		return
+	}
+	defer file.Close()
+
+	// Validate file type (only images)
+	contentType := header.Header.Get("Content-Type")
+	validTypes := map[string]bool{
+		"image/jpeg": true,
+		"image/png":  true,
+		"image/webp": true,
+		"image/gif":  true,
+	}
+	if !validTypes[contentType] {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_type", "only image files (JPEG, PNG, WebP, GIF) are allowed")
+		return
+	}
+
+	// Create a unique filename using studio ID
+	ext := filepath.Ext(header.Filename)
+	if ext == "" {
+		// Infer extension from content type
+		switch contentType {
+		case "image/jpeg":
+			ext = ".jpg"
+		case "image/png":
+			ext = ".png"
+		case "image/webp":
+			ext = ".webp"
+		case "image/gif":
+			ext = ".gif"
+		}
+	}
+
+	filename := fmt.Sprintf("logo_%s%s", studioID.String(), ext)
+	filepath := filepath.Join("./uploads", filename)
+
+	// Read file data
+	bytes, err := io.ReadAll(file)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "failed to read file")
+		return
+	}
+
+	// Ensure the uploads directory exists
+	if err := os.MkdirAll("./uploads", 0755); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to create uploads directory")
+		return
+	}
+
+	// Write file to disk
+	if err := os.WriteFile(filepath, bytes, 0644); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to save file")
+		return
+	}
+
+	// Return the URL
+	logoURL := fmt.Sprintf("/uploads/%s", filename)
+	httpx.JSON(w, http.StatusOK, map[string]string{
+		"logoUrl": logoURL,
+	})
 }
 
 // ----- public -----

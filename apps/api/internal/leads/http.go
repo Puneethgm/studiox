@@ -62,16 +62,8 @@ func (h *Handler) PublicRoutes(r chi.Router) {
 func (h *Handler) resolveStudioID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	c := identity.MustClaims(r.Context())
 	if c.IsSuper() {
-		studioIDStr := chi.URLParam(r, "studioId")
-		if studioIDStr == "" {
-			return uuid.Nil, true
-		}
-		pathID, err := uuid.Parse(studioIDStr)
-		if err != nil {
-			httpx.WriteError(w, http.StatusBadRequest, "bad_studio_id", "invalid studio id")
-			return uuid.Nil, false
-		}
-		return pathID, true
+		httpx.WriteError(w, http.StatusForbidden, "forbidden", "super admins cannot view or manage studio-specific campaign and lead data")
+		return uuid.Nil, false
 	}
 	if c.StudioID == nil {
 		httpx.WriteError(w, http.StatusForbidden, "forbidden", "no studio bound to this user")

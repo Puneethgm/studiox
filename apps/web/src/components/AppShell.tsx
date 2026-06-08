@@ -49,7 +49,7 @@ function navItemsFor(me: Me): NavItem[] {
         href: '/admin/studios',
         label: 'Studios',
         icon: <Building2 className="h-[18px] w-[18px]" />,
-        match: (p) => p === '/admin' || p === '/admin/studios' || (p.startsWith('/admin/studios/') && !p.includes('/inbox') && !p.includes('/pipeline') && !p.includes('/campaigns') && !p.includes('/leads') && !p.includes('/channels') && !p.includes('/settings')),
+        match: (p) => p === '/admin' || p.startsWith('/admin/studios'),
       },
       {
         href: '/admin/payments',

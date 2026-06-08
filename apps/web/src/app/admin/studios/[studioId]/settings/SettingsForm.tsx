@@ -59,6 +59,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
 
   const [showGeminiApiKey, setShowGeminiApiKey] = useState(false);
   const [showMetaAppSecret, setShowMetaAppSecret] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -186,6 +187,42 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
     }
   }
 
+  async function onUploadLogo(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingLogo(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/v1/me/studios/${studio.id}/logo`, {
+        method: 'POST',
+        body: formData,
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({ error: 'Upload failed' }));
+        showToast(error.error || 'Failed to upload logo', 'error');
+        return;
+      }
+
+      const data = await res.json();
+      setLogoUrl(data.logoUrl);
+      showToast('Logo uploaded successfully.');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to upload logo', 'error');
+    } finally {
+      setUploadingLogo(false);
+      // Reset file input
+      e.target.value = '';
+    }
+  }
+
   return (
     <div className="flex flex-col gap-8 lg:flex-row lg:items-start">
       {/* Left Sidebar Navigation */}
@@ -236,38 +273,55 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                   <FieldError message={errors.name} />
                 </div>
 
-                <div className="grid gap-5 sm:grid-cols-2">
-                  <div>
-                    <Label htmlFor="brandColor">Brand color</Label>
-                    <div className="flex items-center gap-2 mt-1">
-                      <div className="relative h-10 w-12 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-white/5">
-                        <input
-                          type="color"
-                          id="brandColor"
-                          value={brandColor}
-                          onChange={(e) => setBrandColor(e.target.value)}
-                          className="absolute -inset-2 h-14 w-16 cursor-pointer border-0 p-0 bg-transparent"
-                          suppressHydrationWarning
-                        />
-                      </div>
-                      <Input
+                <div>
+                  <Label htmlFor="brandColor">Brand color</Label>
+                  <div className="flex items-center gap-2 mt-1">
+                    <div className="relative h-10 w-12 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-white/5">
+                      <input
+                        type="color"
+                        id="brandColor"
                         value={brandColor}
                         onChange={(e) => setBrandColor(e.target.value)}
-                        invalid={!!errors.brandColor}
-                        className="font-mono text-xs"
+                        className="absolute -inset-2 h-14 w-16 cursor-pointer border-0 p-0 bg-transparent"
+                        suppressHydrationWarning
                       />
                     </div>
-                    <FieldError message={errors.brandColor} />
-                  </div>
-                  <div>
-                    <Label htmlFor="logoUrl">Logo URL</Label>
                     <Input
-                      id="logoUrl"
-                      value={logoUrl}
-                      onChange={(e) => setLogoUrl(e.target.value)}
+                      value={brandColor}
+                      onChange={(e) => setBrandColor(e.target.value)}
+                      invalid={!!errors.brandColor}
+                      className="font-mono text-xs"
                     />
-                    <FieldHint>Square image works best.</FieldHint>
                   </div>
+                  <FieldError message={errors.brandColor} />
+                </div>
+
+                <div>
+                  <Label htmlFor="logoUrl">Logo URL</Label>
+                  <Input
+                    id="logoUrl"
+                    value={logoUrl}
+                    onChange={(e) => setLogoUrl(e.target.value)}
+                  />
+                  <FieldHint>Square image works best.</FieldHint>
+                </div>
+
+                <div>
+                  <Label htmlFor="logoFile">Or upload image</Label>
+                  <div className="flex items-center gap-2 mt-1">
+                    <input
+                      id="logoFile"
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,image/gif"
+                      onChange={onUploadLogo}
+                      disabled={uploadingLogo}
+                      className="block w-full text-xs text-zinc-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-gradient-to-r file:from-brand-500 file:to-violet-600 file:text-white file:cursor-pointer hover:file:from-brand-600 hover:file:to-violet-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    />
+                    {uploadingLogo && (
+                      <span className="text-xs text-zinc-500">Uploading...</span>
+                    )}
+                  </div>
+                  <FieldHint>JPEG, PNG, WebP, or GIF (max 5MB)</FieldHint>
                 </div>
 
                 <div>
