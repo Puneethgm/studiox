@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { Building2, Plus } from 'lucide-react';
+import { Building2, Plus, Sparkles, Users, Zap, Palette } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
@@ -55,31 +55,96 @@ export default function NewStudioPage() {
   }
 
   return (
-    <div className="space-y-8 pb-12">
-      {/* Premium Glass Header */}
-      <div
-        className="relative overflow-hidden rounded-[26px] border border-white/30 p-6 backdrop-blur-2xl dark:border-white/5 bg-white/30 dark:bg-neutral-900/30"
-        style={{
-          boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.2), 0 8px 32px rgba(139,92,246,0.07)',
-        }}
-      >
-        <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 rounded-full bg-brand-500/10 blur-[70px]" />
-        
-        <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-4">
-            <div className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-brand-500 to-violet-600 text-white shadow-lg shadow-brand-500/25">
-              <Building2 className="h-6 w-6" />
+    <div className="min-h-[calc(100vh-64px)] flex flex-col lg:flex-row gap-6 lg:gap-0">
+      {/* Left Panel - Premium Visual Design */}
+      <div className="flex-1 hidden lg:flex flex-col justify-between bg-gradient-to-br from-brand-700 via-brand-600 to-violet-700 p-12 relative overflow-hidden lg:rounded-2xl lg:m-6" style={{
+        backgroundImage: 'linear-gradient(to right, rgba(124, 58, 237, 0.4) 0%, rgba(124, 58, 237, 0.6) 100%), url("/platform-bg.png")',
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundRepeat: 'no-repeat',
+      }}>
+        {/* Animated gradient orbs */}
+        <div className="absolute inset-0">
+          <div className="absolute -left-32 -top-32 h-96 w-96 rounded-full bg-white/5 blur-3xl animate-pulse" />
+          <div className="absolute -right-48 -bottom-48 h-[500px] w-[500px] rounded-full bg-violet-300/5 blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />
+          <div className="absolute top-1/3 left-1/4 h-80 w-80 rounded-full bg-brand-400/5 blur-3xl" />
+        </div>
+
+        <div className="relative z-10 space-y-12">
+          {/* Header with Icon */}
+          <div className="space-y-6">
+            <div className="inline-flex items-center justify-center h-20 w-20 rounded-2xl bg-gradient-to-br from-white/30 to-white/10 backdrop-blur-xl border border-white/40 shadow-2xl shadow-black/20">
+              <Building2 className="h-10 w-10 text-white" />
             </div>
-            <div>
-              <h1 className="text-2xl font-black tracking-tight text-zinc-900 dark:text-white">New Studio</h1>
-              <p className="mt-0.5 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
-                Configure the studio&rsquo;s identity and create its first admin login.
+
+            <div className="space-y-3">
+              <h2 className="text-5xl font-black text-white leading-tight">
+                Launch Your <span className="bg-gradient-to-r from-yellow-200 via-pink-200 to-blue-200 bg-clip-text text-transparent">Studio Today</span>
+              </h2>
+              <p className="text-lg text-white/80 font-medium leading-relaxed max-w-md">
+                Turn your fitness vision into reality. Set up in minutes and start capturing leads.
               </p>
             </div>
           </div>
+
+          {/* Feature Cards with Icons */}
+          <div className="space-y-3">
+            {/* Feature 1 */}
+            <div className="group flex gap-4 p-4 rounded-2xl bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 transition-all duration-300">
+              <div className="flex-shrink-0 h-12 w-12 rounded-xl bg-gradient-to-br from-pink-400 to-rose-500 flex items-center justify-center shadow-lg">
+                <Palette className="h-6 w-6 text-white" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-white font-bold text-base leading-tight">Complete Branding</h3>
+                <p className="text-white/70 text-sm mt-0.5">Logo, colors, and identity across all public forms</p>
+              </div>
+            </div>
+
+            {/* Feature 2 */}
+            <div className="group flex gap-4 p-4 rounded-2xl bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 transition-all duration-300">
+              <div className="flex-shrink-0 h-12 w-12 rounded-xl bg-gradient-to-br from-blue-400 to-cyan-500 flex items-center justify-center shadow-lg">
+                <Users className="h-6 w-6 text-white" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-white font-bold text-base leading-tight">Admin Control</h3>
+                <p className="text-white/70 text-sm mt-0.5">Secure login for your first admin user</p>
+              </div>
+            </div>
+
+            {/* Feature 3 */}
+            <div className="group flex gap-4 p-4 rounded-2xl bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 transition-all duration-300">
+              <div className="flex-shrink-0 h-12 w-12 rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center shadow-lg">
+                <Zap className="h-6 w-6 text-white" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-white font-bold text-base leading-tight">AI Social Planner</h3>
+                <p className="text-white/70 text-sm mt-0.5">Optional: AI-powered ad creation & scheduling</p>
+              </div>
+            </div>
+
+            {/* Feature 4 */}
+            <div className="group flex gap-4 p-4 rounded-2xl bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 transition-all duration-300">
+              <div className="flex-shrink-0 h-12 w-12 rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center shadow-lg">
+                <Sparkles className="h-6 w-6 text-white" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-white font-bold text-base leading-tight">Instant Go-Live</h3>
+                <p className="text-white/70 text-sm mt-0.5">Your lead capture page live at <code className="text-white/90 bg-white/10 px-1.5 py-0.5 rounded text-xs font-mono">l/your-slug</code></p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Bottom CTA or Badge */}
+        <div className="relative z-10 flex items-center gap-3 pt-4 border-t border-white/20">
+          <div className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="text-sm text-white/70 font-medium">Setup typically takes 3-5 minutes</span>
         </div>
       </div>
-      <div className="mx-auto max-w-2xl space-y-6">
+
+      {/* Right Panel - Form */}
+      <div className="flex-1 p-8 lg:p-12 overflow-y-auto">
+        <div className="max-w-2xl mx-auto space-y-6">
         <Card title="Studio identity">
           <form id="studio-form" onSubmit={onSubmit} className="space-y-5">
             <div>
@@ -219,6 +284,7 @@ export default function NewStudioPage() {
           >
             Create studio
           </Button>
+        </div>
         </div>
       </div>
     </div>
