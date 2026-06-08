@@ -9,13 +9,15 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/projectx/api/internal/identity"
 	"github.com/projectx/api/internal/platform/httpx"
-	
+	"github.com/projectx/api/internal/platform/s3"
+
 	"github.com/stripe/stripe-go/v78"
 	"github.com/stripe/stripe-go/v78/client"
 	stripeoauth "github.com/stripe/stripe-go/v78/oauth"
@@ -24,10 +26,11 @@ import (
 type Handler struct {
 	svc             *Service
 	credentialsPath string
+	s3Uploader      *s3.Uploader
 }
 
-func NewHandler(svc *Service, credentialsPath string) *Handler {
-	return &Handler{svc: svc, credentialsPath: credentialsPath}
+func NewHandler(svc *Service, credentialsPath string, s3Uploader *s3.Uploader) *Handler {
+	return &Handler{svc: svc, credentialsPath: credentialsPath, s3Uploader: s3Uploader}
 }
 
 // AdminRoutes are super-admin only — only the platform owner manages studios.
@@ -533,8 +536,88 @@ func (h *Handler) uploadLogo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	filename := fmt.Sprintf("logo_%s%s", studioID.String(), ext)
-	filepath := filepath.Join("./uploads", filename)
+	// Read file data
+	bytes, err := io.ReadAll(file)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "failed to read file")
+		return
+	}
+
+	// Upload to S3 if configured, otherwise fall back to disk
+	var logoURL string
+	if h.s3Uploader != nil {
+		key := fmt.Sprintf("logos/%s%s", studioID.String(), ext)
+		url, err := h.s3Uploader.UploadImage(r.Context(), key, bytes, contentType)
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "s3_upload", "failed to upload logo")
+			return
+		}
+		logoURL = url
+	} else {
+		// Fallback to disk storage if S3 not configured
+		filename := fmt.Sprintf("logo_%s%s", studioID.String(), ext)
+		filepath := filepath.Join("./uploads", filename)
+		if err := os.MkdirAll("./uploads", 0755); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to create uploads directory")
+			return
+		}
+		if err := os.WriteFile(filepath, bytes, 0644); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to save file")
+			return
+		}
+		logoURL = fmt.Sprintf("/uploads/%s", filename)
+	}
+
+	httpx.JSON(w, http.StatusOK, map[string]string{
+		"logoUrl": logoURL,
+	})
+}
+
+func (h *Handler) UploadSocialPostImage(w http.ResponseWriter, r *http.Request) {
+	c := identity.MustClaims(r.Context())
+	if c.IsSuper() {
+		httpx.WriteError(w, http.StatusForbidden, "forbidden", "super admins cannot upload social post images")
+		return
+	}
+
+	studioIDStr := chi.URLParam(r, "studioId")
+	studioID, err := uuid.Parse(studioIDStr)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid studio id")
+		return
+	}
+
+	// Verify the user owns the studio
+	if c.StudioID == nil || c.StudioID.String() != studioID.String() {
+		httpx.WriteError(w, http.StatusForbidden, "forbidden", "cannot access this studio")
+		return
+	}
+
+	// 10MB max for social media images
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "failed to parse multipart form")
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "file field is required")
+		return
+	}
+	defer file.Close()
+
+	// Validate image type
+	contentType := header.Header.Get("Content-Type")
+	validTypes := map[string]bool{
+		"image/jpeg": true,
+		"image/png":  true,
+		"image/webp": true,
+		"image/gif":  true,
+	}
+	if !validTypes[contentType] {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_type", "only JPEG, PNG, WebP, GIF allowed")
+		return
+	}
 
 	// Read file data
 	bytes, err := io.ReadAll(file)
@@ -543,23 +626,50 @@ func (h *Handler) uploadLogo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Ensure the uploads directory exists
-	if err := os.MkdirAll("./uploads", 0755); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to create uploads directory")
-		return
+	// Get file extension
+	ext := filepath.Ext(header.Filename)
+	if ext == "" {
+		ext = map[string]string{
+			"image/jpeg": ".jpg",
+			"image/png":  ".png",
+			"image/webp": ".webp",
+			"image/gif":  ".gif",
+		}[contentType]
 	}
 
-	// Write file to disk
-	if err := os.WriteFile(filepath, bytes, 0644); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to save file")
-		return
+	var mediaURL string
+
+	// Try S3 first if configured, otherwise fall back to disk
+	if h.s3Uploader != nil {
+		key := fmt.Sprintf(
+			"social-posts/%s/%d_%s%s",
+			studioID.String(),
+			time.Now().Unix(),
+			uuid.New().String()[:8],
+			ext,
+		)
+		url, err := h.s3Uploader.UploadImage(r.Context(), key, bytes, contentType)
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "s3_upload", fmt.Sprintf("S3 upload failed: %v", err))
+			return
+		}
+		mediaURL = url
+	} else {
+		// Fallback to disk storage if S3 not configured
+		filename := fmt.Sprintf("social_%s_%d_%s%s", studioID.String(), time.Now().Unix(), uuid.New().String()[:8], ext)
+		filepath := filepath.Join("./uploads", filename)
+		if err := os.MkdirAll("./uploads", 0755); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "internal", fmt.Sprintf("failed to create uploads directory: %v", err))
+			return
+		}
+		if err := os.WriteFile(filepath, bytes, 0644); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "internal", fmt.Sprintf("failed to save file: %v", err))
+			return
+		}
+		mediaURL = fmt.Sprintf("/uploads/%s", filename)
 	}
 
-	// Return the URL
-	logoURL := fmt.Sprintf("/uploads/%s", filename)
-	httpx.JSON(w, http.StatusOK, map[string]string{
-		"logoUrl": logoURL,
-	})
+	httpx.JSON(w, http.StatusOK, map[string]string{"mediaUrl": mediaURL})
 }
 
 // ----- public -----

@@ -9,6 +9,9 @@ import (
 	"syscall"
 	"time"
 
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
 	"github.com/google/uuid"
@@ -25,6 +28,7 @@ import (
 	"github.com/projectx/api/internal/platform/httpx"
 	"github.com/projectx/api/internal/platform/logger"
 	"github.com/projectx/api/internal/platform/secrets"
+	s3pkg "github.com/projectx/api/internal/platform/s3"
 	"github.com/projectx/api/internal/studios"
 )
 
@@ -60,7 +64,29 @@ func main() {
 	tokens := identity.NewTokenIssuer(cfg.JWT.Secret, cfg.JWT.TTL)
 
 	studiosSvc := studios.NewService(studiosRepo, identityRepo)
-	studiosHandler := studios.NewHandler(studiosSvc, cfg.Sheets.CredentialsPath)
+
+	// Initialize S3 uploader if configured
+	var s3Uploader *s3pkg.Uploader
+	if cfg.S3.Enabled() {
+		awsCfg, err := awsconfig.LoadDefaultConfig(
+			rootCtx,
+			awsconfig.WithRegion(cfg.S3.Region),
+			awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+				cfg.S3.AccessKeyID, cfg.S3.SecretKey, "",
+			)),
+		)
+		if err != nil {
+			log.Error("AWS config failed (S3 uploads disabled)", "err", err)
+		} else {
+			s3Client := s3.NewFromConfig(awsCfg)
+			s3Uploader = s3pkg.NewUploader(s3Client, cfg.S3.Bucket, cfg.S3.PublicURLBase)
+			log.Info("S3 uploader initialized", "bucket", cfg.S3.Bucket)
+		}
+	} else {
+		log.Info("S3 not configured (using disk for uploads)")
+	}
+
+	studiosHandler := studios.NewHandler(studiosSvc, cfg.Sheets.CredentialsPath, s3Uploader)
 
 	// Identity needs to enrich /me + /login responses with the user's studio
 	// brand info. Wire studios in via a callback to keep the import direction one-way.
@@ -222,6 +248,7 @@ func main() {
 				r.Post("/social-posts", studiosHandler.CreateSocialPost)
 				r.Put("/social-posts/{postId}", studiosHandler.UpdateSocialPost)
 				r.Delete("/social-posts/{postId}", studiosHandler.DeleteSocialPost)
+				r.Post("/social-posts/upload-image", studiosHandler.UploadSocialPostImage)
 				r.Route("/messaging", func(r chi.Router) {
 					msgHandler.AdminRoutes(r)
 				})

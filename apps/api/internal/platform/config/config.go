@@ -36,6 +36,7 @@ type Config struct {
 	// own WABA + access token via the Channels page).
 	Meta   MetaConfig
 	Claude ClaudeConfig
+	S3     S3Config
 }
 
 type MetaConfig struct {
@@ -48,6 +49,18 @@ type MetaConfig struct {
 type ClaudeConfig struct {
 	APIURL string
 	APIKey string
+}
+
+type S3Config struct {
+	Region       string
+	AccessKeyID  string
+	SecretKey    string
+	Bucket       string
+	PublicURLBase string
+}
+
+func (s S3Config) Enabled() bool {
+	return s.Region != "" && s.AccessKeyID != "" && s.SecretKey != "" && s.Bucket != ""
 }
 
 func (m MetaConfig) Enabled() bool {
@@ -144,6 +157,13 @@ func Load() (Config, error) {
 		Claude: ClaudeConfig{
 			APIURL: getEnv("CLAUDE_API_URL", "https://api.anthropic.com/v1/messages"),
 			APIKey: getEnv("CLAUDE_API_KEY", ""),
+		},
+		S3: S3Config{
+			Region:        getEnv("AWS_REGION", ""),
+			AccessKeyID:   getEnv("AWS_ACCESS_KEY_ID", ""),
+			SecretKey:     getEnv("AWS_SECRET_ACCESS_KEY", ""),
+			Bucket:        getEnv("S3_BUCKET", ""),
+			PublicURLBase: getEnv("S3_PUBLIC_URL", ""),
 		},
 	}
 

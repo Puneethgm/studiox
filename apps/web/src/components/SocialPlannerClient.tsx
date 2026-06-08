@@ -231,22 +231,31 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
     formData.append('file', file);
 
     try {
-      const uploadStudioId = studioId === 'global' ? '759b1ee2-5a68-4a5c-8fa0-5b2a64d5cc35' : studioId;
-      const response = await fetch(`/api/v1/studios/${uploadStudioId}/messaging/upload`, {
+      const response = await fetch(`/api/v1/studios/${studioId}/social-posts/upload-image`, {
         method: 'POST',
         body: formData,
       });
 
       if (!response.ok) {
-        throw new Error('Upload failed');
+        const errorText = await response.text();
+        throw new Error(`Upload failed: ${response.status} ${errorText}`);
       }
 
-      const data = await response.json();
-      setMediaUrl(data.url);
+      const contentType = response.headers.get('content-type');
+      if (!contentType?.includes('application/json')) {
+        throw new Error(`Invalid response type: ${contentType}`);
+      }
+
+      const data = await response.json() as { mediaUrl: string };
+      if (!data.mediaUrl) {
+        throw new Error('No mediaUrl in response');
+      }
+      console.log('Upload successful, mediaUrl:', data.mediaUrl);
+      setMediaUrl(data.mediaUrl);
       setMediaName(file.name);
     } catch (err) {
       console.error('File upload failed:', err);
-      alert('Failed to upload file');
+      alert(`Failed to upload file: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setUploadingFile(false);
     }
@@ -705,8 +714,6 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                         type="button"
                         onClick={() => {
                           setMediaInputType('upload');
-                          setMediaUrl('');
-                          setMediaName('');
                         }}
                         className={`font-black uppercase tracking-wider transition-colors ${
                           mediaInputType === 'upload' ? 'text-brand-500' : 'text-zinc-400 hover:text-zinc-200'
@@ -719,8 +726,6 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                         type="button"
                         onClick={() => {
                           setMediaInputType('url');
-                          setMediaUrl('');
-                          setMediaName('');
                         }}
                         className={`font-black uppercase tracking-wider transition-colors ${
                           mediaInputType === 'url' ? 'text-brand-500' : 'text-zinc-400 hover:text-zinc-200'
@@ -752,14 +757,18 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                         </button>
                       </div>
                       
-                      {(mediaUrl.toLowerCase().startsWith('http') || mediaUrl.toLowerCase().startsWith('/uploads')) && (
+                      {mediaUrl && (
                         <div className="mt-2 rounded-2xl border border-zinc-100/50 bg-white/5 p-2 max-w-full overflow-hidden flex justify-center shadow-inner">
-                          <img 
-                            src={mediaUrl} 
-                            alt="Media Preview" 
+                          <img
+                            src={mediaUrl}
+                            alt="Media Preview"
                             className="max-h-48 rounded-xl object-contain"
                             onError={(e) => {
+                              console.error('Image failed to load:', mediaUrl);
                               (e.target as HTMLElement).style.display = 'none';
+                            }}
+                            onLoad={() => {
+                              console.log('Image loaded successfully:', mediaUrl);
                             }}
                           />
                         </div>
@@ -1010,8 +1019,6 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                       type="button"
                       onClick={() => {
                         setMediaInputType('upload');
-                        setMediaUrl('');
-                        setMediaName('');
                       }}
                       className={`font-black uppercase tracking-wider transition-colors ${
                         mediaInputType === 'upload' ? 'text-brand-500' : 'text-zinc-400 hover:text-zinc-200'
@@ -1024,8 +1031,6 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                       type="button"
                       onClick={() => {
                         setMediaInputType('url');
-                        setMediaUrl('');
-                        setMediaName('');
                       }}
                       className={`font-black uppercase tracking-wider transition-colors ${
                         mediaInputType === 'url' ? 'text-brand-500' : 'text-zinc-400 hover:text-zinc-200'
@@ -1057,14 +1062,18 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
                       </button>
                     </div>
                     
-                    {(mediaUrl.toLowerCase().startsWith('http') || mediaUrl.toLowerCase().startsWith('/uploads')) && (
+                    {mediaUrl && (
                       <div className="mt-2 rounded-2xl border border-zinc-100/50 bg-white/5 p-2 max-w-full overflow-hidden flex justify-center shadow-inner">
-                        <img 
-                          src={mediaUrl} 
-                          alt="Media Preview" 
+                        <img
+                          src={mediaUrl}
+                          alt="Media Preview"
                           className="max-h-48 rounded-xl object-contain"
                           onError={(e) => {
+                            console.error('Image failed to load:', mediaUrl);
                             (e.target as HTMLElement).style.display = 'none';
+                          }}
+                          onLoad={() => {
+                            console.log('Image loaded successfully:', mediaUrl);
                           }}
                         />
                       </div>
