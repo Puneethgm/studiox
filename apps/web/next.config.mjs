@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 const configDir = path.dirname(fileURLToPath(import.meta.url));
 
-/** @type {import('next').NextConfig} */
+/** @type {import('next).NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
   devIndicators: {
@@ -20,6 +20,10 @@ const nextConfig = {
 
   serverExternalPackages: ['officeparser', 'pdfjs-dist'],
 
+  // Disable source maps in production for security
+  // (prevent frontend code exposure in DevTools)
+  productionBrowserSourceMaps: false,
+
   // Same-origin API: the browser always calls /api/* on whatever host it's
   // loaded from, and Next.js proxies it to the Go backend. In dev that's
   // localhost:8080; in prod nginx fronts the API at /api/* on the same
@@ -35,6 +39,29 @@ const nextConfig = {
       {
         source: '/uploads/:path*',
         destination: `${apiBase}/uploads/:path*`,
+      },
+    ];
+  },
+
+  // Security headers to prevent source map access
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          {
+            key: 'X-Content-Type-Options',
+            value: 'nosniff',
+          },
+          {
+            key: 'X-Frame-Options',
+            value: 'DENY',
+          },
+          {
+            key: 'X-XSS-Protection',
+            value: '1; mode=block',
+          },
+        ],
       },
     ];
   },
