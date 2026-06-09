@@ -191,7 +191,7 @@ export default function Home() {
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
               <Link href="/pricing">
                 <button className="w-full sm:w-auto flex items-center justify-center gap-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white px-8 py-4 rounded-xl text-base font-bold transition-all shadow-lg shadow-violet-600/20 hover:shadow-violet-600/30 hover:-translate-y-0.5 active:translate-y-0">
-                  Start Free Trial <ArrowRight className="h-4 w-4" />
+                  View Pricing Plans <ArrowRight className="h-4 w-4" />
                 </button>
               </Link>
               <a href="#simulator" className="flex items-center justify-center gap-2 text-base font-bold text-violet-600 hover:text-violet-800 transition-colors py-3">
@@ -203,15 +203,15 @@ export default function Home() {
             <div className="flex flex-wrap gap-x-8 gap-y-3 pt-2 md:pt-4 text-sm text-slate-500 font-semibold">
               <div className="flex items-center gap-2">
                 <CheckCircle className="h-4.5 w-4.5 text-violet-600" />
-                No credit card required
-              </div>
-              <div className="flex items-center gap-2">
-                <CheckCircle className="h-4.5 w-4.5 text-violet-600" />
                 Setup in under 5 minutes
               </div>
               <div className="flex items-center gap-2">
                 <CheckCircle className="h-4.5 w-4.5 text-violet-600" />
-                Cancel anytime
+                Enterprise security & support
+              </div>
+              <div className="flex items-center gap-2">
+                <CheckCircle className="h-4.5 w-4.5 text-violet-600" />
+                Multi-location ready
               </div>
             </div>
           </div>
