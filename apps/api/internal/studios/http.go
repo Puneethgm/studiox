@@ -1443,12 +1443,14 @@ func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delete the studio and all associated data
+	// Delete the studio and all associated data (cascading delete via FK constraints)
 	_, err = h.svc.repo.Pool().Exec(r.Context(), `
 		DELETE FROM studios WHERE id = $1
 	`, studioID)
 
 	if err != nil {
+		// Log the actual error for debugging
+		fmt.Fprintf(os.Stderr, "studio deletion error: %v\n", err)
 		httpx.WriteError(w, http.StatusInternalServerError, "delete_failed", "failed to delete studio")
 		return
 	}
