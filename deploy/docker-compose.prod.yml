@@ -66,6 +66,34 @@ services:
       - api
       - web
 
+  # One-shot: run migrations.
+  migrate:
+    image: deploy-api:latest
+    profiles: ["tools"]
+    entrypoint: ["/usr/local/bin/goose"]
+    command:
+      - "-dir"
+      - "/migrations"
+      - "postgres"
+      - "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
+      - "up"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # One-shot: seed the super-admin.
+  seed:
+    image: deploy-api:latest
+    profiles: ["tools"]
+    entrypoint: ["/usr/local/bin/seed"]
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL}
+      SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   projectx_pg_data:
   uploads_data:
