@@ -168,7 +168,7 @@ export default function DeleteAccountPage() {
               <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">Recovery Window</h2>
               <p className="mb-4">You have 30 days to request account recovery after deletion:</p>
               <ol className="list-decimal pl-6 space-y-1">
-                <li>Contact support immediately: support@1herosocial.ai</li>
+                <li>Contact support immediately: <a href="mailto:1hersocialai@gmail.com" className="text-blue-600 dark:text-blue-400 underline">1hersocialai@gmail.com</a></li>
                 <li>Subject: Account Recovery Request</li>
                 <li>Include your email and reason for recovery</li>
                 <li>We will restore your account within 5 business days</li>
@@ -190,7 +190,7 @@ export default function DeleteAccountPage() {
             <section>
               <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">Questions?</h2>
               <p>For questions about account deletion or data privacy:</p>
-              <p className="mt-4"><strong>Email:</strong> support@1herosocial.ai</p>
+              <p className="mt-4"><strong>Email:</strong> <a href="mailto:1hersocialai@gmail.com" className="text-blue-600 dark:text-blue-400 underline">1hersocialai@gmail.com</a></p>
               <p className="mt-2"><strong>Subject line:</strong> Start with "PRIVACY:" or "ACCOUNT DELETION:"</p>
               <p className="mt-2"><strong>Response time:</strong> 5 business days</p>
             </section>
@@ -200,7 +200,7 @@ export default function DeleteAccountPage() {
               <ul className="space-y-2">
                 <li><a href="/privacy" className="text-violet-600 hover:text-violet-700 font-semibold">Privacy Policy</a> - How we collect and use your data</li>
                 <li><a href="/terms" className="text-violet-600 hover:text-violet-700 font-semibold">Terms of Service</a> - Our full terms and conditions</li>
-                <li><strong>Email:</strong> support@1herosocial.ai - Contact us anytime</li>
+                <li><strong>Email:</strong> <a href="mailto:1hersocialai@gmail.com" className="text-blue-600 dark:text-blue-400 underline">1hersocialai@gmail.com</a> - Contact us anytime</li>
               </ul>
             </section>
           </div>

@@ -2,20 +2,22 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { 
-  ArrowRight, 
-  Sparkles, 
-  Building2, 
-  MessageSquare, 
-  Users, 
-  BarChart3, 
-  Zap, 
-  Globe, 
-  CheckCircle, 
-  Star, 
-  ChevronDown, 
-  Activity, 
-  DollarSign, 
+import { ReviewForm } from '@/components/ReviewForm';
+import { ReviewsCarousel } from '@/components/ReviewsCarousel';
+import {
+  ArrowRight,
+  Sparkles,
+  Building2,
+  MessageSquare,
+  Users,
+  BarChart3,
+  Zap,
+  Globe,
+  CheckCircle,
+  Star,
+  ChevronDown,
+  Activity,
+  DollarSign,
   Target,
   Award,
   ChevronRight,
@@ -77,7 +79,7 @@ const LEAD_STATUSES = ['New Lead', 'AI Responding', 'Trial Booked', 'Member Sold
 export default function Home() {
   // Live Lead Simulator State
   const [simulatedLeads, setSimulatedLeads] = useState<SimulatedLead[]>(INITIAL_SIMULATED_LEADS);
-  
+
   // Interactive Calculator State
   const [adSpend, setAdSpend] = useState<number>(1500);
   const [conversionRate, setConversionRate] = useState<number>(15); // in percentage
@@ -86,6 +88,10 @@ export default function Home() {
 
   // FAQ Accordion State
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(null);
+
+  // Review Form State
+  const [isReviewFormOpen, setIsReviewFormOpen] = useState(false);
+  const [reviewsRefreshKey, setReviewsRefreshKey] = useState(0);
 
   // Live Lead Stream Simulator Interval
   useEffect(() => {
@@ -734,6 +740,25 @@ export default function Home() {
         </div>
       </section>
 
+      {/* ── Reviews Section ──────────────────────────────────── */}
+      <section className="bg-white dark:bg-slate-900 border-t border-slate-200/80 py-16">
+        <div className="mx-auto max-w-[1600px] px-6 md:px-12">
+          <div className="text-center mb-12">
+            <h2 className="text-4xl font-black text-slate-900 dark:text-white mb-4">Client Reviews</h2>
+            <p className="text-slate-600 dark:text-slate-400 text-lg">Hear what our clients say about 1HeroSocial</p>
+          </div>
+          <ReviewsCarousel key={reviewsRefreshKey} onAddReview={() => setIsReviewFormOpen(true)} />
+        </div>
+      </section>
+
+      <ReviewForm
+        isOpen={isReviewFormOpen}
+        onClose={() => setIsReviewFormOpen(false)}
+        onSuccess={() => {
+          setReviewsRefreshKey(prev => prev + 1);
+        }}
+      />
+
       {/* ── Footer ──────────────────────────────────── */}
       <footer className="bg-slate-50 text-slate-500 border-t border-slate-200/80">
         <div className="mx-auto max-w-[1600px] px-6 md:px-12 py-16">
@@ -783,7 +808,12 @@ export default function Home() {
                 <h4 className="font-bold text-slate-800 mb-4">Account</h4>
                 <ul className="space-y-3 text-slate-500">
                   <li><Link href="/login" className="hover:text-violet-600 transition-colors">Log In</Link></li>
-                  <li><Link href="/pricing" className="hover:text-violet-600 transition-colors">Register</Link></li>
+                  <li><button
+                    onClick={() => setIsReviewFormOpen(true)}
+                    className="text-slate-500 hover:text-violet-600 transition-colors text-left"
+                  >
+                    Leave a Review
+                  </button></li>
                 </ul>
               </div>
               <div>
@@ -799,7 +829,7 @@ export default function Home() {
 
           <div className="border-t border-slate-200 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400">
             <p>© 2026 1herosocial.ai. All rights reserved.</p>
-            <p>Built for fitness & wellness studios worldwide 🌏</p>
+            <p>Built for fitness & wellness studios worldwide</p>
           </div>
         </div>
       </footer>

@@ -122,9 +122,10 @@ func (h *Handler) RequireActiveStudio(next http.Handler) http.Handler {
 type createReq struct {
 	Slug          string `json:"slug"`
 	Name          string `json:"name"`
-	BrandColor    string `json:"brandColor"`
-	LogoURL       string `json:"logoUrl"`
-	ContactEmail  string `json:"contactEmail"`
+	BrandColor           string `json:"brandColor"`
+	LogoURL              string `json:"logoUrl"`
+	ContactEmail         string `json:"contactEmail"`
+	ContactPhone         string `json:"contactPhone"`
 	AdminEmail           string `json:"adminEmail"`
 	AdminPassword        string `json:"adminPassword"`
 	SocialPlannerEnabled bool   `json:"socialPlannerEnabled"`
@@ -139,11 +140,12 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		req.BrandColor = "#7c3aed"
 	}
 	res, errs, err := h.svc.CreateStudioWithAdmin(r.Context(), CreateStudioInput{
-		Slug:          req.Slug,
-		Name:          req.Name,
-		BrandColor:    req.BrandColor,
-		LogoURL:       req.LogoURL,
+		Slug:                 req.Slug,
+		Name:                 req.Name,
+		BrandColor:           req.BrandColor,
+		LogoURL:              req.LogoURL,
 		ContactEmail:         req.ContactEmail,
+		ContactPhone:         req.ContactPhone,
 		AdminEmail:           req.AdminEmail,
 		AdminPassword:        req.AdminPassword,
 		SocialPlannerEnabled: req.SocialPlannerEnabled,
@@ -191,6 +193,7 @@ type updateReq struct {
 	BrandColor           *string             `json:"brandColor"`
 	LogoURL              *string             `json:"logoUrl"`
 	ContactEmail         *string             `json:"contactEmail"`
+	ContactPhone         *string             `json:"contactPhone"`
 	Active               *bool               `json:"active"`
 	AvailabilitySlots    *[]AvailabilitySlot `json:"availabilitySlots"`
 	AvailabilityTimezone *string             `json:"availabilityTimezone"`
@@ -232,6 +235,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		BrandColor:           existing.BrandColor,
 		LogoURL:              existing.LogoURL,
 		ContactEmail:         existing.ContactEmail,
+		ContactPhone:         existing.ContactPhone,
 		Active:               existing.Active,
 		AvailabilitySlots:    existing.AvailabilitySlots,
 		AvailabilityTimezone: existing.AvailabilityTimezone,
@@ -257,6 +261,9 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ContactEmail != nil {
 		input.ContactEmail = *req.ContactEmail
+	}
+	if req.ContactPhone != nil {
+		input.ContactPhone = *req.ContactPhone
 	}
 	if req.Active != nil {
 		input.Active = *req.Active
@@ -391,6 +398,7 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 		BrandColor:           existing.BrandColor,
 		LogoURL:              existing.LogoURL,
 		ContactEmail:         existing.ContactEmail,
+		ContactPhone:         existing.ContactPhone,
 		Active:               existing.Active,
 		AvailabilitySlots:    existing.AvailabilitySlots,
 		AvailabilityTimezone: existing.AvailabilityTimezone,
@@ -416,6 +424,9 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ContactEmail != nil {
 		input.ContactEmail = *req.ContactEmail
+	}
+	if req.ContactPhone != nil {
+		input.ContactPhone = *req.ContactPhone
 	}
 	if req.Active != nil {
 		input.Active = *req.Active
@@ -1014,6 +1025,7 @@ func (h *Handler) ProvisionPlatformStudio(w http.ResponseWriter, r *http.Request
 	var req struct {
 		SessionId     string `json:"sessionId"`
 		StudioName    string `json:"studioName"`
+		ContactPhone  string `json:"contactPhone"`
 		AdminPassword string `json:"adminPassword"`
 	}
 	if !httpx.DecodeJSON(w, r, &req) {
@@ -1067,6 +1079,7 @@ func (h *Handler) ProvisionPlatformStudio(w http.ResponseWriter, r *http.Request
 		BrandColor:           "#7c3aed",
 		LogoURL:              "",
 		ContactEmail:         customerEmail,
+		ContactPhone:         req.ContactPhone,
 		AdminEmail:           customerEmail,
 		AdminPassword:        req.AdminPassword,
 		SocialPlannerEnabled: true,

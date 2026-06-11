@@ -25,6 +25,7 @@ type Studio struct {
 	BrandColor   string    `json:"brandColor"`
 	LogoURL      string    `json:"logoUrl"`
 	ContactEmail string    `json:"contactEmail"`
+	ContactPhone string    `json:"contactPhone"`
 	Active       bool      `json:"active"`
 	CreatedAt    time.Time `json:"createdAt"`
 	UpdatedAt    time.Time `json:"updatedAt"`

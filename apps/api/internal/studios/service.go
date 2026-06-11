@@ -27,11 +27,12 @@ func NewService(repo *Repo, id *identity.Repo) *Service {
 // ----- create studio + first admin (atomic) -----
 
 type CreateStudioInput struct {
-	Slug          string
-	Name          string
-	BrandColor    string
-	LogoURL       string
-	ContactEmail  string
+	Slug                 string
+	Name                 string
+	BrandColor           string
+	LogoURL              string
+	ContactEmail         string
+	ContactPhone         string
 	AdminEmail           string
 	AdminPassword        string
 	SocialPlannerEnabled bool
@@ -51,6 +52,7 @@ func (s *Service) CreateStudioWithAdmin(ctx context.Context, in CreateStudioInpu
 	in.BrandColor = normalizeHex(in.BrandColor)
 	in.LogoURL = strings.TrimSpace(in.LogoURL)
 	in.ContactEmail = strings.ToLower(strings.TrimSpace(in.ContactEmail))
+	in.ContactPhone = strings.TrimSpace(in.ContactPhone)
 	in.AdminEmail = strings.ToLower(strings.TrimSpace(in.AdminEmail))
 
 	errs := map[string]string{}
@@ -76,6 +78,9 @@ func (s *Service) CreateStudioWithAdmin(ctx context.Context, in CreateStudioInpu
 			errs["contactEmail"] = "invalid email"
 		}
 	}
+	if in.ContactPhone != "" && len(in.ContactPhone) > 50 {
+		errs["contactPhone"] = "must be under 50 characters"
+	}
 	if len(errs) > 0 {
 		return nil, errs, nil
 	}
@@ -93,6 +98,7 @@ func (s *Service) CreateStudioWithAdmin(ctx context.Context, in CreateStudioInpu
 		BrandColor:           in.BrandColor,
 		LogoURL:              in.LogoURL,
 		ContactEmail:         in.ContactEmail,
+		ContactPhone:         in.ContactPhone,
 		Active:               true,
 		SocialPlannerEnabled: in.SocialPlannerEnabled,
 		KnowledgeBaseFiles:   []KnowledgeBaseFile{},
@@ -160,6 +166,7 @@ type UpdateStudioInput struct {
 	BrandColor           string
 	LogoURL              string
 	ContactEmail         string
+	ContactPhone         string `json:"contactPhone"`
 	Active               bool
 	AvailabilitySlots    []AvailabilitySlot `json:"availabilitySlots"`
 	AvailabilityTimezone string             `json:"availabilityTimezone"`
@@ -187,6 +194,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput
 	in.BrandColor = normalizeHex(in.BrandColor)
 	in.LogoURL = strings.TrimSpace(in.LogoURL)
 	in.ContactEmail = strings.ToLower(strings.TrimSpace(in.ContactEmail))
+	in.ContactPhone = strings.TrimSpace(in.ContactPhone)
 	in.GeminiAPIKey = strings.TrimSpace(in.GeminiAPIKey)
 	in.MetaAppID = strings.TrimSpace(in.MetaAppID)
 	in.MetaAppSecret = strings.TrimSpace(in.MetaAppSecret)
@@ -206,10 +214,13 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput
 			errs["contactEmail"] = "invalid email"
 		}
 	}
+	if in.ContactPhone != "" && len(in.ContactPhone) > 50 {
+		errs["contactPhone"] = "must be under 50 characters"
+	}
 	if len(errs) > 0 {
 		return errs, nil
 	}
-	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.Active, in.AvailabilitySlots, in.AvailabilityTimezone, in.GeminiAPIKey, in.MetaAppID, in.MetaAppSecret, in.GoogleClientID, in.GoogleClientSecret, in.GoogleDeveloperToken, in.SocialPlannerEnabled, in.KnowledgeBase, in.KnowledgeBaseFiles, in.TrialAmountSGD); err != nil {
+	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.ContactPhone, in.Active, in.AvailabilitySlots, in.AvailabilityTimezone, in.GeminiAPIKey, in.MetaAppID, in.MetaAppSecret, in.GoogleClientID, in.GoogleClientSecret, in.GoogleDeveloperToken, in.SocialPlannerEnabled, in.KnowledgeBase, in.KnowledgeBaseFiles, in.TrialAmountSGD); err != nil {
 		return nil, err
 	}
 

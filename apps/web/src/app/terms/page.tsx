@@ -6,17 +6,16 @@ export default function TermsAndConditions() {
       <div className="max-w-4xl mx-auto">
         <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-8 md:p-12 shadow-lg">
           <h1 className="text-4xl font-black mb-2 text-slate-900 dark:text-white">1HeroSocial Platform — Terms and Conditions</h1>
-          <p className="text-sm text-slate-500 mb-8">Last updated: June 9, 2026</p>
+          <p className="text-sm text-slate-500 mb-1">Platform Usage Agreement</p>
+          <p className="text-sm text-slate-500 mb-8">Effective Date: June 9, 2026</p>
 
           <div className="space-y-8 text-slate-700 dark:text-slate-300">
-            {/* Section 1 */}
             <section>
-              <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">1. Introduction & Acceptance</h2>
+              <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">1. Introduction &amp; Acceptance</h2>
               <p className="mb-3">These Terms and Conditions ("Terms") govern your access to and use of the 1HeroSocial platform, including all associated software, services, APIs, and content (collectively, the "Platform"). The Platform is operated by 1HeroSocial ("Company", "we", "us", or "our").</p>
               <p>By registering for an account, accessing, or using the Platform in any way, you ("Client", "Studio", "you") agree to be bound by these Terms. If you are accepting these Terms on behalf of a company or other legal entity, you represent that you have the authority to bind that entity. If you do not agree to these Terms, do not use the Platform.</p>
             </section>
 
-            {/* Section 2 */}
             <section>
               <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">2. Definitions</h2>
               <ul className="list-disc pl-6 space-y-2">
@@ -30,9 +29,8 @@ export default function TermsAndConditions() {
               </ul>
             </section>
 
-            {/* Section 3 */}
             <section>
-              <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">3. Account Registration & Access</h2>
+              <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">3. Account Registration &amp; Access</h2>
               <div className="space-y-4">
                 <div>
                   <h3 className="text-lg font-semibold mb-2 text-slate-900 dark:text-white">3.1 Account Creation</h3>
@@ -44,12 +42,11 @@ export default function TermsAndConditions() {
                 </div>
                 <div>
                   <h3 className="text-lg font-semibold mb-2 text-slate-900 dark:text-white">3.3 Account Security</h3>
-                  <p>You must immediately notify us at legal@1herosocial.com of any unauthorized use of your account or any security breach. We will not be liable for any loss or damage arising from your failure to comply with these security obligations.</p>
+                  <p>You must immediately notify us at <a href="mailto:1hersocialai@gmail.com" className="text-blue-600 dark:text-blue-400 underline">1hersocialai@gmail.com</a> of any unauthorized use of your account or any security breach. We will not be liable for any loss or damage arising from your failure to comply with these security obligations.</p>
                 </div>
               </div>
             </section>
 
-            {/* Section 4 */}
             <section>
               <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">4. Use of the Platform</h2>
               <div className="space-y-4">
@@ -84,13 +81,11 @@ export default function TermsAndConditions() {
               </div>
             </section>
 
-            {/* Section 5 */}
             <section>
-              <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">5. Multi-Tenant Architecture & Data Isolation</h2>
+              <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">5. Multi-Tenant Architecture &amp; Data Isolation</h2>
               <p>The Platform operates as a multi-tenant system. Each Studio's data is logically isolated using row-level security controls. We implement commercially reasonable technical measures to prevent cross-tenant data access. However, you acknowledge that no system is completely impenetrable and agree not to hold us liable for breaches resulting from sophisticated attacks beyond our reasonable control.</p>
             </section>
 
-            {/* Section 6 */}
             <section>
               <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">6. Third-Party Integrations</h2>
               <p className="mb-3">The Platform integrates with third-party services including Meta WhatsApp, Google Sheets, Meta Ads, TikTok, and Google Ads (collectively, "Third-Party Services"). You acknowledge that:</p>
@@ -102,7 +97,6 @@ export default function TermsAndConditions() {
               </ul>
             </section>
 
-            {/* Section 7 */}
             <section>
               <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">7. Intellectual Property</h2>
               <div className="space-y-4">
@@ -121,35 +115,30 @@ export default function TermsAndConditions() {
               </div>
             </section>
 
-            {/* Section 8 */}
             <section>
               <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">8. Confidentiality</h2>
               <p>Each party agrees to keep the other's Confidential Information strictly confidential and not to disclose it to any third party without prior written consent, except as required by law. "Confidential Information" includes, but is not limited to, business plans, customer data, technical specifications, pricing, and API keys. This obligation survives termination of these Terms for a period of five (5) years.</p>
             </section>
 
-            {/* Section 9 */}
             <section>
-              <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">9. Warranties & Disclaimers</h2>
+              <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">9. Warranties &amp; Disclaimers</h2>
               <p className="mb-3 font-semibold">THE PLATFORM IS PROVIDED "AS IS" AND "AS AVAILABLE" WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, NON-INFRINGEMENT, OR UNINTERRUPTED OPERATION.</p>
               <p>We do not warrant that: (a) the Platform will be error-free or uninterrupted; (b) AI-generated content will be accurate or suitable; (c) results obtained from the Platform will meet your expectations; or (d) Third-Party Services will function as expected.</p>
             </section>
 
-            {/* Section 10 */}
             <section>
               <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">10. Limitation of Liability</h2>
               <p className="mb-3 font-semibold">TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL 1HEROSOCIAL, ITS OFFICERS, DIRECTORS, EMPLOYEES, OR AGENTS BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, INCLUDING LOSS OF PROFITS, LOSS OF DATA, OR BUSINESS INTERRUPTION, ARISING OUT OF OR RELATED TO YOUR USE OF THE PLATFORM, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.</p>
               <p>OUR AGGREGATE LIABILITY FOR ALL CLAIMS ARISING OUT OF OR RELATED TO THESE TERMS SHALL NOT EXCEED THE TOTAL FEES PAID BY YOU TO US IN THE THREE (3) MONTHS IMMEDIATELY PRECEDING THE EVENT GIVING RISE TO THE CLAIM.</p>
             </section>
 
-            {/* Section 11 */}
             <section>
               <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">11. Indemnification</h2>
               <p>You agree to indemnify, defend, and hold harmless 1HeroSocial and its affiliates, officers, directors, employees, and agents from and against any claims, liabilities, damages, judgments, awards, losses, costs, and expenses (including reasonable legal fees) arising out of or relating to: (a) your violation of these Terms; (b) your Content; (c) your use of the Platform; (d) your violation of any third-party rights; or (e) any content published via the Platform at your direction.</p>
             </section>
 
-            {/* Section 12 */}
             <section>
-              <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">12. Term & Termination</h2>
+              <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">12. Term &amp; Termination</h2>
               <div className="space-y-4">
                 <div>
                   <h3 className="text-lg font-semibold mb-2 text-slate-900 dark:text-white">12.1 Term</h3>
@@ -170,34 +159,30 @@ export default function TermsAndConditions() {
               </div>
             </section>
 
-            {/* Section 13 */}
             <section>
-              <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">13. Governing Law & Disputes</h2>
+              <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">13. Governing Law &amp; Disputes</h2>
               <p>These Terms are governed by and construed in accordance with applicable law. Any dispute arising from these Terms shall first be attempted to be resolved through good-faith negotiation. If unresolved within 30 days, disputes shall be submitted to binding arbitration.</p>
             </section>
 
-            {/* Section 14 */}
             <section>
               <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">14. Modifications to Terms</h2>
               <p>We reserve the right to modify these Terms at any time. We will notify you of material changes by email and/or by posting a notice on the Platform at least 14 days before the changes take effect. Your continued use of the Platform after the effective date constitutes acceptance of the revised Terms.</p>
             </section>
 
-            {/* Section 15 */}
             <section>
               <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">15. Miscellaneous</h2>
               <ul className="list-disc pl-6 space-y-2">
-                <li><strong>Entire Agreement</strong>: These Terms, together with the Privacy Policy and Payment Terms, constitute the entire agreement between you and us regarding the Platform.</li>
-                <li><strong>Severability</strong>: If any provision is held invalid or unenforceable, the remaining provisions continue in full force.</li>
-                <li><strong>No Waiver</strong>: Failure to enforce any provision does not constitute a waiver of our right to enforce it in the future.</li>
-                <li><strong>Assignment</strong>: You may not assign your rights under these Terms without our prior written consent. We may assign our rights freely.</li>
-                <li><strong>Contact</strong>: For questions about these Terms, contact us at legal@1herosocial.com.</li>
+                <li><strong>Entire Agreement:</strong> These Terms, together with the Privacy Policy and Payment Terms, constitute the entire agreement between you and us regarding the Platform.</li>
+                <li><strong>Severability:</strong> If any provision is held invalid or unenforceable, the remaining provisions continue in full force.</li>
+                <li><strong>No Waiver:</strong> Failure to enforce any provision does not constitute a waiver of our right to enforce it in the future.</li>
+                <li><strong>Assignment:</strong> You may not assign your rights under these Terms without our prior written consent. We may assign our rights freely.</li>
+                <li><strong>Contact:</strong> For questions about these Terms, contact us at <a href="mailto:1hersocialai@gmail.com" className="text-blue-600 dark:text-blue-400 underline">1hersocialai@gmail.com</a>.</li>
               </ul>
             </section>
 
-            {/* Contact Section */}
             <section className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-6">
               <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-3">Questions About These Terms?</h3>
-              <p><strong>Email:</strong> legal@1herosocial.com</p>
+              <p><strong>Email:</strong> <a href="mailto:1hersocialai@gmail.com" className="text-blue-600 dark:text-blue-400 underline">1hersocialai@gmail.com</a></p>
             </section>
           </div>
         </div>

@@ -15,6 +15,19 @@ interface CreateResp {
   adminId: string;
 }
 
+const COUNTRY_CODES = [
+  { code: '+65', name: 'Singapore (+65)' },
+  { code: '+1', name: 'United States/Canada (+1)' },
+  { code: '+44', name: 'United Kingdom (+44)' },
+  { code: '+91', name: 'India (+91)' },
+  { code: '+61', name: 'Australia (+61)' },
+  { code: '+64', name: 'New Zealand (+64)' },
+  { code: '+60', name: 'Malaysia (+60)' },
+  { code: '+852', name: 'Hong Kong (+852)' },
+  { code: '+63', name: 'Philippines (+63)' },
+  { code: '+971', name: 'UAE (+971)' },
+];
+
 export default function NewStudioPage() {
   const router = useRouter();
   const [name, setName] = useState('');
@@ -22,6 +35,8 @@ export default function NewStudioPage() {
   const [brandColor, setBrandColor] = useState('#7c3aed');
   const [logoUrl, setLogoUrl] = useState('');
   const [contactEmail, setContactEmail] = useState('');
+  const [contactPhoneCountryCode, setContactPhoneCountryCode] = useState('+65');
+  const [contactPhone, setContactPhone] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
   const [socialPlannerEnabled, setSocialPlannerEnabled] = useState(false);
@@ -33,9 +48,21 @@ export default function NewStudioPage() {
     setErrors({});
     setSubmitting(true);
     try {
+      const cleanPhone = contactPhone.replace(/\D/g, '');
+      const fullPhone = cleanPhone ? `${contactPhoneCountryCode}${cleanPhone}` : '';
       const res = await api<CreateResp>('/api/v1/admin/studios', {
         method: 'POST',
-        json: { name, slug, brandColor, logoUrl, contactEmail, adminEmail, adminPassword, socialPlannerEnabled },
+        json: {
+          name,
+          slug,
+          brandColor,
+          logoUrl,
+          contactEmail,
+          contactPhone: fullPhone,
+          adminEmail,
+          adminPassword,
+          socialPlannerEnabled
+        },
       });
       sessionStorage.setItem('studiox_toast', JSON.stringify({
         message: `Studio "${name}" has been created successfully.`,
@@ -218,6 +245,32 @@ export default function NewStudioPage() {
                 onChange={(e) => setContactEmail(e.target.value)}
               />
               <FieldError message={errors.contactEmail} />
+            </div>
+
+            <div>
+              <Label htmlFor="contactPhone">Contact phone (optional)</Label>
+              <div className="flex gap-2">
+                <select
+                  value={contactPhoneCountryCode}
+                  onChange={(e) => setContactPhoneCountryCode(e.target.value)}
+                  className="h-10 rounded-xl border border-slate-200 bg-white dark:bg-slate-950 dark:border-slate-800 text-slate-900 dark:text-slate-100 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 w-[110px] shrink-0"
+                >
+                  {COUNTRY_CODES.map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {c.code}
+                    </option>
+                  ))}
+                </select>
+                <Input
+                  id="contactPhone"
+                  type="tel"
+                  placeholder="e.g. 81234567"
+                  invalid={!!errors.contactPhone}
+                  value={contactPhone}
+                  onChange={(e) => setContactPhone(e.target.value)}
+                />
+              </div>
+              <FieldError message={errors.contactPhone} />
             </div>
 
             <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/50">

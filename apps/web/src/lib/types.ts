@@ -25,6 +25,7 @@ export interface Studio {
   brandColor: string;
   logoUrl: string;
   contactEmail: string;
+  contactPhone?: string;
   active: boolean;
   createdAt: string;
   updatedAt: string;

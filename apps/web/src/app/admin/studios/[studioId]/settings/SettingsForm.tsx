@@ -11,6 +11,29 @@ import { changeMyPassword, updateStudioSettings, getSheetsSettings, saveSheetsSe
 import { AvailabilitySettings } from './AvailabilitySettings';
 import { PlansManagement } from './PlansManagement';
 
+const COUNTRY_CODES = [
+  { code: '+65', name: 'Singapore (+65)' },
+  { code: '+1', name: 'United States/Canada (+1)' },
+  { code: '+44', name: 'United Kingdom (+44)' },
+  { code: '+91', name: 'India (+91)' },
+  { code: '+61', name: 'Australia (+61)' },
+  { code: '+64', name: 'New Zealand (+64)' },
+  { code: '+60', name: 'Malaysia (+60)' },
+  { code: '+852', name: 'Hong Kong (+852)' },
+  { code: '+63', name: 'Philippines (+63)' },
+  { code: '+971', name: 'UAE (+971)' },
+];
+
+function parsePhone(fullPhone: string) {
+  if (!fullPhone) return { countryCode: '+65', phoneNumber: '' };
+  for (const c of COUNTRY_CODES) {
+    if (fullPhone.startsWith(c.code)) {
+      return { countryCode: c.code, phoneNumber: fullPhone.slice(c.code.length) };
+    }
+  }
+  return { countryCode: '+65', phoneNumber: fullPhone };
+}
+
 export function SettingsForm({ studio, previewHref, initialPlans }: { studio: Studio; previewHref: string | null; initialPlans: any[] }) {
   const router = useRouter();
   const [name, setName] = useState(studio.name);
@@ -21,6 +44,9 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
     setLogoError(false);
   }, [logoUrl]);
   const [contactEmail, setContactEmail] = useState(studio.contactEmail);
+  const initialPhone = parsePhone(studio.contactPhone || '');
+  const [contactPhoneCountryCode, setContactPhoneCountryCode] = useState(initialPhone.countryCode);
+  const [contactPhone, setContactPhone] = useState(initialPhone.phoneNumber);
   const [geminiApiKey, setGeminiApiKey] = useState(studio.geminiApiKey || '');
   const [metaAppId, setMetaAppId] = useState(studio.metaAppId || '');
   const [metaAppSecret, setMetaAppSecret] = useState(studio.metaAppSecret || '');
@@ -99,11 +125,14 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
     setErrors({});
     setSaving(true);
     try {
+      const cleanPhone = contactPhone.replace(/\D/g, '');
+      const fullPhone = cleanPhone ? `${contactPhoneCountryCode}${cleanPhone}` : '';
       const result = await updateStudioSettings(studio.id, studio.slug, {
         name,
         brandColor,
         logoUrl,
         contactEmail,
+        contactPhone: fullPhone,
         active,
       });
       if (!result.ok) {
@@ -334,6 +363,32 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                     onChange={(e) => setContactEmail(e.target.value)}
                   />
                   <FieldError message={errors.contactEmail} />
+                </div>
+
+                <div>
+                  <Label htmlFor="contactPhone">Contact phone</Label>
+                  <div className="flex gap-2">
+                    <select
+                      value={contactPhoneCountryCode}
+                      onChange={(e) => setContactPhoneCountryCode(e.target.value)}
+                      className="h-10 rounded-xl border border-white/20 bg-white/5 dark:bg-slate-950 dark:border-slate-800 text-slate-900 dark:text-slate-100 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 w-[110px] shrink-0"
+                    >
+                      {COUNTRY_CODES.map((c) => (
+                        <option key={c.code} value={c.code}>
+                          {c.code}
+                        </option>
+                      ))}
+                    </select>
+                    <Input
+                      id="contactPhone"
+                      type="tel"
+                      placeholder="e.g. 81234567"
+                      invalid={!!errors.contactPhone}
+                      value={contactPhone}
+                      onChange={(e) => setContactPhone(e.target.value)}
+                    />
+                  </div>
+                  <FieldError message={errors.contactPhone} />
                 </div>
 
                 <div className="flex items-center gap-3 p-3 rounded-2xl border border-white/10 bg-white/10 dark:bg-neutral-800/10">

@@ -4,11 +4,26 @@ import { useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 
+const COUNTRY_CODES = [
+  { code: '+65', name: 'Singapore (+65)' },
+  { code: '+1', name: 'United States/Canada (+1)' },
+  { code: '+44', name: 'United Kingdom (+44)' },
+  { code: '+91', name: 'India (+91)' },
+  { code: '+61', name: 'Australia (+61)' },
+  { code: '+64', name: 'New Zealand (+64)' },
+  { code: '+60', name: 'Malaysia (+60)' },
+  { code: '+852', name: 'Hong Kong (+852)' },
+  { code: '+63', name: 'Philippines (+63)' },
+  { code: '+971', name: 'UAE (+971)' },
+];
+
 function OnboardingForm() {
   const searchParams = useSearchParams();
   const sessionId = searchParams.get('session_id');
 
   const [studioName, setStudioName] = useState('');
+  const [countryCode, setCountryCode] = useState('+65');
+  const [phoneNumber, setPhoneNumber] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState('');
@@ -23,12 +38,16 @@ function OnboardingForm() {
     setErrorMessage('');
 
     try {
+      const cleanPhoneNum = phoneNumber.replace(/\D/g, '');
+      const fullPhone = cleanPhoneNum ? `${countryCode}${cleanPhoneNum}` : '';
+
       const res = await fetch('/api/v1/public/platform/provision', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sessionId,
           studioName,
+          contactPhone: fullPhone,
           adminPassword,
         }),
       });
@@ -72,6 +91,30 @@ function OnboardingForm() {
               className="w-full rounded-xl border border-slate-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 text-slate-900 dark:text-white"
               placeholder="e.g. FitPro Studio"
             />
+          </div>
+          <div>
+            <label className="block text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-400 mb-1">Phone Number (with Country Code)</label>
+            <div className="flex gap-2">
+              <select
+                value={countryCode}
+                onChange={(e) => setCountryCode(e.target.value)}
+                className="rounded-xl border border-slate-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 text-slate-900 dark:text-white w-[110px] shrink-0"
+              >
+                {COUNTRY_CODES.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.code}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="tel"
+                required
+                value={phoneNumber}
+                onChange={(e) => setPhoneNumber(e.target.value)}
+                className="flex-1 rounded-xl border border-slate-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 text-slate-900 dark:text-white"
+                placeholder="e.g. 81234567"
+              />
+            </div>
           </div>
           <div>
             <label className="block text-xs font-black uppercase tracking-wider text-slate-700 dark:text-slate-400 mb-1">Admin Password</label>

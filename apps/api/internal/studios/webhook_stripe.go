@@ -15,6 +15,7 @@ import (
 	"github.com/stripe/stripe-go/v78"
 	"github.com/stripe/stripe-go/v78/client"
 	"github.com/stripe/stripe-go/v78/webhook"
+	"os"
 )
 
 type StripeWebhookHandler struct {
@@ -52,6 +53,12 @@ func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Requ
 	if endpointSecret == "" {
 		endpointSecret = h.webhookSecret
 	}
+
+	if endpointSecret == "" && os.Getenv("API_ENV") != "local" {
+		httpx.WriteError(w, http.StatusUnauthorized, "missing_webhook_secret", "Stripe webhook signature verification is required in production")
+		return
+	}
+
 
 	var event stripe.Event
 

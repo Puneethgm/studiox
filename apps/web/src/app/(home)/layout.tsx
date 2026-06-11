@@ -14,6 +14,9 @@ export const metadata: Metadata = {
     'lead pipeline fitness',
     'gym marketing automation'
   ],
+  other: {
+    'facebook-domain-verification': 'i6qlqq1nelqkbdu4y9udtaysxj29oc',
+  },
 };
 
 export default function HomeLayout({ children }: { children: React.ReactNode }) {

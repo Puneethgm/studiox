@@ -26,6 +26,7 @@ export async function updateStudioSettings(
     brandColor?: string;
     logoUrl?: string;
     contactEmail?: string;
+    contactPhone?: string;
     active?: boolean;
     availabilitySlots?: { day: string; times: string[] }[];
     availabilityTimezone?: string;

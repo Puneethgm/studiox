@@ -29,6 +29,7 @@ import (
 	"github.com/projectx/api/internal/platform/logger"
 	"github.com/projectx/api/internal/platform/secrets"
 	s3pkg "github.com/projectx/api/internal/platform/s3"
+	"github.com/projectx/api/internal/reviews"
 	"github.com/projectx/api/internal/studios"
 )
 
@@ -60,10 +61,12 @@ func main() {
 	identityRepo := identity.NewRepo(pool)
 	leadsRepo := leads.NewRepo(pool)
 	studiosRepo := studios.NewRepo(pool, cipher)
+	reviewsRepo := reviews.NewRepo(pool)
 
 	tokens := identity.NewTokenIssuer(cfg.JWT.Secret, cfg.JWT.TTL)
 
 	studiosSvc := studios.NewService(studiosRepo, identityRepo)
+	reviewsHandler := reviews.NewHandler(reviewsRepo)
 
 	// Initialize S3 uploader if configured
 	var s3Uploader *s3pkg.Uploader
@@ -192,6 +195,10 @@ func main() {
 		r.Post("/public/platform/provision", studiosHandler.ProvisionPlatformStudio)
 		leadsHandler.PublicRoutes(r)
 		msgHandler.PublicRoutes(r)
+
+		// Reviews endpoints
+		r.Post("/reviews", reviewsHandler.Create)
+		r.Get("/reviews", reviewsHandler.ListAll)
 
 		// Google OAuth endpoints (unauthenticated callbacks)
 		r.Get("/auth/google/callback", googleOAuth.CallbackHandler)
