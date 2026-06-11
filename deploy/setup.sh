@@ -27,14 +27,12 @@ log "Updating system packages..."
 apt-get update -qq && apt-get upgrade -y -qq
 
 # ── 2. Install dependencies ───────────────────────────────────
-log "Installing Docker, Certbot, Git..."
-apt-get install -y -qq \
-    docker.io \
-    docker-compose-v2 \
-    git \
-    certbot \
-    curl \
-    ufw
+log "Installing Certbot, Git, UFW..."
+if command -v docker >/dev/null 2>&1; then
+    apt-get install -y -qq git certbot curl ufw
+else
+    apt-get install -y -qq docker.io docker-compose-v2 git certbot curl ufw
+fi
 
 # ── 3. Start & enable Docker ──────────────────────────────────
 log "Enabling Docker..."
