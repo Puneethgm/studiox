@@ -25,7 +25,13 @@ if [ -f "${DEPLOY_DIR}/.env" ]; then
   while IFS= read -r line || [ -n "$line" ]; do
     # Strip carriage returns (CRLF) to prevent export errors
     line="${line//$'\r'/}"
-    if [[ ! "$line" =~ ^# ]] && [[ ! -z "$line" ]]; then
+    # Strip inline comments (everything from '#' onwards)
+    line="${line%%#*}"
+    # Trim trailing whitespace
+    line="${line%"${line##*[![:space:]]}"}"
+    # Trim leading whitespace
+    line="${line#${line%%[![:space:]]*}}"
+    if [[ ! -z "$line" ]]; then
       export "$line"
     fi
   done < "${DEPLOY_DIR}/.env"
