@@ -78,6 +78,7 @@ services:
     restart: unless-stopped
     environment:
       NEXT_PUBLIC_API_URL: https://1herosocial.ai
+      API_BASE_URL: http://api:8080
     expose:
       - "3000"
     depends_on:
