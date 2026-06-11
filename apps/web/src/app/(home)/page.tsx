@@ -603,55 +603,6 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ── Testimonials (3-Column Layout) ──────────── */}
-      <section className="border-t border-slate-200/60 py-16 md:py-24 px-4 md:px-12">
-        <div className="max-w-[1600px] mx-auto space-y-16">
-          <div className="text-left space-y-4">
-            <span className="text-indigo-600 font-bold uppercase tracking-wider text-xs bg-indigo-50 border border-indigo-100 px-3.5 py-1.5 rounded-full inline-block">
-              Success Stories
-            </span>
-            <h2 className="text-3xl sm:text-5xl font-black text-slate-900 tracking-tight">
-              Loved by Fitness Entrepreneurs
-            </h2>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {[
-              {
-                quote: "Our lead-to-trial booking conversion rate shot up from 8% to 26% within the first month. The RAG AI WhatsApp answers are incredibly realistic.",
-                author: "Elena Rostova",
-                role: "Founder, Zenith Pilates (3 locations)"
-              },
-              {
-                quote: "The ability to manage Stripe subscriptions and outbox leads across both our studios in a single window has saved us 15+ admin hours every week.",
-                author: "Devon Carter",
-                role: "Owner, Iron Oak Gyms"
-              },
-              {
-                quote: "Finally, an AI assistant that actually reads our studio FAQ documents and books class passes directly without making mistakes. Absolute game-changer.",
-                author: "Nisha Patel",
-                role: "Director, Prana Yoga Collective"
-              }
-            ].map((t, idx) => (
-              <div key={idx} className="bg-white border border-slate-200 rounded-3xl p-5 sm:p-6 flex flex-col justify-between shadow-sm hover:shadow-md transition-shadow">
-                <div>
-                  <div className="flex gap-1 mb-5 text-amber-400">
-                    {[...Array(5)].map((_, i) => (
-                      <Star key={i} className="h-4.5 w-4.5 fill-current" />
-                    ))}
-                  </div>
-                  <p className="text-slate-600 italic text-sm sm:text-base leading-relaxed">"{t.quote}"</p>
-                </div>
-                <div className="mt-8 pt-4 border-t border-slate-100 text-left">
-                  <div className="font-extrabold text-slate-900 text-sm sm:text-base">{t.author}</div>
-                  <div className="text-xs text-violet-600 font-bold mt-1">{t.role}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
       {/* ── FAQ Section (Split Column Layout) ───────── */}
       <section className="border-t border-slate-200/60 bg-white py-16 md:py-24 px-4 md:px-12">
         <div className="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-12 items-start">
