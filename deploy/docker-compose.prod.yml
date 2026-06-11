@@ -17,7 +17,7 @@ services:
 
   api:
     build:
-      context: .
+      context: ..
       dockerfile: apps/api/Dockerfile
     container_name: projectx-api
     restart: unless-stopped
@@ -38,7 +38,7 @@ services:
 
   web:
     build:
-      context: .
+      context: ..
       dockerfile: apps/web/Dockerfile
       args:
         NEXT_PUBLIC_API_URL: https://1herosocial.ai
