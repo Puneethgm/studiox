@@ -280,120 +280,68 @@ function SummaryCard({
 // ─────────────────────────────────────────────────────
 
 function StudioCard({ studio: s, idx }: { studio: Studio; idx: number }) {
-  return (
-    <Link href={`/admin/studios/${s.id}`} className="block h-full">
-      <div
-        className="relative h-full overflow-hidden rounded-[24px] backdrop-blur-2xl border border-white/30 bg-white/30 dark:border-white/5 dark:bg-neutral-900/30 cursor-pointer transition-all hover:shadow-lg hover:scale-[1.02]"
-        style={{
-          boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 8px 32px rgba(0,0,0,0.07)',
-        }}
-      >
-        {/* Full-width colored header strip */}
-        <div
-        className="relative h-24 w-full overflow-hidden"
-        style={{ background: `linear-gradient(135deg, ${s.brandColor} 0%, ${s.brandColor}cc 60%, ${s.brandColor}88 100%)` }}
-      >
-        {/* Abstract pattern overlay */}
-        <div className="absolute inset-0 opacity-20"
-          style={{ backgroundImage: `radial-gradient(circle at 80% 20%, white 0%, transparent 50%), radial-gradient(circle at 20% 80%, white 0%, transparent 40%)` }}
-        />
-        {/* Status toggle & badge */}
+  const isDisabled = !s.managedBy1Hero;
+
+  const cardDiv = (
+    <div
+      className={`relative h-full overflow-hidden rounded-[24px] backdrop-blur-2xl border border-white/30 dark:border-white/5 dark:bg-neutral-900/30 transition-all ${
+        isDisabled
+          ? 'opacity-50 cursor-not-allowed bg-white/30'
+          : 'cursor-pointer bg-white/30 hover:shadow-lg hover:scale-[1.02]'
+      }`}
+      style={{
+        boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 8px 32px rgba(0,0,0,0.07)',
+      }}
+    >
+      <div className="relative h-24 w-full overflow-hidden" style={{ background: `linear-gradient(135deg, ${s.brandColor} 0%, ${s.brandColor}cc 60%, ${s.brandColor}88 100%)` }}>
+        <div className="absolute inset-0 opacity-20" style={{ backgroundImage: `radial-gradient(circle at 80% 20%, white 0%, transparent 50%), radial-gradient(circle at 20% 80%, white 0%, transparent 40%)` }} />
         <div className="absolute right-4 top-4 flex items-center gap-2 rounded-xl bg-white/20 backdrop-blur-md p-1.5 border border-white/10 pointer-events-auto">
-          <Badge
-            tone={s.active ? 'success' : 'neutral'}
-            className="text-[10px] font-black uppercase tracking-wider shadow-sm select-none pointer-events-none"
-          >
-            {s.active ? 'Active' : 'Inactive'}
-          </Badge>
+          <Badge tone={s.active ? 'success' : 'neutral'} className="text-[10px] font-black uppercase tracking-wider shadow-sm select-none pointer-events-none">{s.active ? 'Active' : 'Inactive'}</Badge>
           <StudioStatusToggle studioId={s.id} initialActive={s.active} studioName={s.name} />
         </div>
       </div>
 
-        {/* Avatar overlapping the header/body boundary */}
-        <div className="relative px-5 pb-5 pointer-events-none">
+      <div className="relative px-5 pb-5 pointer-events-none">
         <div className="-mt-7 mb-3 flex items-end justify-between">
-          <div
-            className="relative grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-[16px] text-lg font-black text-white shadow-lg ring-4 ring-white dark:ring-neutral-900"
-            style={{ background: s.brandColor }}
-          >
-            {s.logoUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={s.logoUrl} alt="" className="h-full w-full object-cover" />
-            ) : (
-              brandInitials(s.name)
-            )}
+          <div className="relative grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-[16px] text-lg font-black text-white shadow-lg ring-4 ring-white dark:ring-neutral-900" style={{ background: s.brandColor }}>
+            {s.logoUrl ? <img src={s.logoUrl} alt="" className="h-full w-full object-cover" /> : brandInitials(s.name)}
             <div className="absolute inset-0 bg-gradient-to-br from-white/25 to-transparent" />
           </div>
-
-          {/* No navigation for super admin — toggle only */}
-          <div
-            className="grid h-9 w-9 place-items-center rounded-2xl"
-            style={{ background: `${s.brandColor}18` }}
-          >
+          <div className="grid h-9 w-9 place-items-center rounded-2xl" style={{ background: `${s.brandColor}18` }}>
             <Building2 className="h-4 w-4" style={{ color: s.brandColor }} />
           </div>
         </div>
 
-        {/* Name + slug */}
         <div className="min-w-0">
-          <h3 className="truncate text-[15px] font-black text-zinc-900 dark:text-white">
-            {s.name}
-          </h3>
-          <div className="mt-0.5 flex items-center gap-1 font-mono text-[10px] font-bold uppercase tracking-wider text-zinc-400">
-            <Building2 className="h-3 w-3" />
-            /{s.slug}
-          </div>
-          <p className="mt-1 text-[11px] font-medium leading-relaxed text-zinc-500 dark:text-zinc-400 truncate">
-            {s.contactEmail ?? 'No contact email set'}
-          </p>
+          <h3 className="truncate text-[15px] font-black text-zinc-900 dark:text-white">{s.name}</h3>
+          <div className="mt-0.5 flex items-center gap-1 font-mono text-[10px] font-bold uppercase tracking-wider text-zinc-400"><Building2 className="h-3 w-3" /> /{s.slug}</div>
+          <p className="mt-1 text-[11px] font-medium leading-relaxed text-zinc-500 dark:text-zinc-400 truncate">{s.contactEmail ?? 'No contact email set'}</p>
         </div>
 
-        {/* Divider */}
         <div className="my-4 h-px bg-gradient-to-r from-transparent via-white/40 to-transparent dark:via-white/10" />
 
-        {/* Stats row */}
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2 flex-1">
-            <div className="grid h-8 w-8 place-items-center rounded-xl bg-sky-50/80 text-sky-600 dark:bg-sky-500/10 dark:text-sky-400">
-              <Megaphone className="h-3.5 w-3.5" />
-            </div>
-            <div>
-              <div className="text-sm font-black text-zinc-900 dark:text-white leading-none">{s.campaignCount ?? 0}</div>
-              <div className="text-[9px] font-black uppercase tracking-widest text-zinc-400 mt-0.5">Campaigns</div>
-            </div>
+            <div className="grid h-8 w-8 place-items-center rounded-xl bg-sky-50/80 text-sky-600 dark:bg-sky-500/10 dark:text-sky-400"><Megaphone className="h-3.5 w-3.5" /></div>
+            <div><div className="text-sm font-black text-zinc-900 dark:text-white leading-none">{s.campaignCount ?? 0}</div><div className="text-[9px] font-black uppercase tracking-widest text-zinc-400 mt-0.5">Campaigns</div></div>
           </div>
           <div className="h-8 w-px bg-white/30 dark:bg-white/10" />
           <div className="flex items-center gap-2 flex-1">
-            <div className="grid h-8 w-8 place-items-center rounded-xl bg-violet-50/80 text-violet-600 dark:bg-violet-500/10 dark:text-violet-400">
-              <Users className="h-3.5 w-3.5" />
-            </div>
-            <div>
-              <div className="text-sm font-black text-zinc-900 dark:text-white leading-none">{s.leadCount ?? 0}</div>
-              <div className="text-[9px] font-black uppercase tracking-widest text-zinc-400 mt-0.5">Leads</div>
-            </div>
+            <div className="grid h-8 w-8 place-items-center rounded-xl bg-violet-50/80 text-violet-600 dark:bg-violet-500/10 dark:text-violet-400"><Users className="h-3.5 w-3.5" /></div>
+            <div><div className="text-sm font-black text-zinc-900 dark:text-white leading-none">{s.leadCount ?? 0}</div><div className="text-[9px] font-black uppercase tracking-widest text-zinc-400 mt-0.5">Leads</div></div>
           </div>
           <div className="h-8 w-px bg-white/30 dark:bg-white/10" />
           <div className="flex items-center gap-2 flex-1">
-            <div className="grid h-8 w-8 place-items-center rounded-xl bg-emerald-50/80 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400">
-              <Activity className="h-3.5 w-3.5" />
-            </div>
-            <div>
-              <div className="text-[9px] font-black uppercase tracking-widest text-zinc-400 mt-0.5">Status</div>
-              <div className="text-[10px] font-black mt-0.5" style={{ color: s.active ? '#10b981' : '#94a3b8' }}>
-                {s.active ? 'Live' : 'Paused'}
-              </div>
-            </div>
+            <div className="grid h-8 w-8 place-items-center rounded-xl bg-emerald-50/80 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400"><Activity className="h-3.5 w-3.5" /></div>
+            <div><div className="text-[9px] font-black uppercase tracking-widest text-zinc-400 mt-0.5">Status</div><div className="text-[10px] font-black mt-0.5" style={{ color: s.active ? '#10b981' : '#94a3b8' }}>{s.active ? 'Live' : 'Paused'}</div></div>
           </div>
         </div>
-        </div>
-
-        {/* Ambient glow */}
-        <div
-          className="pointer-events-none absolute -right-10 -top-10 h-40 w-40 rounded-full blur-3xl opacity-10"
-          style={{ background: s.brandColor }}
-        />
       </div>
-    </Link>
+
+      <div className="pointer-events-none absolute -right-10 -top-10 h-40 w-40 rounded-full blur-3xl opacity-10" style={{ background: s.brandColor }} />
+    </div>
   );
+
+  return isDisabled ? cardDiv : <Link href={`/admin/studios/${s.id}`} className="block h-full">{cardDiv}</Link>;
 }
 

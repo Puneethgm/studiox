@@ -100,6 +100,7 @@ func (s *Service) CreateStudioWithAdmin(ctx context.Context, in CreateStudioInpu
 		ContactEmail:         in.ContactEmail,
 		ContactPhone:         in.ContactPhone,
 		Active:               true,
+		ManagedBy1Hero:       true,
 		SocialPlannerEnabled: in.SocialPlannerEnabled,
 		KnowledgeBaseFiles:   []KnowledgeBaseFile{},
 	}
@@ -168,6 +169,7 @@ type UpdateStudioInput struct {
 	ContactEmail         string
 	ContactPhone         string `json:"contactPhone"`
 	Active               bool
+	ManagedBy1Hero       bool
 	AvailabilitySlots    []AvailabilitySlot `json:"availabilitySlots"`
 	AvailabilityTimezone string             `json:"availabilityTimezone"`
 	GeminiAPIKey         string             `json:"geminiApiKey"`
@@ -180,8 +182,6 @@ type UpdateStudioInput struct {
 	KnowledgeBase        string             `json:"knowledgeBase"`
 	KnowledgeBaseFiles   []KnowledgeBaseFile `json:"knowledgeBaseFiles"`
 	TrialAmountSGD       int                 `json:"trialAmountSgd"`
-	
-	
 }
 
 func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput) (map[string]string, error) {
@@ -220,7 +220,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput
 	if len(errs) > 0 {
 		return errs, nil
 	}
-	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.ContactPhone, in.Active, in.AvailabilitySlots, in.AvailabilityTimezone, in.GeminiAPIKey, in.MetaAppID, in.MetaAppSecret, in.GoogleClientID, in.GoogleClientSecret, in.GoogleDeveloperToken, in.SocialPlannerEnabled, in.KnowledgeBase, in.KnowledgeBaseFiles, in.TrialAmountSGD); err != nil {
+	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.ContactPhone, in.Active, in.ManagedBy1Hero, in.AvailabilitySlots, in.AvailabilityTimezone, in.GeminiAPIKey, in.MetaAppID, in.MetaAppSecret, in.GoogleClientID, in.GoogleClientSecret, in.GoogleDeveloperToken, in.SocialPlannerEnabled, in.KnowledgeBase, in.KnowledgeBaseFiles, in.TrialAmountSGD); err != nil {
 		return nil, err
 	}
 

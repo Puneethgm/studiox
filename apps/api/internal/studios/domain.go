@@ -27,6 +27,7 @@ type Studio struct {
 	ContactEmail string    `json:"contactEmail"`
 	ContactPhone string    `json:"contactPhone"`
 	Active       bool      `json:"active"`
+	ManagedBy1Hero bool    `json:"managedBy1Hero"`
 	CreatedAt    time.Time `json:"createdAt"`
 	UpdatedAt    time.Time `json:"updatedAt"`
 	AvailabilitySlots []AvailabilitySlot `json:"availabilitySlots"`

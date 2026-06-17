@@ -51,6 +51,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
   const [metaAppId, setMetaAppId] = useState(studio.metaAppId || '');
   const [metaAppSecret, setMetaAppSecret] = useState(studio.metaAppSecret || '');
   const [active, setActive] = useState(studio.active);
+  const [managedBy1Hero, setManagedBy1Hero] = useState(studio.managedBy1Hero || false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   
@@ -134,6 +135,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
         contactEmail,
         contactPhone: fullPhone,
         active,
+        managedBy1Hero,
       });
       if (!result.ok) {
         setErrors(result.details ?? { _: result.error });
@@ -403,6 +405,21 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                   <div>
                     <Label htmlFor="active" className="mb-0 cursor-pointer text-xs font-black uppercase tracking-wider">Studio is active</Label>
                     <p className="text-[10px] text-zinc-400">Inactive studios stop accepting public form submissions.</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 p-3 rounded-2xl border border-white/10 bg-white/10 dark:bg-neutral-800/10">
+                  <input
+                    type="checkbox"
+                    id="managedBy1Hero"
+                    checked={managedBy1Hero}
+                    onChange={(e) => setManagedBy1Hero(e.target.checked)}
+                    className="h-4 w-4 rounded border-white/20 text-brand-500 focus:ring-brand-500 bg-white/10 cursor-pointer"
+                    suppressHydrationWarning
+                  />
+                  <div>
+                    <Label htmlFor="managedBy1Hero" className="mb-0 cursor-pointer text-xs font-black uppercase tracking-wider">Managed by 1Hero</Label>
+                    <p className="text-[10px] text-zinc-400">Super admins can access this studio. Uncheck to restrict access.</p>
                   </div>
                 </div>
 

@@ -27,6 +27,7 @@ export interface Studio {
   contactEmail: string;
   contactPhone?: string;
   active: boolean;
+  managedBy1Hero?: boolean;
   createdAt: string;
   updatedAt: string;
   availabilitySlots?: { day: string; times: string[] }[];

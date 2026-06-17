@@ -195,6 +195,7 @@ type updateReq struct {
 	ContactEmail         *string             `json:"contactEmail"`
 	ContactPhone         *string             `json:"contactPhone"`
 	Active               *bool               `json:"active"`
+	ManagedBy1Hero       *bool               `json:"managedBy1Hero"`
 	AvailabilitySlots    *[]AvailabilitySlot `json:"availabilitySlots"`
 	AvailabilityTimezone *string             `json:"availabilityTimezone"`
 	GeminiAPIKey         *string             `json:"geminiApiKey"`
@@ -237,6 +238,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		ContactEmail:         existing.ContactEmail,
 		ContactPhone:         existing.ContactPhone,
 		Active:               existing.Active,
+		ManagedBy1Hero:       existing.ManagedBy1Hero,
 		AvailabilitySlots:    existing.AvailabilitySlots,
 		AvailabilityTimezone: existing.AvailabilityTimezone,
 		GeminiAPIKey:         existing.GeminiAPIKey,
@@ -267,6 +269,9 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Active != nil {
 		input.Active = *req.Active
+	}
+	if req.ManagedBy1Hero != nil {
+		input.ManagedBy1Hero = *req.ManagedBy1Hero
 	}
 	if req.AvailabilitySlots != nil {
 		input.AvailabilitySlots = *req.AvailabilitySlots
@@ -400,6 +405,7 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 		ContactEmail:         existing.ContactEmail,
 		ContactPhone:         existing.ContactPhone,
 		Active:               existing.Active,
+		ManagedBy1Hero:       existing.ManagedBy1Hero,
 		AvailabilitySlots:    existing.AvailabilitySlots,
 		AvailabilityTimezone: existing.AvailabilityTimezone,
 		GeminiAPIKey:         existing.GeminiAPIKey,
@@ -430,6 +436,9 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Active != nil {
 		input.Active = *req.Active
+	}
+	if req.ManagedBy1Hero != nil {
+		input.ManagedBy1Hero = *req.ManagedBy1Hero
 	}
 	if req.AvailabilitySlots != nil {
 		input.AvailabilitySlots = *req.AvailabilitySlots

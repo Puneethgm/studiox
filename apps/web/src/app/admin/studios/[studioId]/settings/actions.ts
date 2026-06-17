@@ -28,6 +28,7 @@ export async function updateStudioSettings(
     contactEmail?: string;
     contactPhone?: string;
     active?: boolean;
+    managedBy1Hero?: boolean;
     availabilitySlots?: { day: string; times: string[] }[];
     availabilityTimezone?: string;
     geminiApiKey?: string;
