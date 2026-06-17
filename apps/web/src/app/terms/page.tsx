@@ -42,7 +42,7 @@ export default function TermsAndConditions() {
                 </div>
                 <div>
                   <h3 className="text-lg font-semibold mb-2 text-slate-900 dark:text-white">3.3 Account Security</h3>
-                  <p>You must immediately notify us at <a href="mailto:1hersocialai@gmail.com" className="text-blue-600 dark:text-blue-400 underline">1hersocialai@gmail.com</a> of any unauthorized use of your account or any security breach. We will not be liable for any loss or damage arising from your failure to comply with these security obligations.</p>
+                  <p>You must immediately notify us at <a href="mailto:1herosocialai@gmail.com" className="text-blue-600 dark:text-blue-400 underline">1herosocialai@gmail.com</a> of any unauthorized use of your account or any security breach. We will not be liable for any loss or damage arising from your failure to comply with these security obligations.</p>
                 </div>
               </div>
             </section>
@@ -176,13 +176,13 @@ export default function TermsAndConditions() {
                 <li><strong>Severability:</strong> If any provision is held invalid or unenforceable, the remaining provisions continue in full force.</li>
                 <li><strong>No Waiver:</strong> Failure to enforce any provision does not constitute a waiver of our right to enforce it in the future.</li>
                 <li><strong>Assignment:</strong> You may not assign your rights under these Terms without our prior written consent. We may assign our rights freely.</li>
-                <li><strong>Contact:</strong> For questions about these Terms, contact us at <a href="mailto:1hersocialai@gmail.com" className="text-blue-600 dark:text-blue-400 underline">1hersocialai@gmail.com</a>.</li>
+                <li><strong>Contact:</strong> For questions about these Terms, contact us at <a href="mailto:1herosocialai@gmail.com" className="text-blue-600 dark:text-blue-400 underline">1herosocialai@gmail.com</a>.</li>
               </ul>
             </section>
 
             <section className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-6">
               <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-3">Questions About These Terms?</h3>
-              <p><strong>Email:</strong> <a href="mailto:1hersocialai@gmail.com" className="text-blue-600 dark:text-blue-400 underline">1hersocialai@gmail.com</a></p>
+              <p><strong>Email:</strong> <a href="mailto:1herosocialai@gmail.com" className="text-blue-600 dark:text-blue-400 underline">1herosocialai@gmail.com</a></p>
             </section>
           </div>
         </div>

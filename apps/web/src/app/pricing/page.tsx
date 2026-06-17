@@ -111,7 +111,7 @@ export default function PricingPage() {
 
   return (
     <div className="min-h-screen bg-[#FAF9F6] font-sans text-slate-800 selection:bg-violet-600/10 selection:text-violet-900 overflow-x-hidden">
-      
+
       {/* Background Soft Glows */}
       <div className="absolute top-0 right-0 -z-10 h-[600px] w-[600px] rounded-full bg-violet-100/50 blur-[130px] pointer-events-none" />
       <div className="absolute top-[400px] left-0 -z-10 h-[700px] w-[700px] rounded-full bg-indigo-100/40 blur-[120px] pointer-events-none" />
@@ -144,7 +144,7 @@ export default function PricingPage() {
       {/* ── Pricing Hero Split Layout (Wide Viewport) ── */}
       <section className="relative pt-6 pb-6 md:pt-10 md:pb-10 px-4 md:px-12 max-w-[1600px] mx-auto">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-8 items-center">
-          
+
           {/* Left Text Column */}
           <div className="lg:col-span-7 space-y-6 text-left">
             <div className="inline-flex items-center gap-2 bg-violet-600/5 border border-violet-600/10 text-violet-700 text-xs font-bold px-4 py-1.5 rounded-full backdrop-blur-sm">
@@ -182,38 +182,35 @@ export default function PricingPage() {
 
       {/* ── Pricing Cards Grid (Single Row, Full Width) ── */}
       <section className="px-4 md:px-12 pb-20 md:pb-28 max-w-[1600px] mx-auto">
-        <div className={`grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch ${
-          tiers.length === 4 ? 'xl:grid-cols-4' :
-          tiers.length === 3 ? 'lg:grid-cols-3' :
-          'lg:grid-cols-2'
-        }`}>
+        <div className={`grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch ${tiers.length === 4 ? 'xl:grid-cols-4' :
+            tiers.length === 3 ? 'lg:grid-cols-3' :
+              'lg:grid-cols-2'
+          }`}>
           {tiers.map((tier, idx) => (
             <div
               key={tier.name}
-              className={`rounded-[32px] p-5 sm:p-8 flex flex-col justify-between transition-all duration-300 relative text-left ${
-                tier.highlight
+              className={`rounded-[32px] p-5 sm:p-8 flex flex-col justify-between transition-all duration-300 relative text-left ${tier.highlight
                   ? 'bg-white border-2 border-violet-500 shadow-xl shadow-violet-900/[0.04] lg:scale-105 z-10'
                   : 'bg-white border border-slate-200 hover:border-violet-300 hover:shadow-lg'
-              }`}
+                }`}
             >
               {tier.highlight && (
                 <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-violet-600 text-white text-xs font-bold px-4 py-1.5 rounded-full uppercase tracking-widest shadow-md">
                   Most Popular
                 </div>
               )}
-              
+
               <div>
-                <div className={`mb-6 h-12 w-12 flex items-center justify-center rounded-2xl ${
-                  tier.highlight ? 'bg-violet-100 text-violet-600' : 'bg-slate-100 text-slate-600'
-                }`}>
+                <div className={`mb-6 h-12 w-12 flex items-center justify-center rounded-2xl ${tier.highlight ? 'bg-violet-100 text-violet-600' : 'bg-slate-100 text-slate-600'
+                  }`}>
                   <Sparkles className="w-6 h-6" />
                 </div>
-                
+
                 <h3 className="text-2xl font-black text-slate-900 mb-2">{tier.name}</h3>
                 <p className="text-sm text-slate-500 min-h-[40px] mb-6 font-medium">
                   {tier.description}
                 </p>
-                
+
                 <div className="mb-8">
                   <span className="text-5xl font-black tracking-tight text-slate-900">
                     ${tier.price}
@@ -242,11 +239,10 @@ export default function PricingPage() {
                 <button
                   onClick={() => handleSelectPlan(tier.name)}
                   disabled={loadingTier !== null}
-                  className={`w-full py-4 rounded-xl text-base font-bold transition-all ${
-                    tier.highlight
+                  className={`w-full py-4 rounded-xl text-base font-bold transition-all ${tier.highlight
                       ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white hover:from-violet-700 hover:to-indigo-700 shadow-lg shadow-violet-600/20 hover:shadow-violet-600/30'
                       : 'bg-slate-50 text-slate-800 border border-slate-200 hover:border-violet-300 hover:bg-violet-50'
-                  }`}
+                    }`}
                 >
                   {loadingTier === tier.name ? 'Processing...' : `Get Started with ${tier.name}`}
                 </button>
@@ -273,8 +269,8 @@ export default function PricingPage() {
                 <a href="tel:+6582274100" className="flex items-center gap-2 hover:text-violet-600 transition-colors whitespace-nowrap">
                   <span>📞</span> +65 8227 4100
                 </a>
-                <a href="mailto:1hersocialai@gmail.com" className="flex items-center gap-2 hover:text-violet-600 transition-colors whitespace-nowrap">
-                  <span>✉</span> 1hersocialai@gmail.com
+                <a href="mailto:1herosocialai@gmail.com" className="flex items-center gap-2 hover:text-violet-600 transition-colors whitespace-nowrap">
+                  <span>✉</span> 1herosocialai@gmail.com
                 </a>
                 <a href="https://maps.google.com/?q=461+Ang+Mo+Kio+Avenue+2,+Singapore+567886" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 hover:text-violet-600 transition-colors whitespace-nowrap">
                   <span>📍</span> 461 Ang Mo Kio Ave 2, Singapore 567886

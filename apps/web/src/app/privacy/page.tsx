@@ -158,7 +158,7 @@ export default function PrivacyPolicy() {
                 <li><strong>Restriction:</strong> Request that we limit processing of your data in certain circumstances.</li>
                 <li><strong>Objection:</strong> Object to processing based on legitimate interests or for direct marketing.</li>
               </ul>
-              <p className="mt-3">To exercise any of these rights, contact us at <a href="mailto:1hersocialai@gmail.com" className="text-blue-600 dark:text-blue-400 underline">1hersocialai@gmail.com</a>. We will respond within 30 days.</p>
+              <p className="mt-3">To exercise any of these rights, contact us at <a href="mailto:1herosocialai@gmail.com" className="text-blue-600 dark:text-blue-400 underline">1herosocialai@gmail.com</a>. We will respond within 30 days.</p>
             </section>
 
             <section>
@@ -173,7 +173,7 @@ export default function PrivacyPolicy() {
               <p className="text-sm text-slate-600 dark:text-slate-400">
                 <strong>Warning:</strong> This action is irreversible. All your data, conversations, and subscription information will be permanently deleted.
               </p>
-              <p className="mt-3">For assistance with account deletion, contact <a href="mailto:1hersocialai@gmail.com" className="text-blue-600 dark:text-blue-400 underline">1hersocialai@gmail.com</a>.</p>
+              <p className="mt-3">For assistance with account deletion, contact <a href="mailto:1herosocialai@gmail.com" className="text-blue-600 dark:text-blue-400 underline">1herosocialai@gmail.com</a>.</p>
             </section>
 
             <section>
@@ -201,7 +201,7 @@ export default function PrivacyPolicy() {
               <p className="mb-3">For any privacy-related questions, data subject requests, or concerns, please contact:</p>
               <div className="space-y-1">
                 <p><strong>1HeroSocial — Data Privacy</strong></p>
-                <p><strong>Email:</strong> <a href="mailto:1hersocialai@gmail.com" className="text-blue-600 dark:text-blue-400 underline">1hersocialai@gmail.com</a></p>
+                <p><strong>Email:</strong> <a href="mailto:1herosocialai@gmail.com" className="text-blue-600 dark:text-blue-400 underline">1herosocialai@gmail.com</a></p>
                 <p><strong>Website:</strong> https://1herosocial.com</p>
               </div>
             </section>

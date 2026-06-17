@@ -109,13 +109,13 @@ export default function AboutPage() {
                   <div className="text-xs text-slate-500">Call or WhatsApp us</div>
                 </div>
               </a>
-              <a href="mailto:1hersocialai@gmail.com" className="flex items-start gap-3 group">
+              <a href="mailto:1herosocialai@gmail.com" className="flex items-start gap-3 group">
                 <div className="h-9 w-9 rounded-lg bg-indigo-50 border border-indigo-100 flex items-center justify-center shrink-0 group-hover:bg-indigo-100 transition-colors">
                   <Mail className="h-4 w-4 text-indigo-600" />
                 </div>
                 <div>
                   <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Email</div>
-                  <div className="font-bold text-slate-900 text-sm mt-0.5 group-hover:text-indigo-600 transition-colors">1hersocialai@gmail.com</div>
+                  <div className="font-bold text-slate-900 text-sm mt-0.5 group-hover:text-indigo-600 transition-colors">1herosocialai@gmail.com</div>
                   <div className="text-xs text-slate-500">We reply within 1 business day</div>
                 </div>
               </a>
@@ -163,8 +163,8 @@ export default function AboutPage() {
                 <a href="tel:+6582274100" className="flex items-center gap-2 hover:text-violet-600 transition-colors whitespace-nowrap">
                   <span>📞</span> +65 8227 4100
                 </a>
-                <a href="mailto:1hersocialai@gmail.com" className="flex items-center gap-2 hover:text-violet-600 transition-colors whitespace-nowrap">
-                  <span>✉</span> 1hersocialai@gmail.com
+                <a href="mailto:1herosocialai@gmail.com" className="flex items-center gap-2 hover:text-violet-600 transition-colors whitespace-nowrap">
+                  <span>✉</span> 1herosocialai@gmail.com
                 </a>
                 <a href="https://maps.google.com/?q=461+Ang+Mo+Kio+Avenue+2,+Singapore+567886" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 hover:text-violet-600 transition-colors whitespace-nowrap">
                   <span>📍</span> 461 Ang Mo Kio Ave 2, Singapore 567886
