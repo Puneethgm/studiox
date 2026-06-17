@@ -298,10 +298,10 @@ function StudioCard({ studio: s, idx }: { studio: Studio; idx: number }) {
           style={{ backgroundImage: `radial-gradient(circle at 80% 20%, white 0%, transparent 50%), radial-gradient(circle at 20% 80%, white 0%, transparent 40%)` }}
         />
         {/* Status toggle & badge */}
-        <div className="absolute right-4 top-4 flex items-center gap-2 rounded-xl bg-white/20 backdrop-blur-md p-1.5 border border-white/10">
+        <div className="absolute right-4 top-4 flex items-center gap-2 rounded-xl bg-white/20 backdrop-blur-md p-1.5 border border-white/10 pointer-events-auto">
           <Badge
             tone={s.active ? 'success' : 'neutral'}
-            className="text-[10px] font-black uppercase tracking-wider shadow-sm select-none"
+            className="text-[10px] font-black uppercase tracking-wider shadow-sm select-none pointer-events-none"
           >
             {s.active ? 'Active' : 'Inactive'}
           </Badge>
@@ -310,7 +310,7 @@ function StudioCard({ studio: s, idx }: { studio: Studio; idx: number }) {
       </div>
 
         {/* Avatar overlapping the header/body boundary */}
-        <div className="relative px-5 pb-5">
+        <div className="relative px-5 pb-5 pointer-events-none">
         <div className="-mt-7 mb-3 flex items-end justify-between">
           <div
             className="relative grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-[16px] text-lg font-black text-white shadow-lg ring-4 ring-white dark:ring-neutral-900"
@@ -396,3 +396,4 @@ function StudioCard({ studio: s, idx }: { studio: Studio; idx: number }) {
     </Link>
   );
 }
+
