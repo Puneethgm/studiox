@@ -281,7 +281,7 @@ function SummaryCard({
 
 function StudioCard({ studio: s, idx }: { studio: Studio; idx: number }) {
   return (
-    <Link href={`/admin/studios/${s.id}`}>
+    <Link href={`/admin/studios/${s.id}`} className="block h-full">
       <div
         className="relative h-full overflow-hidden rounded-[24px] backdrop-blur-2xl border border-white/30 bg-white/30 dark:border-white/5 dark:bg-neutral-900/30 cursor-pointer transition-all hover:shadow-lg hover:scale-[1.02]"
         style={{
