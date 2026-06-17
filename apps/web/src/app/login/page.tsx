@@ -124,9 +124,7 @@ export default function LoginPage() {
 
           <div className="relative">
             <div className="flex animate-in items-center gap-4" style={{ animationDelay: '100ms' }}>
-              <div className="grid h-14 w-14 place-items-center rounded-3xl bg-gradient-to-br from-brand-400 via-brand-primary to-brand-700 text-lg font-black text-white shadow-2xl shadow-brand-500/40 ring-2 ring-white/10">
-                1H
-              </div>
+              <img src="/logo.png" alt="1herosocial.ai Logo" className="h-14 w-14 object-contain rounded-3xl shadow-2xl shadow-brand-500/40 ring-2 ring-white/10" />
               <div className="text-2xl font-black tracking-tight text-white">1herosocial.ai</div>
             </div>
 
@@ -159,9 +157,7 @@ export default function LoginPage() {
 
           <div className="w-full max-w-md animate-in" style={{ animationDelay: '500ms' }}>
             <div className="mb-12 flex items-center gap-4 lg:hidden">
-              <div className="grid h-14 w-14 place-items-center rounded-3xl bg-gradient-to-br from-brand-400 via-brand-primary to-brand-700 text-lg font-black text-white shadow-xl ring-2 ring-white/10">
-                1H
-              </div>
+              <img src="/logo.png" alt="1herosocial.ai Logo" className="h-14 w-14 object-contain rounded-3xl shadow-xl ring-2 ring-white/10" />
               <div className="text-2xl font-black tracking-tight text-zinc-900 dark:text-white">1herosocial.ai</div>
             </div>
 

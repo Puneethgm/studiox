@@ -121,9 +121,7 @@ export default function PricingPage() {
         <div className="mx-auto flex h-18 w-full max-w-[1600px] items-center justify-between px-6 md:px-12 py-4">
           <div className="flex items-center gap-3">
             <Link href="/" className="flex items-center gap-3">
-              <div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 text-white shadow-lg shadow-violet-600/10">
-                <Sparkles className="h-5 w-5" />
-              </div>
+              <img src="/logo.png" alt="1herosocial.ai Logo" className="h-10 w-10 object-contain rounded-xl shadow-lg shadow-violet-600/10" />
               <span className="text-xl font-black tracking-tight text-slate-900">1herosocial.ai</span>
             </Link>
           </div>
@@ -144,7 +142,7 @@ export default function PricingPage() {
       </header>
 
       {/* ── Pricing Hero Split Layout (Wide Viewport) ── */}
-      <section className="relative pt-12 pb-10 md:pt-28 md:pb-16 px-4 md:px-12 max-w-[1600px] mx-auto">
+      <section className="relative pt-6 pb-6 md:pt-10 md:pb-10 px-4 md:px-12 max-w-[1600px] mx-auto">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-8 items-center">
           
           {/* Left Text Column */}
@@ -265,14 +263,23 @@ export default function PricingPage() {
             {/* Brand */}
             <div className="max-w-xs text-left">
               <div className="flex items-center gap-2.5 mb-6">
-                <div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 text-white shadow-md">
-                  <Sparkles className="h-5 w-5" />
-                </div>
+                <img src="/logo.png" alt="1herosocial.ai Logo" className="h-10 w-10 object-contain rounded-xl shadow-md" />
                 <span className="text-xl font-black tracking-tight text-slate-900">1herosocial.ai</span>
               </div>
               <p className="text-sm text-slate-500 leading-relaxed">
                 The modern, central workspace built for multi-location fitness and wellness studios to optimize lead conversions.
               </p>
+              <div className="mt-5 space-y-2 text-sm text-slate-500">
+                <a href="tel:+6582274100" className="flex items-center gap-2 hover:text-violet-600 transition-colors whitespace-nowrap">
+                  <span>📞</span> +65 8227 4100
+                </a>
+                <a href="mailto:1hersocialai@gmail.com" className="flex items-center gap-2 hover:text-violet-600 transition-colors whitespace-nowrap">
+                  <span>✉</span> 1hersocialai@gmail.com
+                </a>
+                <a href="https://maps.google.com/?q=461+Ang+Mo+Kio+Avenue+2,+Singapore+567886" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 hover:text-violet-600 transition-colors whitespace-nowrap">
+                  <span>📍</span> 461 Ang Mo Kio Ave 2, Singapore 567886
+                </a>
+              </div>
             </div>
 
             {/* Sitemap */}
@@ -289,7 +296,6 @@ export default function PricingPage() {
                 <h4 className="font-bold text-slate-800 mb-4">Account</h4>
                 <ul className="space-y-3 text-slate-500">
                   <li><Link href="/login" className="hover:text-violet-600 transition-colors">Log In</Link></li>
-                  <li><Link href="/pricing" className="hover:text-violet-600 transition-colors">Register</Link></li>
                 </ul>
               </div>
               <div>

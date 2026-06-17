@@ -15,6 +15,11 @@ export const metadata: Metadata = {
     'lead pipeline fitness',
     'gym owner CRM'
   ],
+  icons: {
+    icon: '/favicon.ico',
+    shortcut: '/favicon.ico',
+    apple: '/logo.png',
+  },
   openGraph: {
     title: '1herosocial.ai — Multi-Studio Gym Marketing & AI Operations',
     description: 'Automate lead streams, cross-channel messaging, member billing, and instant AI replies for fitness studios.',

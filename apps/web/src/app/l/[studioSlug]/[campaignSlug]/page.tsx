@@ -87,7 +87,7 @@ export default async function CampaignFormPage({
         </Card>
 
         <div className="mt-8 flex items-center justify-center gap-2 text-xs font-medium text-slate-400">
-          <Sparkles className="h-4 w-4 text-brand-500" />
+          <img src="/logo.png" alt="1herosocial.ai Logo" className="h-4 w-4 object-contain rounded-md" />
           <span>Powered by 1herosocial.ai</span>
         </div>
       </div>

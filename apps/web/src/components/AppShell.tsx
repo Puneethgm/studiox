@@ -359,9 +359,7 @@ function Sidebar({
           "mb-10 flex animate-in items-center gap-3 lg:transition-all lg:duration-300",
           isCollapsed ? "lg:flex-col lg:gap-1" : "lg:flex-row lg:gap-3"
         )} style={{ animationDelay: '100ms' }}>
-          <div className="grid h-12 w-12 shrink-0 animate-float place-items-center rounded-2xl bg-gradient-to-br from-brand-300 via-brand-primary to-brand-700 text-sm font-extrabold text-white shadow-lg shadow-brand-500/20 ring-4 ring-white/30">
-            1H
-          </div>
+          <img src="/logo.png" alt="1herosocial.ai Logo" className="h-12 w-12 shrink-0 animate-float object-contain rounded-2xl shadow-lg shadow-brand-500/20 ring-4 ring-white/30" />
           <div className={cn(
             "min-w-0 lg:block lg:transition-all lg:duration-300",
             isCollapsed ? "lg:max-w-0 lg:overflow-hidden lg:opacity-0" : "lg:max-w-[11rem] lg:opacity-100"

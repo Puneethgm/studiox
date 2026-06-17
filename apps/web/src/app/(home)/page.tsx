@@ -6,26 +6,17 @@ import { ReviewForm } from '@/components/ReviewForm';
 import { ReviewsCarousel } from '@/components/ReviewsCarousel';
 import {
   ArrowRight,
-  Sparkles,
   Building2,
   MessageSquare,
   Users,
-  BarChart3,
-  Zap,
   Globe,
   CheckCircle,
   Star,
+  PenLine,
   ChevronDown,
   Activity,
-  DollarSign,
-  Target,
   Award,
-  ChevronRight,
   TrendingUp,
-  Inbox,
-  ShieldCheck,
-  Calendar,
-  Lock
 } from 'lucide-react';
 
 interface SimulatedLead {
@@ -146,9 +137,7 @@ export default function Home() {
       <header className="sticky top-0 z-50 w-full border-b border-slate-200/50 bg-[#FAF9F6]/75 backdrop-blur-md">
         <div className="mx-auto flex w-full max-w-[1600px] items-center justify-between px-4 md:px-12 py-3 md:py-4">
           <div className="flex items-center gap-2 md:gap-3">
-            <div className="grid h-9 w-9 md:h-10 md:w-10 place-items-center rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 text-white shadow-lg shadow-violet-600/10">
-              <Sparkles className="h-4.5 w-4.5 md:h-5 md:w-5" />
-            </div>
+            <img src="/logo.png" alt="1herosocial.ai Logo" className="h-9 w-9 md:h-10 md:w-10 object-contain rounded-xl shadow-lg shadow-violet-600/10" />
             <span className="text-lg md:text-xl font-black tracking-tight text-slate-900">1herosocial.ai</span>
           </div>
 
@@ -157,6 +146,7 @@ export default function Home() {
             <a href="#calculator" className="text-sm font-semibold text-slate-600 hover:text-violet-600 transition-colors">ROI Calculator</a>
             <a href="#features" className="text-sm font-semibold text-slate-600 hover:text-violet-600 transition-colors">Platform Features</a>
             <Link href="/pricing" className="text-sm font-semibold text-slate-600 hover:text-violet-600 transition-colors">Pricing Plans</Link>
+            <Link href="/about" className="text-sm font-semibold text-slate-600 hover:text-violet-600 transition-colors">About Us</Link>
           </nav>
 
           <div className="flex items-center gap-4 md:gap-6">
@@ -173,7 +163,7 @@ export default function Home() {
       </header>
 
       {/* ── Hero Split Layout (Wide Viewport) ───────── */}
-      <section className="relative pt-12 pb-16 md:pt-28 md:pb-32 px-4 md:px-12 max-w-[1600px] mx-auto">
+      <section className="relative pt-8 pb-12 md:pt-14 md:pb-20 px-4 md:px-12 max-w-[1600px] mx-auto">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-8 items-center">
           
           {/* Left Text Column */}
@@ -710,6 +700,88 @@ export default function Home() {
         }}
       />
 
+      {/* Floating Write a Review button */}
+      <button
+        onClick={() => setIsReviewFormOpen(true)}
+        className="fixed bottom-6 right-6 z-50 flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white px-4 py-3 rounded-2xl text-sm font-bold shadow-lg shadow-violet-600/30 transition-all hover:scale-[1.03] active:scale-[0.97]"
+      >
+        <PenLine className="h-4 w-4" />
+        Write a Review
+      </button>
+
+      {/* ── About Us ────────────────────────────────── */}
+      <section id="about" className="border-t border-slate-200/60 bg-[#FAF9F6] py-16 md:py-24 px-4 md:px-12">
+        <div className="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-16 items-start">
+
+          {/* Left */}
+          <div className="lg:col-span-4 space-y-6 lg:sticky lg:top-24 text-left">
+            <span className="text-violet-600 font-bold uppercase tracking-wider text-xs bg-violet-50 border border-violet-100 px-3.5 py-1.5 rounded-full inline-block">
+              About Us
+            </span>
+            <h2 className="text-3xl sm:text-5xl font-black text-slate-900 tracking-tight leading-tight">
+              Built by Studio Owners, <span className="text-transparent bg-clip-text bg-gradient-to-r from-violet-600 to-indigo-600">For Studio Owners.</span>
+            </h2>
+            <p className="text-slate-600 text-base sm:text-lg leading-relaxed">
+              1 Hero Club Pte. Ltd. is a Singapore-incorporated technology company on a mission to help fitness and wellness studio owners grow faster with less manual effort.
+            </p>
+            <div className="pt-4 border-t border-slate-100 space-y-3 text-sm text-slate-600">
+              <div className="flex items-center gap-3">
+                <Building2 className="h-5 w-5 text-violet-600 shrink-0" />
+                <span><span className="font-bold text-slate-800">Incorporated:</span> 20 June 2025, Singapore</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <Globe className="h-5 w-5 text-violet-600 shrink-0" />
+                <span><span className="font-bold text-slate-800">Address:</span> 461 Ang Mo Kio Avenue 2, Horizon Gardens, Singapore 567886</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Right */}
+          <div className="lg:col-span-8 grid grid-cols-1 sm:grid-cols-2 gap-6">
+
+            <div className="sm:col-span-2 bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-sm">
+              <h3 className="text-lg font-bold text-slate-900 mb-3">Our Mission</h3>
+              <p className="text-slate-600 text-sm leading-relaxed">
+                We believe every gym, yoga studio, and wellness centre deserves enterprise-grade technology without the enterprise price tag. Our platform centralises lead management, AI-powered conversations, and member billing so you can focus on what you love — coaching people to be their best.
+              </p>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-sm flex flex-col gap-4">
+              <div className="h-11 w-11 rounded-xl bg-violet-600/5 border border-violet-100 flex items-center justify-center">
+                <Award className="h-5 w-5 text-violet-600" />
+              </div>
+              <h3 className="text-lg font-bold text-slate-900">Why Choose Us</h3>
+              <ul className="space-y-2 text-sm text-slate-600">
+                <li className="flex items-start gap-2"><CheckCircle className="h-4 w-4 text-violet-600 mt-0.5 shrink-0" /> Multi-studio management from one login</li>
+                <li className="flex items-start gap-2"><CheckCircle className="h-4 w-4 text-violet-600 mt-0.5 shrink-0" /> AI that replies leads in under 5 seconds</li>
+                <li className="flex items-start gap-2"><CheckCircle className="h-4 w-4 text-violet-600 mt-0.5 shrink-0" /> Stripe billing built right in</li>
+                <li className="flex items-start gap-2"><CheckCircle className="h-4 w-4 text-violet-600 mt-0.5 shrink-0" /> Singapore-based, PDPA-conscious</li>
+              </ul>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-sm flex flex-col gap-4">
+              <div className="h-11 w-11 rounded-xl bg-indigo-600/5 border border-indigo-100 flex items-center justify-center">
+                <MessageSquare className="h-5 w-5 text-indigo-600" />
+              </div>
+              <h3 className="text-lg font-bold text-slate-900">Get In Touch</h3>
+              <div className="space-y-3 text-sm text-slate-600">
+                <a href="tel:+6582274100" className="flex items-center gap-2 hover:text-violet-600 transition-colors font-semibold">
+                  <span className="text-violet-600">📞</span> +65 8227 4100
+                </a>
+                <a href="mailto:1hersocialai@gmail.com" className="flex items-center gap-2 hover:text-violet-600 transition-colors">
+                  <span className="text-violet-600">✉</span> 1hersocialai@gmail.com
+                </a>
+                <p className="flex items-start gap-2">
+                  <span className="text-violet-600 mt-0.5">📍</span>
+                  461 Ang Mo Kio Avenue 2,<br />Horizon Gardens, Singapore 567886
+                </p>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </section>
+
       {/* ── Footer ──────────────────────────────────── */}
       <footer className="bg-slate-50 text-slate-500 border-t border-slate-200/80">
         <div className="mx-auto max-w-[1600px] px-6 md:px-12 py-16">
@@ -717,15 +789,26 @@ export default function Home() {
             {/* Brand */}
             <div className="max-w-xs text-left">
               <div className="flex items-center gap-2.5 mb-6">
-                <div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 text-white shadow-md">
-                  <Sparkles className="h-5 w-5" />
-                </div>
+                <img src="/logo.png" alt="1herosocial.ai Logo" className="h-10 w-10 object-contain rounded-xl shadow-md" />
                 <span className="text-xl font-black tracking-tight text-slate-900">1herosocial.ai</span>
               </div>
               <p className="text-sm text-slate-500 leading-relaxed">
                 The modern, central workspace built for multi-location fitness and wellness studios to optimize lead conversions.
               </p>
-              
+
+              {/* Contact Info */}
+              <div className="mt-5 space-y-2 text-sm text-slate-500">
+                <a href="tel:+6582274100" className="flex items-center gap-2 hover:text-violet-600 transition-colors whitespace-nowrap">
+                  <span>📞</span> +65 8227 4100
+                </a>
+                <a href="mailto:1hersocialai@gmail.com" className="flex items-center gap-2 hover:text-violet-600 transition-colors whitespace-nowrap">
+                  <span>✉</span> 1hersocialai@gmail.com
+                </a>
+                <a href="https://maps.google.com/?q=461+Ang+Mo+Kio+Avenue+2,+Singapore+567886" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 hover:text-violet-600 transition-colors whitespace-nowrap">
+                  <span>📍</span> 461 Ang Mo Kio Ave 2, Singapore 567886
+                </a>
+              </div>
+
               {/* Social Icons */}
               <div className="flex items-center gap-4 mt-8">
                 <a href="#" aria-label="Instagram" className="text-slate-400 hover:text-violet-600 transition-colors">
@@ -746,7 +829,7 @@ export default function Home() {
             </div>
 
             {/* Sitemap */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-8 text-sm text-left">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-8 text-sm text-left">
               <div>
                 <h4 className="font-bold text-slate-800 mb-4">Product</h4>
                 <ul className="space-y-3 text-slate-500">
@@ -773,6 +856,13 @@ export default function Home() {
                   <li><Link href="/privacy" className="hover:text-violet-600 transition-colors">Privacy Policy</Link></li>
                   <li><Link href="/terms" className="hover:text-violet-600 transition-colors">Terms of Service</Link></li>
                   <li><Link href="/delete-account" className="hover:text-violet-600 transition-colors">Delete Account</Link></li>
+                </ul>
+              </div>
+              <div>
+                <h4 className="font-bold text-slate-800 mb-4">Company</h4>
+                <ul className="space-y-3 text-slate-500">
+                  <li><Link href="/about" className="hover:text-violet-600 transition-colors">About Us</Link></li>
+                  <li><a href="tel:+6582274100" className="hover:text-violet-600 transition-colors">+65 8227 4100</a></li>
                 </ul>
               </div>
             </div>
