@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { ReviewForm } from '@/components/ReviewForm';
 import { ReviewsCarousel } from '@/components/ReviewsCarousel';
@@ -68,6 +68,9 @@ const LEAD_MESSAGES = [
 const LEAD_STATUSES = ['New Lead', 'AI Responding', 'Trial Booked', 'Member Sold'] as const;
 
 export default function Home() {
+  const ctaRef = useRef<HTMLElement>(null);
+  const [showReviewButton, setShowReviewButton] = useState(false);
+
   // Live Lead Simulator State
   const [simulatedLeads, setSimulatedLeads] = useState<SimulatedLead[]>(INITIAL_SIMULATED_LEADS);
 
@@ -83,6 +86,22 @@ export default function Home() {
   // Review Form State
   const [isReviewFormOpen, setIsReviewFormOpen] = useState(false);
   const [reviewsRefreshKey, setReviewsRefreshKey] = useState(0);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      if (!ctaRef.current) return;
+      const ctaRect = ctaRef.current.getBoundingClientRect();
+      if (ctaRect.bottom < 100) {
+        setShowReviewButton(true);
+      } else {
+        setShowReviewButton(false);
+      }
+    };
+
+    window.addEventListener('scroll', handleScroll);
+    handleScroll();
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
   // Live Lead Stream Simulator Interval
   useEffect(() => {
@@ -656,7 +675,7 @@ export default function Home() {
       </section>
 
       {/* ── Premium High-Impact CTA (Full Width) ────── */}
-      <section className="relative overflow-hidden bg-gradient-to-br from-violet-950 to-indigo-900 py-20 sm:py-32 px-4 sm:px-6 text-center text-white">
+      <section ref={ctaRef} className="relative overflow-hidden bg-gradient-to-br from-violet-950 to-indigo-900 py-20 sm:py-32 px-4 sm:px-6 text-center text-white">
         <div className="absolute inset-0 z-0 opacity-10">
           <img 
             src="https://images.unsplash.com/photo-1540497077202-7c8a3999166f?q=80&w=2000&auto=format&fit=crop" 
@@ -703,7 +722,11 @@ export default function Home() {
       {/* Floating Write a Review button */}
       <button
         onClick={() => setIsReviewFormOpen(true)}
-        className="fixed bottom-6 right-6 z-50 flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white px-4 py-3 rounded-2xl text-sm font-bold shadow-lg shadow-violet-600/30 transition-all hover:scale-[1.03] active:scale-[0.97]"
+        className={`fixed bottom-6 left-6 z-50 flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white px-4 py-3 rounded-2xl text-sm font-bold shadow-lg shadow-violet-600/30 transition-all duration-300 active:scale-[0.97] ${
+          showReviewButton 
+            ? "opacity-100 translate-y-0 pointer-events-auto scale-100" 
+            : "opacity-0 translate-y-10 pointer-events-none scale-95"
+        }`}
       >
         <PenLine className="h-4 w-4" />
         Write a Review
@@ -795,7 +818,6 @@ export default function Home() {
               <p className="text-sm text-slate-500 leading-relaxed">
                 The modern, central workspace built for multi-location fitness and wellness studios to optimize lead conversions.
               </p>
-
               {/* Contact Info */}
               <div className="mt-5 space-y-2 text-sm text-slate-500">
                 <a href="tel:+6582274100" className="flex items-center gap-2 hover:text-violet-600 transition-colors whitespace-nowrap">
@@ -842,12 +864,6 @@ export default function Home() {
                 <h4 className="font-bold text-slate-800 mb-4">Account</h4>
                 <ul className="space-y-3 text-slate-500">
                   <li><Link href="/login" className="hover:text-violet-600 transition-colors">Log In</Link></li>
-                  <li><button
-                    onClick={() => setIsReviewFormOpen(true)}
-                    className="text-slate-500 hover:text-violet-600 transition-colors text-left"
-                  >
-                    Leave a Review
-                  </button></li>
                 </ul>
               </div>
               <div>

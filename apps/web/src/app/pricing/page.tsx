@@ -295,14 +295,15 @@ export default function PricingPage() {
               <div>
                 <h4 className="font-bold text-slate-800 mb-4">Account</h4>
                 <ul className="space-y-3 text-slate-500">
+                  <li><Link href="/about" className="hover:text-violet-600 transition-colors">About Us</Link></li>
                   <li><Link href="/login" className="hover:text-violet-600 transition-colors">Log In</Link></li>
                 </ul>
               </div>
               <div>
                 <h4 className="font-bold text-slate-800 mb-4">Legal</h4>
                 <ul className="space-y-3 text-slate-500">
-                  <li><a href="#" className="hover:text-violet-600 transition-colors">Privacy Policy</a></li>
-                  <li><a href="#" className="hover:text-violet-600 transition-colors">Terms of Service</a></li>
+                  <li><Link href="/privacy" className="hover:text-violet-600 transition-colors">Privacy Policy</Link></li>
+                  <li><Link href="/terms" className="hover:text-violet-600 transition-colors">Terms of Service</Link></li>
                 </ul>
               </div>
             </div>
