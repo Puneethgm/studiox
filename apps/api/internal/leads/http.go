@@ -61,10 +61,23 @@ func (h *Handler) PublicRoutes(r chi.Router) {
 // short-circuits with the right error response if forbidden.
 func (h *Handler) resolveStudioID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	c := identity.MustClaims(r.Context())
+
+	// Super admins can access any studio via URL param
 	if c.IsSuper() {
-		httpx.WriteError(w, http.StatusForbidden, "forbidden", "super admins cannot view or manage studio-specific campaign and lead data")
-		return uuid.Nil, false
+		studioIDStr := chi.URLParam(r, "studioId")
+		if studioIDStr == "" {
+			httpx.WriteError(w, http.StatusBadRequest, "bad_request", "studioId parameter required")
+			return uuid.Nil, false
+		}
+		studioID, err := uuid.Parse(studioIDStr)
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "bad_request", "invalid studioId format")
+			return uuid.Nil, false
+		}
+		return studioID, true
 	}
+
+	// Studio admins use their bound studio
 	if c.StudioID == nil {
 		httpx.WriteError(w, http.StatusForbidden, "forbidden", "no studio bound to this user")
 		return uuid.Nil, false

@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Pagination } from '@/components/ui/Pagination';
 import { Button } from '@/components/ui/Button';
-import { serverFetch } from '@/lib/auth';
+import { serverFetch, requireSession } from '@/lib/auth';
 import { formatDateTime } from '@/lib/datetime';
 import type { Lead, LeadStatus, Campaign } from '@/lib/types';
 import { LEAD_STATUSES, LEAD_STATUS_LABELS } from '@/lib/types';
@@ -69,6 +69,7 @@ export default async function LeadsPage({
   searchParams: Promise<SearchParams>;
 }) {
   const { studioId } = await params;
+  const me = await requireSession();
   const sp = await searchParams;
   const page = Math.max(1, Number(sp.page) || 1);
   const offset = (page - 1) * PAGE_SIZE;
@@ -84,9 +85,13 @@ export default async function LeadsPage({
   qs.set('limit', String(PAGE_SIZE));
   qs.set('offset', String(offset));
 
+  const campaignsEndpoint = me.role === 'super_admin'
+    ? `/api/v1/admin/studios/${studioId}/campaigns`
+    : `/api/v1/studios/${studioId}/campaigns`;
+
   const [data, campaignsResp, sources] = await Promise.all([
     serverFetch<ListResp>(`/api/v1/studios/${studioId}/leads?${qs.toString()}`),
-    serverFetch<{ campaigns: Campaign[] }>(`/api/v1/studios/${studioId}/campaigns`).catch(() => ({ campaigns: [] })),
+    serverFetch<{ campaigns: Campaign[] }>(campaignsEndpoint).catch(() => ({ campaigns: [] })),
     serverFetch<string[]>(`/api/v1/studios/${studioId}/leads/sources`).catch(() => [] as string[]),
   ]);
   const campaigns = campaignsResp.campaigns || [];

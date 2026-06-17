@@ -1,4 +1,3 @@
-import { redirect } from 'next/navigation';
 import { requireSession, serverFetch } from '@/lib/auth';
 import type { Campaign, Lead, Studio, LeadStatus } from '@/lib/types';
 import DashboardClient from './DashboardClient';
@@ -15,12 +14,14 @@ export default async function StudioOverviewPage({
 }) {
   const { studioId } = await params;
   const me = await requireSession();
-  if (me.role === 'super_admin') {
-    redirect('/admin/studios');
-  }
+
+  // Super admins fetch studio from /admin, others from /me
+  const studioEndpoint = me.role === 'super_admin'
+    ? `/api/v1/admin/studios/${studioId}`
+    : `/api/v1/me/studios/${studioId}`;
 
   const [studio, campResp, leadsResp, stats] = await Promise.all([
-    serverFetch<Studio>(`/api/v1/me/studios/${studioId}`),
+    serverFetch<Studio>(studioEndpoint),
     serverFetch<{ campaigns: Campaign[] }>(`/api/v1/studios/${studioId}/campaigns`),
     serverFetch<{ leads: Lead[]; total: number }>(`/api/v1/studios/${studioId}/leads?limit=5`),
     serverFetch<LeadStats>(`/api/v1/studios/${studioId}/leads/stats`),

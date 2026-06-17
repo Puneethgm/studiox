@@ -11,7 +11,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/projectx/api/internal/identity"
 	"github.com/projectx/api/internal/platform/httpx"
 )
 
@@ -136,11 +135,6 @@ func (s *Service) DeleteSocialPost(ctx context.Context, studioID string, id uuid
 }
 
 func (h *Handler) ListSocialPosts(w http.ResponseWriter, r *http.Request) {
-	c := identity.MustClaims(r.Context())
-	if c.IsSuper() {
-		httpx.WriteError(w, http.StatusForbidden, "forbidden", "super admins cannot view or manage studio-specific social posts")
-		return
-	}
 	studioID := chi.URLParam(r, "studioId")
 	posts, err := h.svc.ListSocialPosts(r.Context(), studioID)
 	if err != nil {
@@ -151,11 +145,6 @@ func (h *Handler) ListSocialPosts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) CreateSocialPost(w http.ResponseWriter, r *http.Request) {
-	c := identity.MustClaims(r.Context())
-	if c.IsSuper() {
-		httpx.WriteError(w, http.StatusForbidden, "forbidden", "super admins cannot view or manage studio-specific social posts")
-		return
-	}
 	studioIDStr := chi.URLParam(r, "studioId")
 	if studioIDStr == "global" {
 		httpx.WriteError(w, http.StatusBadRequest, "forbidden", "cannot create post on global scope")
@@ -201,11 +190,6 @@ func (h *Handler) CreateSocialPost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) UpdateSocialPost(w http.ResponseWriter, r *http.Request) {
-	c := identity.MustClaims(r.Context())
-	if c.IsSuper() {
-		httpx.WriteError(w, http.StatusForbidden, "forbidden", "super admins cannot view or manage studio-specific social posts")
-		return
-	}
 	studioID := chi.URLParam(r, "studioId")
 	postIDStr := chi.URLParam(r, "postId")
 	postID, err := uuid.Parse(postIDStr)
@@ -247,11 +231,6 @@ func (h *Handler) UpdateSocialPost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) DeleteSocialPost(w http.ResponseWriter, r *http.Request) {
-	c := identity.MustClaims(r.Context())
-	if c.IsSuper() {
-		httpx.WriteError(w, http.StatusForbidden, "forbidden", "super admins cannot view or manage studio-specific social posts")
-		return
-	}
 	studioID := chi.URLParam(r, "studioId")
 	postIDStr := chi.URLParam(r, "postId")
 	postID, err := uuid.Parse(postIDStr)

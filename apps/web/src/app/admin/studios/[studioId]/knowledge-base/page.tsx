@@ -1,5 +1,5 @@
 import { Database } from 'lucide-react';
-import { serverFetch } from '@/lib/auth';
+import { serverFetch, requireSession } from '@/lib/auth';
 import type { Studio } from '@/lib/types';
 import { KnowledgeBaseForm } from './KnowledgeBaseForm';
 
@@ -9,7 +9,13 @@ export default async function KnowledgeBasePage({
   params: Promise<{ studioId: string }>;
 }) {
   const { studioId } = await params;
-  const studio = await serverFetch<Studio>(`/api/v1/me/studios/${studioId}`);
+  const me = await requireSession();
+
+  const studioEndpoint = me.role === 'super_admin'
+    ? `/api/v1/admin/studios/${studioId}`
+    : `/api/v1/me/studios/${studioId}`;
+
+  const studio = await serverFetch<Studio>(studioEndpoint);
 
   return (
     <div className="space-y-4">

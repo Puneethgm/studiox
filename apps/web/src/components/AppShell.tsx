@@ -42,8 +42,31 @@ interface NavItem {
   match?: (pathname: string) => boolean;
 }
 
-function navItemsFor(me: Me): NavItem[] {
+function navItemsFor(me: Me, currentPath: string): NavItem[] {
+  // Check if currently viewing a studio (both super_admin and studio_admin can do this)
+  const studioMatch = currentPath.match(/\/admin\/studios\/([^/]+)/);
+  const currentStudioId = studioMatch?.[1];
+
   if (me.role === 'super_admin') {
+    // If viewing a specific studio, show studio-level nav (super admins: limited access)
+    if (currentStudioId) {
+      const base = `/admin/studios/${currentStudioId}`;
+      const links: NavItem[] = [
+        { href: base,                 label: 'Dashboard', icon: <Home className="h-[18px] w-[18px]" />,           match: (p) => p === base },
+        { href: `${base}/campaigns`,  label: 'Campaigns', icon: <Megaphone className="h-[18px] w-[18px]" />,      match: (p) => p.startsWith(`${base}/campaigns`) },
+        { href: `${base}/leads`,      label: 'Leads',     icon: <Inbox className="h-[18px] w-[18px]" />,          match: (p) => p.startsWith(`${base}/leads`) },
+        { href: `${base}/social-planner`, label: 'Social Planner', icon: <Sparkles className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/social-planner`) },
+      ];
+
+      links.push(
+        { href: `${base}/channels`,   label: 'Channels',  icon: <Plug className="h-[18px] w-[18px]" />,           match: (p) => p.startsWith(`${base}/channels`) },
+        { href: `${base}/knowledge-base`, label: 'Knowledge Base', icon: <Database className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/knowledge-base`) },
+      );
+
+      return links;
+    }
+
+    // Otherwise show top-level super admin nav
     return [
       {
         href: '/admin/studios',
@@ -65,6 +88,8 @@ function navItemsFor(me: Me): NavItem[] {
       },
     ];
   }
+
+  // Studio admin nav
   const sid = me.studioId!;
   const base = `/admin/studios/${sid}`;
   const links: NavItem[] = [
@@ -74,18 +99,18 @@ function navItemsFor(me: Me): NavItem[] {
     { href: `${base}/campaigns`,  label: 'Campaigns', icon: <Megaphone className="h-[18px] w-[18px]" />,      match: (p) => p.startsWith(`${base}/campaigns`) },
     { href: `${base}/leads`,      label: 'Leads',     icon: <Inbox className="h-[18px] w-[18px]" />,          match: (p) => p.startsWith(`${base}/leads`) },
   ];
-  
+
   if (me.studio?.socialPlannerEnabled) {
     links.push({ href: `${base}/social-planner`, label: 'Social Planner', icon: <Sparkles className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/social-planner`) });
   }
-  
+
   links.push(
     { href: `${base}/payments`,   label: 'Payments',  icon: <CreditCard className="h-[18px] w-[18px]" />,     match: (p) => p.startsWith(`${base}/payments`) },
     { href: `${base}/channels`,   label: 'Channels',  icon: <Plug className="h-[18px] w-[18px]" />,           match: (p) => p.startsWith(`${base}/channels`) },
     { href: `${base}/knowledge-base`, label: 'Knowledge Base', icon: <Database className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/knowledge-base`) },
     { href: `${base}/settings`,   label: 'Settings',  icon: <Settings className="h-[18px] w-[18px]" />,       match: (p) => p.startsWith(`${base}/settings`) }
   );
-  
+
   return links;
 }
 
@@ -265,7 +290,7 @@ function Sidebar({
   onToggle: () => void;
 }) {
   const pathname = usePathname();
-  const items = navItemsFor(me);
+  const items = navItemsFor(me, pathname);
   const isStudio = me.role === 'studio_admin' && !!me.studio;
   const studio = isStudio ? me.studio! : null;
 

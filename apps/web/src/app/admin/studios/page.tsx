@@ -281,14 +281,15 @@ function SummaryCard({
 
 function StudioCard({ studio: s, idx }: { studio: Studio; idx: number }) {
   return (
-    <div
-      className="relative h-full overflow-hidden rounded-[24px] backdrop-blur-2xl border border-white/30 bg-white/30 dark:border-white/5 dark:bg-neutral-900/30"
-      style={{
-        boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 8px 32px rgba(0,0,0,0.07)',
-      }}
-    >
-      {/* Full-width colored header strip */}
+    <Link href={`/admin/studios/${s.id}`}>
       <div
+        className="relative h-full overflow-hidden rounded-[24px] backdrop-blur-2xl border border-white/30 bg-white/30 dark:border-white/5 dark:bg-neutral-900/30 cursor-pointer transition-all hover:shadow-lg hover:scale-[1.02]"
+        style={{
+          boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 8px 32px rgba(0,0,0,0.07)',
+        }}
+      >
+        {/* Full-width colored header strip */}
+        <div
         className="relative h-24 w-full overflow-hidden"
         style={{ background: `linear-gradient(135deg, ${s.brandColor} 0%, ${s.brandColor}cc 60%, ${s.brandColor}88 100%)` }}
       >
@@ -308,8 +309,8 @@ function StudioCard({ studio: s, idx }: { studio: Studio; idx: number }) {
         </div>
       </div>
 
-      {/* Avatar overlapping the header/body boundary */}
-      <div className="relative px-5 pb-5">
+        {/* Avatar overlapping the header/body boundary */}
+        <div className="relative px-5 pb-5">
         <div className="-mt-7 mb-3 flex items-end justify-between">
           <div
             className="relative grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-[16px] text-lg font-black text-white shadow-lg ring-4 ring-white dark:ring-neutral-900"
@@ -384,13 +385,14 @@ function StudioCard({ studio: s, idx }: { studio: Studio; idx: number }) {
             </div>
           </div>
         </div>
-      </div>
+        </div>
 
-      {/* Ambient glow */}
-      <div
-        className="pointer-events-none absolute -right-10 -top-10 h-40 w-40 rounded-full blur-3xl opacity-10"
-        style={{ background: s.brandColor }}
-      />
-    </div>
+        {/* Ambient glow */}
+        <div
+          className="pointer-events-none absolute -right-10 -top-10 h-40 w-40 rounded-full blur-3xl opacity-10"
+          style={{ background: s.brandColor }}
+        />
+      </div>
+    </Link>
   );
 }

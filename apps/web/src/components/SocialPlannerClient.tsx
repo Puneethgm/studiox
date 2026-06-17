@@ -44,7 +44,7 @@ interface SocialPost {
   scheduledTime: string;
 }
 
-export default function SocialPlannerClient({ studioId }: { studioId: string }) {
+export default function SocialPlannerClient({ studioId, studio, isSuperAdmin }: { studioId: string; studio?: any; isSuperAdmin?: boolean }) {
   const [activeTab, setActiveTab] = useState<'scheduler' | 'ai-creator' | 'connections'>('scheduler');
   const [posts, setPosts] = useState<SocialPost[]>([]);
   const [loadingPosts, setLoadingPosts] = useState(true);
@@ -191,9 +191,10 @@ export default function SocialPlannerClient({ studioId }: { studioId: string }) 
     if (studioId !== 'global') {
       void (async () => {
         try {
+          const studioEndpoint = isSuperAdmin ? `/api/v1/admin/studios/${studioId}` : `/api/v1/me/studios/${studioId}`;
           const [campaignsRes, studioRes, channelsRes] = await Promise.all([
             api<{ campaigns: Array<{ id: string; name: string; slug: string; shareUrl: string }>; total: number }>(`/api/v1/studios/${studioId}/campaigns`),
-            api<{ metaAppId?: string; metaAppSecret?: string; googleClientId?: string; googleClientSecret?: string; googleDeveloperToken?: string }>(`/api/v1/me/studios/${studioId}`),
+            api<{ metaAppId?: string; metaAppSecret?: string; googleClientId?: string; googleClientSecret?: string; googleDeveloperToken?: string }>(studioEndpoint),
             api<{ channels: { kind: string; status?: string }[] }>(`/api/v1/studios/${studioId}/messaging/channels`)
           ]);
           setCampaigns(campaignsRes.campaigns || []);

@@ -1,5 +1,5 @@
 import { Share2 } from 'lucide-react';
-import { serverFetch } from '@/lib/auth';
+import { serverFetch, requireSession } from '@/lib/auth';
 import type { ChannelAccount, Studio } from '@/lib/types';
 import { ChannelTabs } from './ChannelTabs';
 
@@ -13,10 +13,16 @@ export default async function ChannelsPage({
   params: Promise<{ studioId: string }>;
 }) {
   const { studioId } = await params;
+  const me = await requireSession();
+
+  const studioEndpoint = me.role === 'super_admin'
+    ? `/api/v1/admin/studios/${studioId}`
+    : `/api/v1/me/studios/${studioId}`;
+
   const { channels } = await serverFetch<ListResp>(
     `/api/v1/studios/${studioId}/messaging/channels`,
   );
-  const studio = await serverFetch<Studio>(`/api/v1/me/studios/${studioId}`);
+  const studio = await serverFetch<Studio>(studioEndpoint);
 
   return (
     <div className="space-y-4">
