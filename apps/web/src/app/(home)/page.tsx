@@ -17,6 +17,8 @@ import {
   Activity,
   Award,
   TrendingUp,
+  Menu,
+  X as XIcon,
 } from 'lucide-react';
 
 interface SimulatedLead {
@@ -79,6 +81,9 @@ export default function Home() {
   const [conversionRate, setConversionRate] = useState<number>(15); // in percentage
   const [memberLifetimeMonths, setMemberLifetimeMonths] = useState<number>(9);
   const [monthlyMembershipFee, setMonthlyMembershipFee] = useState<number>(120);
+
+  // Mobile nav state
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   // FAQ Accordion State
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(null);
@@ -168,17 +173,45 @@ export default function Home() {
             <Link href="/about" className="text-sm font-semibold text-slate-600 hover:text-violet-600 transition-colors">About Us</Link>
           </nav>
 
-          <div className="flex items-center gap-4 md:gap-6">
-            <Link href="/login" className="text-sm font-semibold text-slate-600 hover:text-violet-600 transition-colors">
+          <div className="flex items-center gap-3 md:gap-6">
+            <Link href="/login" className="hidden sm:block text-sm font-semibold text-slate-600 hover:text-violet-600 transition-colors">
               Log in
             </Link>
-            <Link href="/pricing" className="hidden sm:inline-block">
+            <Link href="/pricing" className="hidden lg:inline-block">
               <button className="flex items-center gap-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white px-5 py-2.5 rounded-xl text-sm font-bold transition-all shadow-md shadow-violet-600/10 hover:shadow-violet-600/20 hover:scale-[1.02] active:scale-[0.98]">
                 Get Started <ArrowRight className="h-4 w-4" />
               </button>
             </Link>
+            {/* Hamburger — visible below lg */}
+            <button
+              onClick={() => setMobileNavOpen(o => !o)}
+              aria-label={mobileNavOpen ? 'Close menu' : 'Open menu'}
+              aria-expanded={mobileNavOpen}
+              className="lg:hidden p-2 rounded-xl text-slate-600 hover:text-violet-600 hover:bg-violet-50 transition-colors"
+            >
+              {mobileNavOpen ? <XIcon className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </button>
           </div>
         </div>
+
+        {/* Mobile nav drawer */}
+        {mobileNavOpen && (
+          <div className="lg:hidden border-t border-slate-200/60 bg-[#FAF9F6]/95 backdrop-blur-md px-4 py-4 space-y-1">
+            <a href="#simulator" onClick={() => setMobileNavOpen(false)} className="flex items-center gap-2 px-4 py-3 rounded-xl text-sm font-semibold text-slate-700 hover:bg-violet-50 hover:text-violet-600 transition-colors">Lead Stream</a>
+            <a href="#calculator" onClick={() => setMobileNavOpen(false)} className="flex items-center gap-2 px-4 py-3 rounded-xl text-sm font-semibold text-slate-700 hover:bg-violet-50 hover:text-violet-600 transition-colors">ROI Calculator</a>
+            <a href="#features" onClick={() => setMobileNavOpen(false)} className="flex items-center gap-2 px-4 py-3 rounded-xl text-sm font-semibold text-slate-700 hover:bg-violet-50 hover:text-violet-600 transition-colors">Platform Features</a>
+            <Link href="/pricing" onClick={() => setMobileNavOpen(false)} className="flex items-center gap-2 px-4 py-3 rounded-xl text-sm font-semibold text-slate-700 hover:bg-violet-50 hover:text-violet-600 transition-colors">Pricing Plans</Link>
+            <Link href="/about" onClick={() => setMobileNavOpen(false)} className="flex items-center gap-2 px-4 py-3 rounded-xl text-sm font-semibold text-slate-700 hover:bg-violet-50 hover:text-violet-600 transition-colors">About Us</Link>
+            <div className="pt-2 border-t border-slate-200/60 flex flex-col gap-2">
+              <Link href="/login" onClick={() => setMobileNavOpen(false)} className="px-4 py-3 rounded-xl text-sm font-semibold text-slate-700 hover:bg-violet-50 hover:text-violet-600 transition-colors text-center">Log in</Link>
+              <Link href="/pricing" onClick={() => setMobileNavOpen(false)}>
+                <button className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-violet-600 to-indigo-600 text-white px-5 py-3 rounded-xl text-sm font-bold transition-all">
+                  Get Started <ArrowRight className="h-4 w-4" />
+                </button>
+              </Link>
+            </div>
+          </div>
+        )}
       </header>
 
       {/* ── Hero Split Layout (Wide Viewport) ───────── */}
@@ -232,9 +265,9 @@ export default function Home() {
           </div>
 
           {/* Right Hero Image/Graphic Column */}
-          <div className="lg:col-span-5 relative">
+          <div className="lg:col-span-5 relative min-w-0">
             <div className="absolute inset-0 bg-gradient-to-br from-violet-600/10 to-indigo-600/10 rounded-3xl blur-2xl -z-10" />
-            <div className="bg-white border border-slate-200 rounded-3xl p-4 sm:p-6 shadow-2xl relative overflow-hidden">
+            <div className="bg-white border border-slate-200 rounded-3xl p-4 sm:p-6 shadow-2xl relative overflow-hidden min-w-0">
               <div className="flex justify-between items-center border-b border-slate-100 pb-4 mb-4">
                 <div className="flex items-center gap-2">
                   <span className="h-3 w-3 rounded-full bg-red-400" />
@@ -659,7 +692,7 @@ export default function Home() {
                 </button>
 
                 <div
-                  className={`transition-all duration-300 ease-in-out overflow-hidden ${openFaqIndex === idx ? 'max-h-48 border-t border-slate-200/60 bg-white' : 'max-h-0'
+                  className={`transition-all duration-300 ease-in-out overflow-hidden ${openFaqIndex === idx ? 'max-h-[600px] border-t border-slate-200/60 bg-white' : 'max-h-0'
                     }`}
                 >
                   <p className="p-5 sm:p-6 text-sm sm:text-base text-slate-600 leading-relaxed text-left">{faq.a}</p>
@@ -815,14 +848,14 @@ export default function Home() {
               </p>
               {/* Contact Info */}
               <div className="mt-5 space-y-2 text-sm text-slate-500">
-                <a href="tel:+6582274100" className="flex items-center gap-2 hover:text-violet-600 transition-colors whitespace-nowrap">
+                <a href="tel:+6582274100" className="flex items-center gap-2 hover:text-violet-600 transition-colors">
                   <span>📞</span> +65 8227 4100
                 </a>
-                <a href="mailto:1herosocialai@gmail.com" className="flex items-center gap-2 hover:text-violet-600 transition-colors whitespace-nowrap">
+                <a href="mailto:1herosocialai@gmail.com" className="flex items-center gap-2 hover:text-violet-600 transition-colors break-all">
                   <span>✉</span> 1herosocialai@gmail.com
                 </a>
-                <a href="https://maps.google.com/?q=461+Ang+Mo+Kio+Avenue+2,+Singapore+567886" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 hover:text-violet-600 transition-colors whitespace-nowrap">
-                  <span>📍</span> 461 Ang Mo Kio Ave 2, Singapore 567886
+                <a href="https://maps.google.com/?q=461+Ang+Mo+Kio+Avenue+2,+Singapore+567886" target="_blank" rel="noopener noreferrer" className="flex items-start gap-2 hover:text-violet-600 transition-colors">
+                  <span>📍</span> <span>461 Ang Mo Kio Ave 2, Singapore 567886</span>
                 </a>
               </div>
 

@@ -27,9 +27,9 @@ export default function AboutPage() {
           <div className="flex items-center gap-4 md:gap-6 text-sm font-semibold text-slate-600">
             <Link href="/#features" className="hidden sm:block hover:text-violet-600 transition-colors">Features</Link>
             <Link href="/pricing" className="hidden sm:block hover:text-violet-600 transition-colors">Pricing</Link>
-            <Link href="/login" className="hover:text-violet-600 transition-colors">Log in</Link>
+            <Link href="/login" className="hidden sm:block hover:text-violet-600 transition-colors">Log in</Link>
             <Link href="/pricing">
-              <button className="flex items-center gap-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white px-5 py-2.5 rounded-xl text-sm font-bold transition-all shadow-md">
+              <button className="flex items-center gap-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white px-4 py-2 sm:px-5 sm:py-2.5 rounded-xl text-sm font-bold transition-all shadow-md">
                 Get Started <ArrowRight className="h-4 w-4" />
               </button>
             </Link>
@@ -160,19 +160,19 @@ export default function AboutPage() {
                 The modern, central workspace built for multi-location fitness and wellness studios.
               </p>
               <div className="mt-4 space-y-2 text-sm text-slate-500">
-                <a href="tel:+6582274100" className="flex items-center gap-2 hover:text-violet-600 transition-colors whitespace-nowrap">
+                <a href="tel:+6582274100" className="flex items-center gap-2 hover:text-violet-600 transition-colors">
                   <span>📞</span> +65 8227 4100
                 </a>
-                <a href="mailto:1herosocialai@gmail.com" className="flex items-center gap-2 hover:text-violet-600 transition-colors whitespace-nowrap">
+                <a href="mailto:1herosocialai@gmail.com" className="flex items-center gap-2 hover:text-violet-600 transition-colors break-all">
                   <span>✉</span> 1herosocialai@gmail.com
                 </a>
-                <a href="https://maps.google.com/?q=461+Ang+Mo+Kio+Avenue+2,+Singapore+567886" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 hover:text-violet-600 transition-colors whitespace-nowrap">
-                  <span>📍</span> 461 Ang Mo Kio Ave 2, Singapore 567886
+                <a href="https://maps.google.com/?q=461+Ang+Mo+Kio+Avenue+2,+Singapore+567886" target="_blank" rel="noopener noreferrer" className="flex items-start gap-2 hover:text-violet-600 transition-colors">
+                  <span className="mt-0.5">📍</span> <span>461 Ang Mo Kio Ave 2, Singapore 567886</span>
                 </a>
               </div>
             </div>
             {/* Links */}
-            <div className="grid grid-cols-3 gap-8 text-sm text-left">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-8 text-sm text-left">
               <div>
                 <h4 className="font-bold text-slate-800 mb-4">Product</h4>
                 <ul className="space-y-3 text-slate-500">
