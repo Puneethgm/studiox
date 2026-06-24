@@ -274,6 +274,70 @@ func (r *Repo) MarkChannelError(ctx context.Context, id uuid.UUID, msg string) e
 	return err
 }
 
+// UpsertWAWebChannel creates or re-activates the whatsapp_web channel for a studio.
+// Called when the Baileys session connects successfully after QR scan.
+// phone is the linked WhatsApp number (e.g. "6512345678").
+func (r *Repo) UpsertWAWebChannel(ctx context.Context, studioID uuid.UUID, phone string) error {
+	placeholder, _ := r.cipher.Encrypt("wa-web-baileys")
+
+	// Try to re-activate an existing row for this studio first.
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE channel_accounts
+		SET status = 'active', display_handle = $2, external_id = $2,
+		    connected_at = now(), disconnected_at = NULL, updated_at = now()
+		WHERE studio_id = $1 AND kind = 'whatsapp_web'
+	`, studioID, phone)
+	if err != nil {
+		return fmt.Errorf("upsert wa_web channel (update): %w", err)
+	}
+	if tag.RowsAffected() > 0 {
+		return nil
+	}
+
+	// No existing row — insert fresh.
+	_, err = r.pool.Exec(ctx, `
+		INSERT INTO channel_accounts
+		  (studio_id, kind, bsp, external_id, parent_id, display_handle,
+		   access_token_enc, status, connected_at, updated_at)
+		VALUES ($1, 'whatsapp_web', 'baileys', $2, '', $2, $3, 'active', now(), now())
+	`, studioID, phone, placeholder)
+	if err != nil {
+		return fmt.Errorf("upsert wa_web channel (insert): %w", err)
+	}
+	return nil
+}
+
+// ListWAWebStudioIDs returns all studio IDs that have a whatsapp_web channel (any status).
+func (r *Repo) ListWAWebStudioIDs(ctx context.Context) ([]uuid.UUID, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT DISTINCT studio_id FROM channel_accounts
+		WHERE kind = 'whatsapp_web'
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// DisconnectWAWebChannel marks any active whatsapp_web channel for a studio as disconnected.
+func (r *Repo) DisconnectWAWebChannel(ctx context.Context, studioID uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE channel_accounts
+		SET status = 'disconnected', disconnected_at = now(), updated_at = now()
+		WHERE studio_id = $1 AND kind = 'whatsapp_web' AND status <> 'disconnected'
+	`, studioID)
+	return err
+}
+
 // ============================================================
 // contact_identities
 // ============================================================

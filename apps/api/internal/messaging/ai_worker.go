@@ -191,8 +191,8 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		return nil
 	}
 
-	// Only reply on WhatsApp and Facebook Messenger
-	if channel.Kind != KindWhatsAppMeta && channel.Kind != KindMessengerMeta {
+	// Only reply on WhatsApp and Facebook Messenger channels
+	if channel.Kind != KindWhatsAppMeta && channel.Kind != KindMessengerMeta && channel.Kind != KindWhatsAppWeb {
 		w.log.Debug("skipping ai reply", "channel", channel.Kind, "reason", "not whatsapp or messenger")
 		return nil
 	}
@@ -204,10 +204,29 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		if err != nil {
 			w.log.Error("fetch lead for ai context", "err", err)
 		} else {
-			// Do not reply if the lead is actively inside the bot automation flow
-			if lead.AutoContactStage != "" && lead.AutoContactStage != "completed" {
-				w.log.Debug("skipping ai reply", "lead", lead.ID, "reason", "lead is in bot automation flow")
+			// Skip AI if the bot automation is actively handling this lead — UNLESS we are
+			// at awaiting_options where the user may have asked a question the bot doesn't
+			// recognise (bot only handles "1"/"2" there; everything else falls to AI).
+			stage := lead.AutoContactStage
+			if stage != "" && stage != "completed" && stage != "awaiting_options" {
+				w.log.Debug("skipping ai reply", "lead", lead.ID, "stage", stage, "reason", "bot is handling this stage")
 				return nil
+			}
+			// Even at awaiting_options, skip if the bot already queued an outbound reply
+			// for this conversation after the inbound message arrived (bot handled "1"/"2").
+			if stage == "awaiting_options" || stage == "" {
+				var botReplied bool
+				_ = w.msgRepo.Pool().QueryRow(ctx, `
+					SELECT EXISTS(
+						SELECT 1 FROM outbound_jobs
+						WHERE conversation_id = $1 AND source_kind = 'automation'
+						AND created_at >= $2
+					)
+				`, conv.ID, msg.CreatedAt).Scan(&botReplied)
+				if botReplied {
+					w.log.Debug("skipping ai reply", "lead", lead.ID, "reason", "bot already replied to this message")
+					return nil
+				}
 			}
 		}
 	}
@@ -425,16 +444,10 @@ func (w *AIWorker) buildPrompt(history []Message, semanticHistory []SemanticMatc
 	}
 
 	if kbText != "" {
-		sb.WriteString("KNOWLEDGE BASE (use ONLY this to answer factual questions):\n\"\"\"\n")
+		sb.WriteString("KNOWLEDGE BASE:\n\"\"\"\n")
 		sb.WriteString(kbText)
 		sb.WriteString("\n\"\"\"\n")
-		if kbConfident {
-			sb.WriteString("The knowledge base contains relevant information for this query — use it precisely.\n\n")
-		} else {
-			sb.WriteString("The knowledge base may not directly answer this query. If you cannot find the answer, say: \"I don't have that detail handy — a team member will follow up shortly.\"\n\n")
-		}
-	} else {
-		sb.WriteString("No knowledge base is configured. If asked factual questions you cannot answer, say a team member will follow up.\n\n")
+		sb.WriteString("Use the knowledge base above to answer factual questions. If it doesn't cover the exact question, use what context you have and answer helpfully anyway — do NOT say you don't know or that someone will follow up.\n\n")
 	}
 
 	// ── Plans ────────────────────────────────────────────────────────────────
@@ -472,8 +485,7 @@ func (w *AIWorker) buildPrompt(history []Message, semanticHistory []SemanticMatc
 	case "off_topic":
 		sb.WriteString("Customer is asking something unrelated to the studio. Politely acknowledge, then steer the conversation back to how the studio can help them.\n")
 	default:
-		// general_question or unknown
-		sb.WriteString("Answer the question concisely using the knowledge base. Then ask one qualifying question to understand their fitness goals.\n")
+		sb.WriteString("Answer the question helpfully and concisely. Then ask one qualifying question to understand their fitness goals.\n")
 	}
 
 	// Sentiment overlay
@@ -676,7 +688,19 @@ func (w *AIWorker) scheduleTrialFollowup(ctx context.Context, studioID uuid.UUID
 }
 
 func (w *AIWorker) generateGeminiReply(ctx context.Context, apiKey string, prompt string) (string, error) {
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=%s", apiKey)
+	models := []string{"gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite"}
+	for _, model := range models {
+		resp, err := w.tryGeminiModel(ctx, apiKey, model, prompt)
+		if err == nil {
+			return resp, nil
+		}
+		w.log.Warn("gemini model failed, trying next", "model", model, "err", err)
+	}
+	return "", fmt.Errorf("all Gemini models failed")
+}
+
+func (w *AIWorker) tryGeminiModel(ctx context.Context, apiKey string, model string, prompt string) (string, error) {
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, apiKey)
 
 	reqBody, err := json.Marshal(map[string]any{
 		"contents": []map[string]any{

@@ -70,9 +70,12 @@ api: ## Run the Go API
 web: ## Run the Next.js web app (admin + public + auth, single app)
 	cd apps/web && $(PNPM) dev
 
-dev: ## Run API + web concurrently (requires `npx`)
-	npx -y concurrently -k -n api,web -c blue,magenta \
-		"\"$(MAKE)\" api" "\"$(MAKE)\" web"
+wa-web: ## Run the WhatsApp Web QR service
+	cd apps/wa-web && node src/index.js
+
+dev: ## Run API + web + wa-web concurrently
+	$(PNPM) dlx concurrently -k -n api,web,wa-web -c blue,magenta,green \
+		"\"$(MAKE)\" api" "\"$(MAKE)\" web" "\"$(MAKE)\" wa-web"
 
 # ---------- quality ----------
 .PHONY: test lint fmt

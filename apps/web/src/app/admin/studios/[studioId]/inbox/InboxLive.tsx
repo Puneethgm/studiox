@@ -35,8 +35,14 @@ import type {
   Studio,
 } from '@/lib/types';
 
+// Strip @c.us / @lid / @s.whatsapp.net suffixes from WA chat IDs for display
+function displayContact(value: string): string {
+  return value ? value.replace(/@[^@]+$/, '') : value;
+}
+
 const CHANNEL_BADGE: Record<ChannelKind, { label: string; color: string }> = {
   whatsapp_meta:  { label: 'WA',  color: '#25D366' },
+  whatsapp_web:   { label: 'WA',  color: '#128C7E' },
   instagram_meta: { label: 'IG',  color: '#E1306C' },
   messenger_meta: { label: 'FB',  color: '#0084FF' },
   x_dm:           { label: 'X',   color: '#000000' },
@@ -99,7 +105,7 @@ export function InboxLive({
   const [mounted, setMounted] = useState(false);
   const [currentTab, _setCurrentTab] = useState<InboxTab>('conversations');
   const setCurrentTab = useCallback((tab: InboxTab) => { currentTabRef.current = tab; _setCurrentTab(tab); }, []);
-  const [activeChannel, setActiveChannel] = useState<ChannelKind>('whatsapp_meta');
+  const [activeChannel, setActiveChannel] = useState<ChannelKind>('whatsapp_web');
   const [unrespondedOnly, setUnrespondedOnly] = useState(initialUnresponded);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedId, _setSelectedId] = useState<string | null>(null);
@@ -796,7 +802,7 @@ export function InboxLive({
               {/* Channel Tabs */}
               <div className="flex gap-1.5 px-4 py-3">
                 {mounted ? (
-                  (['whatsapp_meta', 'instagram_meta', 'messenger_meta', 'sms'] as const).map((kind) => (
+                  (['whatsapp_web', 'instagram_meta', 'messenger_meta', 'sms', 'whatsapp_meta'] as const).map((kind) => (
                     <button
                       key={kind}
                       type="button"
@@ -852,7 +858,7 @@ export function InboxLive({
                     type="text"
                     value={newReceiverValue}
                     onChange={(e) => setNewReceiverValue(e.target.value)}
-                    placeholder={activeChannel === 'whatsapp_meta' || activeChannel === 'sms' ? "Phone number..." : "Messenger ID..."}
+                    placeholder={activeChannel === 'whatsapp_meta' || activeChannel === 'whatsapp_web' || activeChannel === 'sms' ? "Phone number..." : "Messenger ID..."}
                     className="w-full rounded-2xl border border-white/20 bg-white/30 py-2.5 pl-4 pr-12 text-xs font-medium text-zinc-900 placeholder:text-zinc-400 backdrop-blur-md focus:border-brand-500/40 focus:outline-none focus:ring-2 focus:ring-brand-500/15 dark:border-white/5 dark:bg-white/5 dark:text-zinc-100 dark:placeholder:text-zinc-500"
                     suppressHydrationWarning
                   />
@@ -888,7 +894,7 @@ export function InboxLive({
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center justify-between gap-2">
                               <span className={cn('truncate text-xs font-bold', selectedId === c.id ? 'text-white' : 'text-zinc-900 dark:text-zinc-100')}>
-                                {c.contactDisplayName || c.contactValue}
+                                {c.contactDisplayName || displayContact(c.contactValue)}
                               </span>
                               <span
                                 className={cn('shrink-0 text-[9px] font-bold uppercase tracking-wider', selectedId === c.id ? 'text-white/60' : 'text-zinc-400')}
@@ -936,7 +942,7 @@ export function InboxLive({
                       </div>
                       <div className="flex items-center gap-1.5 truncate text-[9px] font-bold uppercase tracking-[0.15em] text-zinc-400">
                         <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shadow-sm shadow-emerald-500/50" />
-                        {channelLabel(selected.channelKind)} · {selected.contactValue}
+                        {channelLabel(selected.channelKind)}{selected.contactDisplayName && selected.contactDisplayName !== displayContact(selected.contactValue) ? ` · ${displayContact(selected.contactValue)}` : ''}
                       </div>
                     </div>
                   </header>
@@ -1392,8 +1398,8 @@ export function InboxLive({
                               className="rounded border-zinc-300 text-brand-600 focus:ring-brand-500"
                             />
                             <div className="flex-1 truncate">
-                              <div>{c.contactDisplayName || c.contactValue}</div>
-                              <div className="text-[9px] text-zinc-400">{c.contactValue}</div>
+                              <div>{c.contactDisplayName || displayContact(c.contactValue)}</div>
+                              <div className="text-[9px] text-zinc-400">{c.contactDisplayName && c.contactDisplayName !== displayContact(c.contactValue) ? displayContact(c.contactValue) : ''}</div>
                             </div>
                             <span className="text-[8px] font-bold px-1.5 py-0.5 rounded text-white" style={{ backgroundColor: CHANNEL_BADGE[c.channelKind]?.color || '#999' }}>
                               {CHANNEL_BADGE[c.channelKind]?.label || c.channelKind}
@@ -2292,6 +2298,7 @@ function sourceTagFor(s: SourceKind): string | null {
 function channelLabel(k: ChannelKind): string {
   switch (k) {
     case 'whatsapp_meta':  return 'WhatsApp';
+    case 'whatsapp_web':   return 'WhatsApp';
     case 'instagram_meta': return 'Instagram';
     case 'messenger_meta': return 'Messenger';
     case 'x_dm':           return 'X DM';

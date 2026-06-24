@@ -20,6 +20,7 @@ import { formatDate } from '@/lib/datetime';
 import type { ChannelAccount, ChannelKind, ChannelStatus } from '@/lib/types';
 
 const KIND_LABELS: Record<ChannelKind, string> = {
+  whatsapp_web: 'WhatsApp (QR)',
   whatsapp_meta: 'WhatsApp',
   instagram_meta: 'Instagram DMs',
   messenger_meta: 'Facebook Messenger',

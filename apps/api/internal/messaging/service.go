@@ -855,6 +855,135 @@ func (s *Service) HandleInboundSMS(ctx context.Context, messageSid, from, to, bo
 	return nil
 }
 
+// HandleInboundWAWeb processes a message received from a QR-linked WhatsApp Web session.
+// It follows the same identity → conversation → message → lead pattern as HandleInboundSMS.
+func (s *Service) HandleInboundWAWeb(ctx context.Context, studioID uuid.UUID, from, body, externalID string, sentAt time.Time) error {
+	// 1. Resolve the whatsapp_web channel for this studio.
+	channel, err := s.repo.GetActiveChannelByKind(ctx, studioID, KindWhatsAppWeb)
+	if err != nil || channel == nil {
+		return nil // session not yet connected — ignore
+	}
+
+	tx, err := s.repo.Pool().BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// 2. Identity stitching — strip @suffix for display, but also try to merge
+	// LID-based identities with phone-based ones for the same numeric ID.
+	displayName := from
+	numericPart := from
+	if idx := strings.Index(from, "@"); idx > 0 {
+		numericPart = from[:idx]
+		displayName = numericPart
+	}
+	// If incoming is a phone (@c.us), check if we already have a LID identity
+	// with the same numeric prefix and reuse it (merge duplicate contacts).
+	identityKey := from
+	if strings.HasSuffix(from, "@c.us") {
+		var lidValue string
+		_ = tx.QueryRow(ctx, `
+			SELECT value FROM contact_identities
+			WHERE studio_id = $1 AND kind = 'phone' AND value LIKE $2
+			LIMIT 1
+		`, studioID, numericPart+"%@lid").Scan(&lidValue)
+		if lidValue != "" {
+			identityKey = lidValue // reuse existing LID-keyed identity
+		}
+	}
+	identity, err := s.repo.FindOrCreateIdentity(ctx, tx, studioID, IdentityPhone, identityKey, displayName)
+	if err != nil {
+		return err
+	}
+
+	// 3. Conversation — keyed by identity key so LID and phone merge to same thread.
+	conv, err := s.repo.FindOrCreateConversation(ctx, tx, studioID, channel.ID, identity.ID, identityKey)
+	if err != nil {
+		return err
+	}
+
+	// 4. Auto-create a lead if none exists yet (same logic as SMS).
+	var activeLeadID *uuid.UUID
+	if identity.LeadID != nil {
+		activeLeadID = identity.LeadID
+	} else if conv.LeadID != nil {
+		activeLeadID = conv.LeadID
+	}
+
+	if activeLeadID == nil {
+		var campaignID uuid.UUID
+		var fitnessPlans []string
+		errCampaign := tx.QueryRow(ctx, `
+			SELECT id, fitness_plans FROM campaigns
+			WHERE studio_id = $1 AND active = true
+			ORDER BY created_at DESC LIMIT 1
+		`, studioID).Scan(&campaignID, &fitnessPlans)
+		if errCampaign != nil {
+			_ = tx.QueryRow(ctx, `
+				SELECT id, fitness_plans FROM campaigns WHERE studio_id = $1 LIMIT 1
+			`, studioID).Scan(&campaignID, &fitnessPlans)
+		}
+		defaultPlan := "Trial Class"
+		if len(fitnessPlans) > 0 {
+			defaultPlan = fitnessPlans[0]
+		}
+		leadID := uuid.New()
+		emailPlaceholder := fmt.Sprintf("wa-%s@example.com", from)
+		_, err = tx.Exec(ctx, `
+			INSERT INTO leads (id, studio_id, campaign_id, name, first_name, last_name,
+			                   email, phone, fitness_plan, status, source,
+			                   auto_contact_stage, created_at, updated_at)
+			VALUES ($1,$2,$3,$4,$5,'', $6,$7,$8,'contacted','whatsapp_web','awaiting_options',now(),now())
+		`, leadID, studioID, campaignID, from, from, emailPlaceholder, from, defaultPlan)
+		if err != nil {
+			return fmt.Errorf("auto-create wa-web lead: %w", err)
+		}
+		activeLeadID = &leadID
+	}
+
+	if identity.LeadID == nil {
+		_, _ = tx.Exec(ctx, `UPDATE contact_identities SET lead_id=$2 WHERE id=$1`, identity.ID, *activeLeadID)
+		identity.LeadID = activeLeadID
+	}
+	if conv.LeadID == nil {
+		_, _ = tx.Exec(ctx, `UPDATE conversations SET lead_id=$2 WHERE id=$1`, conv.ID, *activeLeadID)
+		conv.LeadID = activeLeadID
+	}
+
+	// 5. Insert message.
+	stored, err := s.repo.InsertMessage(ctx, tx, CreateMessageInput{
+		ConversationID: conv.ID,
+		StudioID:       studioID,
+		Direction:      DirectionInbound,
+		SourceKind:     SourceCustomer,
+		Body:           body,
+		ExternalID:     externalID,
+		SentAt:         sentAt,
+	})
+	if err != nil {
+		return err
+	}
+
+	if err := s.processInboundLeadAutomation(ctx, tx, studioID, conv, stored, body); err != nil {
+		return fmt.Errorf("inbound lead automation: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+
+	if stored != nil {
+		s.bus.Publish(ctx, Event{
+			Kind:           EvtMessageReceived,
+			StudioID:       studioID,
+			ConversationID: conv.ID,
+			MessageID:      &stored.ID,
+		})
+	}
+	return nil
+}
+
 // HandleStatus updates an outbound message's delivery state when Meta tells
 // us it was delivered/read/failed. Looked up by Meta wamid.
 func (s *Service) HandleStatus(ctx context.Context, st channels.WhatsAppWebhookStatus) error {
@@ -1263,6 +1392,8 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 				outboundBody = sb.String()
 			}
 		}
+		// Unrecognised message at awaiting_options — let the AI worker answer the question.
+		// The AI prompt already appends "1. Book a Trial / 2. Become a Member" for new/contacted leads.
 	} else if autoContactStage == "awaiting_plan_selection" {
 		plans, errPlans := s.repo.ListActivePlans(ctx, studioID)
 		if errPlans == nil && len(plans) > 0 {
@@ -1525,63 +1656,63 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 	// Update the lead if anything changed
 	if targetStage != autoContactStage || targetStatus != leadStatus || targetNotes != leadNotes {
 		_, err = tx.Exec(ctx, `
-			UPDATE leads 
+			UPDATE leads
 			SET status = $3, notes = $4, auto_contact_stage = $5, updated_at = now()
 			WHERE studio_id = $1 AND id = $2
 		`, studioID, *conv.LeadID, targetStatus, targetNotes, targetStage)
 		if err != nil {
 			return err
 		}
+	}
 
-		// If outbound message needs to be sent
-		if outboundBody != "" {
-			_, err = tx.Exec(ctx, `
-				INSERT INTO outbound_jobs (studio_id, conversation_id, body, attachments,
-				                           source_kind, source_ref, scheduled_for, next_attempt_at)
-				VALUES ($1, $2, $3, '[]'::jsonb, 'automation', $4, $5, $5)
-			`, studioID, conv.ID, outboundBody, fmt.Sprintf("lead:%s:auto_reply:%s", conv.LeadID.String(), targetStage), time.Now().UTC())
-			if err != nil {
-				return err
-			}
+	// Send outbound reply whenever automation produced one (stage may or may not have changed).
+	if outboundBody != "" {
+		_, err = tx.Exec(ctx, `
+			INSERT INTO outbound_jobs (studio_id, conversation_id, body, attachments,
+			                           source_kind, source_ref, scheduled_for, next_attempt_at)
+			VALUES ($1, $2, $3, '[]'::jsonb, 'automation', $4, $5, $5)
+		`, studioID, conv.ID, outboundBody, fmt.Sprintf("lead:%s:auto_reply:%s", conv.LeadID.String(), targetStage), time.Now().UTC())
+		if err != nil {
+			return err
 		}
+	}
 
-		// If they just transitioned to trial_booked, schedule the 1-day check-in follow-up
-		if targetStatus == "trial_booked" && leadStatus != "trial_booked" {
-			followupBody := "Hi {{contact.first_name}}, we hope you're enjoying your trial! Are you ready to take the next step and become a member? Please select an option:\n1. Book a Trial\n2. Become a Member"
-			_, err = tx.Exec(ctx, `
-				INSERT INTO outbound_jobs (studio_id, conversation_id, body, attachments,
-				                           source_kind, source_ref, scheduled_for, next_attempt_at)
-				VALUES ($1, $2, $3, '[]'::jsonb, 'automation', $4, $5, $5)
-			`, studioID, conv.ID, followupBody, fmt.Sprintf("lead:%s:trial_followup:1day", conv.LeadID.String()), time.Now().UTC().Add(24*time.Hour))
-			if err != nil {
-				return err
-			}
+	// If they just transitioned to trial_booked, schedule the 1-day check-in follow-up
+	if targetStatus == "trial_booked" && leadStatus != "trial_booked" {
+		followupBody := "Hi {{contact.first_name}}, we hope you're enjoying your trial! Are you ready to take the next step and become a member? Please select an option:\n1. Book a Trial\n2. Become a Member"
+		_, err = tx.Exec(ctx, `
+			INSERT INTO outbound_jobs (studio_id, conversation_id, body, attachments,
+			                           source_kind, source_ref, scheduled_for, next_attempt_at)
+			VALUES ($1, $2, $3, '[]'::jsonb, 'automation', $4, $5, $5)
+		`, studioID, conv.ID, followupBody, fmt.Sprintf("lead:%s:trial_followup:1day", conv.LeadID.String()), time.Now().UTC().Add(24*time.Hour))
+		if err != nil {
+			return err
 		}
+	}
 
-		// Enqueue Google Sheets update if status or notes changed
-		if targetStatus != leadStatus || targetNotes != leadNotes {
-			var l leads.Lead
-			var ipText *string
-			row := tx.QueryRow(ctx, `
-				SELECT l.id, l.studio_id, l.campaign_id, l.name, COALESCE(l.first_name, ''), COALESCE(l.last_name, ''), l.email, l.phone, l.fitness_plan, l.goals,
-				       l.source, l.status, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage, l.referrer, l.user_agent, l.ip_address::text, l.created_at, l.updated_at,
-				       s.name, s.slug, c.name, c.slug
-				FROM leads l
-				JOIN campaigns c ON c.id = l.campaign_id
-				JOIN studios s ON s.id = l.studio_id
-				WHERE l.id = $1
-			`, *conv.LeadID)
-			scanErr := row.Scan(&l.ID, &l.StudioID, &l.CampaignID, &l.Name, &l.FirstName, &l.LastName, &l.Email, &l.Phone, &l.FitnessPlan, &l.Goals,
-				&l.Source, &l.Status, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage, &l.Referrer, &l.UserAgent, &ipText, &l.CreatedAt, &l.UpdatedAt,
-				&l.StudioName, &l.StudioSlug, &l.CampaignName, &l.CampaignSlug)
-			if scanErr == nil {
-				payload, mErr := json.Marshal(l)
-				if mErr == nil {
-					_, _ = tx.Exec(ctx, `
-						INSERT INTO outbox (aggregate_type, aggregate_id, event_type, destination, payload)
-						VALUES ('lead', $1, 'lead.updated', 'google_sheets', $2)
-					`, l.ID, payload)
-				}
+	// Enqueue Google Sheets update if status or notes changed
+	if targetStatus != leadStatus || targetNotes != leadNotes {
+		var l leads.Lead
+		var ipText *string
+		row := tx.QueryRow(ctx, `
+			SELECT l.id, l.studio_id, l.campaign_id, l.name, COALESCE(l.first_name, ''), COALESCE(l.last_name, ''), l.email, l.phone, l.fitness_plan, l.goals,
+			       l.source, l.status, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage, l.referrer, l.user_agent, l.ip_address::text, l.created_at, l.updated_at,
+			       s.name, s.slug, c.name, c.slug
+			FROM leads l
+			JOIN campaigns c ON c.id = l.campaign_id
+			JOIN studios s ON s.id = l.studio_id
+			WHERE l.id = $1
+		`, *conv.LeadID)
+		scanErr := row.Scan(&l.ID, &l.StudioID, &l.CampaignID, &l.Name, &l.FirstName, &l.LastName, &l.Email, &l.Phone, &l.FitnessPlan, &l.Goals,
+			&l.Source, &l.Status, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage, &l.Referrer, &l.UserAgent, &ipText, &l.CreatedAt, &l.UpdatedAt,
+			&l.StudioName, &l.StudioSlug, &l.CampaignName, &l.CampaignSlug)
+		if scanErr == nil {
+			payload, mErr := json.Marshal(l)
+			if mErr == nil {
+				_, _ = tx.Exec(ctx, `
+					INSERT INTO outbox (aggregate_type, aggregate_id, event_type, destination, payload)
+					VALUES ('lead', $1, 'lead.updated', 'google_sheets', $2)
+				`, l.ID, payload)
 			}
 		}
 	}

@@ -40,6 +40,8 @@ x-api-env: &api_env
   META_APP_SECRET: ${META_APP_SECRET:-}
   META_WEBHOOK_VERIFY_TOKEN: ${META_WEBHOOK_VERIFY_TOKEN}
   META_GRAPH_API_VERSION: ${META_GRAPH_API_VERSION:-v21.0}
+  WA_WEB_SERVICE_URL: http://wa-web:3100
+  INTERNAL_API_KEY: ${INTERNAL_API_KEY:-changeme}
 
 services:
   postgres:
@@ -108,6 +110,23 @@ services:
       - ./secrets:/secrets
       - uploads_data:/app/uploads
 
+  wa-web:
+    build:
+      context: ..
+      dockerfile: deploy/wa-web.Dockerfile
+    image: projectx-wa-web:local
+    restart: always
+    depends_on:
+      - api
+    environment:
+      PORT: "3100"
+      LOG_LEVEL: info
+      PROJECTX_API_URL: http://api:8080
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-changeme}
+      AUTH_DIR: /auth
+    volumes:
+      - wa_auth_data:/auth
+
   web:
     build:
       context: ..
@@ -143,3 +162,4 @@ services:
 volumes:
   pg_data:
   uploads_data:
+  wa_auth_data:

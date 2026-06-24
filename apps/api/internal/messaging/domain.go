@@ -12,7 +12,8 @@ import (
 type ChannelKind string
 
 const (
-	KindWhatsAppMeta  ChannelKind = "whatsapp_meta"
+	KindWhatsAppMeta ChannelKind = "whatsapp_meta"
+	KindWhatsAppWeb  ChannelKind = "whatsapp_web" // QR-linked via Baileys (no Meta API needed)
 	KindInstagramMeta ChannelKind = "instagram_meta"
 	KindMessengerMeta ChannelKind = "messenger_meta"
 	KindXDM           ChannelKind = "x_dm"
@@ -22,7 +23,7 @@ const (
 
 func (k ChannelKind) Valid() bool {
 	switch k {
-	case KindWhatsAppMeta, KindInstagramMeta, KindMessengerMeta, KindXDM, KindSMS, KindGoogleAds:
+	case KindWhatsAppMeta, KindWhatsAppWeb, KindInstagramMeta, KindMessengerMeta, KindXDM, KindSMS, KindGoogleAds:
 		return true
 	}
 	return false

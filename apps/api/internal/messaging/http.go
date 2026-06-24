@@ -81,6 +81,20 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Post("/upload", h.uploadMedia)
 
 	r.Get("/stream", h.stream) // SSE — live updates for the inbox UI
+
+	// WhatsApp Web (QR-based) — proxies to the wa-web Node service
+	r.Get("/channels/whatsapp-web/qr", h.waWebQR)
+	r.Post("/channels/whatsapp-web/disconnect", h.waWebDisconnect)
+	r.Get("/channels/whatsapp-web/status", h.waWebStatus)
+}
+
+// InternalRoutes are mounted at /internal (not exposed through nginx to public).
+// Called by the wa-web Node service to push session events into the Go pipeline.
+func (h *Handler) InternalRoutes(r chi.Router) {
+	r.Post("/wa-web/connected", h.waWebConnected)
+	r.Post("/wa-web/disconnected", h.waWebDisconnected)
+	r.Post("/wa-web/inbound", h.waWebInbound)
+	r.Get("/wa-web/studios", h.waWebStudios)
 }
 
 // ============================================================
@@ -891,7 +905,8 @@ func (h *Handler) updateJob(w http.ResponseWriter, r *http.Request) {
 // ============================================================
 
 func callGeminiAPI(ctx context.Context, apiKey string, prompt string) (string, error) {
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=%s", apiKey)
+	// Try models in order; fall back when a model is unavailable or overloaded.
+	models := []string{"gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite"}
 
 	reqBody, err := json.Marshal(map[string]any{
 		"contents": []map[string]any{
@@ -906,63 +921,70 @@ func callGeminiAPI(ctx context.Context, apiKey string, prompt string) (string, e
 		return "", err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(reqBody))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
+	var lastErr error
+	for _, model := range models {
+		url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, apiKey)
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	respBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-
-	if resp.StatusCode >= 400 {
-		// If the model isn't available (404) or the API indicates the model
-		// isn't supported for this method, fall back to a local generator so
-		// the UI still receives a useful response instead of an error.
-		if resp.StatusCode == 404 || strings.Contains(string(respBytes), "models/gemini-2.5-flash is not found") || strings.Contains(string(respBytes), "models/gemini-1.5-flash is not found") {
-			// Simple fallback: return the prompt trimmed and lightly formatted
-			// so the frontend can display meaningful copy without failing.
-			fallback := strings.TrimSpace(prompt)
-			if idx := strings.Index(fallback, "based on this instruction: "); idx != -1 {
-				fallback = fallback[idx+len("based on this instruction: "):]
-			}
-			if fallback == "" {
-				fallback = "Check out our latest offers and book today!"
-			}
-			// Ensure a friendly social-style formatting
-			fallbackText := fmt.Sprintf("🚨 NEW LAUNCH ALERT! 🚨\n\n%s\n\nDon't miss out — book your slot today!", fallback)
-			return fallbackText, nil
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(reqBody))
+		if err != nil {
+			return "", err
 		}
-		return "", fmt.Errorf("gemini API error (HTTP %d): %s", resp.StatusCode, string(respBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		respBytes, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		if resp.StatusCode >= 400 {
+			// 503 (overloaded) or 429 (rate limit) — try next model
+			if resp.StatusCode == 503 || resp.StatusCode == 429 {
+				lastErr = fmt.Errorf("gemini API error (HTTP %d): %s", resp.StatusCode, string(respBytes))
+				continue
+			}
+			// 404 = model not found — try next model
+			if resp.StatusCode == 404 {
+				lastErr = fmt.Errorf("model %s not found", model)
+				continue
+			}
+			return "", fmt.Errorf("gemini API error (HTTP %d): %s", resp.StatusCode, string(respBytes))
+		}
+
+		var res struct {
+			Candidates []struct {
+				Content struct {
+					Parts []struct {
+						Text string `json:"text"`
+					} `json:"parts"`
+				} `json:"content"`
+			} `json:"candidates"`
+		}
+
+		if err := json.Unmarshal(respBytes, &res); err != nil {
+			lastErr = err
+			continue
+		}
+
+		if len(res.Candidates) == 0 || len(res.Candidates[0].Content.Parts) == 0 {
+			lastErr = fmt.Errorf("empty response from Gemini API")
+			continue
+		}
+
+		return res.Candidates[0].Content.Parts[0].Text, nil
 	}
 
-	var res struct {
-		Candidates []struct {
-			Content struct {
-				Parts []struct {
-					Text string `json:"text"`
-				} `json:"parts"`
-			} `json:"content"`
-		} `json:"candidates"`
+	if lastErr != nil {
+		return "", lastErr
 	}
-
-	if err := json.Unmarshal(respBytes, &res); err != nil {
-		return "", err
-	}
-
-	if len(res.Candidates) == 0 || len(res.Candidates[0].Content.Parts) == 0 {
-		return "", fmt.Errorf("empty response from Gemini API")
-	}
-
-	return res.Candidates[0].Content.Parts[0].Text, nil
+	return "", fmt.Errorf("all Gemini models failed")
 }
 
 func (h *Handler) aiGenerateTemplate(w http.ResponseWriter, r *http.Request) {

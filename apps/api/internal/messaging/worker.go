@@ -124,6 +124,10 @@ func (w *OutboundWorker) dispatch(ctx context.Context, j OutboundJob) {
 			contactFirstName = "there"
 		}
 	}
+	// Sanity check: if the name still looks like a raw chat ID, fall back to "there"
+	if strings.Contains(contactFirstName, "@") {
+		contactFirstName = "there"
+	}
 
 	// Replace placeholders in the body
 	j.Body = strings.ReplaceAll(j.Body, "{{contact.first_name}}", contactFirstName)
@@ -168,6 +172,8 @@ func (w *OutboundWorker) dispatch(ctx context.Context, j OutboundJob) {
 		}
 	case KindXDM:
 		sender = w.x
+	case KindWhatsAppWeb:
+		sender = &waWebSender{studioID: j.StudioID}
 	default:
 		w.failJob(ctx, j, "no sender for channel kind: "+string(channel.Kind), true)
 		return

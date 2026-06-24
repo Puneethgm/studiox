@@ -186,6 +186,12 @@ func main() {
 	}
 	r.Handle("/uploads/*", http.StripPrefix("/uploads/", http.FileServer(http.Dir(uploadsDir))))
 
+	// Internal routes — only reachable from within the Docker network (wa-web service).
+	// Not exposed through nginx; bound to the same port but path-protected.
+	r.Route("/internal", func(r chi.Router) {
+		msgHandler.InternalRoutes(r)
+	})
+
 	r.Route("/api/v1", func(r chi.Router) {
 		identityHandler.Routes(r)
 

@@ -8,6 +8,7 @@ import { cn } from '@/lib/cn';
 import type { ChannelAccount, ChannelKind, Studio } from '@/lib/types';
 import { ChannelList } from './ChannelList';
 import { ConnectWhatsApp } from './ConnectWhatsApp';
+import { ConnectWhatsAppWeb } from './ConnectWhatsAppWeb';
 import { ConnectMetaChannel } from './ConnectMetaChannel';
 import { ConnectGoogleAds } from './ConnectGoogleAds';
 import { ConnectTwilio } from './ConnectTwilio';
@@ -23,9 +24,9 @@ interface TabDef {
 
 const TABS: TabDef[] = [
   {
-    kind: 'whatsapp_meta',
-    label: 'WhatsApp',
-    brand: '#25D366',
+    kind: 'whatsapp_web',
+    label: 'WhatsApp (QR)',
+    brand: '#128C7E',
     status: 'available',
   },
   {
@@ -58,6 +59,12 @@ const TABS: TabDef[] = [
     brand: '#000000',
     status: 'available',
   },
+  {
+    kind: 'whatsapp_meta',
+    label: 'WhatsApp (Meta)',
+    brand: '#25D366',
+    status: 'available',
+  },
 ];
 
 export function ChannelTabs({
@@ -69,7 +76,7 @@ export function ChannelTabs({
   channels: ChannelAccount[];
   studio: Studio;
 }) {
-  const [active, setActive] = useState<ChannelKind>('whatsapp_meta');
+  const [active, setActive] = useState<ChannelKind>('whatsapp_web');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -205,6 +212,8 @@ function AvailablePanel({
       <div className="space-y-6">
         {kind === 'whatsapp_meta' ? (
           <ConnectWhatsApp studioId={studioId} showToast={showToast} />
+        ) : kind === 'whatsapp_web' ? (
+          <ConnectWhatsAppWeb studioId={studioId} showToast={showToast} />
         ) : kind === 'sms' ? (
           <ConnectTwilio studioId={studioId} showToast={showToast} />
         ) : kind === 'x_dm' ? (

@@ -36,6 +36,9 @@ coverage.txt
 
 # Docker volumes (if mounted locally)
 .docker-data/
+
+# WhatsApp Web session auth (mounted as Docker volume in prod)
+apps/wa-web/auth/
 *.json
 heroic-artifact-434914-d4-1b7152cf7bec.json
 apps/api/secrets/
