@@ -39,8 +39,11 @@ coverage.txt
 
 # WhatsApp Web session auth (mounted as Docker volume in prod)
 apps/wa-web/auth/
-*.json
 heroic-artifact-434914-d4-1b7152cf7bec.json
+# Exclude all json except package manifests
+*.json
+!apps/wa-web/package.json
+!apps/wa-web/package-lock.json
 apps/api/secrets/
 !deploy/secrets/google-credentials.json
 .aider*
