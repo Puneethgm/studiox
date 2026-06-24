@@ -1350,8 +1350,23 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 
 	isInterested := text == "1" || text == "interested" || (strings.Contains(text, "interested") && !strings.Contains(text, "not interested"))
 	isNotInterested := text == "2" || text == "not interested" || strings.Contains(text, "not interested") || strings.Contains(text, "not_interested")
-	isTrial := text == "1" || strings.Contains(text, "book a trial") || strings.Contains(text, "book trial") || strings.Contains(text, "trial") || strings.Contains(text, "book a trail") || strings.Contains(text, "book trail") || strings.Contains(text, "trail")
-	isMember := text == "2" || strings.Contains(text, "become a member") || strings.Contains(text, "become member") || strings.Contains(text, "member")
+	// Only treat as a bot choice if the message is a short clear selection (≤5 words),
+	// not a question. Long messages containing "trial" or "member" are questions for AI.
+	isQuestion := strings.Contains(text, "?") || strings.HasPrefix(text, "what") ||
+		strings.HasPrefix(text, "how") || strings.HasPrefix(text, "when") ||
+		strings.HasPrefix(text, "where") || strings.HasPrefix(text, "why") ||
+		strings.HasPrefix(text, "is ") || strings.HasPrefix(text, "are ") ||
+		strings.HasPrefix(text, "do ") || strings.HasPrefix(text, "can ")
+	wordCount := len(strings.Fields(text))
+	isShortChoice := !isQuestion && wordCount <= 5
+
+	isTrial := text == "1" ||
+		(isShortChoice && (strings.Contains(text, "book a trial") || strings.Contains(text, "book trial") ||
+			strings.Contains(text, "trial") || strings.Contains(text, "book a trail") ||
+			strings.Contains(text, "book trail") || strings.Contains(text, "trail")))
+	isMember := text == "2" ||
+		(isShortChoice && (strings.Contains(text, "become a member") || strings.Contains(text, "become member") ||
+			strings.Contains(text, "member")))
 
 	if autoContactStage == "awaiting_interest" {
 		if isInterested && !isNotInterested {
