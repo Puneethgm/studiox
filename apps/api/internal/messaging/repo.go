@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,6 +26,13 @@ func NewRepo(pool *pgxpool.Pool, cipher *secrets.Cipher) *Repo {
 }
 
 func (r *Repo) Pool() *pgxpool.Pool { return r.pool }
+
+// SemanticMatch wraps a Message with the cosine similarity score returned by
+// SearchSemanticHistory.
+type SemanticMatch struct {
+	Message
+	Score float32
+}
 
 // ============================================================
 // channel_accounts
@@ -600,6 +608,94 @@ func (r *Repo) GetMessageByID(ctx context.Context, studioID, id uuid.UUID) (*Mes
 		_ = json.Unmarshal(atts, &m.Attachments)
 	}
 	return &m, nil
+}
+
+// SearchSemanticHistory finds the top-K messages from a conversation that are
+// semantically similar to the query embedding. Uses the pre-computed HNSW index
+// on messages.embedding — much faster than real-time embedding of each message.
+// Returns each match together with its cosine similarity score (0–1, higher = more similar).
+func (r *Repo) SearchSemanticHistory(ctx context.Context, studioID, conversationID uuid.UUID, queryEmbedding []float32, excludeIDs []uuid.UUID, limit int) ([]SemanticMatch, error) {
+	embStr := formatVec(queryEmbedding)
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, conversation_id, studio_id, direction, source_kind, source_user_id,
+		       source_ref, body, attachments, external_id, in_reply_to, status,
+		       failure_reason, sent_at, delivered_at, read_at, created_at,
+		       1 - (embedding <=> $4::vector) AS similarity_score
+		FROM messages
+		WHERE studio_id = $1
+		  AND conversation_id = $2
+		  AND embedding IS NOT NULL
+		  AND body != ''
+		  AND id != ALL($3)
+		ORDER BY embedding <=> $4::vector
+		LIMIT $5
+	`, studioID, conversationID, excludeIDs, embStr, limit)
+	if err != nil {
+		return nil, fmt.Errorf("semantic history search: %w", err)
+	}
+	defer rows.Close()
+
+	var out []SemanticMatch
+	for rows.Next() {
+		var sm SemanticMatch
+		var atts []byte
+		var srcRef, externalID, inReplyTo *string
+		if err := rows.Scan(
+			&sm.ID, &sm.ConversationID, &sm.StudioID, &sm.Direction, &sm.SourceKind,
+			&sm.SourceUserID, &srcRef, &sm.Body, &atts, &externalID, &inReplyTo, &sm.Status,
+			&sm.FailureReason, &sm.SentAt, &sm.DeliveredAt, &sm.ReadAt, &sm.CreatedAt,
+			&sm.Score,
+		); err != nil {
+			return nil, fmt.Errorf("scan semantic history: %w", err)
+		}
+		if srcRef != nil {
+			sm.SourceRef = *srcRef
+		}
+		if externalID != nil {
+			sm.ExternalID = *externalID
+		}
+		if inReplyTo != nil {
+			sm.InReplyTo = *inReplyTo
+		}
+		if len(atts) > 0 {
+			_ = json.Unmarshal(atts, &sm.Attachments)
+		}
+		out = append(out, sm)
+	}
+	return out, rows.Err()
+}
+
+// SaveMessageEmbedding persists a pre-computed embedding and LLM-classified intent/sentiment
+// on an existing message row. Called asynchronously after the message is inserted.
+func (r *Repo) SaveMessageEmbedding(ctx context.Context, messageID uuid.UUID, embedding []float32, intent string, sentiment int, confidence float32) error {
+	embStr := formatVec(embedding)
+	_, err := r.pool.Exec(ctx, `
+		UPDATE messages
+		SET embedding = $2::vector,
+		    intent = $3,
+		    sentiment = $4,
+		    sentiment_confidence = $5
+		WHERE id = $1
+	`, messageID, embStr, intent, sentiment, confidence)
+	return err
+}
+
+// formatVec serialises []float32 → "[v1,v2,...]" for pgvector.
+func formatVec(vec []float32) string {
+	if len(vec) == 0 {
+		return "[]"
+	}
+	var sb strings.Builder
+	sb.WriteByte('[')
+	for i, v := range vec {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		fmt.Fprintf(&sb, "%g", v)
+	}
+	sb.WriteByte(']')
+	return sb.String()
 }
 
 // ============================================================

@@ -303,29 +303,132 @@ func (r *Repo) SaveKnowledgeChunks(ctx context.Context, studioID uuid.UUID, chun
 	return tx.Commit(ctx)
 }
 
-// SearchKnowledgeChunks returns the top-K most relevant chunks for a query embedding,
-// strictly scoped to the given studio_id.
+// SearchKnowledgeChunks performs hybrid retrieval: vector similarity + BM25 full-text search,
+// fused with Reciprocal Rank Fusion (RRF). Returns top-K deduplicated chunks.
+// Falls back to pure vector search if the FTS column is not yet available.
 func (r *Repo) SearchKnowledgeChunks(ctx context.Context, studioID uuid.UUID, queryEmbedding []float32, limit int) ([]string, error) {
 	embStr := FormatVectorAsString(queryEmbedding)
+	candidateN := limit * 5 // fetch wider candidate set before RRF fusion
+
+	// Hybrid RRF query:
+	// - vector_ranked: top candidates by cosine distance
+	// - fts_ranked:    top candidates by BM25 ts_rank
+	// - RRF score:     1/(k+rank) summed across both lists (k=60 is standard)
 	rows, err := r.pool.Query(ctx, `
-		SELECT content
-		FROM studio_knowledge_chunks
-		WHERE studio_id = $1
-		ORDER BY embedding <=> $2::vector
-		LIMIT $3
-	`, studioID, embStr, limit)
+		WITH vector_ranked AS (
+			SELECT content, ROW_NUMBER() OVER () AS rank
+			FROM studio_knowledge_chunks
+			WHERE studio_id = $1
+			ORDER BY embedding <=> $2::vector
+			LIMIT $4
+		),
+		fts_ranked AS (
+			SELECT content, ROW_NUMBER() OVER () AS rank
+			FROM studio_knowledge_chunks
+			WHERE studio_id = $1
+			  AND content_tsv @@ plainto_tsquery('english', $3)
+			ORDER BY ts_rank(content_tsv, plainto_tsquery('english', $3)) DESC
+			LIMIT $4
+		),
+		fused AS (
+			SELECT content,
+				COALESCE(v.rrf, 0) + COALESCE(f.rrf, 0) AS score
+			FROM (
+				SELECT content, 1.0 / (60 + rank) AS rrf FROM vector_ranked
+			) v
+			FULL OUTER JOIN (
+				SELECT content, 1.0 / (60 + rank) AS rrf FROM fts_ranked
+			) f USING (content)
+		)
+		SELECT content FROM fused
+		ORDER BY score DESC
+		LIMIT $5
+	`, studioID, embStr, "", candidateN, limit)
+
+	// Fallback: pure vector search if hybrid fails (e.g. content_tsv column missing)
 	if err != nil {
-		return nil, fmt.Errorf("search chunks: %w", err)
+		rows, err = r.pool.Query(ctx, `
+			SELECT content
+			FROM studio_knowledge_chunks
+			WHERE studio_id = $1
+			ORDER BY embedding <=> $2::vector
+			LIMIT $3
+		`, studioID, embStr, limit)
+		if err != nil {
+			return nil, fmt.Errorf("search chunks: %w", err)
+		}
 	}
 	defer rows.Close()
 
+	seen := make(map[string]bool)
 	var results []string
 	for rows.Next() {
 		var content string
 		if err := rows.Scan(&content); err != nil {
 			return nil, fmt.Errorf("scan chunk: %w", err)
 		}
-		results = append(results, content)
+		if !seen[content] {
+			seen[content] = true
+			results = append(results, content)
+		}
+	}
+	return results, rows.Err()
+}
+
+// SearchKnowledgeChunksHybrid is the same as SearchKnowledgeChunks but accepts
+// an explicit query string for BM25 (used when the caller has a plain-text query).
+func (r *Repo) SearchKnowledgeChunksHybrid(ctx context.Context, studioID uuid.UUID, queryEmbedding []float32, queryText string, limit int) ([]string, error) {
+	embStr := FormatVectorAsString(queryEmbedding)
+	candidateN := limit * 5
+
+	rows, err := r.pool.Query(ctx, `
+		WITH vector_ranked AS (
+			SELECT content, ROW_NUMBER() OVER () AS rank
+			FROM studio_knowledge_chunks
+			WHERE studio_id = $1
+			ORDER BY embedding <=> $2::vector
+			LIMIT $4
+		),
+		fts_ranked AS (
+			SELECT content, ROW_NUMBER() OVER () AS rank
+			FROM studio_knowledge_chunks
+			WHERE studio_id = $1
+			  AND content_tsv @@ plainto_tsquery('english', $3)
+			ORDER BY ts_rank(content_tsv, plainto_tsquery('english', $3)) DESC
+			LIMIT $4
+		),
+		fused AS (
+			SELECT content,
+				COALESCE(v.rrf, 0) + COALESCE(f.rrf, 0) AS score
+			FROM (
+				SELECT content, 1.0 / (60 + rank) AS rrf FROM vector_ranked
+			) v
+			FULL OUTER JOIN (
+				SELECT content, 1.0 / (60 + rank) AS rrf FROM fts_ranked
+			) f USING (content)
+		)
+		SELECT content FROM fused
+		ORDER BY score DESC
+		LIMIT $5
+	`, studioID, embStr, queryText, candidateN, limit)
+
+	if err != nil {
+		// Fallback to pure vector
+		return r.SearchKnowledgeChunks(ctx, studioID, queryEmbedding, limit)
+	}
+	defer rows.Close()
+
+	seen := make(map[string]bool)
+	var results []string
+	for rows.Next() {
+		var content string
+		if err := rows.Scan(&content); err != nil {
+			return nil, fmt.Errorf("scan chunk hybrid: %w", err)
+		}
+		if !seen[content] {
+			seen[content] = true
+			results = append(results, content)
+		}
 	}
 	return results, rows.Err()
 }

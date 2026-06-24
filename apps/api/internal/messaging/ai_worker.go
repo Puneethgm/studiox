@@ -225,19 +225,10 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		plans = []Plan{} // fallback to empty
 	}
 
-	// Analyze sentiment and keywords
+	// Keyword sentiment as initial fallback
 	sentiment, confidence, keywords := w.analyzeSentiment(msg.Body)
-	w.log.Debug("sentiment analyzed", "message_id", msg.ID, "sentiment", sentiment, "confidence", confidence, "keywords", keywords)
 
-	// Fetch up to the last 5 messages for conversation context
-	history, err := w.msgRepo.ListMessages(ctx, studioID, conv.ID, 5)
-	if err != nil {
-		w.log.Error("fetch message history for ai context failed", "err", err)
-		history = []Message{*msg} // fallback to just the current message
-	}
-
-	// Fetch relevant knowledge base chunks via vector similarity search
-	var kbChunks []string
+	// Resolve Gemini API key (studio key takes priority over platform key)
 	apiKey := studio.GeminiAPIKey
 	if apiKey == "" {
 		if platformKey, err := w.studiosRepo.GetPlatformSetting(ctx, "gemini_api_key"); err == nil && platformKey != "" {
@@ -245,15 +236,102 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		}
 	}
 
+	// Fetch last 5 messages as the immediate recent window
+	history, err := w.msgRepo.ListMessages(ctx, studioID, conv.ID, 5)
+	if err != nil {
+		w.log.Error("fetch message history for ai context failed", "err", err)
+		history = []Message{*msg}
+	}
+
+	var kbChunks []string
+	var semanticHistory []SemanticMatch
+	var intent string
+	// kbConfident tracks whether retrieval found high-confidence chunks.
+	// Used to gate hallucination: if false, the prompt instructs the AI not to guess.
+	kbConfident := false
+
 	if apiKey != "" && msg.Body != "" {
-		queryVec, err := studios.GetGeminiEmbedding(ctx, apiKey, msg.Body)
+		// Step 1: LLM intent + sentiment classification
+		llmIntent, llmSentiment, llmConf := studios.ClassifyIntent(ctx, apiKey, msg.Body)
+		intent = llmIntent
+		sentiment = llmSentiment
+		confidence = llmConf
+		keywords = []string{intent}
+		w.log.Debug("llm intent classified", "message_id", msg.ID, "intent", intent, "sentiment", sentiment, "confidence", llmConf)
+
+		// Step 2: Query expansion — rewrite query with 3 alternative phrasings before embedding.
+		// This fixes vocabulary mismatch (customer says "cost", KB says "price").
+		expandedQuery := studios.ExpandQuery(ctx, apiKey, msg.Body)
+		w.log.Debug("query expanded", "message_id", msg.ID, "expanded_len", len(expandedQuery))
+
+		// Step 3: Embed the expanded query (richer signal than the raw message alone)
+		queryVec, err := studios.GetGeminiEmbedding(ctx, apiKey, expandedQuery)
 		if err == nil {
-			matched, err := w.studiosRepo.SearchKnowledgeChunks(ctx, studioID, queryVec, 4)
+			// Step 3b: Async — persist original message embedding + classification for HNSW lookups.
+			// We store the original-message embedding (not expanded) so history similarity is user-intent based.
+			origVec, origErr := studios.GetGeminiEmbedding(ctx, apiKey, msg.Body)
+			go func() {
+				saveCtx := context.Background()
+				vec := queryVec
+				if origErr == nil {
+					vec = origVec
+				}
+				if err := w.msgRepo.SaveMessageEmbedding(saveCtx, msg.ID, vec, intent, sentiment, float32(confidence)); err != nil {
+					w.log.Warn("save message embedding failed", "message_id", msg.ID, "err", err)
+				}
+			}()
+
+			// Step 4: Hybrid retrieval — BM25 + vector + RRF, 12 candidates (wider than before)
+			matched, err := w.studiosRepo.SearchKnowledgeChunksHybrid(ctx, studioID, queryVec, expandedQuery, 12)
 			if err == nil && len(matched) > 0 {
-				kbChunks = matched
-				w.log.Info("retrieved relevant knowledge chunks", "studio_id", studioID, "count", len(matched))
+				// Step 5: Cross-encoder rerank by Gemini — narrow 12 → 6 by true relevance
+				reranked := studios.RerankChunks(ctx, apiKey, msg.Body, matched, 6)
+
+				// Step 6: MMR diversity pass — select top 4 from 6, balancing relevance vs redundancy.
+				// We need embeddings for each reranked chunk to compute inter-chunk similarity.
+				chunkEmbeddings := make([][]float32, len(reranked))
+				allEmbedded := true
+				for i, chunk := range reranked {
+					vec, err := studios.GetGeminiEmbedding(ctx, apiKey, chunk)
+					if err != nil {
+						allEmbedded = false
+						break
+					}
+					chunkEmbeddings[i] = vec
+				}
+				if allEmbedded {
+					kbChunks = studios.MaxMarginalRelevance(queryVec, reranked, chunkEmbeddings, 4, 0.7)
+				} else {
+					kbChunks = reranked
+					if len(kbChunks) > 4 {
+						kbChunks = kbChunks[:4]
+					}
+				}
+
+				// Step 7: Confidence gate — if the top chunk's score from the reranker is reasonable,
+				// mark as confident. We use chunk count as a proxy (if we found ≥2 chunks, it's confident).
+				kbConfident = len(kbChunks) >= 2
+				w.log.Info("rag pipeline complete", "studio_id", studioID,
+					"candidates", len(matched), "reranked", len(reranked),
+					"final", len(kbChunks), "confident", kbConfident)
 			} else if err != nil {
 				w.log.Warn("failed to search knowledge chunks", "studio_id", studioID, "err", err)
+			}
+
+			// Step 8: Semantic history via pre-computed HNSW index
+			recentIDs := make([]uuid.UUID, len(history))
+			for i, m := range history {
+				recentIDs[i] = m.ID
+			}
+			semHist, err := w.msgRepo.SearchSemanticHistory(ctx, studioID, conv.ID, queryVec, recentIDs, 3)
+			if err == nil && len(semHist) > 0 {
+				// Only include past messages with score ≥ 0.75 — low-similarity history adds noise
+				for _, sm := range semHist {
+					if sm.Score >= 0.75 {
+						semanticHistory = append(semanticHistory, sm)
+					}
+				}
+				w.log.Info("retrieved semantic history", "studio_id", studioID, "count", len(semanticHistory))
 			}
 		} else {
 			w.log.Warn("failed to get message embedding for rag", "studio_id", studioID, "err", err)
@@ -261,7 +339,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	}
 
 	// Generate AI response with context
-	prompt := w.buildPrompt(history, conv, lead, studio, plans, sentiment, keywords, kbChunks)
+	prompt := w.buildPrompt(history, semanticHistory, conv, lead, studio, plans, sentiment, keywords, kbChunks, intent, kbConfident)
 	
 	var resp string
 	var sourceRef string
@@ -311,13 +389,17 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	return nil
 }
 
-func (w *AIWorker) buildPrompt(history []Message, conv *Conversation, lead *leads.Lead, studio *studios.Studio, plans []Plan, sentiment int, keywords []string, kbChunks []string) string {
-	context := "You are a helpful AI assistant for a fitness studio. "
+func (w *AIWorker) buildPrompt(history []Message, semanticHistory []SemanticMatch, conv *Conversation, lead *leads.Lead, studio *studios.Studio, plans []Plan, sentiment int, keywords []string, kbChunks []string, intent string, kbConfident bool) string {
+	var sb strings.Builder
 
+	// ── System role ──────────────────────────────────────────────────────────
+	sb.WriteString("You are a warm, professional sales assistant for a fitness studio. ")
+	sb.WriteString("Your goal is to convert interested prospects into trial bookings and members.\n\n")
+
+	// Time-aware greeting
 	hour := time.Now().UTC().Hour()
 	if studio != nil && studio.AvailabilityTimezone != "" {
-		loc, err := time.LoadLocation(studio.AvailabilityTimezone)
-		if err == nil {
+		if loc, err := time.LoadLocation(studio.AvailabilityTimezone); err == nil {
 			hour = time.Now().In(loc).Hour()
 		}
 	}
@@ -327,8 +409,9 @@ func (w *AIWorker) buildPrompt(history []Message, conv *Conversation, lead *lead
 	} else if hour < 17 {
 		greeting = "Good afternoon"
 	}
-	context += fmt.Sprintf("Always start your reply with the appropriate greeting ('%s') based on the current local time. ", greeting)
+	sb.WriteString(fmt.Sprintf("Always open your reply with '%s'.\n\n", greeting))
 
+	// ── Knowledge base ───────────────────────────────────────────────────────
 	kbText := ""
 	if len(kbChunks) > 0 {
 		kbText = strings.Join(kbChunks, "\n\n")
@@ -342,58 +425,97 @@ func (w *AIWorker) buildPrompt(history []Message, conv *Conversation, lead *lead
 	}
 
 	if kbText != "" {
-		context += fmt.Sprintf("\nHere are the specific company details and knowledge base you MUST use to answer questions:\n\"\"\"\n%s\n\"\"\"\nDo not invent information outside of this knowledge base. If the answer cannot be found in these details, politely state that you do not have that information and a member of the team will contact them shortly. Do not hallucinate or make up facts.\n\n", kbText)
-	}
-	
-	if len(plans) > 0 {
-		context += "Available Membership Plans (in SGD):\n"
-		for _, p := range plans {
-			context += fmt.Sprintf("- %s: S$ %.2f/%s. Features: %s\n", p.PlanName, float64(p.PriceSGD)/100.0, p.BillingCycle, strings.Join(p.Features, ", "))
-		}
-		context += "\n"
-	}
-
-	if lead != nil {
-		context += fmt.Sprintf("Responding to %s about the %s plan. The lead's current status is '%s'. ", lead.Name, lead.FitnessPlan, lead.Status)
-		if lead.Status == leads.StatusNew || lead.Status == leads.StatusContacted {
-			context += "When presenting next steps or asking the customer to decide between a trial and membership, always end your reply by offering these two clear options to choose from: '1. Book a Trial' and '2. Become a Member'. "
-		} else if lead.Status == leads.StatusTrialBooked {
-			context += "The customer has already booked or taken a trial. When presenting next steps, offer these two clear options to choose from: '1. Yes, I am ready to become a member!' and '2. Not right now'. "
-		}
-	}
-
-	context += "Be friendly, professional, and helpful. Keep responses concise (1-3 sentences). "
-
-	// Tailor response based on sentiment
-	if sentiment == 1 {
-		if lead != nil && lead.Status == leads.StatusTrialBooked {
-			context += "The customer seems interested - try to get them to commit to a membership. "
+		sb.WriteString("KNOWLEDGE BASE (use ONLY this to answer factual questions):\n\"\"\"\n")
+		sb.WriteString(kbText)
+		sb.WriteString("\n\"\"\"\n")
+		if kbConfident {
+			sb.WriteString("The knowledge base contains relevant information for this query — use it precisely.\n\n")
 		} else {
-			context += "The customer seems interested - try to book a trial session or get more details. "
+			sb.WriteString("The knowledge base may not directly answer this query. If you cannot find the answer, say: \"I don't have that detail handy — a team member will follow up shortly.\"\n\n")
 		}
-	} else if sentiment == -1 {
-		context += "The customer seems hesitant or uninterested - try to understand their concerns and address them. "
 	} else {
-		context += "Ask clarifying questions to understand their needs and interest level. "
+		sb.WriteString("No knowledge base is configured. If asked factual questions you cannot answer, say a team member will follow up.\n\n")
 	}
 
-	if lead != nil && lead.Status == leads.StatusTrialBooked {
-		context += "\nRespond naturally and try to move the conversation toward getting a membership commitment."
-	} else {
-		context += "\nRespond naturally and try to move the conversation toward booking a trial or getting commitment."
+	// ── Plans ────────────────────────────────────────────────────────────────
+	if len(plans) > 0 {
+		sb.WriteString("MEMBERSHIP PLANS (SGD):\n")
+		for _, p := range plans {
+			sb.WriteString(fmt.Sprintf("  • %s — S$%.2f/%s | %s\n",
+				p.PlanName, float64(p.PriceSGD)/100.0, p.BillingCycle, strings.Join(p.Features, ", ")))
+		}
+		sb.WriteString("\n")
 	}
 
-	context += "\n\n--- CONVERSATION HISTORY ---\n"
+	// ── Lead context ─────────────────────────────────────────────────────────
+	if lead != nil {
+		sb.WriteString(fmt.Sprintf("LEAD: %s | plan interest: %s | status: %s\n", lead.Name, lead.FitnessPlan, lead.Status))
+		switch lead.Status {
+		case leads.StatusNew, leads.StatusContacted:
+			sb.WriteString("END your reply with these exact options:\n  1. Book a Trial\n  2. Become a Member\n\n")
+		case leads.StatusTrialBooked:
+			sb.WriteString("END your reply with these exact options:\n  1. Yes, I am ready to become a member!\n  2. Not right now\n\n")
+		}
+	}
+
+	// ── Intent-aware instructions ─────────────────────────────────────────────
+	sb.WriteString("RESPONSE STRATEGY:\n")
+	switch intent {
+	case "pricing_question":
+		sb.WriteString("Customer is asking about price. Give the exact price from the plans above. Then show the value: what they get for that price. End with a soft CTA to book a trial.\n")
+	case "booking_inquiry":
+		sb.WriteString("Customer wants to book. Make it easy — confirm what they want, offer next steps (date/time or a booking link). Be enthusiastic.\n")
+	case "objection":
+		sb.WriteString("Customer has a concern or objection. Acknowledge it empathetically, address it with facts from the knowledge base, then redirect toward a trial (low commitment).\n")
+	case "ready_to_buy":
+		sb.WriteString("Customer is ready. Do NOT delay — confirm the next action clearly and immediately. Help them complete the purchase or booking right now.\n")
+	case "off_topic":
+		sb.WriteString("Customer is asking something unrelated to the studio. Politely acknowledge, then steer the conversation back to how the studio can help them.\n")
+	default:
+		// general_question or unknown
+		sb.WriteString("Answer the question concisely using the knowledge base. Then ask one qualifying question to understand their fitness goals.\n")
+	}
+
+	// Sentiment overlay
+	switch sentiment {
+	case 1:
+		if lead != nil && lead.Status == leads.StatusTrialBooked {
+			sb.WriteString("Tone: enthusiastic — they're interested, push gently for membership commitment.\n")
+		} else {
+			sb.WriteString("Tone: enthusiastic — they're interested, push gently for a trial booking.\n")
+		}
+	case -1:
+		sb.WriteString("Tone: empathetic — they seem hesitant. Listen first, address concerns, lower the commitment bar (trial is free/cheap).\n")
+	default:
+		sb.WriteString("Tone: curious and friendly — ask one open question to uncover their motivation.\n")
+	}
+	sb.WriteString("Keep the reply concise: 2–4 sentences maximum. Never make up facts.\n\n")
+
+	// ── Semantic history (high-confidence past context) ───────────────────────
+	if len(semanticHistory) > 0 {
+		sb.WriteString("--- RELEVANT PAST CONTEXT (earlier messages semantically similar to today's query) ---\n")
+		for _, sm := range semanticHistory {
+			label := "Assistant (earlier)"
+			if sm.Direction == DirectionInbound {
+				label = "Customer (earlier)"
+			}
+			sb.WriteString(fmt.Sprintf("%s [similarity %.2f]: %s\n", label, sm.Score, sm.Body))
+		}
+		sb.WriteString("\n")
+	}
+
+	// ── Recent conversation window ────────────────────────────────────────────
+	sb.WriteString("--- RECENT CONVERSATION ---\n")
 	for _, m := range history {
 		if m.Direction == DirectionInbound {
-			context += fmt.Sprintf("Customer: %s\n", m.Body)
+			sb.WriteString(fmt.Sprintf("Customer: %s\n", m.Body))
 		} else {
-			context += fmt.Sprintf("Assistant: %s\n", m.Body)
+			sb.WriteString(fmt.Sprintf("Assistant: %s\n", m.Body))
 		}
 	}
-	context += "Assistant: "
+	sb.WriteString("Assistant: ")
 
-	return context
+	return sb.String()
 }
 
 func (w *AIWorker) detectOptionChoice(body string, status leads.LeadStatus) (leads.LeadStatus, bool) {

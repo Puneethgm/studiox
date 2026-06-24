@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.6
 #
 # Build context: repo root.
 #   docker build -f deploy/web.Dockerfile -t projectx-web .
