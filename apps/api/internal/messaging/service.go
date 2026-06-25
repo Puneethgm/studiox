@@ -929,13 +929,15 @@ func (s *Service) HandleInboundWAWeb(ctx context.Context, studioID uuid.UUID, fr
 			defaultPlan = fitnessPlans[0]
 		}
 		leadID := uuid.New()
-		emailPlaceholder := fmt.Sprintf("wa-%s@example.com", from)
+		// Use the clean numeric part (no @c.us / @lid suffix) for human-readable fields.
+		cleanPhone := numericPart
+		emailPlaceholder := fmt.Sprintf("wa-%s@example.com", cleanPhone)
 		_, err = tx.Exec(ctx, `
 			INSERT INTO leads (id, studio_id, campaign_id, name, first_name, last_name,
 			                   email, phone, fitness_plan, status, source,
 			                   auto_contact_stage, created_at, updated_at)
 			VALUES ($1,$2,$3,$4,$5,'', $6,$7,$8,'contacted','whatsapp_web','awaiting_options',now(),now())
-		`, leadID, studioID, campaignID, from, from, emailPlaceholder, from, defaultPlan)
+		`, leadID, studioID, campaignID, cleanPhone, cleanPhone, emailPlaceholder, cleanPhone, defaultPlan)
 		if err != nil {
 			return fmt.Errorf("auto-create wa-web lead: %w", err)
 		}
