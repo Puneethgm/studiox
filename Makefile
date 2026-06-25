@@ -74,7 +74,7 @@ wa-web: ## Run the WhatsApp Web QR service
 	cd apps/wa-web && node src/index.js
 
 dev: ## Run API + web + wa-web concurrently
-	$(PNPM) dlx concurrently -k -n api,web,wa-web -c blue,magenta,green \
+	$(PNPM) dlx concurrently -n api,web,wa-web -c blue,magenta,green \
 		"\"$(MAKE)\" api" "\"$(MAKE)\" web" "\"$(MAKE)\" wa-web"
 
 # ---------- quality ----------
