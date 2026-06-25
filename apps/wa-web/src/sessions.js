@@ -51,34 +51,48 @@ export class SessionManager {
     this.sessions.delete(studioId);
   }
 
+  _isDeadSession(err) {
+    const msg = err?.message || '';
+    return msg.includes('detached Frame') || msg.includes('Target closed') ||
+      msg.includes('Session closed') || msg.includes('Protocol error');
+  }
+
+  async _recoverSession(studioId) {
+    this.log.warn({ studioId }, 'wa-web: dead session detected, restarting...');
+    const s = this.sessions.get(studioId);
+    if (s?.client) await s.client.destroy().catch(() => {});
+    this.sessions.delete(studioId);
+    await this._notifyDisconnected(studioId);
+    this._startSession(studioId).catch(err =>
+      this.log.error({ err, studioId }, 'wa-web: session recovery failed'),
+    );
+  }
+
   async sendMessage(studioId, to, text) {
     const s = this.sessions.get(studioId);
     if (!s || s.status !== 'connected') throw new Error(`session not connected for studio ${studioId}`);
-    // If already a full WA chat ID (has @), try direct send first
-    if (to.includes('@')) {
-      try {
-        return await s.client.sendMessage(to, text);
-      } catch (err) {
-        if (!err.message?.includes('LID')) throw err;
-        // LID error on @c.us — this contact requires @lid routing.
-        // Try the same numeric part with @lid suffix.
-        if (to.endsWith('@c.us')) {
-          const number = to.replace('@c.us', '');
-          try {
-            return await s.client.sendMessage(number + '@lid', text);
-          } catch (_) {}
+    try {
+      // If already a full WA chat ID (has @), try direct send first
+      if (to.includes('@')) {
+        try {
+          return await s.client.sendMessage(to, text);
+        } catch (err) {
+          if (this._isDeadSession(err)) { await this._recoverSession(studioId); throw err; }
+          if (!err.message?.includes('LID')) throw err;
+          if (to.endsWith('@c.us')) {
+            const number = to.replace('@c.us', '');
+            try { return await s.client.sendMessage(number + '@lid', text); } catch (_) {}
+          }
         }
-        // Fall through to getNumberId resolution
       }
+      const number = to.replace(/[^\d]/g, '');
+      const numberId = await s.client.getNumberId(number);
+      if (numberId) return await s.client.sendMessage(numberId._serialized, text);
+      return await s.client.sendMessage(number + '@lid', text);
+    } catch (err) {
+      if (this._isDeadSession(err)) await this._recoverSession(studioId);
+      throw err;
     }
-    // Resolve via getNumberId (works for regular numbers)
-    const number = to.replace(/[^\d]/g, '');
-    const numberId = await s.client.getNumberId(number);
-    if (numberId) {
-      return await s.client.sendMessage(numberId._serialized, text);
-    }
-    // Last resort: try @lid directly
-    return await s.client.sendMessage(number + '@lid', text);
   }
 
   async sendMedia(studioId, to, mediaUrl, mediaType, caption) {
@@ -87,24 +101,27 @@ export class SessionManager {
     const absoluteUrl = mediaUrl.startsWith('http') ? mediaUrl : `${this.projectxApiUrl}${mediaUrl}`;
     const media = await MessageMedia.fromUrl(absoluteUrl, { unsafeMime: true });
 
-    // Try sending — with the same @lid fallback as sendMessage
-    if (to.includes('@')) {
-      try {
-        return await s.client.sendMessage(to, media, { caption });
-      } catch (err) {
-        if (!err.message?.includes('LID')) throw err;
-        if (to.endsWith('@c.us')) {
-          const number = to.replace('@c.us', '');
-          try {
-            return await s.client.sendMessage(number + '@lid', media, { caption });
-          } catch (_) {}
+    try {
+      if (to.includes('@')) {
+        try {
+          return await s.client.sendMessage(to, media, { caption });
+        } catch (err) {
+          if (this._isDeadSession(err)) { await this._recoverSession(studioId); throw err; }
+          if (!err.message?.includes('LID')) throw err;
+          if (to.endsWith('@c.us')) {
+            const number = to.replace('@c.us', '');
+            try { return await s.client.sendMessage(number + '@lid', media, { caption }); } catch (_) {}
+          }
         }
       }
+      const number = to.replace(/[^\d]/g, '');
+      const numberId = await s.client.getNumberId(number);
+      if (numberId) return await s.client.sendMessage(numberId._serialized, media, { caption });
+      return await s.client.sendMessage(number + '@lid', media, { caption });
+    } catch (err) {
+      if (this._isDeadSession(err)) await this._recoverSession(studioId);
+      throw err;
     }
-    const number = to.replace(/[^\d]/g, '');
-    const numberId = await s.client.getNumberId(number);
-    if (numberId) return await s.client.sendMessage(numberId._serialized, media, { caption });
-    return await s.client.sendMessage(number + '@lid', media, { caption });
   }
 
   // Pre-warm Chrome for a studio so the QR is ready before the user clicks.
