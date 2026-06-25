@@ -81,10 +81,12 @@ func (w *AutoContactWorker) processItem(ctx context.Context, it leads.OutboxItem
 		return fmt.Errorf("empty phone for lead %s", l.ID)
 	}
 
-	// Resolve active channel for phone-based contact (WhatsApp first, then SMS)
+	// Resolve active channel for phone-based contact (WhatsApp Meta → WhatsApp Web → SMS)
 	channelKind := KindWhatsAppMeta
 	if _, err := w.msgRepo.GetActiveChannelByKind(ctx, l.StudioID, KindWhatsAppMeta); err != nil {
-		if _, smsErr := w.msgRepo.GetActiveChannelByKind(ctx, l.StudioID, KindSMS); smsErr == nil {
+		if _, waWebErr := w.msgRepo.GetActiveChannelByKind(ctx, l.StudioID, KindWhatsAppWeb); waWebErr == nil {
+			channelKind = KindWhatsAppWeb
+		} else if _, smsErr := w.msgRepo.GetActiveChannelByKind(ctx, l.StudioID, KindSMS); smsErr == nil {
 			channelKind = KindSMS
 		} else {
 			// No active channel!

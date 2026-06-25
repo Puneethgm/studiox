@@ -63,6 +63,8 @@ func (w *AIWorker) Run(ctx context.Context) {
 		w.log.Info("claude configured; starting ai worker")
 	}
 	w.log.Info("ai worker started")
+	// Subscribe immediately so messages arriving in the first 30s are not missed.
+	w.syncSubscriptions(ctx)
 	t := time.NewTicker(aiResyncInterval)
 	defer t.Stop()
 	for {
@@ -204,29 +206,32 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		if err != nil {
 			w.log.Error("fetch lead for ai context", "err", err)
 		} else {
-			// Skip AI if the bot automation is actively handling this lead — UNLESS we are
-			// at awaiting_options where the user may have asked a question the bot doesn't
-			// recognise (bot only handles "1"/"2" there; everything else falls to AI).
+			// Skip AI only for mid-flow stages where the bot owns the conversation
+			// (date/time selection, plan selection, reason collection).
+			// At awaiting_interest and awaiting_options the bot only reacts to exact
+			// numeric/keyword choices; anything else (questions, greetings) falls to AI.
 			stage := lead.AutoContactStage
-			if stage != "" && stage != "completed" && stage != "awaiting_options" {
+			botOwnedStage := stage != "" &&
+				stage != "completed" &&
+				stage != "awaiting_options" &&
+				stage != "awaiting_interest"
+			if botOwnedStage {
 				w.log.Debug("skipping ai reply", "lead", lead.ID, "stage", stage, "reason", "bot is handling this stage")
 				return nil
 			}
-			// Even at awaiting_options, skip if the bot already queued an outbound reply
-			// for this conversation after the inbound message arrived (bot handled "1"/"2").
-			if stage == "awaiting_options" || stage == "" {
-				var botReplied bool
-				_ = w.msgRepo.Pool().QueryRow(ctx, `
-					SELECT EXISTS(
-						SELECT 1 FROM outbound_jobs
-						WHERE conversation_id = $1 AND source_kind = 'automation'
-						AND created_at >= $2
-					)
-				`, conv.ID, msg.CreatedAt).Scan(&botReplied)
-				if botReplied {
-					w.log.Debug("skipping ai reply", "lead", lead.ID, "reason", "bot already replied to this message")
-					return nil
-				}
+			// At awaiting_options / awaiting_interest / no-stage: skip only if the bot
+			// already queued an outbound reply for this specific inbound message.
+			var botReplied bool
+			_ = w.msgRepo.Pool().QueryRow(ctx, `
+				SELECT EXISTS(
+					SELECT 1 FROM outbound_jobs
+					WHERE conversation_id = $1 AND source_kind = 'automation'
+					AND created_at >= $2
+				)
+			`, conv.ID, msg.CreatedAt).Scan(&botReplied)
+			if botReplied {
+				w.log.Debug("skipping ai reply", "lead", lead.ID, "reason", "bot already replied to this message")
+				return nil
 			}
 		}
 	}
@@ -359,19 +364,20 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 
 	// Generate AI response with context
 	prompt := w.buildPrompt(history, semanticHistory, conv, lead, studio, plans, sentiment, keywords, kbChunks, intent, kbConfident)
-	
+
+	// apiKey already has the platform-level fallback applied above — reuse it for generation too.
 	var resp string
 	var sourceRef string
-	if studio.GeminiAPIKey != "" {
-		w.log.Info("generating ai reply using studio gemini api key", "studio_id", studioID, "message_id", msg.ID)
-		resp, err = w.generateGeminiReply(ctx, studio.GeminiAPIKey, prompt)
+	if apiKey != "" {
+		w.log.Info("generating ai reply using gemini", "studio_id", studioID, "message_id", msg.ID)
+		resp, err = w.generateGeminiReply(ctx, apiKey, prompt)
 		sourceRef = "gemini"
 	} else if w.claude != nil {
 		w.log.Info("generating ai reply using claude", "studio_id", studioID, "message_id", msg.ID)
 		resp, err = w.claude.GenerateReply(ctx, prompt)
 		sourceRef = "claude"
 	} else {
-		w.log.Warn("skipping ai reply: neither claude nor studio gemini key configured", "studio_id", studioID)
+		w.log.Warn("skipping ai reply: neither gemini nor claude configured", "studio_id", studioID)
 		return nil
 	}
 	if err != nil {
