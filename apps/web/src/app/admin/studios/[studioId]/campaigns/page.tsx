@@ -1,5 +1,6 @@
+import React from 'react';
 import Link from 'next/link';
-import { Megaphone, Plus, Users, Link as LinkIcon, ExternalLink, Zap } from 'lucide-react';
+import { Megaphone, Plus, Users, Link as LinkIcon, ExternalLink, Zap, Calendar, Facebook, Instagram, Twitter, Globe } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -16,6 +17,14 @@ interface ListResp {
   total: number;
 }
 
+interface SocialPost {
+  id: string;
+  campaignName: string;
+  platform: 'Facebook' | 'Instagram' | 'Google Ads' | 'X (Twitter)';
+  status: 'published' | 'scheduled' | 'draft' | 'failed';
+  scheduledTime: string;
+}
+
 export default async function CampaignsPage({
   params,
   searchParams,
@@ -29,9 +38,18 @@ export default async function CampaignsPage({
   const limit = 5; // 5 campaigns + 1 create card = 6 slots on page 1
   const offset = (currentPage - 1) * limit;
 
-  const { campaigns, total = 0 } = await serverFetch<ListResp>(
-    `/api/v1/studios/${studioId}/campaigns?limit=${limit}&offset=${offset}`,
-  );
+  const [{ campaigns, total = 0 }, socialPosts] = await Promise.all([
+    serverFetch<ListResp>(`/api/v1/studios/${studioId}/campaigns?limit=${limit}&offset=${offset}`),
+    serverFetch<SocialPost[]>(`/api/v1/studios/${studioId}/social-posts`).catch(() => [] as SocialPost[]),
+  ]);
+
+  // Group social posts by campaign name for quick lookup
+  const postsByCampaign = (socialPosts ?? []).reduce<Record<string, SocialPost[]>>((acc, p) => {
+    const key = p.campaignName ?? '';
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(p);
+    return acc;
+  }, {});
 
   return (
     <div className="space-y-6">
@@ -68,7 +86,7 @@ export default async function CampaignsPage({
         <div className="space-y-6">
           <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {campaigns.map((c, i) => (
-              <CampaignCard key={c.id} campaign={c} studioId={studioId} index={i} />
+              <CampaignCard key={c.id} campaign={c} studioId={studioId} index={i} posts={postsByCampaign[c.name] ?? []} />
             ))}
             
             {currentPage === 1 && (
@@ -118,9 +136,32 @@ export default async function CampaignsPage({
   );
 }
 
-function CampaignCard({ campaign, studioId, index }: { campaign: Campaign, studioId: string, index: number }) {
+const PLATFORM_ICON: Record<string, React.ReactNode> = {
+  'Facebook': <Facebook className="h-3 w-3" />,
+  'Instagram': <Instagram className="h-3 w-3" />,
+  'X (Twitter)': <Twitter className="h-3 w-3" />,
+  'Google Ads': <Globe className="h-3 w-3" />,
+};
+
+const PLATFORM_COLOR: Record<string, string> = {
+  'Facebook': 'bg-blue-500/10 text-blue-600 dark:text-blue-400',
+  'Instagram': 'bg-pink-500/10 text-pink-600 dark:text-pink-400',
+  'X (Twitter)': 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400',
+  'Google Ads': 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
+};
+
+function CampaignCard({ campaign, studioId, index, posts }: { campaign: Campaign, studioId: string, index: number, posts: SocialPost[] }) {
   const delay = `${index * 0.1}s`;
   const detailHref = `/admin/studios/${studioId}/campaigns/${campaign.id}`;
+
+  // Unique platforms across all posts
+  const platforms = [...new Set(posts.map(p => p.platform))];
+
+  // Nearest upcoming scheduled or most recent published date
+  const relevantPosts = posts.filter(p => p.status === 'scheduled' || p.status === 'published');
+  const scheduledPosts = relevantPosts.filter(p => p.status === 'scheduled').sort((a, b) => new Date(a.scheduledTime).getTime() - new Date(b.scheduledTime).getTime());
+  const publishedPosts = relevantPosts.filter(p => p.status === 'published').sort((a, b) => new Date(b.scheduledTime).getTime() - new Date(a.scheduledTime).getTime());
+  const featuredPost = scheduledPosts[0] ?? publishedPosts[0] ?? null;
 
   return (
     <div
@@ -186,6 +227,30 @@ function CampaignCard({ campaign, studioId, index }: { campaign: Campaign, studi
               </div>
             </div>
           </div>
+
+          {/* ── Social planner info ── */}
+          {(platforms.length > 0 || featuredPost) && (
+            <div className="mb-6 rounded-2xl bg-white/30 px-4 py-3 backdrop-blur-md dark:bg-neutral-950/30 space-y-2">
+              {platforms.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {platforms.map(pl => (
+                    <span key={pl} className={cn('inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-[10px] font-bold', PLATFORM_COLOR[pl] ?? 'bg-zinc-500/10 text-zinc-500')}>
+                      {PLATFORM_ICON[pl]}
+                      {pl}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {featuredPost && (
+                <div className="flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 dark:text-zinc-400">
+                  <Calendar className="h-3 w-3 shrink-0" />
+                  <span className="capitalize">{featuredPost.status}</span>
+                  <span>·</span>
+                  <span>{new Date(featuredPost.scheduledTime).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ── Footer: raised above overlay so buttons still work ── */}
           <div className="relative z-20 mt-auto border-t border-slate-100 pt-6 dark:border-white/5">
