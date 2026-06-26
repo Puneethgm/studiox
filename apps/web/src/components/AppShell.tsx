@@ -48,22 +48,21 @@ function navItemsFor(me: Me, currentPath: string): NavItem[] {
   const currentStudioId = studioMatch?.[1];
 
   if (me.role === 'super_admin') {
-    // If viewing a specific studio, show studio-level nav (super admins: limited access)
+    // If viewing a specific studio, show full studio-level nav (super admins managing a studio get all access)
     if (currentStudioId) {
       const base = `/admin/studios/${currentStudioId}`;
-      const links: NavItem[] = [
-        { href: base,                 label: 'Dashboard', icon: <Home className="h-[18px] w-[18px]" />,           match: (p) => p === base },
-        { href: `${base}/campaigns`,  label: 'Campaigns', icon: <Megaphone className="h-[18px] w-[18px]" />,      match: (p) => p.startsWith(`${base}/campaigns`) },
-        { href: `${base}/leads`,      label: 'Leads',     icon: <Inbox className="h-[18px] w-[18px]" />,          match: (p) => p.startsWith(`${base}/leads`) },
-        { href: `${base}/social-planner`, label: 'Social Planner', icon: <Sparkles className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/social-planner`) },
+      return [
+        { href: base,                     label: 'Dashboard',     icon: <Home className="h-[18px] w-[18px]" />,           match: (p) => p === base },
+        { href: `${base}/inbox`,          label: 'Inbox',         icon: <MessagesSquare className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/inbox`) },
+        { href: `${base}/pipeline`,       label: 'Pipeline',      icon: <GitBranch className="h-[18px] w-[18px]" />,      match: (p) => p.startsWith(`${base}/pipeline`) },
+        { href: `${base}/campaigns`,      label: 'Campaigns',     icon: <Megaphone className="h-[18px] w-[18px]" />,      match: (p) => p.startsWith(`${base}/campaigns`) },
+        { href: `${base}/leads`,          label: 'Leads',         icon: <Inbox className="h-[18px] w-[18px]" />,          match: (p) => p.startsWith(`${base}/leads`) },
+        { href: `${base}/social-planner`, label: 'Social Planner',icon: <Sparkles className="h-[18px] w-[18px]" />,       match: (p) => p.startsWith(`${base}/social-planner`) },
+        { href: `${base}/payments`,       label: 'Payments',      icon: <CreditCard className="h-[18px] w-[18px]" />,     match: (p) => p.startsWith(`${base}/payments`) },
+        { href: `${base}/channels`,       label: 'Channels',      icon: <Plug className="h-[18px] w-[18px]" />,           match: (p) => p.startsWith(`${base}/channels`) },
+        { href: `${base}/knowledge-base`, label: 'Knowledge Base',icon: <Database className="h-[18px] w-[18px]" />,       match: (p) => p.startsWith(`${base}/knowledge-base`) },
+        { href: `${base}/settings`,       label: 'Settings',      icon: <Settings className="h-[18px] w-[18px]" />,       match: (p) => p.startsWith(`${base}/settings`) },
       ];
-
-      links.push(
-        { href: `${base}/channels`,   label: 'Channels',  icon: <Plug className="h-[18px] w-[18px]" />,           match: (p) => p.startsWith(`${base}/channels`) },
-        { href: `${base}/knowledge-base`, label: 'Knowledge Base', icon: <Database className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/knowledge-base`) },
-      );
-
-      return links;
     }
 
     // Otherwise show top-level super admin nav
