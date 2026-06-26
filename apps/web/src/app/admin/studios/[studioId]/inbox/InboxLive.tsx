@@ -41,13 +41,13 @@ function displayContact(value: string): string {
 }
 
 const CHANNEL_BADGE: Record<ChannelKind, { label: string; color: string }> = {
-  whatsapp_meta:  { label: 'WA',  color: '#25D366' },
-  whatsapp_web:   { label: 'WA',  color: '#128C7E' },
-  instagram_meta: { label: 'IG',  color: '#E1306C' },
-  messenger_meta: { label: 'FB',  color: '#0084FF' },
-  x_dm:           { label: 'X',   color: '#000000' },
-  sms:            { label: 'SMS', color: '#3b82f6' },
-  google_ads:     { label: 'G',   color: '#4285F4' },
+  whatsapp_meta:  { label: 'WA Meta',    color: '#25D366' },
+  whatsapp_web:   { label: 'WA Web',     color: '#128C7E' },
+  instagram_meta: { label: 'Instagram',  color: '#E1306C' },
+  messenger_meta: { label: 'Messenger',  color: '#0084FF' },
+  x_dm:           { label: 'X',          color: '#000000' },
+  sms:            { label: 'SMS',        color: '#3b82f6' },
+  google_ads:     { label: 'Google Ads', color: '#4285F4' },
 };
 
 interface SSEEvent {
@@ -789,38 +789,37 @@ export function InboxLive({
               <div className="flex h-14 items-center justify-between border-b border-white/20 px-5 dark:border-white/5">
                 <div className="flex items-center gap-2">
                   <h2 className="text-sm font-black uppercase tracking-[0.15em] text-violet-600 dark:text-violet-400">Messages</h2>
+                  <div className="flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-emerald-600 dark:text-emerald-400">
+                    <span className="relative flex h-1.5 w-1.5">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                      <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                    </span>
+                    Live
+                  </div>
                 </div>
-                <div className="flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-emerald-600 dark:text-emerald-400">
-                  <span className="relative flex h-1.5 w-1.5">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                  </span>
-                  Live
+                {/* Channel Tabs — top right */}
+                <div className="flex gap-1">
+                  {mounted ? (
+                    (['whatsapp_web', 'instagram_meta', 'messenger_meta', 'sms', 'whatsapp_meta'] as const).map((kind) => (
+                      <button
+                        key={kind}
+                        type="button"
+                        onClick={() => handleChannelSwitch(kind)}
+                        className={cn(
+                          "py-1.5 px-2 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all duration-300",
+                          activeChannel === kind
+                            ? "bg-gradient-to-r from-brand-500 to-violet-500 text-white shadow-md shadow-brand-500/25"
+                            : "bg-white/30 text-zinc-500 hover:bg-white/50 hover:text-zinc-700 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/10"
+                        )}
+                        suppressHydrationWarning
+                      >
+                        {CHANNEL_BADGE[kind].label}
+                      </button>
+                    ))
+                  ) : (
+                    <div className="w-32 h-7 bg-white/20 animate-pulse rounded-lg dark:bg-white/5" />
+                  )}
                 </div>
-              </div>
-
-              {/* Channel Tabs */}
-              <div className="flex gap-1.5 px-4 py-3">
-                {mounted ? (
-                  (['whatsapp_web', 'instagram_meta', 'messenger_meta', 'sms', 'whatsapp_meta'] as const).map((kind) => (
-                    <button
-                      key={kind}
-                      type="button"
-                      onClick={() => handleChannelSwitch(kind)}
-                      className={cn(
-                        "flex-1 py-2 px-1 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all duration-300",
-                        activeChannel === kind
-                          ? "bg-gradient-to-r from-brand-500 to-violet-500 text-white shadow-lg shadow-brand-500/25"
-                          : "bg-white/30 text-zinc-500 hover:bg-white/50 hover:text-zinc-700 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/10"
-                      )}
-                      suppressHydrationWarning
-                    >
-                      {CHANNEL_BADGE[kind].label}
-                    </button>
-                  ))
-                ) : (
-                  <div className="flex-1 h-8 bg-white/20 animate-pulse rounded-xl dark:bg-white/5" />
-                )}
               </div>
 
               {/* Filter Row */}
