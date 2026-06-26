@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Zap, Users, Target, ArrowRight, BarChart3, Calendar } from 'lucide-react';
+import { Zap, Users, Target, ArrowRight, BarChart3, Calendar, ChevronLeft } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -52,6 +52,15 @@ export default async function CampaignDetailPage({
 
   return (
     <div className="space-y-6">
+      {/* Back to Campaigns */}
+      <Link
+        href={`/admin/studios/${studioId}/campaigns`}
+        className="inline-flex items-center gap-1.5 text-sm font-semibold text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 transition-colors"
+      >
+        <ChevronLeft className="h-4 w-4" />
+        All Campaigns
+      </Link>
+
       {/* ── Premium Glass Header ── */}
       <div
         className="relative overflow-hidden rounded-[26px] border border-white/30 p-6 backdrop-blur-2xl dark:border-white/5 bg-white/30 dark:bg-neutral-900/30"

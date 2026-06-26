@@ -1,6 +1,6 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { Eye, EyeOff, Database, Building, Calendar, Cpu, Lock, Save, CheckCircle2, X, DollarSign } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
@@ -34,8 +34,18 @@ function parsePhone(fullPhone: string) {
   return { countryCode: '+65', phoneNumber: fullPhone };
 }
 
+type SettingsSection = 'general' | 'plans' | 'availability' | 'integrations' | 'security' | 'billing';
+const VALID_SECTIONS: SettingsSection[] = ['general', 'plans', 'availability', 'integrations', 'security', 'billing'];
+
 export function SettingsForm({ studio, previewHref, initialPlans }: { studio: Studio; previewHref: string | null; initialPlans: any[] }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  const initialSection = (VALID_SECTIONS.includes(searchParams.get('tab') as SettingsSection)
+    ? searchParams.get('tab')
+    : 'general') as SettingsSection;
+
   const [name, setName] = useState(studio.name);
   const [brandColor, setBrandColor] = useState(studio.brandColor);
   const [logoUrl, setLogoUrl] = useState(studio.logoUrl);
@@ -55,7 +65,13 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   
-  const [activeSection, setActiveSection] = useState<'general' | 'plans' | 'availability' | 'integrations' | 'security' | 'billing'>('general');
+  const [activeSection, _setActiveSection] = useState<SettingsSection>(initialSection);
+  const setActiveSection = (section: SettingsSection) => {
+    _setActiveSection(section);
+    const p = new URLSearchParams(searchParams.toString());
+    p.set('tab', section);
+    router.replace(`${pathname}?${p.toString()}`, { scroll: false });
+  };
   
   // Trial Pricing (stored as cents/paise in the backend)
   const [trialAmountSgd, setTrialAmountSgd] = useState((studio.trialAmountSgd ?? 2500) / 100);

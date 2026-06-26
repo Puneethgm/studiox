@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import {
   Check,
   MessagesSquare,
@@ -102,10 +102,26 @@ export function InboxLive({
   initialUnresponded?: boolean;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [mounted, setMounted] = useState(false);
-  const [currentTab, _setCurrentTab] = useState<InboxTab>('conversations');
-  const setCurrentTab = useCallback((tab: InboxTab) => { currentTabRef.current = tab; _setCurrentTab(tab); }, []);
-  const [activeChannel, setActiveChannel] = useState<ChannelKind>('whatsapp_web');
+
+  const VALID_TABS: InboxTab[] = ['conversations', 'automated_messages', 'snippets', 'trigger_links'];
+  const VALID_CHANNELS: ChannelKind[] = ['whatsapp_web', 'whatsapp_meta', 'instagram_meta', 'messenger_meta', 'sms'];
+
+  const initialTab = (VALID_TABS.includes(searchParams.get('tab') as InboxTab) ? searchParams.get('tab') : 'conversations') as InboxTab;
+  const initialChannel = (VALID_CHANNELS.includes(searchParams.get('channel') as ChannelKind) ? searchParams.get('channel') : 'whatsapp_web') as ChannelKind;
+
+  const [currentTab, _setCurrentTab] = useState<InboxTab>(initialTab);
+  const setCurrentTab = useCallback((tab: InboxTab) => {
+    currentTabRef.current = tab;
+    _setCurrentTab(tab);
+    const p = new URLSearchParams(searchParams.toString());
+    p.set('tab', tab);
+    router.replace(`${pathname}?${p.toString()}`, { scroll: false });
+  }, [pathname, router, searchParams]);
+
+  const [activeChannel, setActiveChannel] = useState<ChannelKind>(initialChannel);
   const [unrespondedOnly, setUnrespondedOnly] = useState(initialUnresponded);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedId, _setSelectedId] = useState<string | null>(null);
@@ -119,7 +135,7 @@ export function InboxLive({
   const [authError, setAuthError] = useState(false);
   const messagesEndRef = useRef<HTMLLIElement>(null);
   const selectedIdRef = useRef<string | null>(null);
-  const currentTabRef = useRef<InboxTab>('conversations');
+  const currentTabRef = useRef<InboxTab>(initialTab);
 
   // templates, links, jobs state
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -546,6 +562,9 @@ export function InboxLive({
     setActiveChannel(kind);
     setSelectedId(null);
     setMessages([]);
+    const p = new URLSearchParams(searchParams.toString());
+    p.set('channel', kind);
+    router.replace(`${pathname}?${p.toString()}`, { scroll: false });
   };
 
   useEffect(() => {
@@ -797,29 +816,21 @@ export function InboxLive({
                     Live
                   </div>
                 </div>
-                {/* Channel Tabs — top right */}
-                <div className="flex gap-1">
-                  {mounted ? (
-                    (['whatsapp_web', 'instagram_meta', 'messenger_meta', 'sms', 'whatsapp_meta'] as const).map((kind) => (
-                      <button
-                        key={kind}
-                        type="button"
-                        onClick={() => handleChannelSwitch(kind)}
-                        className={cn(
-                          "py-1.5 px-2 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all duration-300",
-                          activeChannel === kind
-                            ? "bg-gradient-to-r from-brand-500 to-violet-500 text-white shadow-md shadow-brand-500/25"
-                            : "bg-white/30 text-zinc-500 hover:bg-white/50 hover:text-zinc-700 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/10"
-                        )}
-                        suppressHydrationWarning
-                      >
-                        {CHANNEL_BADGE[kind].label}
-                      </button>
-                    ))
-                  ) : (
-                    <div className="w-32 h-7 bg-white/20 animate-pulse rounded-lg dark:bg-white/5" />
-                  )}
-                </div>
+                {/* Channel Dropdown — top right */}
+                {mounted && (
+                  <select
+                    value={activeChannel}
+                    onChange={(e) => handleChannelSwitch(e.target.value as ChannelKind)}
+                    className="rounded-xl border border-white/20 bg-white/30 px-3 py-1.5 text-xs font-bold text-zinc-700 backdrop-blur-md focus:border-brand-500/40 focus:outline-none focus:ring-2 focus:ring-brand-500/15 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 cursor-pointer"
+                    suppressHydrationWarning
+                  >
+                    <option value="whatsapp_web">WhatsApp Web</option>
+                    <option value="whatsapp_meta">WhatsApp Meta</option>
+                    <option value="instagram_meta">Instagram</option>
+                    <option value="messenger_meta">Messenger</option>
+                    <option value="sms">SMS</option>
+                  </select>
+                )}
               </div>
 
               {/* Filter Row */}

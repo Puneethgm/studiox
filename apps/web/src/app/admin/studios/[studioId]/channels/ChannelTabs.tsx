@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, type ReactNode } from 'react';
+import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { Clock, Plug, CheckCircle2, X } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -76,8 +77,24 @@ export function ChannelTabs({
   channels: ChannelAccount[];
   studio: Studio;
 }) {
-  const [active, setActive] = useState<ChannelKind>('whatsapp_web');
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  const VALID_KINDS = TABS.map((t) => t.kind);
+  const initialActive = (VALID_KINDS.includes(searchParams.get('channel') as ChannelKind)
+    ? searchParams.get('channel')
+    : 'whatsapp_web') as ChannelKind;
+
+  const [active, setActive] = useState<ChannelKind>(initialActive);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const handleSetActive = (kind: ChannelKind) => {
+    setActive(kind);
+    const p = new URLSearchParams(searchParams.toString());
+    p.set('channel', kind);
+    router.replace(`${pathname}?${p.toString()}`, { scroll: false });
+  };
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
@@ -97,7 +114,7 @@ export function ChannelTabs({
             <button
               key={t.kind}
               type="button"
-              onClick={() => setActive(t.kind)}
+              onClick={() => handleSetActive(t.kind)}
               className={cn(
                 'group relative flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition-all duration-200',
                 isActive

@@ -1,4 +1,3 @@
-import { redirect } from 'next/navigation';
 import { requireSession, serverFetch } from '@/lib/auth';
 import type { Campaign, Studio, Plan } from '@/lib/types';
 import { SettingsForm } from './SettingsForm';
@@ -13,12 +12,6 @@ export default async function SettingsPage({
   const { studioId } = await params;
   const me = await requireSession();
 
-  // Super admins have no business in individual studio settings
-  if (me.role === 'super_admin') {
-    redirect('/admin/studios');
-  }
-
-  // Studio-admin only from here on
   const studio = await serverFetch<Studio>(`/api/v1/me/studios/${studioId}`);
 
   let previewHref: string | null = null;
