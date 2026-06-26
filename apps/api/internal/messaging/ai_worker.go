@@ -469,11 +469,57 @@ func (w *AIWorker) buildPrompt(history []Message, semanticHistory []SemanticMatc
 	// ── Lead context ─────────────────────────────────────────────────────────
 	if lead != nil {
 		sb.WriteString(fmt.Sprintf("LEAD: %s | plan interest: %s | status: %s\n", lead.Name, lead.FitnessPlan, lead.Status))
+		// Bot automation owns the numbered-choice flow while it is active.
+		// AI answers questions freely but must not inject its own options during
+		// bot-managed stages — the bot will present the right choices at the right time.
+		botOwnsFlow := lead.AutoContactStage != "" && lead.AutoContactStage != "completed"
+
 		switch lead.Status {
 		case leads.StatusNew, leads.StatusContacted:
-			sb.WriteString("END your reply with these exact options:\n  1. Book a Trial\n  2. Become a Member\n\n")
+			if !botOwnsFlow {
+				// No active bot flow — AI may append booking options, but only if the
+				// customer hasn't already seen them and is asking about booking.
+				optionsAlreadySent := false
+				for _, m := range history {
+					if m.Direction == DirectionOutbound &&
+						(strings.Contains(m.Body, "Book a Trial") || strings.Contains(m.Body, "Become a Member")) {
+						optionsAlreadySent = true
+						break
+					}
+				}
+				customerAsksAboutBooking := false
+				if len(history) > 0 {
+					lastMsg := history[len(history)-1]
+					if lastMsg.Direction == DirectionInbound {
+						lt := strings.ToLower(lastMsg.Body)
+						customerAsksAboutBooking = strings.Contains(lt, "book") ||
+							strings.Contains(lt, "trial") ||
+							strings.Contains(lt, "join") ||
+							strings.Contains(lt, "member") ||
+							strings.Contains(lt, "sign up") ||
+							strings.Contains(lt, "enroll") ||
+							strings.Contains(lt, "register")
+					}
+				}
+				if !optionsAlreadySent || customerAsksAboutBooking {
+					sb.WriteString("END your reply with these exact options:\n  1. Book a Trial\n  2. Become a Member\n\n")
+				}
+			}
 		case leads.StatusTrialBooked:
-			sb.WriteString("END your reply with these exact options:\n  1. Yes, I am ready to become a member!\n  2. Not right now\n\n")
+			if !botOwnsFlow {
+				// Only show follow-up options if not already shown recently.
+				optionsAlreadySent := false
+				for _, m := range history {
+					if m.Direction == DirectionOutbound &&
+						strings.Contains(m.Body, "ready to become a member") {
+						optionsAlreadySent = true
+						break
+					}
+				}
+				if !optionsAlreadySent {
+					sb.WriteString("END your reply with these exact options:\n  1. Yes, I am ready to become a member!\n  2. Not right now\n\n")
+				}
+			}
 		}
 	}
 
