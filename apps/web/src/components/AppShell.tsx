@@ -293,6 +293,7 @@ function Sidebar({
   const items = navItemsFor(me, pathname);
   const isStudio = me.role === 'studio_admin' && !!me.studio;
   const studio = isStudio ? me.studio! : null;
+  const isSuperAdminInStudio = me.role === 'super_admin' && /\/admin\/studios\/[^/]+/.test(pathname);
 
   const [logoError, setLogoError] = useState(false);
   useEffect(() => {
@@ -377,6 +378,22 @@ function Sidebar({
         "flex flex-1 flex-col gap-3 overflow-y-auto no-scrollbar lg:w-full",
         isCollapsed ? "lg:items-center" : "lg:items-stretch"
       )}>
+        {isSuperAdminInStudio && (
+          <Link
+            href="/admin/studios"
+            className={cn(
+              'group flex animate-in items-center gap-2 rounded-[20px] px-3 py-2.5 text-xs font-semibold text-zinc-400 transition-colors hover:bg-white/50 hover:text-zinc-700 dark:text-zinc-500 dark:hover:bg-white/5 dark:hover:text-zinc-300 mb-1',
+              isCollapsed ? 'lg:justify-center' : 'lg:justify-start',
+            )}
+            title="All Studios"
+          >
+            <ChevronLeft className="h-4 w-4 shrink-0 transition-transform group-hover:-translate-x-0.5" />
+            <span className={cn(
+              'lg:transition-all lg:duration-300',
+              isCollapsed ? 'lg:max-w-0 lg:overflow-hidden lg:opacity-0' : 'lg:max-w-[10rem] lg:opacity-100'
+            )}>All Studios</span>
+          </Link>
+        )}
         {items.map((item, idx) => {
           const active = item.match ? item.match(pathname) : pathname === item.href;
           return (
