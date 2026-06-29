@@ -25,7 +25,7 @@ RUN go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server \
  && mkdir -p /out/uploads
 
 # ---------- runtime ----------
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM alpine:3.19
 
 WORKDIR /app
 
@@ -36,5 +36,6 @@ COPY --from=build /src/migrations /migrations
 COPY --chown=nonroot:nonroot --from=build /out/uploads /app/uploads
 
 EXPOSE 8080
-USER nonroot:nonroot
+RUN adduser -D -u 65532 nonroot
+USER nonroot
 ENTRYPOINT ["/usr/local/bin/server"]

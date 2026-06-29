@@ -513,7 +513,7 @@ func (s *Service) BookTrialSlot(ctx context.Context, leadID uuid.UUID, slot stri
 			_, _ = tx.Exec(ctx, `
 				INSERT INTO outbox (aggregate_type, aggregate_id, event_type, destination, payload)
 				VALUES ('lead', $1, 'lead.updated', 'google_sheets', $2)
-			`, l.ID, payload)
+			`, l.ID, string(payload))
 		}
 	}
 

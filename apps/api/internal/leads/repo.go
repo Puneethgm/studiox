@@ -223,14 +223,39 @@ func (r *Repo) CreateLeadWithOutbox(ctx context.Context, l *Lead, destination st
 		return fmt.Errorf("insert lead: %w", err)
 	}
 
-	payload, err := json.Marshal(l)
+	type leadPayload struct {
+		ID           string `json:"id"`
+		StudioID     string `json:"studioId"`
+		CampaignID   string `json:"campaignId"`
+		Name         string `json:"name"`
+		FirstName    string `json:"firstName"`
+		LastName     string `json:"lastName"`
+		Email        string `json:"email"`
+		Phone        string `json:"phone"`
+		FitnessPlan  string `json:"fitnessPlan"`
+		Goals        string `json:"goals"`
+		Source       string `json:"source"`
+		Status       string `json:"status"`
+		StudioName   string `json:"studioName"`
+		CampaignName string `json:"campaignName"`
+		StudioSlug   string `json:"studioSlug"`
+		CampaignSlug string `json:"campaignSlug"`
+	}
+	payload, err := json.Marshal(leadPayload{
+		ID: l.ID.String(), StudioID: l.StudioID.String(), CampaignID: l.CampaignID.String(),
+		Name: l.Name, FirstName: l.FirstName, LastName: l.LastName,
+		Email: l.Email, Phone: l.Phone, FitnessPlan: l.FitnessPlan,
+		Goals: l.Goals, Source: l.Source, Status: string(l.Status),
+		StudioName: l.StudioName, CampaignName: l.CampaignName,
+		StudioSlug: l.StudioSlug, CampaignSlug: l.CampaignSlug,
+	})
 	if err != nil {
 		return fmt.Errorf("marshal lead payload: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO outbox (aggregate_type, aggregate_id, event_type, destination, payload)
 		VALUES ('lead', $1, 'lead.created', $2, $3)
-	`, l.ID, destination, payload); err != nil {
+	`, l.ID, destination, string(payload)); err != nil {
 		return fmt.Errorf("insert outbox: %w", err)
 	}
 
@@ -238,7 +263,7 @@ func (r *Repo) CreateLeadWithOutbox(ctx context.Context, l *Lead, destination st
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO outbox (aggregate_type, aggregate_id, event_type, destination, payload)
 		VALUES ('lead', $1, 'lead.created', 'lead_autocontact', $2)
-	`, l.ID, payload); err != nil {
+	`, l.ID, string(payload)); err != nil {
 		return fmt.Errorf("insert autocontact outbox: %w", err)
 	}
 
@@ -531,7 +556,7 @@ func (r *Repo) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status Le
 		_, err = tx.Exec(ctx, `
 			INSERT INTO outbox (aggregate_type, aggregate_id, event_type, destination, payload)
 			VALUES ('lead', $1, 'lead.updated', 'google_sheets', $2)
-		`, l.ID, payload)
+		`, l.ID, string(payload))
 		if err != nil {
 			return fmt.Errorf("enqueue update outbox: %w", err)
 		}
@@ -624,7 +649,7 @@ func (r *Repo) UpdateStatus(ctx context.Context, studioID, id uuid.UUID, status 
 				_, _ = tx.Exec(ctx, `
 					INSERT INTO outbox (aggregate_type, aggregate_id, event_type, destination, payload)
 					VALUES ('lead', $1, 'lead.updated', 'google_sheets', $2)
-				`, l.ID, payload)
+				`, l.ID, string(payload))
 			}
 		}
 	}

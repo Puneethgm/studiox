@@ -524,10 +524,11 @@ type CreateMessageInput struct {
 // inbound). Runs inside the caller's transaction so the conversation snapshot
 // stays consistent.
 func (r *Repo) InsertMessage(ctx context.Context, tx pgx.Tx, in CreateMessageInput) (*Message, error) {
-	atts, err := json.Marshal(in.Attachments)
+	attsBytes, err := json.Marshal(in.Attachments)
 	if err != nil {
 		return nil, fmt.Errorf("marshal attachments: %w", err)
 	}
+	atts := string(attsBytes)
 	if in.SentAt.IsZero() {
 		in.SentAt = time.Now().UTC()
 	}
@@ -767,7 +768,8 @@ func formatVec(vec []float32) string {
 // ============================================================
 
 func (r *Repo) EnqueueOutbound(ctx context.Context, j OutboundJob) (int64, error) {
-	atts, _ := json.Marshal(j.Attachments)
+	attsBytes, _ := json.Marshal(j.Attachments)
+	atts := string(attsBytes)
 	if j.ScheduledFor.IsZero() {
 		j.ScheduledFor = time.Now().UTC()
 	}
@@ -909,7 +911,8 @@ func (r *Repo) ListTemplates(ctx context.Context, studioID uuid.UUID) ([]Message
 }
 
 func (r *Repo) CreateTemplate(ctx context.Context, mt *MessageTemplate) error {
-	atts, _ := json.Marshal(mt.Attachments)
+	attsBytes, _ := json.Marshal(mt.Attachments)
+	atts := string(attsBytes)
 	row := r.pool.QueryRow(ctx, `
 		INSERT INTO message_templates (studio_id, name, body, channel_kinds, attachments,
 		                               whatsapp_template_name, whatsapp_template_lang)
@@ -921,7 +924,8 @@ func (r *Repo) CreateTemplate(ctx context.Context, mt *MessageTemplate) error {
 }
 
 func (r *Repo) UpdateTemplate(ctx context.Context, mt *MessageTemplate) error {
-	atts, _ := json.Marshal(mt.Attachments)
+	attsBytes, _ := json.Marshal(mt.Attachments)
+	atts := string(attsBytes)
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE message_templates
 		SET name = $3, body = $4, channel_kinds = $5, attachments = $6,
@@ -1111,7 +1115,8 @@ func (r *Repo) DeleteJob(ctx context.Context, studioID uuid.UUID, id int64) erro
 }
 
 func (r *Repo) UpdateJob(ctx context.Context, studioID uuid.UUID, id int64, body string, scheduledFor time.Time, attachments []Attachment) error {
-	atts, _ := json.Marshal(attachments)
+	attsBytes, _ := json.Marshal(attachments)
+	atts := string(attsBytes)
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE outbound_jobs
 		SET body = $3, scheduled_for = $4, next_attempt_at = $4, attachments = $5
