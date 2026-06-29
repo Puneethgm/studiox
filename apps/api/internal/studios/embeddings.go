@@ -252,6 +252,9 @@ Include only the top %d most relevant. No explanation.`, query, chunkList.String
 	if err := json.Unmarshal(body, &geminiResp); err != nil || len(geminiResp.Candidates) == 0 {
 		return chunks[:min(topK, len(chunks))]
 	}
+	if len(geminiResp.Candidates[0].Content.Parts) == 0 {
+		return chunks[:min(topK, len(chunks))]
+	}
 
 	raw := strings.TrimSpace(geminiResp.Candidates[0].Content.Parts[0].Text)
 	raw = strings.TrimPrefix(raw, "```json")
