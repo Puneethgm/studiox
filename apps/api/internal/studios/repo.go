@@ -116,7 +116,7 @@ func (r *Repo) GetByID(ctx context.Context, id uuid.UUID) (*Studio, error) {
 		       availability_slots, availability_timezone, gemini_api_key, meta_app_id, meta_app_secret,
 		       google_client_id, google_client_secret, google_developer_token,
 		       stripe_account_id, stripe_secret_key, stripe_publishable_key, stripe_webhook_secret, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files,
-		       trial_amount_sgd, managed_by_1hero
+		       greeting_message, trial_amount_sgd, managed_by_1hero, booking_hero_image_url, booking_hero_video_url
 		FROM studios WHERE id = $1
 	`, id)
 	s, err := scanStudio(row, r.cipher)
@@ -140,7 +140,7 @@ func (r *Repo) GetBySlug(ctx context.Context, slug string) (*Studio, error) {
 		       availability_slots, availability_timezone, gemini_api_key, meta_app_id, meta_app_secret,
 		       google_client_id, google_client_secret, google_developer_token,
 		       stripe_account_id, stripe_secret_key, stripe_publishable_key, stripe_webhook_secret, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files,
-		       trial_amount_sgd, managed_by_1hero
+		       greeting_message, trial_amount_sgd, managed_by_1hero, booking_hero_image_url, booking_hero_video_url
 		FROM studios WHERE slug = $1
 	`, slug)
 	s, err := scanStudio(row, r.cipher)
@@ -154,16 +154,16 @@ func (r *Repo) GetBySlug(ctx context.Context, slug string) (*Studio, error) {
 // Update writes the editable fields. Slug is intentionally NOT updatable here
 // (changing a slug breaks every shared public link). Add a deliberate "rename
 // slug" flow when needed.
-func (r *Repo) Update(ctx context.Context, id uuid.UUID, name, brandColor, logoURL, contactEmail, contactPhone string, active bool, managedBy1Hero bool, availabilitySlots []AvailabilitySlot, availabilityTimezone string, geminiAPIKey, metaAppID, metaAppSecret, googleClientID, googleClientSecret, googleDeveloperToken string, socialPlannerEnabled bool, knowledgeBase string, knowledgeBaseFiles []KnowledgeBaseFile, trialAmountSGD int) error {
+func (r *Repo) Update(ctx context.Context, id uuid.UUID, name, brandColor, logoURL, contactEmail, contactPhone string, active bool, managedBy1Hero bool, availabilitySlots []AvailabilitySlot, availabilityTimezone string, geminiAPIKey, metaAppID, metaAppSecret, googleClientID, googleClientSecret, googleDeveloperToken string, socialPlannerEnabled bool, knowledgeBase string, knowledgeBaseFiles []KnowledgeBaseFile, greetingMessage string, trialAmountSGD int, bookingHeroImageURL, bookingHeroVideoURL string) error {
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE studios
 		SET name = $2, brand_color = $3, logo_url = $4, contact_email = $5, contact_phone = $6, active = $7,
 		    availability_slots = $8, availability_timezone = $9, gemini_api_key = $10,
 		    meta_app_id = $11, meta_app_secret = $12, google_client_id = $13, google_client_secret = $14, google_developer_token = $15,
 		    social_planner_enabled = $16, knowledge_base = $17, knowledge_base_files = $18,
-		    trial_amount_sgd = $19, managed_by_1hero = $20, updated_at = now()
+		    greeting_message = $19, trial_amount_sgd = $20, managed_by_1hero = $21, booking_hero_image_url = $22, booking_hero_video_url = $23, updated_at = now()
 		WHERE id = $1`,
-		id, name, brandColor, logoURL, contactEmail, contactPhone, active, availabilitySlots, availabilityTimezone, geminiAPIKey, metaAppID, metaAppSecret, googleClientID, googleClientSecret, googleDeveloperToken, socialPlannerEnabled, knowledgeBase, knowledgeBaseFiles, trialAmountSGD, managedBy1Hero)
+		id, name, brandColor, logoURL, contactEmail, contactPhone, active, availabilitySlots, availabilityTimezone, geminiAPIKey, metaAppID, metaAppSecret, googleClientID, googleClientSecret, googleDeveloperToken, socialPlannerEnabled, knowledgeBase, knowledgeBaseFiles, greetingMessage, trialAmountSGD, managedBy1Hero, bookingHeroImageURL, bookingHeroVideoURL)
 	if err != nil {
 		return fmt.Errorf("update studio: %w", err)
 	}
@@ -182,7 +182,7 @@ func scanStudio(row pgx.Row, cipher *secrets.Cipher) (*Studio, error) {
 		&s.Active, &s.CreatedAt, &s.UpdatedAt, &s.AvailabilitySlots, &s.AvailabilityTimezone, &s.GeminiAPIKey, &s.MetaAppID, &s.MetaAppSecret,
 		&s.GoogleClientID, &s.GoogleClientSecret, &s.GoogleDeveloperToken,
 		&s.StripeAccountID, &s.StripeSecretKey, &s.StripePublishableKey, &s.StripeWebhookSecret, &s.SubscriptionTier, &s.SocialPlannerEnabled, &s.KnowledgeBase, &s.KnowledgeBaseFiles,
-		&s.TrialAmountSGD, &s.ManagedBy1Hero); err != nil {
+		&s.GreetingMessage, &s.TrialAmountSGD, &s.ManagedBy1Hero, &s.BookingHeroImageURL, &s.BookingHeroVideoURL); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}

@@ -1,16 +1,16 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  CreditCard, 
-  ArrowUpRight, 
-  TrendingUp, 
-  CheckCircle, 
-  ShieldCheck, 
-  ArrowRight,
-  Download,
+import {
+  CreditCard,
+  ArrowUpRight,
+  CheckCircle,
+  ShieldCheck,
   AlertCircle,
-  Calendar
+  Calendar,
+  Copy,
+  Check,
+  Link2,
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -30,6 +30,8 @@ interface Invoice {
   invoice_pdf: string;
   description?: string;
   buyer_name?: string;
+  campaign_name?: string;
+  campaign_slug?: string;
   metadata?: Record<string, string>;
 }
 // Module-level cache to prevent re-fetching on client-side tab navigation
@@ -76,6 +78,11 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
   const [formWebhookSecret, setFormWebhookSecret] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  // Booking links
+  const [campaigns, setCampaigns] = useState<{ slug: string; name: string; studioSlug: string; shareUrl: string }[]>([]);
+  const [selectedCampaignSlug, setSelectedCampaignSlug] = useState('');
+  const [bookingLinkCopied, setBookingLinkCopied] = useState(false);
 
   // Filters
   const [duration, setDuration] = useState('');
@@ -163,9 +170,18 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
 
     void (async () => {
       try {
-        const res = await api<{ stripeAccountId: string; stripePublishableKey: string; hasStripeSecretKey: boolean; hasStripeWebhookSecret: boolean; subscriptionTier: string }>(
-          `/api/v1/me/studios/${studioId}/payments`
-        );
+        const [res, campaignsRes] = await Promise.all([
+          api<{ stripeAccountId: string; stripePublishableKey: string; hasStripeSecretKey: boolean; hasStripeWebhookSecret: boolean; subscriptionTier: string }>(
+            `/api/v1/me/studios/${studioId}/payments`
+          ),
+          api<{ campaigns: { slug: string; name: string; studioSlug: string; shareUrl: string }[] }>(
+            `/api/v1/studios/${studioId}/campaigns`
+          ).catch(() => ({ campaigns: [] })),
+        ]);
+        if (campaignsRes.campaigns?.length) {
+          setCampaigns(campaignsRes.campaigns);
+          setSelectedCampaignSlug(campaignsRes.campaigns[0]?.slug ?? '');
+        }
         const isConnected = !!(res.stripeAccountId && res.hasStripeSecretKey);
         const newStatus = isConnected ? 'connected' : 'disconnected';
         setStripeStatus(newStatus);
@@ -269,6 +285,12 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
     }
   };
 
+  const copyBookingLink = async (url: string) => {
+    await navigator.clipboard.writeText(url);
+    setBookingLinkCopied(true);
+    setTimeout(() => setBookingLinkCopied(false), 2000);
+  };
+
   const handleDisconnect = async () => {
     if (studioId === 'global') return;
     try {
@@ -343,6 +365,60 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Plan Upgrade / Stripe Connect */}
         <div className="lg:col-span-1 space-y-6">
+
+          {/* Booking Links Card */}
+          {studioId !== 'global' && campaigns.length > 0 && (() => {
+            const selected = campaigns.find(c => c.slug === selectedCampaignSlug) ?? campaigns[0]!;
+            const bookUrl = `${selected.shareUrl}/book?leadId=LEAD_ID`;
+            return (
+              <Card className="border-white/30 bg-white/20 dark:border-white/5 dark:bg-neutral-900/30 backdrop-blur-2xl">
+                <div className="flex items-center gap-2 mb-1">
+                  <Link2 className="h-4 w-4 text-brand-500" />
+                  <h3 className="text-sm font-black text-zinc-950 dark:text-white">Trial Booking Link</h3>
+                  <span className="ml-auto text-[9px] font-bold uppercase tracking-widest text-zinc-400 bg-white/20 dark:bg-white/5 rounded-full px-2 py-0.5">
+                    {campaigns.length} campaign{campaigns.length > 1 ? 's' : ''}
+                  </span>
+                </div>
+                <p className="text-[11px] text-zinc-400 mb-3 leading-relaxed">
+                  Send to your lead — <code className="font-mono bg-white/10 px-1 rounded text-[10px]">leadId</code> is filled automatically by the bot.
+                </p>
+
+                {/* Campaign picker — only shown when > 1 */}
+                {campaigns.length > 1 && (
+                  <div className="mb-3">
+                    <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block mb-1">Campaign</label>
+                    <select
+                      value={selectedCampaignSlug}
+                      onChange={e => { setSelectedCampaignSlug(e.target.value); setBookingLinkCopied(false); }}
+                      className="w-full rounded-xl border border-white/20 bg-white/10 dark:bg-neutral-800 px-3 py-2 text-xs font-bold text-zinc-800 dark:text-white focus:outline-none focus:border-brand-500 appearance-none"
+                    >
+                      {campaigns.map(c => (
+                        <option key={c.slug} value={c.slug}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* URL display + copy */}
+                <div className="rounded-xl border border-white/10 bg-white/10 dark:bg-neutral-900/40 px-3 py-2.5 mb-2">
+                  <code className="block text-[10px] font-mono text-zinc-600 dark:text-zinc-300 break-all leading-relaxed">
+                    {bookUrl}
+                  </code>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => copyBookingLink(bookUrl)}
+                  className={`w-full flex items-center justify-center gap-2 rounded-xl py-2 text-xs font-bold text-white transition-all ${bookingLinkCopied ? 'bg-emerald-500' : 'bg-brand-500 hover:bg-brand-600'}`}
+                >
+                  {bookingLinkCopied
+                    ? <><Check className="h-3.5 w-3.5" />Copied to clipboard!</>
+                    : <><Copy className="h-3.5 w-3.5" />Copy booking link</>
+                  }
+                </button>
+              </Card>
+            );
+          })()}
+
           {/* Stripe Connect Card */}
           <div ref={leftCardRef}>
             <Card className="border-white/30 bg-white/20 dark:border-white/5 dark:bg-neutral-900/30 backdrop-blur-2xl">
@@ -628,7 +704,14 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
                           <td className="py-3 font-semibold font-mono text-zinc-555 dark:text-zinc-500">{inv.number || inv.id.slice(0,12)}</td>
                           <td className="py-3">{new Date(inv.created * 1000).toLocaleDateString()}</td>
                           <td className="py-3 font-semibold text-zinc-900 dark:text-zinc-100">{inv.buyer_name || inv.metadata?.customer_name || 'Guest'}</td>
-                          <td className="py-3 text-zinc-400 max-w-[160px] truncate">{inv.description || 'Trial Session'}</td>
+                          <td className="py-3 max-w-[180px]">
+                            <p className="font-semibold text-zinc-900 dark:text-zinc-100 truncate">{inv.description || 'Payment'}</p>
+                            {inv.campaign_name && (
+                              <span className="inline-block mt-0.5 rounded-full bg-brand-100 dark:bg-brand-900/30 text-brand-700 dark:text-brand-300 text-[9px] font-bold px-1.5 py-0.5 uppercase tracking-wide truncate max-w-full">
+                                {inv.campaign_name}
+                              </span>
+                            )}
+                          </td>
                           <td className="py-3 font-bold text-zinc-950 dark:text-white">
                             {new Intl.NumberFormat('en-US', { style: 'currency', currency: inv.currency.toUpperCase() }).format(inv.amount_paid / 100)}
                           </td>

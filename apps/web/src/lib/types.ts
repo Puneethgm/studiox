@@ -32,16 +32,21 @@ export interface Studio {
   updatedAt: string;
   availabilitySlots?: { day: string; times: string[] }[];
   availabilityTimezone?: string;
-  geminiApiKey?: string;
   metaAppId?: string;
-  metaAppSecret?: string;
   googleClientId?: string;
-  googleClientSecret?: string;
-  googleDeveloperToken?: string;
+  hasGeminiApiKey?: boolean;
+  hasMetaAppSecret?: boolean;
+  hasGoogleClientSecret?: boolean;
+  hasGoogleDeveloperToken?: boolean;
+  hasStripeSecretKey?: boolean;
+  hasStripeWebhookSecret?: boolean;
   campaignCount?: number;
   leadCount?: number;
   knowledgeBase?: string;
   knowledgeBaseFiles?: { name: string; url: string; text: string }[];
+  greetingMessage?: string;
+  bookingHeroImageUrl?: string;
+  bookingHeroVideoUrl?: string;
   trialAmountSgd?: number;
   subscriptionTier?: string;
 }
@@ -214,6 +219,50 @@ export interface Message {
   readAt?: string;
   createdAt: string;
 }
+
+// ===== Decision Trees =====
+
+export type ConditionType = 'keyword' | 'intent' | 'sentiment' | 'default' | 'lead_status';
+export type NodeAction = 'reply' | 'escalate_human' | 'book_trial' | 'send_link' | 'change_status';
+
+export interface TreeNode {
+  id: string;
+  treeId: string;
+  parentId?: string;
+  label: string;
+  conditionType: ConditionType;
+  conditionValue: Record<string, unknown>;
+  replyTemplate: string;
+  action: NodeAction;
+  actionValue: Record<string, unknown>;
+  sortOrder: number;
+  children?: TreeNode[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DecisionTree {
+  id: string;
+  studioId: string;
+  name: string;
+  isActive: boolean;
+  targetStatuses: string[];
+  nodes?: TreeNode[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SimulateResult {
+  matched: boolean;
+  nodeId?: string;
+  nodeLabel?: string;
+  reply?: string;
+  action?: NodeAction;
+  targetStatus?: string;
+  traversalPath: string[];
+}
+
+// ===== Campaign Analytics =====
 
 export interface CampaignAnalytics {
   id: string;

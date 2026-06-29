@@ -46,7 +46,11 @@ type Studio struct {
 	SocialPlannerEnabled bool                `json:"socialPlannerEnabled"`
 	KnowledgeBase        string              `json:"knowledgeBase"`
 	KnowledgeBaseFiles   []KnowledgeBaseFile `json:"knowledgeBaseFiles"`
-	TrialAmountSGD       int    `json:"trialAmountSgd"`
+	// GreetingMessage is sent automatically on the first inbound message of a new conversation.
+	GreetingMessage      string              `json:"greetingMessage"`
+	TrialAmountSGD       int                 `json:"trialAmountSgd"`
+	BookingHeroImageURL  string              `json:"bookingHeroImageUrl"`
+	BookingHeroVideoURL  string              `json:"bookingHeroVideoUrl"`
 
 	// Optional summary fields used by list endpoints.
 	CampaignCount int `json:"campaignCount,omitempty"`

@@ -2,7 +2,7 @@
 
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { useState, useEffect } from 'react';
-import { Eye, EyeOff, Database, Building, Calendar, Cpu, Lock, Save, CheckCircle2, X, DollarSign } from 'lucide-react';
+import { Eye, EyeOff, Database, Building, Calendar, Cpu, Lock, Save, CheckCircle2, X, DollarSign, Upload, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { FieldError, FieldHint, Label } from '@/components/ui/Label';
@@ -34,8 +34,8 @@ function parsePhone(fullPhone: string) {
   return { countryCode: '+65', phoneNumber: fullPhone };
 }
 
-type SettingsSection = 'general' | 'plans' | 'availability' | 'integrations' | 'security' | 'billing';
-const VALID_SECTIONS: SettingsSection[] = ['general', 'plans', 'availability', 'integrations', 'security', 'billing'];
+type SettingsSection = 'general' | 'plans' | 'availability' | 'booking' | 'integrations' | 'security' | 'billing';
+const VALID_SECTIONS: SettingsSection[] = ['general', 'plans', 'availability', 'booking', 'integrations', 'security', 'billing'];
 
 export function SettingsForm({ studio, previewHref, initialPlans }: { studio: Studio; previewHref: string | null; initialPlans: any[] }) {
   const router = useRouter();
@@ -57,9 +57,9 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
   const initialPhone = parsePhone(studio.contactPhone || '');
   const [contactPhoneCountryCode, setContactPhoneCountryCode] = useState(initialPhone.countryCode);
   const [contactPhone, setContactPhone] = useState(initialPhone.phoneNumber);
-  const [geminiApiKey, setGeminiApiKey] = useState(studio.geminiApiKey || '');
+  const [geminiApiKey, setGeminiApiKey] = useState('');
   const [metaAppId, setMetaAppId] = useState(studio.metaAppId || '');
-  const [metaAppSecret, setMetaAppSecret] = useState(studio.metaAppSecret || '');
+  const [metaAppSecret, setMetaAppSecret] = useState('');
   const [active, setActive] = useState(studio.active);
   const [managedBy1Hero, setManagedBy1Hero] = useState(studio.managedBy1Hero || false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -73,6 +73,12 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
     router.replace(`${pathname}?${p.toString()}`, { scroll: false });
   };
   
+  // Booking page media
+  const [bookingHeroImageUrl, setBookingHeroImageUrl] = useState(studio.bookingHeroImageUrl || '');
+  const [bookingHeroVideoUrl, setBookingHeroVideoUrl] = useState(studio.bookingHeroVideoUrl || '');
+  const [mediaUploading, setMediaUploading] = useState<'image' | 'video' | null>(null);
+  const [mediaSaving, setMediaSaving] = useState(false);
+
   // Trial Pricing (stored as cents/paise in the backend)
   const [trialAmountSgd, setTrialAmountSgd] = useState((studio.trialAmountSgd ?? 2500) / 100);
   const [pricingSaving, setPricingSaving] = useState(false);
@@ -278,6 +284,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
           { id: 'general', label: 'General Info', icon: Building },
           { id: 'plans', label: 'Plans', icon: DollarSign },
           { id: 'availability', label: 'Availability', icon: Calendar },
+          { id: 'booking', label: 'Booking Page', icon: Eye },
           { id: 'integrations', label: 'Integrations', icon: Cpu },
           { id: 'security', label: 'Security', icon: Lock },
           { id: 'billing', label: 'Platform Billing', icon: DollarSign },
@@ -523,6 +530,105 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
           <PlansManagement studioId={studio.id} initialPlans={initialPlans} onSaveSuccess={(msg) => showToast(msg)} />
         )}
 
+        {activeSection === 'booking' && (
+          <div className="space-y-6">
+            <div className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30 p-6 space-y-5">
+              <div>
+                <h3 className="text-sm font-black text-zinc-950 dark:text-white">Booking Page Media</h3>
+                <p className="text-xs text-zinc-400 mt-1">Add a hero image or background video shown to leads on your public booking/checkout page.</p>
+              </div>
+
+              {/* Hero Image */}
+              <div className="space-y-2">
+                <Label htmlFor="heroImage">Hero Image</Label>
+                <div className="flex gap-2">
+                  <input
+                    id="heroImage"
+                    type="url"
+                    value={bookingHeroImageUrl}
+                    onChange={e => setBookingHeroImageUrl(e.target.value)}
+                    placeholder="https://… or upload below"
+                    className="flex-1 rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-neutral-800 px-3 py-2 text-sm text-zinc-800 dark:text-white placeholder:text-zinc-400 focus:outline-none focus:border-zinc-400"
+                  />
+                  <label className="cursor-pointer">
+                    <input type="file" accept="image/*" className="hidden"
+                      onChange={async e => {
+                        const file = e.target.files?.[0]; if (!file) return;
+                        setMediaUploading('image');
+                        try {
+                          const fd = new FormData(); fd.append('image', file);
+                          const res = await fetch(`/api/v1/studios/${studio.id}/social-posts/upload-image`, { method: 'POST', body: fd });
+                          if (!res.ok) throw new Error('Upload failed');
+                          const { url } = await res.json();
+                          setBookingHeroImageUrl(url);
+                        } catch { alert('Upload failed'); }
+                        finally { setMediaUploading(null); }
+                      }}
+                    />
+                    <span className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-bold transition-all ${mediaUploading === 'image' ? 'bg-zinc-200 text-zinc-400' : 'border-zinc-200 dark:border-white/10 bg-white dark:bg-neutral-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-neutral-700 cursor-pointer'}`}>
+                      {mediaUploading === 'image' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}
+                      Upload
+                    </span>
+                  </label>
+                </div>
+                {bookingHeroImageUrl && (
+                  <div className="relative mt-2 rounded-xl overflow-hidden border border-zinc-200 dark:border-white/10 h-36">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={bookingHeroImageUrl} alt="Hero preview" className="w-full h-full object-cover" />
+                    <button type="button" onClick={() => setBookingHeroImageUrl('')}
+                      className="absolute top-2 right-2 h-6 w-6 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70 transition-colors">
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Hero Video */}
+              <div className="space-y-2">
+                <Label htmlFor="heroVideo">Background Video URL</Label>
+                <div className="flex gap-2">
+                  <input
+                    id="heroVideo"
+                    type="url"
+                    value={bookingHeroVideoUrl}
+                    onChange={e => setBookingHeroVideoUrl(e.target.value)}
+                    placeholder="https://… (mp4 or YouTube embed)"
+                    className="flex-1 rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-neutral-800 px-3 py-2 text-sm text-zinc-800 dark:text-white placeholder:text-zinc-400 focus:outline-none focus:border-zinc-400"
+                  />
+                  {bookingHeroVideoUrl && (
+                    <button type="button" onClick={() => setBookingHeroVideoUrl('')}
+                      className="rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-neutral-800 px-3 py-2 text-xs font-bold text-zinc-500 hover:bg-zinc-50 dark:hover:bg-neutral-700 transition-colors">
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+                <p className="text-[11px] text-zinc-400">Paste an .mp4 URL. Video plays muted in the background of the booking page.</p>
+              </div>
+
+              <Button
+                type="button"
+                loading={mediaSaving}
+                onClick={async () => {
+                  setMediaSaving(true);
+                  try {
+                    const res = await fetch(`/api/v1/me/studios/${studio.id}`, {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ bookingHeroImageUrl, bookingHeroVideoUrl }),
+                    });
+                    if (!res.ok) throw new Error('Save failed');
+                    showToast('Booking page media saved!');
+                  } catch { showToast('Failed to save.'); }
+                  finally { setMediaSaving(false); }
+                }}
+                className="text-sm font-bold"
+              >
+                <Save className="h-4 w-4" />Save Media
+              </Button>
+            </div>
+          </div>
+        )}
+
         {activeSection === 'integrations' && (
           <div className="grid gap-6 lg:grid-cols-2 items-start">
             <div className="space-y-6">
@@ -552,7 +658,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                     <Input
                       id="metaAppSecret"
                       type={showMetaAppSecret ? 'text' : 'password'}
-                      placeholder="e.g. d2d2fad32..."
+                      placeholder={studio.hasMetaAppSecret ? '••••••••••••••••' : 'e.g. d2d2fad32...'}
                       invalid={!!errors.metaAppSecret}
                       value={metaAppSecret}
                       onChange={(e) => setMetaAppSecret(e.target.value)}
@@ -595,7 +701,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                     <Input
                       id="geminiApiKey"
                       type={showGeminiApiKey ? 'text' : 'password'}
-                      placeholder="AIzaSy..."
+                      placeholder={studio.hasGeminiApiKey ? '••••••••••••••••' : 'AIzaSy...'}
                       invalid={!!errors.geminiApiKey}
                       value={geminiApiKey}
                       onChange={(e) => setGeminiApiKey(e.target.value)}

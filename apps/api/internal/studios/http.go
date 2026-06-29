@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -31,6 +32,82 @@ type Handler struct {
 
 func NewHandler(svc *Service, credentialsPath string, s3Uploader *s3.Uploader) *Handler {
 	return &Handler{svc: svc, credentialsPath: credentialsPath, s3Uploader: s3Uploader}
+}
+
+// studioResponse is the safe API shape for Studio — never returns raw secret values.
+type studioResponse struct {
+	ID                   uuid.UUID          `json:"id"`
+	Slug                 string             `json:"slug"`
+	Name                 string             `json:"name"`
+	BrandColor           string             `json:"brandColor"`
+	LogoURL              string             `json:"logoUrl"`
+	ContactEmail         string             `json:"contactEmail"`
+	ContactPhone         string             `json:"contactPhone"`
+	Active               bool               `json:"active"`
+	ManagedBy1Hero       bool               `json:"managedBy1Hero"`
+	CreatedAt            time.Time          `json:"createdAt"`
+	UpdatedAt            time.Time          `json:"updatedAt"`
+	AvailabilitySlots    []AvailabilitySlot  `json:"availabilitySlots"`
+	AvailabilityTimezone string             `json:"availabilityTimezone"`
+	MetaAppID            string             `json:"metaAppId"`
+	GoogleClientID       string             `json:"googleClientId"`
+	StripeAccountID      string             `json:"stripeAccountId"`
+	StripePublishableKey string             `json:"stripePublishableKey"`
+	SubscriptionTier     string             `json:"subscriptionTier"`
+	SocialPlannerEnabled bool               `json:"socialPlannerEnabled"`
+	KnowledgeBase        string             `json:"knowledgeBase"`
+	KnowledgeBaseFiles   []KnowledgeBaseFile `json:"knowledgeBaseFiles"`
+	GreetingMessage      string             `json:"greetingMessage"`
+	TrialAmountSGD       int                `json:"trialAmountSgd"`
+	BookingHeroImageURL  string             `json:"bookingHeroImageUrl"`
+	BookingHeroVideoURL  string             `json:"bookingHeroVideoUrl"`
+	CampaignCount        int                `json:"campaignCount,omitempty"`
+	LeadCount            int                `json:"leadCount,omitempty"`
+	// Presence indicators — actual secret values are never returned.
+	HasGeminiApiKey         bool `json:"hasGeminiApiKey"`
+	HasMetaAppSecret        bool `json:"hasMetaAppSecret"`
+	HasGoogleClientSecret   bool `json:"hasGoogleClientSecret"`
+	HasGoogleDeveloperToken bool `json:"hasGoogleDeveloperToken"`
+	HasStripeSecretKey      bool `json:"hasStripeSecretKey"`
+	HasStripeWebhookSecret  bool `json:"hasStripeWebhookSecret"`
+}
+
+func toStudioResponse(s *Studio) studioResponse {
+	return studioResponse{
+		ID:                      s.ID,
+		Slug:                    s.Slug,
+		Name:                    s.Name,
+		BrandColor:              s.BrandColor,
+		LogoURL:                 s.LogoURL,
+		ContactEmail:            s.ContactEmail,
+		ContactPhone:            s.ContactPhone,
+		Active:                  s.Active,
+		ManagedBy1Hero:          s.ManagedBy1Hero,
+		CreatedAt:               s.CreatedAt,
+		UpdatedAt:               s.UpdatedAt,
+		AvailabilitySlots:       s.AvailabilitySlots,
+		AvailabilityTimezone:    s.AvailabilityTimezone,
+		MetaAppID:               s.MetaAppID,
+		GoogleClientID:          s.GoogleClientID,
+		StripeAccountID:         s.StripeAccountID,
+		StripePublishableKey:    s.StripePublishableKey,
+		SubscriptionTier:        s.SubscriptionTier,
+		SocialPlannerEnabled:    s.SocialPlannerEnabled,
+		KnowledgeBase:           s.KnowledgeBase,
+		KnowledgeBaseFiles:      s.KnowledgeBaseFiles,
+		GreetingMessage:         s.GreetingMessage,
+		TrialAmountSGD:          s.TrialAmountSGD,
+		BookingHeroImageURL:     s.BookingHeroImageURL,
+		BookingHeroVideoURL:     s.BookingHeroVideoURL,
+		CampaignCount:           s.CampaignCount,
+		LeadCount:               s.LeadCount,
+		HasGeminiApiKey:         s.GeminiAPIKey != "",
+		HasMetaAppSecret:        s.MetaAppSecret != "",
+		HasGoogleClientSecret:   s.GoogleClientSecret != "",
+		HasGoogleDeveloperToken: s.GoogleDeveloperToken != "",
+		HasStripeSecretKey:      s.StripeSecretKey != "",
+		HasStripeWebhookSecret:  s.StripeWebhookSecret != "",
+	}
 }
 
 // AdminRoutes are super-admin only — only the platform owner manages studios.
@@ -73,6 +150,10 @@ func (h *Handler) SelfRoutes(r chi.Router) {
 // PublicRoutes expose the studio's brand info for the public form to render.
 func (h *Handler) PublicRoutes(r chi.Router) {
 	r.Get("/public/studios/{slug}", h.publicGet)
+	r.Get("/public/studios/{slug}/plans", h.publicGetPlans)
+	r.Post("/public/studios/{slug}/checkout", h.publicCreateCheckout)
+	r.Post("/public/studios/{slug}/payment-intent", h.publicCreatePaymentIntent)
+	r.Get("/public/studios/{slug}/payment-receipt/{piId}", h.publicGetPaymentReceipt)
 	r.Get("/public/platform/plans", h.GetPlatformPlans)
 }
 
@@ -158,7 +239,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return
 	}
-	httpx.JSON(w, http.StatusCreated, res)
+	httpx.JSON(w, http.StatusCreated, map[string]any{
+		"studio":  toStudioResponse(res.Studio),
+		"adminId": res.AdminID,
+	})
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
@@ -167,7 +251,11 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"studios": list})
+	resp := make([]studioResponse, len(list))
+	for i := range list {
+		resp[i] = toStudioResponse(&list[i])
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"studios": resp})
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
@@ -185,7 +273,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return
 	}
-	httpx.JSON(w, http.StatusOK, s)
+	httpx.JSON(w, http.StatusOK, toStudioResponse(s))
 }
 
 type updateReq struct {
@@ -207,9 +295,12 @@ type updateReq struct {
 	SocialPlannerEnabled *bool               `json:"socialPlannerEnabled"`
 	KnowledgeBase        *string             `json:"knowledgeBase"`
 	KnowledgeBaseFiles   *[]KnowledgeBaseFile `json:"knowledgeBaseFiles"`
+	GreetingMessage      *string             `json:"greetingMessage"`
 	TrialAmountSGD       *int                `json:"trialAmountSgd"`
 	TrialAmountINR       *int                `json:"trialAmountInr"`
 	TrialAmountUSD       *int                `json:"trialAmountUsd"`
+	BookingHeroImageURL  *string             `json:"bookingHeroImageUrl"`
+	BookingHeroVideoURL  *string             `json:"bookingHeroVideoUrl"`
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
@@ -250,7 +341,10 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		SocialPlannerEnabled: existing.SocialPlannerEnabled,
 		KnowledgeBase:        existing.KnowledgeBase,
 		KnowledgeBaseFiles:   existing.KnowledgeBaseFiles,
+		GreetingMessage:      existing.GreetingMessage,
 		TrialAmountSGD:       existing.TrialAmountSGD,
+		BookingHeroImageURL:  existing.BookingHeroImageURL,
+		BookingHeroVideoURL:  existing.BookingHeroVideoURL,
 	}
 	if req.Name != nil {
 		input.Name = *req.Name
@@ -279,22 +373,23 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	if req.AvailabilityTimezone != nil {
 		input.AvailabilityTimezone = *req.AvailabilityTimezone
 	}
-	if req.GeminiAPIKey != nil {
+	// Only overwrite secrets when a non-empty value is provided; empty means "keep existing".
+	if req.GeminiAPIKey != nil && *req.GeminiAPIKey != "" {
 		input.GeminiAPIKey = *req.GeminiAPIKey
 	}
 	if req.MetaAppID != nil {
 		input.MetaAppID = *req.MetaAppID
 	}
-	if req.MetaAppSecret != nil {
+	if req.MetaAppSecret != nil && *req.MetaAppSecret != "" {
 		input.MetaAppSecret = *req.MetaAppSecret
 	}
 	if req.GoogleClientID != nil {
 		input.GoogleClientID = *req.GoogleClientID
 	}
-	if req.GoogleClientSecret != nil {
+	if req.GoogleClientSecret != nil && *req.GoogleClientSecret != "" {
 		input.GoogleClientSecret = *req.GoogleClientSecret
 	}
-	if req.GoogleDeveloperToken != nil {
+	if req.GoogleDeveloperToken != nil && *req.GoogleDeveloperToken != "" {
 		input.GoogleDeveloperToken = *req.GoogleDeveloperToken
 	}
 	if req.SocialPlannerEnabled != nil {
@@ -306,8 +401,17 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	if req.KnowledgeBaseFiles != nil {
 		input.KnowledgeBaseFiles = *req.KnowledgeBaseFiles
 	}
+	if req.GreetingMessage != nil {
+		input.GreetingMessage = *req.GreetingMessage
+	}
 	if req.TrialAmountSGD != nil {
 		input.TrialAmountSGD = *req.TrialAmountSGD
+	if req.BookingHeroImageURL != nil {
+		input.BookingHeroImageURL = *req.BookingHeroImageURL
+	}
+	if req.BookingHeroVideoURL != nil {
+		input.BookingHeroVideoURL = *req.BookingHeroVideoURL
+	}
 	}
 
 	errs, err := h.svc.Update(r.Context(), id, input)
@@ -328,7 +432,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return
 	}
-	httpx.JSON(w, http.StatusOK, updated)
+	httpx.JSON(w, http.StatusOK, toStudioResponse(updated))
 }
 
 // ----- studio-admin scoped handlers -----
@@ -364,7 +468,7 @@ func (h *Handler) getScoped(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return
 	}
-	httpx.JSON(w, http.StatusOK, s)
+	httpx.JSON(w, http.StatusOK, toStudioResponse(s))
 }
 
 func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
@@ -417,6 +521,7 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 		SocialPlannerEnabled: existing.SocialPlannerEnabled,
 		KnowledgeBase:        existing.KnowledgeBase,
 		KnowledgeBaseFiles:   existing.KnowledgeBaseFiles,
+		GreetingMessage:      existing.GreetingMessage,
 		TrialAmountSGD:       existing.TrialAmountSGD,
 	}
 	if req.Name != nil {
@@ -446,22 +551,23 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 	if req.AvailabilityTimezone != nil {
 		input.AvailabilityTimezone = *req.AvailabilityTimezone
 	}
-	if req.GeminiAPIKey != nil {
+	// Only overwrite secrets when a non-empty value is provided; empty means "keep existing".
+	if req.GeminiAPIKey != nil && *req.GeminiAPIKey != "" {
 		input.GeminiAPIKey = *req.GeminiAPIKey
 	}
 	if req.MetaAppID != nil {
 		input.MetaAppID = *req.MetaAppID
 	}
-	if req.MetaAppSecret != nil {
+	if req.MetaAppSecret != nil && *req.MetaAppSecret != "" {
 		input.MetaAppSecret = *req.MetaAppSecret
 	}
 	if req.GoogleClientID != nil {
 		input.GoogleClientID = *req.GoogleClientID
 	}
-	if req.GoogleClientSecret != nil {
+	if req.GoogleClientSecret != nil && *req.GoogleClientSecret != "" {
 		input.GoogleClientSecret = *req.GoogleClientSecret
 	}
-	if req.GoogleDeveloperToken != nil {
+	if req.GoogleDeveloperToken != nil && *req.GoogleDeveloperToken != "" {
 		input.GoogleDeveloperToken = *req.GoogleDeveloperToken
 	}
 	if req.SocialPlannerEnabled != nil {
@@ -473,10 +579,19 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 	if req.KnowledgeBaseFiles != nil {
 		input.KnowledgeBaseFiles = *req.KnowledgeBaseFiles
 	}
+	if req.GreetingMessage != nil {
+		input.GreetingMessage = *req.GreetingMessage
+	}
 	if req.TrialAmountSGD != nil {
 		input.TrialAmountSGD = *req.TrialAmountSGD
 	}
 
+	if req.BookingHeroImageURL != nil {
+		input.BookingHeroImageURL = *req.BookingHeroImageURL
+	}
+	if req.BookingHeroVideoURL != nil {
+		input.BookingHeroVideoURL = *req.BookingHeroVideoURL
+	}
 	errs, err := h.svc.Update(r.Context(), studioID, input)
 	if errs != nil {
 		httpx.WriteValidationError(w, errs)
@@ -495,7 +610,7 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return
 	}
-	httpx.JSON(w, http.StatusOK, updated)
+	httpx.JSON(w, http.StatusOK, toStudioResponse(updated))
 }
 
 func (h *Handler) uploadLogo(w http.ResponseWriter, r *http.Request) {
@@ -698,10 +813,25 @@ func (h *Handler) UploadSocialPostImage(w http.ResponseWriter, r *http.Request) 
 // ----- public -----
 
 type publicRes struct {
-	Slug       string `json:"slug"`
-	Name       string `json:"name"`
-	BrandColor string `json:"brandColor"`
-	LogoURL    string `json:"logoUrl"`
+	Slug                 string `json:"slug"`
+	Name                 string `json:"name"`
+	BrandColor           string `json:"brandColor"`
+	LogoURL              string `json:"logoUrl"`
+	TrialAmountSGD       int    `json:"trialAmountSgd"`
+	AvailabilitySlots    any    `json:"availabilitySlots,omitempty"`
+	AvailabilityTimezone string `json:"availabilityTimezone,omitempty"`
+	StripePublishableKey string `json:"stripePublishableKey,omitempty"`
+	BookingHeroImageURL  string `json:"bookingHeroImageUrl,omitempty"`
+	BookingHeroVideoURL  string `json:"bookingHeroVideoUrl,omitempty"`
+}
+
+type publicPlanRes struct {
+	ID           string   `json:"id"`
+	PlanName     string   `json:"planName"`
+	PriceSGD     int      `json:"priceSgd"`
+	BillingCycle string   `json:"billingCycle"`
+	Features     []string `json:"features"`
+	IsActive     bool     `json:"isActive"`
 }
 
 func (h *Handler) publicGet(w http.ResponseWriter, r *http.Request) {
@@ -712,10 +842,249 @@ func (h *Handler) publicGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, publicRes{
-		Slug:       s.Slug,
-		Name:       s.Name,
-		BrandColor: s.BrandColor,
-		LogoURL:    s.LogoURL,
+		Slug:                 s.Slug,
+		Name:                 s.Name,
+		BrandColor:           s.BrandColor,
+		LogoURL:              s.LogoURL,
+		TrialAmountSGD:       s.TrialAmountSGD,
+		AvailabilitySlots:    s.AvailabilitySlots,
+		AvailabilityTimezone: s.AvailabilityTimezone,
+		StripePublishableKey: s.StripePublishableKey,
+		BookingHeroImageURL:  s.BookingHeroImageURL,
+		BookingHeroVideoURL:  s.BookingHeroVideoURL,
+	})
+}
+
+func (h *Handler) publicGetPlans(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "slug")
+	s, err := h.svc.GetBySlug(r.Context(), slug)
+	if err != nil || !s.Active {
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "studio not found")
+		return
+	}
+	plans, err := h.svc.ListPlans(r.Context(), s.ID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not load plans")
+		return
+	}
+	out := make([]publicPlanRes, 0, len(plans))
+	for _, p := range plans {
+		// Skip inactive and free/trial plans — booking page shows membership plans only
+		if !p.IsActive || p.PriceSGD == 0 {
+			continue
+		}
+		out = append(out, publicPlanRes{
+			ID:           p.ID.String(),
+			PlanName:     p.PlanName,
+			PriceSGD:     p.PriceSGD,
+			BillingCycle: p.BillingCycle,
+			Features:     p.Features,
+			IsActive:     p.IsActive,
+		})
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"plans": out})
+}
+
+func (h *Handler) publicCreateCheckout(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "slug")
+	s, err := h.svc.GetBySlug(r.Context(), slug)
+	if err != nil || !s.Active {
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "studio not found")
+		return
+	}
+
+	var req struct {
+		PlanID   string `json:"planId"`
+		LeadID   string `json:"leadId"`
+		LeadName string `json:"leadName"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if s.StripeSecretKey == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "stripe_not_configured", "Stripe not connected for this studio")
+		return
+	}
+
+	// Load the selected plan
+	plans, err := h.svc.ListPlans(r.Context(), s.ID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not load plans")
+		return
+	}
+	var selected *Plan
+	for i := range plans {
+		if plans[i].ID.String() == req.PlanID && plans[i].IsActive {
+			selected = &plans[i]
+			break
+		}
+	}
+	if selected == nil {
+		httpx.WriteError(w, http.StatusBadRequest, "plan_not_found", "plan not found or inactive")
+		return
+	}
+	if selected.PriceSGD == 0 {
+		httpx.WriteError(w, http.StatusBadRequest, "free_plan", "plan is free, no checkout needed")
+		return
+	}
+
+	sc := &client.API{}
+	sc.Init(s.StripeSecretKey, nil)
+
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "http://localhost:3000"
+	}
+
+	// Build success URL that returns lead back to booking calendar
+	successURL := fmt.Sprintf(
+		"%s/l/%s/%s/book?leadId=%s&paid=1",
+		frontendURL, s.Slug, slug, req.LeadID,
+	)
+	// Find the campaign slug for the cancel URL via plans is not needed — use a generic return
+	cancelURL := fmt.Sprintf("%s/payment-cancelled?studio=%s", frontendURL, s.Slug)
+
+	mode := "payment"
+	params := &stripe.CheckoutSessionParams{
+		PaymentMethodTypes: stripe.StringSlice([]string{"card"}),
+		LineItems: []*stripe.CheckoutSessionLineItemParams{
+			{
+				PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{
+					Currency:   stripe.String("sgd"),
+					UnitAmount: stripe.Int64(int64(selected.PriceSGD)),
+					ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
+						Name:        stripe.String(fmt.Sprintf("%s — %s", s.Name, selected.PlanName)),
+						Description: stripe.String(fmt.Sprintf("Billing: %s", selected.BillingCycle)),
+					},
+				},
+				Quantity: stripe.Int64(1),
+			},
+		},
+		Mode:       stripe.String(mode),
+		SuccessURL: stripe.String(successURL),
+		CancelURL:  stripe.String(cancelURL),
+		Metadata: map[string]string{
+			"studio_id":   s.ID.String(),
+			"lead_id":     req.LeadID,
+			"plan_id":     req.PlanID,
+			"lead_name":   req.LeadName,
+			"plan_name":   selected.PlanName,
+			"studio_slug": s.Slug,
+		},
+	}
+
+	session, err := sc.CheckoutSessions.New(params)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "stripe_error", fmt.Sprintf("failed to create checkout: %v", err))
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"url": session.URL})
+}
+
+func (h *Handler) publicCreatePaymentIntent(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "slug")
+	s, err := h.svc.GetBySlug(r.Context(), slug)
+	if err != nil || !s.Active {
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "studio not found")
+		return
+	}
+
+	var req struct {
+		PlanID string `json:"planId"`
+		LeadID string `json:"leadId"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if s.StripeSecretKey == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "stripe_not_configured", "Stripe not connected for this studio")
+		return
+	}
+
+	plans, err := h.svc.ListPlans(r.Context(), s.ID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not load plans")
+		return
+	}
+	var selected *Plan
+	for i := range plans {
+		if plans[i].ID.String() == req.PlanID && plans[i].IsActive {
+			selected = &plans[i]
+			break
+		}
+	}
+	if selected == nil || selected.PriceSGD == 0 {
+		httpx.WriteError(w, http.StatusBadRequest, "plan_not_found", "plan not found, inactive, or free")
+		return
+	}
+
+	sc := &client.API{}
+	sc.Init(s.StripeSecretKey, nil)
+
+	// Look up campaign name+slug from the lead so we can store it in PI metadata.
+	var campaignName, campaignSlug string
+	_ = h.svc.repo.Pool().QueryRow(r.Context(),
+		`SELECT c.name, c.slug FROM leads l JOIN campaigns c ON c.id = l.campaign_id WHERE l.id = $1`,
+		req.LeadID,
+	).Scan(&campaignName, &campaignSlug)
+
+	params := &stripe.PaymentIntentParams{
+		Amount:      stripe.Int64(int64(selected.PriceSGD)),
+		Currency:    stripe.String("sgd"),
+		Description: stripe.String(selected.PlanName),
+		Metadata: map[string]string{
+			"studio_id":      s.ID.String(),
+			"lead_id":        req.LeadID,
+			"plan_id":        req.PlanID,
+			"plan_name":      selected.PlanName,
+			"studio_slug":    s.Slug,
+			"campaign_name":  campaignName,
+			"campaign_slug":  campaignSlug,
+		},
+	}
+	pi, err := sc.PaymentIntents.New(params)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "stripe_error", fmt.Sprintf("failed to create payment intent: %v", err))
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"clientSecret": pi.ClientSecret,
+		"amount":       selected.PriceSGD,
+		"planName":     selected.PlanName,
+		"billingCycle": selected.BillingCycle,
+	})
+}
+
+func (h *Handler) publicGetPaymentReceipt(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "slug")
+	piID := chi.URLParam(r, "piId")
+
+	s, err := h.svc.GetBySlug(r.Context(), slug)
+	if err != nil || !s.Active || s.StripeSecretKey == "" {
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "studio not found")
+		return
+	}
+
+	sc := &client.API{}
+	sc.Init(s.StripeSecretKey, nil)
+
+	params := &stripe.PaymentIntentParams{}
+	params.AddExpand("latest_charge")
+	pi, err := sc.PaymentIntents.Get(piID, params)
+	if err != nil {
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "payment not found")
+		return
+	}
+
+	receiptURL := ""
+	if pi.LatestCharge != nil {
+		receiptURL = pi.LatestCharge.ReceiptURL
+	}
+
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"receiptUrl": receiptURL,
 	})
 }
 
@@ -1268,9 +1637,16 @@ func (h *Handler) getBillingHistory(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		if description == "" || description == "Subscription creation" {
-			description = "Trial Session Payment"
+		// Prefer plan_name from metadata for description.
+		if planName := pi.Metadata["plan_name"]; planName != "" {
+			description = planName
 		}
+		if description == "" || description == "Subscription creation" {
+			description = "Payment"
+		}
+
+		campaignName := pi.Metadata["campaign_name"]
+		campaignSlug := pi.Metadata["campaign_slug"]
 
 		// Try to get receipt and buyer from latest charge
 		if pi.LatestCharge != nil {
@@ -1295,6 +1671,8 @@ func (h *Handler) getBillingHistory(w http.ResponseWriter, r *http.Request) {
 			"invoice_pdf":        receiptURL,
 			"description":        description,
 			"buyer_name":         buyerName,
+			"campaign_name":      campaignName,
+			"campaign_slug":      campaignSlug,
 			"metadata":           pi.Metadata,
 		})
 
@@ -1359,7 +1737,7 @@ func (h *Handler) StripeConnectCallback(w http.ResponseWriter, r *http.Request) 
 
 	token, err := stripeoauth.New(params)
 	if err != nil {
-		fmt.Printf("STRIPE OAUTH ERROR: %v\n", err)
+		slog.Error("stripe oauth failed", "err", err)
 		httpx.WriteError(w, http.StatusInternalServerError, "stripe_error", "Failed to authenticate with Stripe")
 		return
 	}

@@ -9,6 +9,19 @@ export interface PublicStudio {
   logoUrl: string;
   trialAmountSgd?: number;
   availabilitySlots?: Record<string, string[]>;
+  availabilityTimezone?: string;
+  stripePublishableKey?: string;
+  bookingHeroImageUrl?: string;
+  bookingHeroVideoUrl?: string;
+}
+
+export interface PublicPlan {
+  id: string;
+  planName: string;
+  priceSgd: number;
+  billingCycle: string;
+  features: string[];
+  isActive: boolean;
 }
 
 export interface PublicCampaign {
@@ -27,6 +40,16 @@ export async function fetchPublicStudio(slug: string): Promise<PublicStudio | nu
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`API ${res.status}`);
   return (await res.json()) as PublicStudio;
+}
+
+export async function fetchPublicPlans(slug: string): Promise<PublicPlan[]> {
+  const res = await fetch(
+    `${SERVER_BASE}/api/v1/public/studios/${encodeURIComponent(slug)}/plans`,
+    { cache: 'no-store' },
+  );
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.plans ?? []) as PublicPlan[];
 }
 
 export async function fetchPublicCampaign(

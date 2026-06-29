@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/mail"
 	"regexp"
 	"strings"
@@ -181,7 +182,10 @@ type UpdateStudioInput struct {
 	SocialPlannerEnabled bool               `json:"socialPlannerEnabled"`
 	KnowledgeBase        string             `json:"knowledgeBase"`
 	KnowledgeBaseFiles   []KnowledgeBaseFile `json:"knowledgeBaseFiles"`
-	TrialAmountSGD       int                 `json:"trialAmountSgd"`
+	GreetingMessage      string             `json:"greetingMessage"`
+	TrialAmountSGD       int                `json:"trialAmountSgd"`
+	BookingHeroImageURL  string             `json:"bookingHeroImageUrl"`
+	BookingHeroVideoURL  string             `json:"bookingHeroVideoUrl"`
 }
 
 func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput) (map[string]string, error) {
@@ -220,7 +224,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput
 	if len(errs) > 0 {
 		return errs, nil
 	}
-	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.ContactPhone, in.Active, in.ManagedBy1Hero, in.AvailabilitySlots, in.AvailabilityTimezone, in.GeminiAPIKey, in.MetaAppID, in.MetaAppSecret, in.GoogleClientID, in.GoogleClientSecret, in.GoogleDeveloperToken, in.SocialPlannerEnabled, in.KnowledgeBase, in.KnowledgeBaseFiles, in.TrialAmountSGD); err != nil {
+	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.ContactPhone, in.Active, in.ManagedBy1Hero, in.AvailabilitySlots, in.AvailabilityTimezone, in.GeminiAPIKey, in.MetaAppID, in.MetaAppSecret, in.GoogleClientID, in.GoogleClientSecret, in.GoogleDeveloperToken, in.SocialPlannerEnabled, in.KnowledgeBase, in.KnowledgeBaseFiles, in.GreetingMessage, in.TrialAmountSGD, in.BookingHeroImageURL, in.BookingHeroVideoURL); err != nil {
 		return nil, err
 	}
 
@@ -251,7 +255,6 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput
 // asyncSyncKnowledgeChunks runs in a background goroutine so the HTTP
 // response is not blocked by embedding API calls.
 func (s *Service) asyncSyncKnowledgeChunks(studioID uuid.UUID, kbText string, kbFiles []KnowledgeBaseFile, geminiAPIKey string) {
-	fmt.Printf("[RAG-DEBUG] asyncSyncKnowledgeChunks started for studio %s\n", studioID)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
@@ -263,10 +266,9 @@ func (s *Service) asyncSyncKnowledgeChunks(studioID uuid.UUID, kbText string, kb
 			}
 		}
 		if apiKey == "" {
-			fmt.Println("[RAG-DEBUG] No Gemini API key found. Skipping embedding sync.")
+			slog.Warn("knowledge sync skipped: no Gemini API key", "studio_id", studioID)
 			return
 		}
-		fmt.Printf("[RAG-DEBUG] Resolved Gemini API Key (starts with %s)\n", apiKey[:8])
 
 		type rawChunk struct{ sourceType, sourceName, content string }
 		var raw []rawChunk
@@ -280,23 +282,18 @@ func (s *Service) asyncSyncKnowledgeChunks(studioID uuid.UUID, kbText string, kb
 			}
 		}
 
-		fmt.Printf("[RAG-DEBUG] Prepared %d raw chunks to process.\n", len(raw))
-
 		if len(raw) == 0 {
-			fmt.Println("[RAG-DEBUG] 0 chunks prepared. Clearing existing chunks.")
-			err := s.repo.SaveKnowledgeChunks(ctx, studioID, nil)
-			if err != nil {
-				fmt.Printf("[RAG-DEBUG] SaveKnowledgeChunks error (clear): %v\n", err)
+			if err := s.repo.SaveKnowledgeChunks(ctx, studioID, nil); err != nil {
+				slog.Error("knowledge chunks clear failed", "studio_id", studioID, "err", err)
 			}
 			return
 		}
 
 		var chunks []ChunkData
 		for i, rc := range raw {
-			fmt.Printf("[RAG-DEBUG] Getting embedding for chunk %d (source: %s)...\n", i, rc.sourceName)
 			vec, err := GetGeminiEmbedding(ctx, apiKey, rc.content)
 			if err != nil {
-				fmt.Printf("[RAG-DEBUG] GetGeminiEmbedding error on chunk %d: %v\n", i, err)
+				slog.Warn("embedding failed for chunk", "studio_id", studioID, "chunk", i, "err", err)
 				continue
 			}
 			chunks = append(chunks, ChunkData{
@@ -306,17 +303,14 @@ func (s *Service) asyncSyncKnowledgeChunks(studioID uuid.UUID, kbText string, kb
 				Content:    rc.content,
 				Embedding:  vec,
 			})
-			time.Sleep(100 * time.Millisecond) // rate-limit courtesy
+			time.Sleep(100 * time.Millisecond)
 		}
 
-		fmt.Printf("[RAG-DEBUG] Successfully generated %d embeddings out of %d chunks.\n", len(chunks), len(raw))
-
 		if len(chunks) > 0 {
-			err := s.repo.SaveKnowledgeChunks(ctx, studioID, chunks)
-			if err != nil {
-				fmt.Printf("[RAG-DEBUG] SaveKnowledgeChunks error: %v\n", err)
+			if err := s.repo.SaveKnowledgeChunks(ctx, studioID, chunks); err != nil {
+				slog.Error("knowledge chunks save failed", "studio_id", studioID, "err", err)
 			} else {
-				fmt.Println("[RAG-DEBUG] Successfully saved chunks and embeddings to database!")
+				slog.Info("knowledge sync complete", "studio_id", studioID, "chunks", len(chunks))
 			}
 		}
 	}()

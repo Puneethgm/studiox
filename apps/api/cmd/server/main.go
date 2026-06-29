@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,6 +17,7 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/google/uuid"
 
+	"github.com/projectx/api/internal/decisiontree"
 	"github.com/projectx/api/internal/identity"
 	"github.com/projectx/api/internal/integrations/claude"
 	"github.com/projectx/api/internal/integrations/google"
@@ -40,6 +42,7 @@ func main() {
 		os.Exit(1)
 	}
 	log := logger.New(cfg.LogLevel)
+	slog.SetDefault(log)
 
 	rootCtx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -60,6 +63,9 @@ func main() {
 	// --- repos / services / handlers ---
 	identityRepo := identity.NewRepo(pool)
 	leadsRepo := leads.NewRepo(pool)
+	dtRepo := decisiontree.NewRepo(pool)
+	dtSvc := decisiontree.NewService(dtRepo)
+	dtHandler := decisiontree.NewHandler(dtSvc)
 	studiosRepo := studios.NewRepo(pool, cipher)
 	reviewsRepo := reviews.NewRepo(pool)
 
@@ -144,7 +150,7 @@ func main() {
 		log.Error("init claude client", "err", err)
 	}
 	log.Info("claude config", "enabled", claudeClient != nil)
-	aiWorker := messaging.NewAIWorker(msgBus, msgRepo, msgSvc, studiosRepo, leadsRepo, claudeClient, log.With("component", "ai_worker"))
+	aiWorker := messaging.NewAIWorker(msgBus, msgRepo, msgSvc, studiosRepo, leadsRepo, dtSvc, claudeClient, log.With("component", "ai_worker"))
 	go aiWorker.Run(rootCtx)
 
 	// Social Publisher worker
@@ -164,6 +170,7 @@ func main() {
 	r := chi.NewRouter()
 
 	r.Use(httpx.RequestID)
+	r.Use(httpx.SecurityHeaders)
 	r.Use(httpx.RateLimiter)
 	r.Use(httpx.Recoverer(log))
 	r.Use(httpx.AccessLog(log))
@@ -257,6 +264,7 @@ func main() {
 			// gates against inactive studios for non-super-admins.
 			r.Route("/studios/{studioId}", func(r chi.Router) {
 				r.Use(studiosHandler.RequireActiveStudio)
+				dtHandler.AdminRoutes(r)
 				r.Get("/google-oauth/login", googleOAuth.LoginHandler)
 				r.Get("/stripe-oauth/login", studiosHandler.StripeConnectRedirect)
 				leadsHandler.AdminRoutes(r)
