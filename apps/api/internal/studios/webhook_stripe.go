@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -15,7 +16,6 @@ import (
 	"github.com/stripe/stripe-go/v78"
 	"github.com/stripe/stripe-go/v78/client"
 	"github.com/stripe/stripe-go/v78/webhook"
-	"os"
 )
 
 type StripeWebhookHandler struct {
@@ -54,53 +54,20 @@ func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Requ
 		endpointSecret = h.webhookSecret
 	}
 
-	if endpointSecret == "" && os.Getenv("API_ENV") != "local" {
-		httpx.WriteError(w, http.StatusUnauthorized, "missing_webhook_secret", "Stripe webhook signature verification is required in production")
+	if endpointSecret == "" {
+		httpx.WriteError(w, http.StatusUnauthorized, "missing_webhook_secret", "Stripe webhook secret is required")
 		return
 	}
 
-
+	signatureHeader := r.Header.Get("Stripe-Signature")
 	var event stripe.Event
-
-	if endpointSecret != "" {
-		signatureHeader := r.Header.Get("Stripe-Signature")
-		event, err = webhook.ConstructEvent(payload, signatureHeader, endpointSecret)
-		if err != nil {
-			httpx.WriteError(w, http.StatusBadRequest, "bad_signature", "Error verifying webhook signature")
-			return
-		}
-	} else {
-		var raw map[string]any
-		if err := json.Unmarshal(payload, &raw); err != nil {
-			fmt.Printf("[Stripe Webhook] JSON unmarshal error: %v\n", err)
-			httpx.WriteError(w, http.StatusBadRequest, "invalid_payload", "Error parsing webhook JSON")
-			return
-		}
-		
-		typ, _ := raw["type"].(string)
-		fmt.Printf("[Stripe Webhook Tracker] Received event type: %s\n", typ)
-		
-		if typ == "checkout.session.completed" || typ == "payment_link.payment.completed" {
-			data, _ := raw["data"].(map[string]any)
-			obj, _ := data["object"].(map[string]any)
-			
-			objBytes, errMarshal := json.Marshal(obj)
-			if errMarshal != nil {
-				fmt.Printf("[Stripe Webhook Tracker] Marshal object error: %v\n", errMarshal)
-			}
-			
-			var session stripe.CheckoutSession
-			if err := json.Unmarshal(objBytes, &session); err == nil {
-				go h.handleCheckoutComplete(context.Background(), &session)
-			} else {
-				fmt.Printf("[Stripe Webhook Tracker] Session Unmarshal error: %v\n", err)
-			}
-		}
-		httpx.JSON(w, http.StatusOK, map[string]bool{"ok": true})
+	event, err = webhook.ConstructEvent(payload, signatureHeader, endpointSecret)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_signature", "Error verifying webhook signature")
 		return
 	}
 
-	// Handle the event (for when secret is used)
+	// Handle the verified event
 	switch event.Type {
 	case "checkout.session.completed":
 		var session stripe.CheckoutSession
@@ -140,7 +107,7 @@ func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Requ
 						if err == nil {
 							// Set the studio tier to 'past_due'
 							_ = h.svc.UpdatePayments(context.Background(), id, "", "", "", "", "past_due")
-							fmt.Printf("[Stripe Webhook] Marked studio %s as past_due\n", sub.Metadata["studio_id"])
+							slog.Info("stripe studio past_due", "studio_id", sub.Metadata["studio_id"])
 						}
 					}
 				}
@@ -158,7 +125,7 @@ func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Requ
 				if err == nil {
 					if sub.Status == "canceled" || sub.CancelAtPeriodEnd {
 						_ = h.svc.UpdatePayments(context.Background(), id, "", "", "", "", "canceled")
-						fmt.Printf("[Stripe Webhook] Marked studio %s as canceled\n", sub.Metadata["studio_id"])
+						slog.Info("stripe studio canceled", "studio_id", sub.Metadata["studio_id"])
 					} else {
 						// If they un-cancel, or upgrade
 						// Wait, if it's updated and NOT canceled, we shouldn't necessarily override unless we know the tier.
@@ -179,13 +146,13 @@ func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Requ
 // It reads the phone number from session metadata and sends a WhatsApp
 // thank-you message with the receipt / invoice link.
 func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, session *stripe.CheckoutSession) {
-	fmt.Println("[Stripe Webhook] inside handleCheckoutComplete!")
+	slog.Debug("stripe checkout complete handler started")
 	if session == nil {
-		fmt.Println("[Stripe Webhook] session is nil!")
+		slog.Warn("stripe checkout complete: session is nil")
 		return
 	}
 
-	fmt.Printf("[Stripe Webhook] session ID: %s, Metadata: %+v\n", session.ID, session.Metadata)
+	slog.Debug("stripe checkout session", "session_id", session.ID)
 
 	customerPhone := session.Metadata["customer_phone"]
 	customerName := session.Metadata["customer_name"]
@@ -196,7 +163,7 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 		id, err := uuid.Parse(studioIDStr)
 		if err == nil {
 			_ = h.svc.UpdatePayments(ctx, id, "", "", "", "", tier)
-			fmt.Printf("[Stripe Webhook] Successfully upgraded studio %s to %s\n", studioIDStr, tier)
+			slog.Info("stripe studio upgraded", "studio_id", studioIDStr, "tier", tier)
 			
 			// Cancel old subscriptions
 			secretKey, _ := h.svc.GetPlatformSetting(ctx, "stripe_secret_key")
@@ -216,7 +183,7 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 							continue
 						}
 						_, _ = sc.Subscriptions.Cancel(sub.ID, nil)
-						fmt.Printf("[Stripe Webhook] Canceled old subscription %s for studio %s\n", sub.ID, studioIDStr)
+						slog.Info("stripe old subscription canceled", "sub_id", sub.ID, "studio_id", studioIDStr)
 					}
 				}
 			}
@@ -225,7 +192,7 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 	}
 
 	if customerPhone == "" || studioIDStr == "" {
-		fmt.Printf("[Stripe Webhook] customerPhone or studioIDStr is empty! Phone: '%s', Studio: '%s'\n", customerPhone, studioIDStr)
+		slog.Warn("stripe checkout missing metadata")
 		// No phone embedded — nothing to do for WhatsApp
 		return
 	}
@@ -256,10 +223,10 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 					receiptURL = inv.InvoicePDF
 				}
 			} else {
-				fmt.Printf("[Stripe Webhook] Failed to fetch invoice %s with studio key: %v\n", session.Invoice.ID, errInv)
+				slog.Warn("stripe invoice fetch failed", "invoice_id", session.Invoice.ID, "err", errInv)
 			}
 		} else {
-			fmt.Printf("[Stripe Webhook] Studio has no StripeSecretKey to fetch invoice %s\n", session.Invoice.ID)
+			slog.Warn("stripe studio missing secret key for invoice", "invoice_id", session.Invoice.ID)
 		}
 	}
 	
@@ -331,9 +298,9 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 			}
 
 			if err != nil {
-				fmt.Printf("[Stripe Webhook] Failed to update lead status: %v\n", err)
+				slog.Warn("stripe lead status update failed", "err", err)
 			} else {
-				fmt.Printf("[Stripe Webhook] Successfully updated lead status to member for %s\n", customerPhone)
+				slog.Info("stripe lead status updated to member", "phone", customerPhone)
 
 				// Phase 5: Cancel any pending automated follow-ups since the lead became a member
 				_, _ = h.svc.repo.Pool().Exec(ctx, `
@@ -350,9 +317,9 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 				WHERE id = $1
 			`, *leadID)
 			if updateErr != nil {
-				fmt.Printf("[Stripe Webhook] Failed to update lead status: %v\n", updateErr)
+				slog.Warn("stripe lead status update failed", "err", updateErr)
 			} else {
-				fmt.Printf("[Stripe Webhook] Successfully updated lead status to trial_booked for %s\n", customerPhone)
+				slog.Info("stripe lead status updated to trial_booked", "phone", customerPhone)
 			}
 		}
 	}
@@ -363,12 +330,12 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 			VALUES ($1, $2, 'automation', $3, now(), now())
 		`, studio.ID, convID, message)
 		if err != nil {
-			fmt.Printf("[Stripe Webhook] Failed to enqueue WhatsApp message: %v\n", err)
+			slog.Warn("stripe whatsapp enqueue failed", "err", err)
 		} else {
-			fmt.Printf("[Stripe Webhook] ✅ WhatsApp enqueued successfully for %s\n", customerPhone)
+			slog.Info("stripe whatsapp enqueued", "phone", customerPhone)
 		}
 	} else {
-		fmt.Printf("[Stripe Webhook] Failed to find conversation for phone %s: %v\n", customerPhone, err)
+		slog.Warn("stripe conversation not found", "phone", customerPhone, "err", err)
 	}
 }
 

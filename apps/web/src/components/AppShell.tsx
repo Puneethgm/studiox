@@ -27,6 +27,7 @@ import {
   AlertCircle,
   Zap,
   GitBranch,
+  Network,
 } from 'lucide-react';
 import { useEffect, useState, useRef, type CSSProperties, type ReactNode } from 'react';
 import { Button } from '@/components/ui/Button';
@@ -60,8 +61,9 @@ function navItemsFor(me: Me, currentPath: string): NavItem[] {
         { href: `${base}/social-planner`, label: 'Social Planner',icon: <Sparkles className="h-[18px] w-[18px]" />,       match: (p) => p.startsWith(`${base}/social-planner`) },
         { href: `${base}/payments`,       label: 'Payments',      icon: <CreditCard className="h-[18px] w-[18px]" />,     match: (p) => p.startsWith(`${base}/payments`) },
         { href: `${base}/channels`,       label: 'Channels',      icon: <Plug className="h-[18px] w-[18px]" />,           match: (p) => p.startsWith(`${base}/channels`) },
-        { href: `${base}/knowledge-base`, label: 'Knowledge Base',icon: <Database className="h-[18px] w-[18px]" />,       match: (p) => p.startsWith(`${base}/knowledge-base`) },
-        { href: `${base}/settings`,       label: 'Settings',      icon: <Settings className="h-[18px] w-[18px]" />,       match: (p) => p.startsWith(`${base}/settings`) },
+        { href: `${base}/knowledge-base`,  label: 'Knowledge Base', icon: <Database className="h-[18px] w-[18px]" />,      match: (p) => p.startsWith(`${base}/knowledge-base`) },
+        { href: `${base}/decision-trees`, label: 'Decision Trees', icon: <Network className="h-[18px] w-[18px]" />,       match: (p) => p.startsWith(`${base}/decision-trees`) },
+        { href: `${base}/settings`,       label: 'Settings',       icon: <Settings className="h-[18px] w-[18px]" />,      match: (p) => p.startsWith(`${base}/settings`) },
       ];
     }
 
@@ -106,8 +108,9 @@ function navItemsFor(me: Me, currentPath: string): NavItem[] {
   links.push(
     { href: `${base}/payments`,   label: 'Payments',  icon: <CreditCard className="h-[18px] w-[18px]" />,     match: (p) => p.startsWith(`${base}/payments`) },
     { href: `${base}/channels`,   label: 'Channels',  icon: <Plug className="h-[18px] w-[18px]" />,           match: (p) => p.startsWith(`${base}/channels`) },
-    { href: `${base}/knowledge-base`, label: 'Knowledge Base', icon: <Database className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/knowledge-base`) },
-    { href: `${base}/settings`,   label: 'Settings',  icon: <Settings className="h-[18px] w-[18px]" />,       match: (p) => p.startsWith(`${base}/settings`) }
+    { href: `${base}/knowledge-base`,  label: 'Knowledge Base', icon: <Database className="h-[18px] w-[18px]" />,  match: (p) => p.startsWith(`${base}/knowledge-base`) },
+    { href: `${base}/decision-trees`, label: 'Decision Trees', icon: <Network className="h-[18px] w-[18px]" />,  match: (p) => p.startsWith(`${base}/decision-trees`) },
+    { href: `${base}/settings`,       label: 'Settings',       icon: <Settings className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/settings`) },
   );
 
   return links;
@@ -572,6 +575,9 @@ function Topbar({
   } else if (pathname.includes('/knowledge-base')) {
     pageTitle = 'Knowledge Base';
     pageIcon = <Database className="h-[18px] w-[18px] text-indigo-500" />;
+  } else if (pathname.includes('/decision-trees')) {
+    pageTitle = 'Decision Trees';
+    pageIcon = <Network className="h-[18px] w-[18px] text-violet-500" />;
   } else if (pathname.includes('/settings')) {
     pageTitle = 'Settings';
     pageIcon = <Settings className="h-[18px] w-[18px] text-slate-500" />;

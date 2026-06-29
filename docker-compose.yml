@@ -3,14 +3,13 @@ services:
     image: pgvector/pgvector:pg16
     container_name: projectx-postgres
     restart: unless-stopped
+    command: postgres -c password_encryption=md5
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-projectx}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-projectx_dev}
       POSTGRES_DB: ${POSTGRES_DB:-projectx}
     ports:
-      # 5432 is taken by a native Postgres; 5433 by the ibms-postgres container.
-      # Use 5434 for Project-X to avoid both.
-      - "${POSTGRES_PORT:-5434}:5432"
+      - "5436:5432"
     volumes:
       - projectx_pg_data:/var/lib/postgresql/data
     healthcheck:
@@ -18,6 +17,25 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: projectx-pgbouncer
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # host.docker.internal resolves to the Docker host — reaches Postgres on 5434
+      DATABASE_URL: postgres://${POSTGRES_USER:-projectx}:${POSTGRES_PASSWORD:-projectx_dev}@host.docker.internal:5436/${POSTGRES_DB:-projectx}
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 200
+      DEFAULT_POOL_SIZE: 20
+      AUTH_TYPE: md5
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${POSTGRES_PORT:-5435}:5432"
 
 volumes:
   projectx_pg_data:

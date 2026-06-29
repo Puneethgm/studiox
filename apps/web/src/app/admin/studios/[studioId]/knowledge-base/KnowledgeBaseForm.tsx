@@ -12,6 +12,7 @@ import { parseDocument, updateKnowledgeBase } from './actions';
 export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
   const router = useRouter();
   const [text, setText] = useState(studio.knowledgeBase || '');
+  const [greeting, setGreeting] = useState(studio.greetingMessage || '');
   const [files, setFiles] = useState<{ name: string; url: string; text: string }[]>(
     studio.knowledgeBaseFiles || []
   );
@@ -88,7 +89,7 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
     setSaving(true);
 
     try {
-      const res = await updateKnowledgeBase(studio.id, studio.slug, text, files);
+      const res = await updateKnowledgeBase(studio.id, studio.slug, text, files, greeting);
       if (!res.ok) {
         throw new Error(res.error || 'Failed to save changes');
       }
@@ -126,6 +127,17 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
               <h3 className="text-sm font-black uppercase tracking-[0.15em] text-zinc-400">Text Instructions</h3>
             </div>
             <div className="p-6 space-y-4">
+              <div>
+                <Label htmlFor="greetingMessage">Greeting Message</Label>
+                <textarea
+                  id="greetingMessage"
+                  className="flex w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:placeholder:text-slate-500 min-h-[80px]"
+                  placeholder="Hi! Thanks for reaching out to us. How can we help you today? 👋"
+                  value={greeting}
+                  onChange={(e) => setGreeting(e.target.value)}
+                />
+                <FieldHint>Sent automatically on the first message of a new conversation. Leave blank to skip. Use <code>{'{{lead_first_name}}'}</code>, <code>{'{{lead_name}}'}</code>, <code>{'{{studio_name}}'}</code> as placeholders.</FieldHint>
+              </div>
               <div>
                 <Label htmlFor="knowledgeBase">Instructions / General Info</Label>
                 <textarea

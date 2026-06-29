@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -435,6 +436,14 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
+	if len(req.Body) > 10000 {
+		httpx.WriteValidationError(w, map[string]string{"body": "message must be 10,000 characters or less"})
+		return
+	}
+	if len(req.Attachments) > 10 {
+		httpx.WriteValidationError(w, map[string]string{"attachments": "maximum 10 attachments per message"})
+		return
+	}
 	c := identity.MustClaims(r.Context())
 	jobID, err := h.svc.EnqueueReply(r.Context(), SendInput{
 		StudioID:       studioID,
@@ -754,6 +763,11 @@ func (h *Handler) redirectTriggerLink(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	_ = h.svc.RecordTriggerLinkClick(r.Context(), id, leadIDPtr)
+	parsed, err := url.Parse(tl.URL)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_url", "trigger link has an invalid destination URL")
+		return
+	}
 	http.Redirect(w, r, tl.URL, http.StatusFound)
 }
 

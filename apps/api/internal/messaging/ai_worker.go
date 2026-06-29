@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/projectx/api/internal/decisiontree"
 	"github.com/projectx/api/internal/integrations/claude"
 	"github.com/projectx/api/internal/leads"
 	"github.com/projectx/api/internal/studios"
@@ -27,13 +28,14 @@ type AIWorker struct {
 	msgSvc      *Service
 	studiosRepo *studios.Repo
 	leadsRepo   *leads.Repo
+	dtSvc       *decisiontree.Service
 	claude      *claude.Client
 	log         *slog.Logger
 	subs        map[uuid.UUID]func()
 	httpClient  *http.Client
 }
 
-func NewAIWorker(bus Bus, msgRepo *Repo, msgSvc *Service, studiosRepo *studios.Repo, leadsRepo *leads.Repo, cl *claude.Client, log *slog.Logger) *AIWorker {
+func NewAIWorker(bus Bus, msgRepo *Repo, msgSvc *Service, studiosRepo *studios.Repo, leadsRepo *leads.Repo, dtSvc *decisiontree.Service, cl *claude.Client, log *slog.Logger) *AIWorker {
 	transport := &http.Transport{
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 100,
@@ -49,6 +51,7 @@ func NewAIWorker(bus Bus, msgRepo *Repo, msgSvc *Service, studiosRepo *studios.R
 		msgSvc:      msgSvc,
 		studiosRepo: studiosRepo,
 		leadsRepo:   leadsRepo,
+		dtSvc:       dtSvc,
 		claude:      cl,
 		log:         log,
 		subs:        make(map[uuid.UUID]func()),
@@ -193,12 +196,6 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		return nil
 	}
 
-	// Only reply on WhatsApp and Facebook Messenger channels
-	if channel.Kind != KindWhatsAppMeta && channel.Kind != KindMessengerMeta && channel.Kind != KindWhatsAppWeb {
-		w.log.Debug("skipping ai reply", "channel", channel.Kind, "reason", "not whatsapp or messenger")
-		return nil
-	}
-
 	// Get lead associated with this conversation (if any)
 	var lead *leads.Lead
 	if conv.LeadID != nil {
@@ -265,6 +262,34 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	if err != nil {
 		w.log.Error("fetch message history for ai context failed", "err", err)
 		history = []Message{*msg}
+	}
+
+	// Send greeting on the very first inbound message of a new conversation.
+	// "First" = only one message in history (the current one) and a greeting is configured.
+	if len(history) == 1 && studio.GreetingMessage != "" {
+		greetingBody := studio.GreetingMessage
+		// Substitute the same placeholders supported in reply templates.
+		greetingBody = strings.ReplaceAll(greetingBody, "{{studio_name}}", studio.Name)
+		if lead != nil {
+			greetingBody = strings.ReplaceAll(greetingBody, "{{lead_name}}", lead.Name)
+			greetingBody = strings.ReplaceAll(greetingBody, "{{lead_first_name}}", lead.FirstName)
+			greetingBody = strings.ReplaceAll(greetingBody, "{{lead_status}}", string(lead.Status))
+		}
+		if _, sendErr := w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
+			StudioID:       studioID,
+			ConversationID: conv.ID,
+			Body:           greetingBody,
+			SourceKind:     SourceAI,
+			SourceRef:      "greeting",
+			ScheduledFor:   time.Now().UTC(),
+		}); sendErr != nil {
+			w.log.Error("failed to enqueue greeting message", "err", sendErr, "conv_id", conv.ID)
+		} else {
+			w.bus.Publish(ctx, Event{
+				Kind:     EvtOutboundJobEnqueued,
+				StudioID: studioID,
+			})
+		}
 	}
 
 	var kbChunks []string
@@ -359,6 +384,71 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 			}
 		} else {
 			w.log.Warn("failed to get message embedding for rag", "studio_id", studioID, "err", err)
+		}
+	}
+
+	// Decision tree: check if the studio has an active tree that matches this message.
+	// If it does, use the tree reply directly and skip the AI call entirely.
+	if w.dtSvc != nil {
+		leadStatus := ""
+		if lead != nil {
+			leadStatus = string(lead.Status)
+		}
+		treeResult, treeErr := w.dtSvc.TraverseActiveTree(ctx, studioID, msg.Body, leadStatus)
+		if treeErr != nil {
+			w.log.Warn("decision tree traversal failed", "studio_id", studioID, "err", treeErr)
+		} else if treeResult != nil && treeResult.Matched {
+			// Pipeline: change lead status before or alongside reply.
+			if treeResult.TargetStatus != "" && lead != nil {
+				newStatus := leads.LeadStatus(treeResult.TargetStatus)
+				if newStatus.Valid() {
+					if err := w.leadsRepo.UpdateStatus(ctx, studioID, lead.ID, newStatus); err != nil {
+						w.log.Warn("decision tree status change failed", "studio_id", studioID, "err", err)
+					} else {
+						w.log.Info("decision tree changed lead status", "studio_id", studioID, "lead_id", lead.ID, "status", treeResult.TargetStatus)
+					}
+				}
+			}
+
+			switch treeResult.Action {
+			case decisiontree.ActionReply, decisiontree.ActionChangeStatus:
+				// ActionChangeStatus can also carry a reply — handle both the same way.
+				reply := treeResult.Reply
+				if reply == "" {
+					// change_status with no reply: silently update status and stop.
+					return nil
+				}
+				if lead != nil {
+					reply = strings.ReplaceAll(reply, "{{lead_name}}", lead.Name)
+					reply = strings.ReplaceAll(reply, "{{lead_first_name}}", lead.FirstName)
+					reply = strings.ReplaceAll(reply, "{{lead_status}}", string(lead.Status))
+				}
+				if studio != nil {
+					reply = strings.ReplaceAll(reply, "{{studio_name}}", studio.Name)
+				}
+				w.log.Info("decision tree matched, using tree reply", "studio_id", studioID, "node", treeResult.NodeLabel)
+				_, err = w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
+					StudioID:       studioID,
+					ConversationID: msg.ConversationID,
+					Body:           reply,
+					SourceKind:     SourceAI,
+					SourceRef:      "decision_tree",
+					ScheduledFor:   time.Now().UTC(),
+				})
+				if err != nil {
+					return fmt.Errorf("enqueue tree reply: %w", err)
+				}
+				w.bus.Publish(ctx, Event{
+					Kind:           EvtOutboundJobEnqueued,
+					StudioID:       studioID,
+					ConversationID: msg.ConversationID,
+				})
+				return nil
+			case decisiontree.ActionEscalate:
+				w.log.Info("decision tree matched, escalating to human", "studio_id", studioID, "node", treeResult.NodeLabel)
+				return nil
+			}
+			// For book_trial / send_link — fall through to AI for now.
 		}
 	}
 

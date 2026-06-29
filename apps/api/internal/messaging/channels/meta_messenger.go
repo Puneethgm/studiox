@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -103,7 +104,7 @@ func (m *MetaMessenger) uploadMediaToMeta(ctx context.Context, accessToken, page
 	if resp.StatusCode >= 400 {
 		isLocalDev := os.Getenv("API_ENV") == "local"
 		if isLocalDev {
-			fmt.Printf("[Meta Messenger Media Upload Mapped to Mock] HTTP Status %d: %s\n", resp.StatusCode, string(respBody))
+			slog.Warn("meta messenger media upload failed (local mock)", "status", resp.StatusCode, "body", string(respBody))
 			return "mock_attachment_id_" + time.Now().Format("20060102150405"), nil
 		}
 		return "", fmt.Errorf("meta media upload: HTTP %d: %s", resp.StatusCode, string(respBody))
@@ -149,7 +150,7 @@ func (m *MetaMessenger) SendText(ctx context.Context, accessToken, channelExtern
 			localPath := filepath.Join("uploads", strings.TrimPrefix(attURL, "/uploads/"))
 			attID, uploadErr := m.uploadMediaToMeta(ctx, accessToken, channelExternalID, localPath, mediaType)
 			if uploadErr != nil {
-				fmt.Printf("[WARN] Meta Messenger media upload failed: %v. Falling back to URL.\n", uploadErr)
+				slog.Warn("meta messenger media upload failed, falling back to URL", "err", uploadErr)
 				payload = map[string]any{
 					"recipient": map[string]string{"id": recipient},
 					"message": map[string]any{
@@ -300,7 +301,7 @@ func (m *MetaMessenger) sendPayload(ctx context.Context, accessToken, url string
 		}
 		isLocalDev := os.Getenv("API_ENV") == "local"
 		if isLocalDev {
-			fmt.Printf("[Meta Messenger API Error Mapped to Mock] HTTP Status %d, Error Body: %s\n", resp.StatusCode, string(respBody))
+			slog.Warn("meta messenger API error (local mock)", "status", resp.StatusCode, "body", string(respBody))
 			return &SendResult{
 				ExternalID: "mid.mock-" + time.Now().Format("20060102150405"),
 			}, nil

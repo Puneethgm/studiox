@@ -1,10 +1,20 @@
-# Env / secrets
+# Env / secrets — NEVER commit these
 .env
 .env.local
 .env.*.local
+.env.production
+.env.staging
+.env.backup
+.env.bak
+deploy/.env.backup
+deploy/.env.*.backup
 /secrets/
 *.pem
 *.key
+*.p12
+*.pfx
+*credentials*.json
+*service-account*.json
 
 # Production deploy state — created on the EC2 box, never committed
 deploy/.env

@@ -281,11 +281,12 @@ func (r *Repo) ListLeads(ctx context.Context, studioID uuid.UUID, f ListLeadsFil
 		conds = append(conds, fmt.Sprintf("l.campaign_id = $%d", len(args)))
 	}
 	if len(f.Statuses) > 0 {
-		statusStrs := make([]string, len(f.Statuses))
+		placeholders := make([]string, len(f.Statuses))
 		for i, s := range f.Statuses {
-			statusStrs[i] = fmt.Sprintf("'%s'", string(s))
+			args = append(args, string(s))
+			placeholders[i] = fmt.Sprintf("$%d", len(args))
 		}
-		conds = append(conds, fmt.Sprintf("l.status IN (%s)", strings.Join(statusStrs, ",")))
+		conds = append(conds, fmt.Sprintf("l.status IN (%s)", strings.Join(placeholders, ",")))
 	} else if f.Status != nil {
 		args = append(args, string(*f.Status))
 		conds = append(conds, fmt.Sprintf("l.status = $%d", len(args)))

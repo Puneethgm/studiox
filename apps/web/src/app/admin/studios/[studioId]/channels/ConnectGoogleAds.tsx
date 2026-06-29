@@ -20,8 +20,8 @@ interface Props {
 export function ConnectGoogleAds({ studio, channels, showToast }: Props) {
   const router = useRouter();
   const [googleClientId, setGoogleClientId] = useState(studio.googleClientId || '');
-  const [googleClientSecret, setGoogleClientSecret] = useState(studio.googleClientSecret || '');
-  const [googleDeveloperToken, setGoogleDeveloperToken] = useState(studio.googleDeveloperToken || '');
+  const [googleClientSecret, setGoogleClientSecret] = useState('');
+  const [googleDeveloperToken, setGoogleDeveloperToken] = useState('');
   const [googleCustomerId, setGoogleCustomerId] = useState(channels[0]?.externalId || '');
   const [googleLoginCustomerId, setGoogleLoginCustomerId] = useState(channels[0]?.parentId || '');
   const [saving, setSaving] = useState(false);
@@ -76,7 +76,7 @@ export function ConnectGoogleAds({ studio, channels, showToast }: Props) {
       setError('Google Ads Login Customer ID must contain digits only.');
       return;
     }
-    if (!googleClientId.trim() || !googleClientSecret.trim() || !googleDeveloperToken.trim()) {
+    if (!googleClientId.trim() || (!googleClientSecret.trim() && !studio.hasGoogleClientSecret) || (!googleDeveloperToken.trim() && !studio.hasGoogleDeveloperToken)) {
       setError('Google Client ID, Client Secret, and Developer Token are required before Google login.');
       return;
     }
@@ -118,8 +118,6 @@ export function ConnectGoogleAds({ studio, channels, showToast }: Props) {
   // Sync state with updated studio props
   useEffect(() => {
     setGoogleClientId(studio.googleClientId || '');
-    setGoogleClientSecret(studio.googleClientSecret || '');
-    setGoogleDeveloperToken(studio.googleDeveloperToken || '');
     setGoogleCustomerId(channels[0]?.externalId || '');
     setGoogleLoginCustomerId(channels[0]?.parentId || '');
   }, [studio, channels]);
@@ -332,8 +330,8 @@ export function ConnectGoogleAds({ studio, channels, showToast }: Props) {
               <Input
                 id="googleClientSecret"
                 type="password"
-                placeholder={studio.googleClientSecret ? "••••••••••••••••" : "e.g. GOCSPX-..."}
-                required={!studio.googleClientSecret}
+                placeholder={studio.hasGoogleClientSecret ? "••••••••••••••••" : "e.g. GOCSPX-..."}
+                required={!studio.hasGoogleClientSecret}
                 value={googleClientSecret}
                 onChange={(e) => setGoogleClientSecret(e.target.value)}
                 className="font-mono text-xs mt-1.5"
@@ -348,8 +346,8 @@ export function ConnectGoogleAds({ studio, channels, showToast }: Props) {
               <Input
                 id="googleDeveloperToken"
                 type="password"
-                placeholder={studio.googleDeveloperToken ? "••••••••••••••••" : "e.g. AbCdEfGhIjKlMnOpQrStUv"}
-                required={!studio.googleDeveloperToken}
+                placeholder={studio.hasGoogleDeveloperToken ? "••••••••••••••••" : "e.g. AbCdEfGhIjKlMnOpQrStUv"}
+                required={!studio.hasGoogleDeveloperToken}
                 value={googleDeveloperToken}
                 onChange={(e) => setGoogleDeveloperToken(e.target.value)}
                 className="font-mono text-xs mt-1.5"

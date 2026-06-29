@@ -579,6 +579,29 @@ func (h *Handler) publicSubmit(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
+	valErrs := map[string]string{}
+	if len(req.Name) > 255 {
+		valErrs["name"] = "must be 255 characters or less"
+	}
+	if len(req.FirstName) > 100 {
+		valErrs["firstName"] = "must be 100 characters or less"
+	}
+	if len(req.LastName) > 100 {
+		valErrs["lastName"] = "must be 100 characters or less"
+	}
+	if len(req.Email) > 255 {
+		valErrs["email"] = "must be 255 characters or less"
+	}
+	if len(req.Phone) > 30 {
+		valErrs["phone"] = "must be 30 characters or less"
+	}
+	if len(req.Goals) > 2000 {
+		valErrs["goals"] = "must be 2000 characters or less"
+	}
+	if len(valErrs) > 0 {
+		httpx.WriteValidationError(w, valErrs)
+		return
+	}
 	lead, errs, err := h.svc.SubmitPublicLead(r.Context(), SubmitLeadInput{
 		StudioSlug:   studioSlug,
 		CampaignSlug: campaignSlug,

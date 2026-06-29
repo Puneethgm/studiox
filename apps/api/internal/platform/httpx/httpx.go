@@ -8,7 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
@@ -152,28 +151,20 @@ func Recoverer(base *slog.Logger) func(http.Handler) http.Handler {
 
 // DecodeJSON decodes a request body, returning false (and writing a 400) on failure.
 func DecodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
-	// Read the body so we can log it if decoding fails.
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		WriteError(w, http.StatusBadRequest, "bad_json", "invalid request body")
 		return false
 	}
-	// Log the incoming body (always) to help capture problematic payloads
-	// quickly during debugging. This is intentionally verbose but temporary.
-	logger.FromCtx(r.Context(), slog.Default()).Info("incoming_json_body",
-		"method", r.Method,
-		"path", r.URL.Path,
-		"content_type", r.Header.Get("Content-Type"),
-		"body", string(body),
-	)
 
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
-		// Log the raw body to help debug mismatched JSON shapes.
-		// Use the default logger as a safe non-nil base so we don't panic.
-		os.WriteFile("bad_json.log", []byte(err.Error() + "\n" + string(body)), 0644)
-		logger.FromCtx(r.Context(), slog.Default()).Info("bad_json_body", "error", err.Error(), "body", string(body))
+		logger.FromCtx(r.Context(), slog.Default()).Warn("bad_json_body",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"error", err.Error(),
+		)
 		WriteError(w, http.StatusBadRequest, "bad_json", "invalid request body")
 		return false
 	}
@@ -202,6 +193,18 @@ func ContextWithTimeout(parent context.Context) (context.Context, context.Cancel
 	return context.WithTimeout(parent, 30*time.Second)
 }
 
+// SecurityHeaders adds standard security headers to every response.
+func SecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-XSS-Protection", "1; mode=block")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+		next.ServeHTTP(w, r)
+	})
+}
+
 // IP-based Rate Limiter (Token Bucket algorithm).
 // Limits to 10k requests per minute per IP.
 type clientLimiter struct {
@@ -210,9 +213,43 @@ type clientLimiter struct {
 }
 
 var (
-	limiters = make(map[string]*clientLimiter)
-	mu       sync.Mutex
+	limiters     = make(map[string]*clientLimiter)
+	authLimiters = make(map[string]*clientLimiter)
+	mu           sync.Mutex
 )
+
+// AuthRateLimiter applies a strict 10 requests/minute limit — for login/password endpoints.
+func AuthRateLimiter(next http.Handler) http.Handler {
+	const (
+		ratePerSecond = 10.0 / 60.0
+		maxTokens     = 10.0
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ip := ClientIP(r)
+		mu.Lock()
+		client, exists := authLimiters[ip]
+		now := time.Now()
+		if !exists {
+			client = &clientLimiter{tokens: maxTokens, lastCheck: now}
+			authLimiters[ip] = client
+		} else {
+			elapsed := now.Sub(client.lastCheck).Seconds()
+			client.tokens += elapsed * ratePerSecond
+			if client.tokens > maxTokens {
+				client.tokens = maxTokens
+			}
+			client.lastCheck = now
+		}
+		if client.tokens >= 1.0 {
+			client.tokens -= 1.0
+			mu.Unlock()
+			next.ServeHTTP(w, r)
+		} else {
+			mu.Unlock()
+			WriteError(w, http.StatusTooManyRequests, "rate_limit_exceeded", "too many attempts, please wait before trying again")
+		}
+	})
+}
 
 // RateLimiter limits requests per client IP to a specified rate.
 func RateLimiter(next http.Handler) http.Handler {

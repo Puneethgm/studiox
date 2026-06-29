@@ -1,7 +1,7 @@
 package studios
 
 import (
-	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 
@@ -50,7 +50,7 @@ func (h *Handler) SyncBillingStatus(w http.ResponseWriter, r *http.Request) {
 		// No customer at all — they've never paid, mark as canceled if they have a non-free tier
 		if os.Getenv("API_ENV") != "local" && studio.SubscriptionTier != "" && studio.SubscriptionTier != "Trial Pass" {
 			_ = h.svc.UpdatePayments(r.Context(), parsedID, "", "", "", "", "canceled")
-			fmt.Printf("[BillingSync] No Stripe customer found for studio %s, marking canceled\n", studioID)
+			slog.Info("billing sync: no stripe customer, marked canceled", "studio_id", studioID)
 		}
 		tier := "canceled"
 		if os.Getenv("API_ENV") == "local" {
@@ -85,7 +85,7 @@ func (h *Handler) SyncBillingStatus(w http.ResponseWriter, r *http.Request) {
 		// No active subscription → mark canceled
 		if os.Getenv("API_ENV") != "local" && currentTier != "canceled" && currentTier != "" {
 			_ = h.svc.UpdatePayments(r.Context(), parsedID, "", "", "", "", "canceled")
-			fmt.Printf("[BillingSync] No active sub found for studio %s, marking canceled\n", studioID)
+			slog.Info("billing sync: no active subscription, marked canceled", "studio_id", studioID)
 		}
 		tier := "canceled"
 		if os.Getenv("API_ENV") == "local" {
@@ -119,7 +119,7 @@ func (h *Handler) SyncBillingStatus(w http.ResponseWriter, r *http.Request) {
 	// If we have a tier and it differs from what's stored (or stored is canceled), update
 	if planTier != "" && (planTier != currentTier || currentTier == "canceled" || currentTier == "past_due") {
 		_ = h.svc.UpdatePayments(r.Context(), parsedID, "", "", "", "", planTier)
-		fmt.Printf("[BillingSync] Synced studio %s tier from '%s' to '%s'\n", studioID, currentTier, planTier)
+		slog.Info("billing sync: tier updated", "studio_id", studioID, "from", currentTier, "to", planTier)
 		httpx.JSON(w, http.StatusOK, map[string]any{"synced": true, "tier": planTier})
 		return
 	}
@@ -131,7 +131,7 @@ func (h *Handler) SyncBillingStatus(w http.ResponseWriter, r *http.Request) {
 			restoreTier = "Growth Tier" // fallback if no metadata found
 		}
 		_ = h.svc.UpdatePayments(r.Context(), parsedID, "", "", "", "", restoreTier)
-		fmt.Printf("[BillingSync] Restored studio %s to active tier '%s'\n", studioID, restoreTier)
+		slog.Info("billing sync: tier restored", "studio_id", studioID, "tier", restoreTier)
 		httpx.JSON(w, http.StatusOK, map[string]any{"synced": true, "tier": restoreTier})
 		return
 	}

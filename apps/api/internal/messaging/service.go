@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"os"
@@ -558,14 +559,11 @@ func (s *Service) HandleInboundMessaging(ctx context.Context, kind ChannelKind, 
 	}
 
 	// 1. Resolve the channel account by the recipient's ID (the IG Account or FB Page PSID).
-	fmt.Printf("DEBUG: HandleInboundMessaging: kind=%s, recipientID=%s, senderID=%s\n", kind, m.Recipient.ID, m.Sender.ID)
 	channel, err := s.repo.GetChannelByExternalID(ctx, kind, m.Recipient.ID)
 	if err != nil {
-		// Fallback: try sender ID (e.g. if the page itself sent the message or for echo events)
 		channel, err = s.repo.GetChannelByExternalID(ctx, kind, m.Sender.ID)
 		if err != nil {
-			// Log the mismatch so we can debug.
-			fmt.Printf("DEBUG: Meta message received for unknown channel: kind=%s, recipientID=%s, senderID=%s\n", kind, m.Recipient.ID, m.Sender.ID)
+			slog.Warn("inbound message for unknown channel", "kind", kind, "recipientID", m.Recipient.ID, "senderID", m.Sender.ID)
 			return nil
 		}
 	}
@@ -730,8 +728,7 @@ func (s *Service) HandleInboundSMS(ctx context.Context, messageSid, from, to, bo
 	// 1. Resolve the channel account by the recipient's phone number (Twilio To number).
 	channel, err := s.repo.GetChannelByExternalID(ctx, KindSMS, to)
 	if err != nil {
-		// Log the mismatch so we can debug.
-		fmt.Printf("DEBUG: SMS message received for unknown channel: to=%s, from=%s\n", to, from)
+		slog.Warn("SMS inbound for unknown channel", "to", to, "from", from)
 		return nil
 	}
 

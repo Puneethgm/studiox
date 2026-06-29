@@ -8,7 +8,8 @@ const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3100;
-const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || 'changeme';
+const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY;
+if (!INTERNAL_API_KEY) { console.error('INTERNAL_API_KEY is not set'); process.exit(1); }
 const PROJECTX_API_URL = process.env.PROJECTX_API_URL || 'http://api:8080';
 
 const sessions = new SessionManager({ log, projectxApiUrl: PROJECTX_API_URL });

@@ -13,7 +13,8 @@ export
 endif
 
 GOOSE := go run github.com/pressly/goose/v3/cmd/goose@v3.22.0
-PG_DSN := postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)?sslmode=$(POSTGRES_SSLMODE)
+# Migrations bypass PgBouncer and go directly to Postgres (DDL needs session mode, not transaction mode)
+PG_DSN := postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):5436/$(POSTGRES_DB)?sslmode=$(POSTGRES_SSLMODE)
 PNPM := $(shell if command -v pnpm >/dev/null 2>&1; then printf 'pnpm'; elif command -v corepack >/dev/null 2>&1; then printf 'corepack pnpm'; else printf 'npx -y pnpm@9.10.0'; fi)
 
 .PHONY: help
@@ -64,8 +65,8 @@ seed-admin: ## Seed the super-admin user from .env (idempotent)
 
 # ---------- dev ----------
 .PHONY: api web dev
-api: ## Run the Go API
-	cd apps/api && go run ./cmd/server
+api: ## Run the Go API (auto-reloads on code changes via air)
+	cd apps/api && $(HOME)/go/bin/air
 
 web: ## Run the Next.js web app (admin + public + auth, single app)
 	cd apps/web && $(PNPM) dev

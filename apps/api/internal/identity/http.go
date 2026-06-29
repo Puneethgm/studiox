@@ -1,11 +1,8 @@
 package identity
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"io"
-	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -48,10 +45,10 @@ func NewHandler(repo *Repo, tokens *TokenIssuer, cookie config.CookieConfig, bra
 }
 
 func (h *Handler) Routes(r chi.Router) {
-	r.Post("/auth/login", h.login)
+	r.With(httpx.AuthRateLimiter).Post("/auth/login", h.login)
 	r.Post("/auth/logout", h.logout)
 	r.With(h.RequireAuth).Get("/auth/me", h.me)
-	r.With(h.RequireAuth).Post("/auth/password", h.changePassword)
+	r.With(h.RequireAuth, httpx.AuthRateLimiter).Post("/auth/password", h.changePassword)
 }
 
 type loginReq struct {
@@ -116,7 +113,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		Expires:  exp,
 		HttpOnly: true,
 		Secure:   h.cookie.Secure,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: http.SameSiteStrictMode,
 	})
 	httpx.JSON(w, http.StatusOK, h.buildMeRes(r.Context(), u))
 }
@@ -131,7 +128,7 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   h.cookie.Secure,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: http.SameSiteStrictMode,
 	})
 	httpx.NoContent(w)
 }
@@ -160,7 +157,7 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 				MaxAge:   -1,
 				HttpOnly: true,
 				Secure:   h.cookie.Secure,
-				SameSite: http.SameSiteLaxMode,
+				SameSite: http.SameSiteStrictMode,
 			})
 			httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "studio no longer accessible")
 			return
@@ -259,21 +256,6 @@ func MustClaims(ctx context.Context) *Claims {
 // RequireAuth verifies the session cookie and injects claims into the context.
 func (h *Handler) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Read and log the incoming body so we can capture payloads even when
-		// the request is unauthenticated. Restore the body for downstream
-		// handlers.
-		if r.Body != nil {
-			if b, err := io.ReadAll(r.Body); err == nil {
-				logger.FromCtx(r.Context(), slog.Default()).Info("auth_incoming_body",
-					"method", r.Method,
-					"path", r.URL.Path,
-					"content_type", r.Header.Get("Content-Type"),
-					"body", string(b),
-				)
-				r.Body = io.NopCloser(bytes.NewReader(b))
-			}
-		}
-
 		cookie, err := r.Cookie(h.cookie.Name)
 		if err != nil || cookie.Value == "" {
 			httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "authentication required")

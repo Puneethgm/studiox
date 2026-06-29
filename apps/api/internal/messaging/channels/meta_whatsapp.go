@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -209,7 +210,7 @@ func (m *MetaWhatsApp) SendText(ctx context.Context, accessToken, channelExterna
 			mediaID, uploadErr := m.uploadMediaToMeta(ctx, accessToken, channelExternalID, localPath)
 			if uploadErr != nil {
 				// Non-fatal: fall back to link (only works if server is public)
-				fmt.Printf("[WARN] Meta media upload failed (%v); falling back to link\n", uploadErr)
+				slog.Warn("meta whatsapp media upload failed, falling back to link", "err", uploadErr)
 				mediaObj["link"] = attURL
 			} else {
 				mediaObj["id"] = mediaID
@@ -300,7 +301,7 @@ func (m *MetaWhatsApp) SendText(ctx context.Context, accessToken, channelExterna
 		}
 		isLocalDev := os.Getenv("API_ENV") == "local"
 		if isLocalDev && (resp.StatusCode == http.StatusForbidden || errEnv.Error.Code == 131005 || errEnv.Error.Code == 131030 || errEnv.Error.Code == 100) {
-			fmt.Printf("[Meta API Error Mapped to Mock] HTTP Status %d, Error Body: %s\n", resp.StatusCode, string(respBody))
+			slog.Warn("meta whatsapp API error (local mock)", "status", resp.StatusCode, "body", string(respBody))
 			return &SendResult{
 				ExternalID: "wamid-mock-" + time.Now().Format("20060102150405"),
 			}, nil

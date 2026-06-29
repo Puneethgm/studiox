@@ -194,11 +194,11 @@ export default function SocialPlannerClient({ studioId, studio, isSuperAdmin }: 
           const studioEndpoint = isSuperAdmin ? `/api/v1/admin/studios/${studioId}` : `/api/v1/me/studios/${studioId}`;
           const [campaignsRes, studioRes, channelsRes] = await Promise.all([
             api<{ campaigns: Array<{ id: string; name: string; slug: string; shareUrl: string }>; total: number }>(`/api/v1/studios/${studioId}/campaigns`),
-            api<{ metaAppId?: string; metaAppSecret?: string; googleClientId?: string; googleClientSecret?: string; googleDeveloperToken?: string }>(studioEndpoint),
+            api<{ metaAppId?: string; hasMetaAppSecret?: boolean; googleClientId?: string; hasGoogleClientSecret?: boolean; hasGoogleDeveloperToken?: boolean }>(studioEndpoint),
             api<{ channels: { kind: string; status?: string }[] }>(`/api/v1/studios/${studioId}/messaging/channels`)
           ]);
           setCampaigns(campaignsRes.campaigns || []);
-          const hasMeta = !!(studioRes.metaAppId && studioRes.metaAppSecret);
+          const hasMeta = !!(studioRes.metaAppId && studioRes.hasMetaAppSecret);
           const hasGoogleAds = channelsRes.channels?.some(c => c.kind === 'google_ads' && (!c.status || c.status === 'active'));
           const hasX = channelsRes.channels?.some(c => c.kind === 'x_dm');
           setConnectedChannels({
