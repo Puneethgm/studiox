@@ -217,12 +217,13 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 			// At awaiting_interest and awaiting_options the bot only reacts to exact
 			// numeric/keyword choices; anything else (questions, greetings) falls to AI.
 			stage := lead.AutoContactStage
+			w.log.Info("ai worker: lead stage check", "lead_id", lead.ID, "stage", stage, "lead_status", string(lead.Status), "message", msg.Body)
 			botOwnedStage := stage != "" &&
 				stage != "completed" &&
 				stage != "awaiting_options" &&
 				stage != "awaiting_interest"
 			if botOwnedStage {
-				w.log.Debug("skipping ai reply", "lead", lead.ID, "stage", stage, "reason", "bot is handling this stage")
+				w.log.Info("ai worker: skipping — bot owns this stage", "lead", lead.ID, "stage", stage)
 				return nil
 			}
 			// At awaiting_options / awaiting_interest / no-stage: skip only if the bot
@@ -235,8 +236,9 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 					AND created_at >= $2
 				)
 			`, conv.ID, msg.CreatedAt).Scan(&botReplied)
+			w.log.Info("ai worker: bot_replied check", "lead_id", lead.ID, "bot_replied", botReplied, "msg_created_at", msg.CreatedAt)
 			if botReplied {
-				w.log.Debug("skipping ai reply", "lead", lead.ID, "reason", "bot already replied to this message")
+				w.log.Info("ai worker: skipping — automation already replied", "lead", lead.ID)
 				return nil
 			}
 		}
@@ -421,6 +423,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 			leadStatus = string(lead.Status)
 		}
 		treeResult, treeErr := w.dtSvc.TraverseActiveTree(ctx, studioID, msg.Body, leadStatus)
+		w.log.Info("decision tree traversal", "studio_id", studioID, "lead_status", leadStatus, "msg", msg.Body, "tree_found", treeResult != nil, "matched", treeResult != nil && treeResult.Matched, "err", treeErr)
 		if treeErr != nil {
 			w.log.Warn("decision tree traversal failed", "studio_id", studioID, "err", treeErr)
 		} else if treeResult != nil && treeResult.Matched {

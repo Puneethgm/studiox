@@ -1295,8 +1295,11 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 	`, studioID, *conv.LeadID).Scan(&leadName, &leadStatus, &leadNotes, &autoContactStage, &studioSlug, &campaignSlug, &slotsJSON, &timezone)
 
 	if err != nil {
+		slog.Warn("auto-contact: lead query failed, skipping", "err", err, "lead_id", conv.LeadID)
 		return nil // Lead not found or other db error, skip automation
 	}
+
+	slog.Info("auto-contact: processing inbound", "lead_id", conv.LeadID, "stage", autoContactStage, "status", leadStatus, "body", body)
 
 	text := strings.ToLower(strings.TrimSpace(body))
 	targetStage := autoContactStage
@@ -1390,9 +1393,14 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 			days, _ := getAvailableDays()
 			if len(days) == 0 {
 				targetStage = "completed"
-				outboundBody = "Sorry! No trial classes are available at this time. Please check back later or contact us directly."
+				outboundBody = "Great! Our team will reach out to you within 24 hours to schedule your trial. We look forward to seeing you!"
 			} else {
-				outboundBody = fmt.Sprintf("Please select a date for your trial:\n1. %s\n2. %s\n3. %s", days[0], days[1], days[2])
+				var sb strings.Builder
+				sb.WriteString("Please select a date for your trial:")
+				for i, d := range days {
+					sb.WriteString(fmt.Sprintf("\n%d. %s", i+1, d))
+				}
+				outboundBody = sb.String()
 			}
 		} else if isMember && !isTrial {
 			plans, errPlans := s.repo.ListActivePlans(ctx, studioID)
@@ -1499,19 +1507,30 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 		}
 	} else if autoContactStage == "awaiting_trial_date" {
 		days, daysWeekdayStr := getAvailableDays()
+		if len(days) == 0 {
+			// Availability was removed after stage was set — reset to completed gracefully.
+			targetStage = "completed"
+			outboundBody = "Great! Our team will reach out to you within 24 hours to schedule your trial."
+		} else {
 		selectedDate := ""
 		selectedWeekday := ""
-		isOption1 := text == "1" || strings.Contains(text, "choice_1") || strings.Contains(text, strings.ToLower(days[0]))
-		isOption2 := text == "2" || strings.Contains(text, "choice_2") || strings.Contains(text, strings.ToLower(days[1]))
-		isOption3 := text == "3" || strings.Contains(text, "choice_3") || strings.Contains(text, strings.ToLower(days[2]))
+		dayOf := func(i int, s []string) string {
+			if i < len(s) {
+				return strings.ToLower(s[i])
+			}
+			return ""
+		}
+		isOption1 := text == "1" || strings.Contains(text, "choice_1") || (dayOf(0, days) != "" && strings.Contains(text, dayOf(0, days)))
+		isOption2 := text == "2" || strings.Contains(text, "choice_2") || (dayOf(1, days) != "" && strings.Contains(text, dayOf(1, days)))
+		isOption3 := text == "3" || strings.Contains(text, "choice_3") || (dayOf(2, days) != "" && strings.Contains(text, dayOf(2, days)))
 
 		if isOption1 {
 			selectedDate = days[0]
 			selectedWeekday = daysWeekdayStr[0]
-		} else if isOption2 {
+		} else if isOption2 && len(days) > 1 {
 			selectedDate = days[1]
 			selectedWeekday = daysWeekdayStr[1]
-		} else if isOption3 {
+		} else if isOption3 && len(days) > 2 {
 			selectedDate = days[2]
 			selectedWeekday = daysWeekdayStr[2]
 		} else {
@@ -1540,6 +1559,7 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 			sb.WriteString(fmt.Sprintf("\n%d. %s", idx+1, ts))
 		}
 		outboundBody = sb.String()
+		} // end else (days available)
 	} else if autoContactStage == "awaiting_trial_time" {
 		dateStr := ""
 		idx := strings.Index(targetNotes, "[Selected Trial Date]: ")
@@ -1672,6 +1692,8 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 		targetStage = "completed"
 		outboundBody = "Thank you for your time we would get back to u."
 	}
+
+	slog.Info("auto-contact: result", "lead_id", conv.LeadID, "old_stage", autoContactStage, "new_stage", targetStage, "has_reply", outboundBody != "")
 
 	// Update the lead if anything changed
 	if targetStage != autoContactStage || targetStatus != leadStatus || targetNotes != leadNotes {
