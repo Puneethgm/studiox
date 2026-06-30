@@ -18,6 +18,14 @@ import (
 	"github.com/projectx/api/internal/studios"
 )
 
+type claudeReply = claude.Reply
+
+type geminiReply struct {
+	text      string
+	tokensIn  int
+	tokensOut int
+}
+
 const (
 	aiResyncInterval = 30 * time.Second
 )
@@ -461,25 +469,29 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	if apiKey != "" {
 		w.log.Info("generating ai reply using gemini", "studio_id", studioID, "message_id", msg.ID)
 		t0 := time.Now()
-		resp, err = w.generateGeminiReply(ctx, apiKey, prompt)
+		var gemReply geminiReply
+		gemReply, err = w.generateGeminiReply(ctx, apiKey, prompt)
 		latMs := int(time.Since(t0).Milliseconds())
+		resp = gemReply.text
 		sourceRef = "gemini"
 		errMsg := ""
 		if err != nil {
 			errMsg = err.Error()
 		}
-		w.msgRepo.LogLLMUsage(ctx, studioID, "gemini", "gemini-2.5-flash", latMs, err == nil && resp != "", errMsg)
+		w.msgRepo.LogLLMUsage(ctx, studioID, "gemini", "gemini-2.5-flash", latMs, err == nil && resp != "", errMsg, gemReply.tokensIn, gemReply.tokensOut)
 	} else if w.claude != nil {
 		w.log.Info("generating ai reply using claude", "studio_id", studioID, "message_id", msg.ID)
 		t0 := time.Now()
-		resp, err = w.claude.GenerateReply(ctx, prompt)
+		var cr claudeReply
+		cr, err = w.claude.GenerateReply(ctx, prompt)
 		latMs := int(time.Since(t0).Milliseconds())
+		resp = cr.Text
 		sourceRef = "claude"
 		errMsg := ""
 		if err != nil {
 			errMsg = err.Error()
 		}
-		w.msgRepo.LogLLMUsage(ctx, studioID, "claude", "claude-haiku-4-5", latMs, err == nil && resp != "", errMsg)
+		w.msgRepo.LogLLMUsage(ctx, studioID, "claude", "claude-haiku-4-5", latMs, err == nil && resp != "", errMsg, cr.TokensIn, cr.TokensOut)
 	} else {
 		w.log.Warn("skipping ai reply: neither gemini nor claude configured", "studio_id", studioID)
 		return nil
@@ -843,19 +855,19 @@ func (w *AIWorker) scheduleTrialFollowup(ctx context.Context, studioID uuid.UUID
 	}
 }
 
-func (w *AIWorker) generateGeminiReply(ctx context.Context, apiKey string, prompt string) (string, error) {
+func (w *AIWorker) generateGeminiReply(ctx context.Context, apiKey string, prompt string) (geminiReply, error) {
 	models := []string{"gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite"}
 	for _, model := range models {
-		resp, err := w.tryGeminiModel(ctx, apiKey, model, prompt)
+		r, err := w.tryGeminiModel(ctx, apiKey, model, prompt)
 		if err == nil {
-			return resp, nil
+			return r, nil
 		}
 		w.log.Warn("gemini model failed, trying next", "model", model, "err", err)
 	}
-	return "", fmt.Errorf("all Gemini models failed")
+	return geminiReply{}, fmt.Errorf("all Gemini models failed")
 }
 
-func (w *AIWorker) tryGeminiModel(ctx context.Context, apiKey string, model string, prompt string) (string, error) {
+func (w *AIWorker) tryGeminiModel(ctx context.Context, apiKey string, model string, prompt string) (geminiReply, error) {
 	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, apiKey)
 
 	reqBody, err := json.Marshal(map[string]any{
@@ -868,7 +880,7 @@ func (w *AIWorker) tryGeminiModel(ctx context.Context, apiKey string, model stri
 		},
 	})
 	if err != nil {
-		return "", err
+		return geminiReply{}, err
 	}
 
 	var lastErr error
@@ -879,7 +891,7 @@ func (w *AIWorker) tryGeminiModel(ctx context.Context, apiKey string, model stri
 		req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, url, bytes.NewBuffer(reqBody))
 		if err != nil {
 			cancel()
-			return "", err
+			return geminiReply{}, err
 		}
 		req.Header.Set("Content-Type", "application/json")
 
@@ -912,7 +924,7 @@ func (w *AIWorker) tryGeminiModel(ctx context.Context, apiKey string, model stri
 				backoff *= 2
 				continue
 			}
-			return "", lastErr
+			return geminiReply{}, lastErr
 		}
 
 		var res struct {
@@ -923,18 +935,26 @@ func (w *AIWorker) tryGeminiModel(ctx context.Context, apiKey string, model stri
 					} `json:"parts"`
 				} `json:"content"`
 			} `json:"candidates"`
+			UsageMetadata struct {
+				PromptTokenCount     int `json:"promptTokenCount"`
+				CandidatesTokenCount int `json:"candidatesTokenCount"`
+			} `json:"usageMetadata"`
 		}
 
 		if err := json.Unmarshal(respBytes, &res); err != nil {
-			return "", err
+			return geminiReply{}, err
 		}
 
 		if len(res.Candidates) == 0 || len(res.Candidates[0].Content.Parts) == 0 {
-			return "", fmt.Errorf("empty response from Gemini API")
+			return geminiReply{}, fmt.Errorf("empty response from Gemini API")
 		}
 
-		return res.Candidates[0].Content.Parts[0].Text, nil
+		return geminiReply{
+			text:      res.Candidates[0].Content.Parts[0].Text,
+			tokensIn:  res.UsageMetadata.PromptTokenCount,
+			tokensOut: res.UsageMetadata.CandidatesTokenCount,
+		}, nil
 	}
 
-	return "", fmt.Errorf("gemini API call failed after 3 attempts: %w", lastErr)
+	return geminiReply{}, fmt.Errorf("gemini API call failed after 3 attempts: %w", lastErr)
 }

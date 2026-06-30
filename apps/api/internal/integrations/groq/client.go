@@ -29,10 +29,17 @@ func New(key string) *Client {
 	return &Client{key: key, http: &http.Client{Timeout: 30 * time.Second}}
 }
 
-// GenerateReply calls the Groq API with the given model and returns the text response.
-func (c *Client) GenerateReply(ctx context.Context, prompt, model string) (string, error) {
+// Reply bundles the text response with token usage from the Groq API.
+type Reply struct {
+	Text      string
+	TokensIn  int
+	TokensOut int
+}
+
+// GenerateReply calls the Groq API with the given model and returns text + token counts.
+func (c *Client) GenerateReply(ctx context.Context, prompt, model string) (Reply, error) {
 	if c == nil {
-		return "", fmt.Errorf("groq client not configured")
+		return Reply{}, fmt.Errorf("groq client not configured")
 	}
 	if model == "" {
 		model = Model8B
@@ -51,7 +58,7 @@ func (c *Client) GenerateReply(ctx context.Context, prompt, model string) (strin
 	for attempt := 1; attempt <= 2; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, "POST", baseURL, strings.NewReader(string(reqBody)))
 		if err != nil {
-			return "", fmt.Errorf("groq new request: %w", err)
+			return Reply{}, fmt.Errorf("groq new request: %w", err)
 		}
 		req.Header.Set("Authorization", "Bearer "+c.key)
 		req.Header.Set("Content-Type", "application/json")
@@ -71,7 +78,7 @@ func (c *Client) GenerateReply(ctx context.Context, prompt, model string) (strin
 			continue
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return "", fmt.Errorf("groq status %d: %s", resp.StatusCode, string(body))
+			return Reply{}, fmt.Errorf("groq status %d: %s", resp.StatusCode, string(body))
 		}
 
 		var out struct {
@@ -80,14 +87,22 @@ func (c *Client) GenerateReply(ctx context.Context, prompt, model string) (strin
 					Content string `json:"content"`
 				} `json:"message"`
 			} `json:"choices"`
+			Usage struct {
+				PromptTokens     int `json:"prompt_tokens"`
+				CompletionTokens int `json:"completion_tokens"`
+			} `json:"usage"`
 		}
 		if err := json.Unmarshal(body, &out); err != nil {
-			return "", fmt.Errorf("groq parse response: %w", err)
+			return Reply{}, fmt.Errorf("groq parse response: %w", err)
 		}
 		if len(out.Choices) == 0 || out.Choices[0].Message.Content == "" {
-			return "", fmt.Errorf("groq empty response")
+			return Reply{}, fmt.Errorf("groq empty response")
 		}
-		return strings.TrimSpace(out.Choices[0].Message.Content), nil
+		return Reply{
+			Text:      strings.TrimSpace(out.Choices[0].Message.Content),
+			TokensIn:  out.Usage.PromptTokens,
+			TokensOut: out.Usage.CompletionTokens,
+		}, nil
 	}
-	return "", lastErr
+	return Reply{}, lastErr
 }

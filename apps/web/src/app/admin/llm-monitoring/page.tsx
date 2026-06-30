@@ -15,9 +15,31 @@ import {
   Legend,
   ResponsiveContainer,
 } from 'recharts';
-import { Activity, CheckCircle2, ChevronLeft, ChevronRight, Clock, Cpu } from 'lucide-react';
+import { Activity, CheckCircle2, ChevronLeft, ChevronRight, Clock, Cpu, DollarSign } from 'lucide-react';
 
 const PAGE_SIZE = 10;
+
+// Cost per 1M tokens (USD) — update when pricing changes
+const COST_PER_1M: Record<string, { in: number; out: number }> = {
+  'llama-3.1-8b-instant':    { in: 0.05,  out: 0.08  },
+  'llama-3.3-70b-versatile': { in: 0.59,  out: 0.79  },
+  'gemini-2.5-flash':        { in: 0.075, out: 0.30  },
+  'gemini-2.0-flash':        { in: 0.075, out: 0.30  },
+  'gemini-2.0-flash-lite':   { in: 0.075, out: 0.04  },
+  'claude-haiku-4-5':        { in: 0.80,  out: 4.00  },
+};
+
+function computeCostUSD(model: string, tokensIn: number, tokensOut: number): number {
+  const p = COST_PER_1M[model];
+  if (!p) return 0;
+  return (tokensIn / 1_000_000) * p.in + (tokensOut / 1_000_000) * p.out;
+}
+
+function fmtCost(usd: number): string {
+  if (usd === 0) return '—';
+  if (usd < 0.0001) return '<$0.0001';
+  return `$${usd.toFixed(4)}`;
+}
 
 interface LLMStat {
   provider: string;
@@ -25,6 +47,8 @@ interface LLMStat {
   count: number;
   successCount: number;
   avgLatencyMs: number;
+  tokensIn: number;
+  tokensOut: number;
   date: string;
 }
 
@@ -33,6 +57,7 @@ interface Summary {
   successRate: number;
   avgLatency: number;
   topModel: string;
+  totalCostUSD: number;
 }
 
 function computeSummary(stats: LLMStat[]): Summary {
@@ -55,7 +80,12 @@ function computeSummary(stats: LLMStat[]): Summary {
   }
   const topModel = Object.entries(modelCount).sort((a, b) => b[1] - a[1])[0]?.[0] ?? '—';
 
-  return { todayTotal, successRate, avgLatency, topModel };
+  const totalCostUSD = stats.reduce(
+    (acc, s) => acc + computeCostUSD(s.model, s.tokensIn, s.tokensOut),
+    0,
+  );
+
+  return { todayTotal, successRate, avgLatency, topModel, totalCostUSD };
 }
 
 function buildBarData(stats: LLMStat[]) {
@@ -162,8 +192,8 @@ export default function LLMMonitoringPage() {
           <h1 className="text-2xl font-black tracking-tight text-zinc-900 dark:text-white">LLM Monitor</h1>
           <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">AI provider usage — last 30 days</p>
         </div>
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          {[...Array(4)].map((_, i) => (
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+          {[...Array(5)].map((_, i) => (
             <div key={i} className="rounded-2xl border border-zinc-200 dark:border-white/10 bg-zinc-100 dark:bg-white/5 p-5 animate-pulse">
               <div className="h-4 w-24 rounded bg-zinc-200 dark:bg-white/10 mb-4" />
               <div className="h-8 w-16 rounded bg-zinc-200 dark:bg-white/10" />
@@ -208,7 +238,7 @@ export default function LLMMonitoringPage() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         <SummaryCard
           icon={<Activity className="h-5 w-5 text-violet-600 dark:text-violet-400" />}
           label="Requests today"
@@ -232,6 +262,12 @@ export default function LLMMonitoringPage() {
           label="Top model"
           value={summary.topModel}
           color="amber"
+        />
+        <SummaryCard
+          icon={<DollarSign className="h-5 w-5 text-rose-600 dark:text-rose-400" />}
+          label="Total cost (30d)"
+          value={summary.totalCostUSD < 0.01 ? `$${summary.totalCostUSD.toFixed(5)}` : `$${summary.totalCostUSD.toFixed(4)}`}
+          color="rose"
         />
       </div>
 
@@ -334,6 +370,9 @@ export default function LLMMonitoringPage() {
                     <th className="px-6 py-3 text-right font-semibold">Requests</th>
                     <th className="px-6 py-3 text-right font-semibold">Success</th>
                     <th className="px-6 py-3 text-right font-semibold">Avg latency</th>
+                    <th className="px-6 py-3 text-right font-semibold">Tokens in</th>
+                    <th className="px-6 py-3 text-right font-semibold">Tokens out</th>
+                    <th className="px-6 py-3 text-right font-semibold">Cost</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100 dark:divide-white/5">
@@ -366,6 +405,15 @@ export default function LLMMonitoringPage() {
                       </td>
                       <td className="px-6 py-3 text-right text-zinc-500 dark:text-zinc-400 tabular-nums font-mono text-xs">
                         {Math.round(row.avgLatencyMs)} ms
+                      </td>
+                      <td className="px-6 py-3 text-right text-zinc-500 dark:text-zinc-400 tabular-nums font-mono text-xs">
+                        {row.tokensIn > 0 ? row.tokensIn.toLocaleString() : '—'}
+                      </td>
+                      <td className="px-6 py-3 text-right text-zinc-500 dark:text-zinc-400 tabular-nums font-mono text-xs">
+                        {row.tokensOut > 0 ? row.tokensOut.toLocaleString() : '—'}
+                      </td>
+                      <td className="px-6 py-3 text-right text-zinc-700 dark:text-zinc-300 tabular-nums font-mono text-xs font-medium">
+                        {fmtCost(computeCostUSD(row.model, row.tokensIn, row.tokensOut))}
                       </td>
                     </tr>
                   ))}
@@ -428,13 +476,14 @@ function SummaryCard({
   icon: React.ReactNode;
   label: string;
   value: string;
-  color: 'violet' | 'emerald' | 'blue' | 'amber';
+  color: 'violet' | 'emerald' | 'blue' | 'amber' | 'rose';
 }) {
   const styles: Record<string, string> = {
     violet: 'bg-violet-50 dark:bg-violet-500/10 border-violet-200 dark:border-violet-500/20',
     emerald: 'bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20',
     blue: 'bg-blue-50 dark:bg-blue-500/10 border-blue-200 dark:border-blue-500/20',
     amber: 'bg-amber-50 dark:bg-amber-500/10 border-amber-200 dark:border-amber-500/20',
+    rose: 'bg-rose-50 dark:bg-rose-500/10 border-rose-200 dark:border-rose-500/20',
   };
   return (
     <div className={`rounded-2xl border p-5 ${styles[color]}`}>

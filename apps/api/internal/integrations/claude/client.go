@@ -30,10 +30,17 @@ func New(url, key string) (*Client, error) {
 	return &Client{url: url, key: key, http: &http.Client{Timeout: 20 * time.Second}}, nil
 }
 
-// GenerateReply sends a prompt to the Claude endpoint and returns the text reply.
-func (c *Client) GenerateReply(ctx context.Context, prompt string) (string, error) {
+// Reply bundles the text response with token usage from the Claude API.
+type Reply struct {
+	Text      string
+	TokensIn  int
+	TokensOut int
+}
+
+// GenerateReply sends a prompt to the Claude endpoint and returns text + token counts.
+func (c *Client) GenerateReply(ctx context.Context, prompt string) (Reply, error) {
 	if c == nil {
-		return "", errors.New("claude client not configured")
+		return Reply{}, errors.New("claude client not configured")
 	}
 	reqBody := map[string]any{
 		"model":      defaultModel,
@@ -46,7 +53,7 @@ func (c *Client) GenerateReply(ctx context.Context, prompt string) (string, erro
 	b, _ := json.Marshal(reqBody)
 	req, err := http.NewRequestWithContext(ctx, "POST", c.url, strings.NewReader(string(b)))
 	if err != nil {
-		return "", fmt.Errorf("new request: %w", err)
+		return Reply{}, fmt.Errorf("new request: %w", err)
 	}
 	req.Header.Set("x-api-key", c.key)
 	req.Header.Set("anthropic-version", "2023-06-01")
@@ -54,49 +61,45 @@ func (c *Client) GenerateReply(ctx context.Context, prompt string) (string, erro
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("claude request: %w", err)
+		return Reply{}, fmt.Errorf("claude request: %w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("claude status %d: %s", resp.StatusCode, string(body))
+		return Reply{}, fmt.Errorf("claude status %d: %s", resp.StatusCode, string(body))
 	}
 
-	// Try to parse a few common shapes. First, { "completion": "..." }
-	var out map[string]any
-	if err := json.Unmarshal(body, &out); err == nil {
-		if arr, ok := out["content"].([]any); ok {
-			parts := make([]string, 0, len(arr))
-			for _, item := range arr {
-				if m, ok := item.(map[string]any); ok {
-					if s, ok := m["text"].(string); ok && s != "" {
-						parts = append(parts, s)
-					}
-				}
-			}
-			if len(parts) > 0 {
-				return strings.Join(parts, ""), nil
-			}
-		}
-		if v, ok := out["completion"].(string); ok && v != "" {
-			return v, nil
-		}
-		if v, ok := out["text"].(string); ok && v != "" {
-			return v, nil
-		}
-		if v, ok := out["output"]; ok {
-			if s, ok := v.(string); ok {
-				return s, nil
-			}
-			// sometimes output is array
-			if arr, ok := v.([]any); ok && len(arr) > 0 {
-				if s, ok := arr[0].(string); ok {
-					return s, nil
-				}
-			}
-		}
+	var out struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+		Usage struct {
+			InputTokens  int `json:"input_tokens"`
+			OutputTokens int `json:"output_tokens"`
+		} `json:"usage"`
+		Completion string `json:"completion"`
+		Text       string `json:"text"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return Reply{Text: string(body)}, nil
 	}
 
-	// fallback: return raw body as string
-	return string(body), nil
+	r := Reply{TokensIn: out.Usage.InputTokens, TokensOut: out.Usage.OutputTokens}
+
+	if len(out.Content) > 0 {
+		parts := make([]string, 0, len(out.Content))
+		for _, c := range out.Content {
+			if c.Text != "" {
+				parts = append(parts, c.Text)
+			}
+		}
+		r.Text = strings.Join(parts, "")
+	} else if out.Completion != "" {
+		r.Text = out.Completion
+	} else if out.Text != "" {
+		r.Text = out.Text
+	} else {
+		r.Text = string(body)
+	}
+	return r, nil
 }

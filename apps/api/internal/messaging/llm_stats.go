@@ -15,6 +15,8 @@ type LLMStat struct {
 	Count        int     `json:"count"`
 	SuccessCount int     `json:"successCount"`
 	AvgLatencyMs float64 `json:"avgLatencyMs"`
+	TokensIn     int     `json:"tokensIn"`
+	TokensOut    int     `json:"tokensOut"`
 	Date         string  `json:"date"` // YYYY-MM-DD
 }
 
@@ -30,6 +32,8 @@ func (h *Handler) GetLLMStats(w http.ResponseWriter, r *http.Request) {
 			COUNT(*)::int                                       AS count,
 			SUM(CASE WHEN success THEN 1 ELSE 0 END)::int      AS success_count,
 			COALESCE(AVG(latency_ms), 0)                       AS avg_latency_ms,
+			COALESCE(SUM(tokens_in), 0)::int                   AS tokens_in,
+			COALESCE(SUM(tokens_out), 0)::int                  AS tokens_out,
 			DATE(created_at)                                    AS date
 		FROM llm_usage_logs
 		WHERE created_at >= $1
@@ -46,7 +50,7 @@ func (h *Handler) GetLLMStats(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var s LLMStat
 		var date time.Time
-		if err := rows.Scan(&s.Provider, &s.Model, &s.Count, &s.SuccessCount, &s.AvgLatencyMs, &date); err != nil {
+		if err := rows.Scan(&s.Provider, &s.Model, &s.Count, &s.SuccessCount, &s.AvgLatencyMs, &s.TokensIn, &s.TokensOut, &date); err != nil {
 			continue
 		}
 		s.Date = date.Format("2006-01-02")
