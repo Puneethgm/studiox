@@ -602,6 +602,7 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusNotFound, "not_found", "studio not found")
 			return
 		}
+		slog.Error("updateScoped failed", "err", err)
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return
 	}
