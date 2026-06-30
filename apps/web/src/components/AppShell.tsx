@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
+  BarChart2,
   Building2,
   Home,
   Inbox,
@@ -80,6 +81,12 @@ function navItemsFor(me: Me, currentPath: string): NavItem[] {
         label: 'Payments',
         icon: <CreditCard className="h-[18px] w-[18px]" />,
         match: (p) => p.startsWith('/admin/payments'),
+      },
+      {
+        href: '/admin/llm-monitoring',
+        label: 'LLM Monitor',
+        icon: <BarChart2 className="h-[18px] w-[18px]" />,
+        match: (p) => p.startsWith('/admin/llm-monitoring'),
       },
       {
         href: '/admin/settings',
@@ -578,6 +585,9 @@ function Topbar({
   } else if (pathname.includes('/decision-trees')) {
     pageTitle = 'Decision Trees';
     pageIcon = <Network className="h-[18px] w-[18px] text-violet-500" />;
+  } else if (pathname.includes('/llm-monitoring')) {
+    pageTitle = 'LLM Monitor';
+    pageIcon = <BarChart2 className="h-[18px] w-[18px] text-violet-500" />;
   } else if (pathname.includes('/settings')) {
     pageTitle = 'Settings';
     pageIcon = <Settings className="h-[18px] w-[18px] text-slate-500" />;

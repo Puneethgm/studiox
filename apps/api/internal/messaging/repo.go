@@ -1205,3 +1205,12 @@ func (r *Repo) ListActivePlans(ctx context.Context, studioID uuid.UUID) ([]Plan,
 	}
 	return out, rows.Err()
 }
+
+// LogLLMUsage inserts a fire-and-forget LLM usage record. Errors are silently
+// dropped because logging must never block the AI response path.
+func (r *Repo) LogLLMUsage(ctx context.Context, studioID uuid.UUID, provider, model string, latencyMs int, success bool, errMsg string) {
+	_, _ = r.pool.Exec(ctx, `
+		INSERT INTO llm_usage_logs (studio_id, provider, model, latency_ms, success, error_msg)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, studioID, provider, model, latencyMs, success, errMsg)
+}

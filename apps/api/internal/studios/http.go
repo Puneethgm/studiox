@@ -65,6 +65,7 @@ type studioResponse struct {
 	LeadCount            int                `json:"leadCount,omitempty"`
 	// Presence indicators — actual secret values are never returned.
 	HasGeminiApiKey         bool `json:"hasGeminiApiKey"`
+	HasGroqApiKey           bool `json:"hasGroqApiKey"`
 	HasMetaAppSecret        bool `json:"hasMetaAppSecret"`
 	HasGoogleClientSecret   bool `json:"hasGoogleClientSecret"`
 	HasGoogleDeveloperToken bool `json:"hasGoogleDeveloperToken"`
@@ -102,6 +103,7 @@ func toStudioResponse(s *Studio) studioResponse {
 		CampaignCount:           s.CampaignCount,
 		LeadCount:               s.LeadCount,
 		HasGeminiApiKey:         s.GeminiAPIKey != "",
+		HasGroqApiKey:           s.GroqAPIKey != "",
 		HasMetaAppSecret:        s.MetaAppSecret != "",
 		HasGoogleClientSecret:   s.GoogleClientSecret != "",
 		HasGoogleDeveloperToken: s.GoogleDeveloperToken != "",
@@ -287,6 +289,7 @@ type updateReq struct {
 	AvailabilitySlots    *[]AvailabilitySlot `json:"availabilitySlots"`
 	AvailabilityTimezone *string             `json:"availabilityTimezone"`
 	GeminiAPIKey         *string             `json:"geminiApiKey"`
+	GroqAPIKey           *string             `json:"groqApiKey"`
 	MetaAppID            *string             `json:"metaAppId"`
 	MetaAppSecret        *string             `json:"metaAppSecret"`
 	GoogleClientID       *string             `json:"googleClientId"`
@@ -333,6 +336,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		AvailabilitySlots:    existing.AvailabilitySlots,
 		AvailabilityTimezone: existing.AvailabilityTimezone,
 		GeminiAPIKey:         existing.GeminiAPIKey,
+		GroqAPIKey:           existing.GroqAPIKey,
 		MetaAppID:            existing.MetaAppID,
 		MetaAppSecret:        existing.MetaAppSecret,
 		GoogleClientID:       existing.GoogleClientID,
@@ -376,6 +380,9 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	// Only overwrite secrets when a non-empty value is provided; empty means "keep existing".
 	if req.GeminiAPIKey != nil && *req.GeminiAPIKey != "" {
 		input.GeminiAPIKey = *req.GeminiAPIKey
+	}
+	if req.GroqAPIKey != nil && *req.GroqAPIKey != "" {
+		input.GroqAPIKey = *req.GroqAPIKey
 	}
 	if req.MetaAppID != nil {
 		input.MetaAppID = *req.MetaAppID
@@ -513,6 +520,7 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 		AvailabilitySlots:    existing.AvailabilitySlots,
 		AvailabilityTimezone: existing.AvailabilityTimezone,
 		GeminiAPIKey:         existing.GeminiAPIKey,
+		GroqAPIKey:           existing.GroqAPIKey,
 		MetaAppID:            existing.MetaAppID,
 		MetaAppSecret:        existing.MetaAppSecret,
 		GoogleClientID:       existing.GoogleClientID,
@@ -554,6 +562,9 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 	// Only overwrite secrets when a non-empty value is provided; empty means "keep existing".
 	if req.GeminiAPIKey != nil && *req.GeminiAPIKey != "" {
 		input.GeminiAPIKey = *req.GeminiAPIKey
+	}
+	if req.GroqAPIKey != nil && *req.GroqAPIKey != "" {
+		input.GroqAPIKey = *req.GroqAPIKey
 	}
 	if req.MetaAppID != nil {
 		input.MetaAppID = *req.MetaAppID

@@ -1347,9 +1347,13 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 		return days, daysWeekdayStr
 	}
 
-	isInterested := text == "1" || text == "interested" || (strings.Contains(text, "interested") && !strings.Contains(text, "not interested"))
+	isInterested := text == "1" || text == "interested" || (strings.Contains(text, "interested") && !strings.Contains(text, "not interested")) ||
+		strings.Contains(text, "book a trial") || strings.Contains(text, "book trial") ||
+		strings.Contains(text, "want to book") || strings.Contains(text, "want to join") ||
+		strings.Contains(text, "want to try") || strings.Contains(text, "i want trial") ||
+		strings.Contains(text, "book a trail") || strings.Contains(text, "book trail")
 	isNotInterested := text == "2" || text == "not interested" || strings.Contains(text, "not interested") || strings.Contains(text, "not_interested")
-	// Only treat as a bot choice if the message is a short clear selection (≤5 words),
+	// Only treat as a bot choice if the message is a short clear selection (≤8 words),
 	// not a question. Long messages containing "trial" or "member" are questions for AI.
 	isQuestion := strings.Contains(text, "?") || strings.HasPrefix(text, "what") ||
 		strings.HasPrefix(text, "how") || strings.HasPrefix(text, "when") ||
@@ -1357,12 +1361,14 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 		strings.HasPrefix(text, "is ") || strings.HasPrefix(text, "are ") ||
 		strings.HasPrefix(text, "do ") || strings.HasPrefix(text, "can ")
 	wordCount := len(strings.Fields(text))
-	isShortChoice := !isQuestion && wordCount <= 5
+	isShortChoice := !isQuestion && wordCount <= 8
 
 	isTrial := text == "1" ||
-		(isShortChoice && (strings.Contains(text, "book a trial") || strings.Contains(text, "book trial") ||
-			strings.Contains(text, "trial") || strings.Contains(text, "book a trail") ||
-			strings.Contains(text, "book trail") || strings.Contains(text, "trail")))
+		(!isQuestion && (strings.Contains(text, "book a trial") || strings.Contains(text, "book trial") ||
+			strings.Contains(text, "want to book") || strings.Contains(text, "want to try") ||
+			strings.Contains(text, "book a trail") || strings.Contains(text, "book trail") ||
+			strings.Contains(text, "want trial") || strings.Contains(text, "i want trial") ||
+			(isShortChoice && (strings.Contains(text, "trial") || strings.Contains(text, "trail")))))
 	isMember := text == "2" ||
 		(isShortChoice && (strings.Contains(text, "become a member") || strings.Contains(text, "become member") ||
 			strings.Contains(text, "member")))
@@ -1605,7 +1611,7 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 
 			// Get Trial plan price from the studio's plans
 			_ = tx.QueryRow(ctx, `
-				SELECT COALESCE(price_sgd, 0) FROM studio_plans
+				SELECT COALESCE(price_sgd, 0) FROM plans
 				WHERE studio_id = $1 AND plan_name = 'Trial' AND is_active = true
 				LIMIT 1
 			`, studioID).Scan(&trialPrice)

@@ -460,12 +460,26 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	var sourceRef string
 	if apiKey != "" {
 		w.log.Info("generating ai reply using gemini", "studio_id", studioID, "message_id", msg.ID)
+		t0 := time.Now()
 		resp, err = w.generateGeminiReply(ctx, apiKey, prompt)
+		latMs := int(time.Since(t0).Milliseconds())
 		sourceRef = "gemini"
+		errMsg := ""
+		if err != nil {
+			errMsg = err.Error()
+		}
+		w.msgRepo.LogLLMUsage(ctx, studioID, "gemini", "gemini-2.5-flash", latMs, err == nil && resp != "", errMsg)
 	} else if w.claude != nil {
 		w.log.Info("generating ai reply using claude", "studio_id", studioID, "message_id", msg.ID)
+		t0 := time.Now()
 		resp, err = w.claude.GenerateReply(ctx, prompt)
+		latMs := int(time.Since(t0).Milliseconds())
 		sourceRef = "claude"
+		errMsg := ""
+		if err != nil {
+			errMsg = err.Error()
+		}
+		w.msgRepo.LogLLMUsage(ctx, studioID, "claude", "claude-haiku-4-5", latMs, err == nil && resp != "", errMsg)
 	} else {
 		w.log.Warn("skipping ai reply: neither gemini nor claude configured", "studio_id", studioID)
 		return nil

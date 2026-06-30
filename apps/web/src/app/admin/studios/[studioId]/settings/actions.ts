@@ -32,6 +32,7 @@ export async function updateStudioSettings(
     availabilitySlots?: { day: string; times: string[] }[];
     availabilityTimezone?: string;
     geminiApiKey?: string;
+    groqApiKey?: string;
     metaAppId?: string;
     metaAppSecret?: string;
     googleClientId?: string;

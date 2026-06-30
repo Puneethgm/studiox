@@ -36,6 +36,7 @@ type Config struct {
 	// own WABA + access token via the Channels page).
 	Meta   MetaConfig
 	Claude ClaudeConfig
+	Groq   GroqConfig
 	S3     S3Config
 }
 
@@ -48,6 +49,10 @@ type MetaConfig struct {
 
 type ClaudeConfig struct {
 	APIURL string
+	APIKey string
+}
+
+type GroqConfig struct {
 	APIKey string
 }
 
@@ -157,6 +162,9 @@ func Load() (Config, error) {
 		Claude: ClaudeConfig{
 			APIURL: getEnv("CLAUDE_API_URL", "https://api.anthropic.com/v1/messages"),
 			APIKey: getEnv("CLAUDE_API_KEY", ""),
+		},
+		Groq: GroqConfig{
+			APIKey: getEnv("GROQ_API_KEY", ""),
 		},
 		S3: S3Config{
 			Region:        getEnv("AWS_REGION", ""),

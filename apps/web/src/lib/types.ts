@@ -35,6 +35,7 @@ export interface Studio {
   metaAppId?: string;
   googleClientId?: string;
   hasGeminiApiKey?: boolean;
+  hasGroqApiKey?: boolean;
   hasMetaAppSecret?: boolean;
   hasGoogleClientSecret?: boolean;
   hasGoogleDeveloperToken?: boolean;

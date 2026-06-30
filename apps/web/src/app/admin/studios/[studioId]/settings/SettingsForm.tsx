@@ -58,6 +58,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
   const [contactPhoneCountryCode, setContactPhoneCountryCode] = useState(initialPhone.countryCode);
   const [contactPhone, setContactPhone] = useState(initialPhone.phoneNumber);
   const [geminiApiKey, setGeminiApiKey] = useState('');
+  const [groqApiKey, setGroqApiKey] = useState('');
   const [metaAppId, setMetaAppId] = useState(studio.metaAppId || '');
   const [metaAppSecret, setMetaAppSecret] = useState('');
   const [active, setActive] = useState(studio.active);
@@ -99,6 +100,8 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
   const [sheetsError, setSheetsError] = useState<string | null>(null);
   const [metaSaving, setMetaSaving] = useState(false);
   const [geminiSaving, setGeminiSaving] = useState(false);
+  const [groqSaving, setGroqSaving] = useState(false);
+  const [showGroqApiKey, setShowGroqApiKey] = useState(false);
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
@@ -188,6 +191,24 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
       showToast('Gemini API Key saved successfully.');
     } finally {
       setGeminiSaving(false);
+    }
+  }
+
+  async function onSaveGroqKey(e: React.FormEvent) {
+    e.preventDefault();
+    setErrors({});
+    setGroqSaving(true);
+    try {
+      const result = await updateStudioSettings(studio.id, studio.slug, {
+        groqApiKey,
+      });
+      if (!result.ok) {
+        setErrors(result.details ?? { _: result.error });
+        return;
+      }
+      showToast('Groq API Key saved successfully.');
+    } finally {
+      setGroqSaving(false);
     }
   }
 
@@ -732,6 +753,49 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                 </div>
               </form>
             </div>
+
+            {/* Groq AI Integration Card */}
+              <form onSubmit={onSaveGroqKey} className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30 p-6 space-y-5">
+                <div>
+                  <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Groq AI Integration</h3>
+                </div>
+
+                <div>
+                  <Label htmlFor="groqApiKey">Groq API Key</Label>
+                  <div className="relative mt-1">
+                    <Input
+                      id="groqApiKey"
+                      type={showGroqApiKey ? 'text' : 'password'}
+                      placeholder={studio.hasGroqApiKey ? '••••••••••••••••' : 'gsk_...'}
+                      invalid={!!errors.groqApiKey}
+                      value={groqApiKey}
+                      onChange={(e) => setGroqApiKey(e.target.value)}
+                      className="pr-12"
+                    />
+                    <button
+                      type="button"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 transition hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+                      onClick={() => setShowGroqApiKey(!showGroqApiKey)}
+                    >
+                      {showGroqApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  <FieldHint>Groq key enables Llama 3.1 8B (primary) and Llama 3.3 70B (fallback) for fast, cheap AI replies.</FieldHint>
+                  <FieldError message={errors.groqApiKey} />
+                </div>
+
+                <FieldError message={errors._} />
+
+                <div className="flex items-center justify-end border-t border-white/10 pt-4">
+                  <Button
+                    type="submit"
+                    loading={groqSaving}
+                    className="bg-gradient-to-r from-brand-500 to-violet-600 hover:from-brand-600 hover:to-violet-700 text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-500/25 rounded-xl h-10 px-6"
+                  >
+                    Save Groq Key
+                  </Button>
+                </div>
+              </form>
 
             {/* Google Sheets Card */}
             <div className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30">

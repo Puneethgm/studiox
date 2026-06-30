@@ -249,6 +249,7 @@ func main() {
 				r.Use(identity.RequireRole(identity.RoleSuperAdmin))
 				studiosHandler.AdminRoutes(r)
 				leadsHandler.AdminRoutes(r)
+				msgHandler.SuperAdminRoutes(r)
 			})
 
 			// Any authenticated user: read/update OWN studio (studio_admin) or

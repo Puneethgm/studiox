@@ -12,7 +12,7 @@ import (
 )
 
 const defaultAPIURL = "https://api.anthropic.com/v1/messages"
-const defaultModel = "claude-3-5-sonnet-latest"
+const defaultModel = "claude-haiku-4-5-20251001"
 
 type Client struct {
 	url  string

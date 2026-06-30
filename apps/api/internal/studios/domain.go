@@ -33,6 +33,7 @@ type Studio struct {
 	AvailabilitySlots []AvailabilitySlot `json:"availabilitySlots"`
 	AvailabilityTimezone string `json:"availabilityTimezone"`
 	GeminiAPIKey string    `json:"geminiApiKey"`
+	GroqAPIKey   string    `json:"groqApiKey"`
 	MetaAppID    string    `json:"metaAppId"`
 	MetaAppSecret string   `json:"metaAppSecret"`
 	GoogleClientID string  `json:"googleClientId"`

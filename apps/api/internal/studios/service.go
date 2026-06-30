@@ -174,6 +174,7 @@ type UpdateStudioInput struct {
 	AvailabilitySlots    []AvailabilitySlot `json:"availabilitySlots"`
 	AvailabilityTimezone string             `json:"availabilityTimezone"`
 	GeminiAPIKey         string             `json:"geminiApiKey"`
+	GroqAPIKey           string             `json:"groqApiKey"`
 	MetaAppID            string             `json:"metaAppId"`
 	MetaAppSecret        string             `json:"metaAppSecret"`
 	GoogleClientID       string             `json:"googleClientId"`
@@ -224,7 +225,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput
 	if len(errs) > 0 {
 		return errs, nil
 	}
-	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.ContactPhone, in.Active, in.ManagedBy1Hero, in.AvailabilitySlots, in.AvailabilityTimezone, in.GeminiAPIKey, in.MetaAppID, in.MetaAppSecret, in.GoogleClientID, in.GoogleClientSecret, in.GoogleDeveloperToken, in.SocialPlannerEnabled, in.KnowledgeBase, in.KnowledgeBaseFiles, in.GreetingMessage, in.TrialAmountSGD, in.BookingHeroImageURL, in.BookingHeroVideoURL); err != nil {
+	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.ContactPhone, in.Active, in.ManagedBy1Hero, in.AvailabilitySlots, in.AvailabilityTimezone, in.GeminiAPIKey, in.GroqAPIKey, in.MetaAppID, in.MetaAppSecret, in.GoogleClientID, in.GoogleClientSecret, in.GoogleDeveloperToken, in.SocialPlannerEnabled, in.KnowledgeBase, in.KnowledgeBaseFiles, in.GreetingMessage, in.TrialAmountSGD, in.BookingHeroImageURL, in.BookingHeroVideoURL); err != nil {
 		return nil, err
 	}
 
