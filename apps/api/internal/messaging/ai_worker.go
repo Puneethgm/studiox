@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/projectx/api/internal/decisiontree"
 	"github.com/projectx/api/internal/integrations/claude"
+	"github.com/projectx/api/internal/integrations/groq"
 	"github.com/projectx/api/internal/leads"
 	"github.com/projectx/api/internal/studios"
 )
@@ -463,10 +464,50 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	// Generate AI response with context
 	prompt := w.buildPrompt(history, semanticHistory, conv, lead, studio, plans, sentiment, keywords, kbChunks, intent, kbConfident)
 
-	// apiKey already has the platform-level fallback applied above — reuse it for generation too.
+	// Waterfall: Groq 8B → Groq 70B → Gemini → Claude
 	var resp string
 	var sourceRef string
-	if apiKey != "" {
+
+	// 1. Try Groq (fast + cheap) — use studio key first, fall back to platform key
+	groqKey := studio.GroqAPIKey
+	if groqKey == "" {
+		if pk, e := w.studiosRepo.GetPlatformSetting(ctx, "groq_api_key"); e == nil {
+			groqKey = pk
+		}
+	}
+	if groqKey != "" {
+		groqClient := groq.New(groqKey)
+		w.log.Info("generating ai reply using groq 8b", "studio_id", studioID, "message_id", msg.ID)
+		t0 := time.Now()
+		gr, gerr := groqClient.GenerateReply(ctx, prompt, groq.Model8B)
+		latMs := int(time.Since(t0).Milliseconds())
+		errMsg := ""
+		if gerr != nil {
+			errMsg = gerr.Error()
+		}
+		w.msgRepo.LogLLMUsage(ctx, studioID, "groq", groq.Model8B, latMs, gerr == nil && len(strings.TrimSpace(gr.Text)) >= 15, errMsg, gr.TokensIn, gr.TokensOut)
+		if gerr == nil && len(strings.TrimSpace(gr.Text)) >= 15 {
+			resp = gr.Text
+			sourceRef = "groq-8b"
+		} else {
+			w.log.Info("groq 8b failed or short, trying 70b", "studio_id", studioID, "err", gerr)
+			t0 = time.Now()
+			gr70, gerr70 := groqClient.GenerateReply(ctx, prompt, groq.Model70B)
+			latMs = int(time.Since(t0).Milliseconds())
+			errMsg = ""
+			if gerr70 != nil {
+				errMsg = gerr70.Error()
+			}
+			w.msgRepo.LogLLMUsage(ctx, studioID, "groq", groq.Model70B, latMs, gerr70 == nil && gr70.Text != "", errMsg, gr70.TokensIn, gr70.TokensOut)
+			if gerr70 == nil && gr70.Text != "" {
+				resp = gr70.Text
+				sourceRef = "groq-70b"
+			}
+		}
+	}
+
+	// 2. Gemini fallback
+	if resp == "" && apiKey != "" {
 		w.log.Info("generating ai reply using gemini", "studio_id", studioID, "message_id", msg.ID)
 		t0 := time.Now()
 		var gemReply geminiReply
@@ -479,7 +520,10 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 			errMsg = err.Error()
 		}
 		w.msgRepo.LogLLMUsage(ctx, studioID, "gemini", "gemini-2.5-flash", latMs, err == nil && resp != "", errMsg, gemReply.tokensIn, gemReply.tokensOut)
-	} else if w.claude != nil {
+	}
+
+	// 3. Claude fallback
+	if resp == "" && w.claude != nil {
 		w.log.Info("generating ai reply using claude", "studio_id", studioID, "message_id", msg.ID)
 		t0 := time.Now()
 		var cr claudeReply
@@ -492,8 +536,10 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 			errMsg = err.Error()
 		}
 		w.msgRepo.LogLLMUsage(ctx, studioID, "claude", "claude-haiku-4-5", latMs, err == nil && resp != "", errMsg, cr.TokensIn, cr.TokensOut)
-	} else {
-		w.log.Warn("skipping ai reply: neither gemini nor claude configured", "studio_id", studioID)
+	}
+
+	if resp == "" {
+		w.log.Warn("skipping ai reply: all providers failed or not configured", "studio_id", studioID)
 		return nil
 	}
 	if err != nil {
