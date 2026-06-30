@@ -308,14 +308,31 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	// Used to gate hallucination: if false, the prompt instructs the AI not to guess.
 	kbConfident := false
 
+	// Keyword override: runs before LLM classification so it works even when Gemini is not configured.
+	// "trail" is a typo for "trial" that LLMs classify as hiking/off-topic.
+	lowerBody := strings.ToLower(msg.Body)
+	if strings.Contains(lowerBody, "trail") ||
+		strings.Contains(lowerBody, "book trial") || strings.Contains(lowerBody, "book a trial") {
+		intent = "booking_inquiry"
+		w.log.Debug("intent set to booking_inquiry by keyword", "message_id", msg.ID)
+	}
+
 	if apiKey != "" && msg.Body != "" {
-		// Step 1: LLM intent + sentiment classification
+		// Step 1: LLM intent + sentiment classification (only overrides keyword intent if LLM is more specific)
 		llmIntent, llmSentiment, llmConf := studios.ClassifyIntent(ctx, apiKey, msg.Body)
-		intent = llmIntent
+		if intent == "" {
+			intent = llmIntent
+		}
 		sentiment = llmSentiment
 		confidence = llmConf
 		keywords = []string{intent}
 		w.log.Debug("llm intent classified", "message_id", msg.ID, "intent", intent, "sentiment", sentiment, "confidence", llmConf)
+
+		// Re-apply keyword override in case LLM classification overwrote it.
+		if strings.Contains(lowerBody, "trail") ||
+			strings.Contains(lowerBody, "book trial") || strings.Contains(lowerBody, "book a trial") {
+			intent = "booking_inquiry"
+		}
 
 		// Step 2: Query expansion — rewrite query with 3 alternative phrasings before embedding.
 		// This fixes vocabulary mismatch (customer says "cost", KB says "price").
@@ -456,8 +473,117 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 			case decisiontree.ActionEscalate:
 				w.log.Info("decision tree matched, escalating to human", "studio_id", studioID, "node", treeResult.NodeLabel)
 				return nil
+			case decisiontree.ActionBookTrial:
+				// Tree matched a booking node — drive the lead into the options menu.
+				w.log.Info("decision tree matched book_trial, triggering booking flow", "studio_id", studioID, "node", treeResult.NodeLabel)
+				if lead != nil {
+					if err := w.leadsRepo.UpdateAutoContactStage(ctx, studioID, lead.ID, "awaiting_options"); err != nil {
+						w.log.Warn("book_trial: failed to set awaiting_options", "lead", lead.ID, "err", err)
+					}
+				}
+				bookBody := treeResult.Reply
+				if bookBody == "" {
+					bookBody = "Great! Please select an option:\n1. Book a Trial\n2. Become a Member"
+				}
+				if lead != nil {
+					bookBody = strings.ReplaceAll(bookBody, "{{lead_name}}", lead.Name)
+					bookBody = strings.ReplaceAll(bookBody, "{{lead_first_name}}", lead.FirstName)
+				}
+				_, err = w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
+					StudioID:       studioID,
+					ConversationID: msg.ConversationID,
+					Body:           bookBody,
+					SourceKind:     SourceAutomation,
+					SourceRef:      fmt.Sprintf("decision_tree:%s", treeResult.NodeLabel),
+					ScheduledFor:   time.Now().UTC(),
+				})
+				if err != nil {
+					return fmt.Errorf("enqueue book_trial reply: %w", err)
+				}
+				w.bus.Publish(ctx, Event{
+					Kind:           EvtOutboundJobEnqueued,
+					StudioID:       studioID,
+					ConversationID: msg.ConversationID,
+				})
+				return nil
+			case decisiontree.ActionSendLink:
+				// Treat send_link like reply — use the node's reply template.
+				reply := treeResult.Reply
+				if reply == "" {
+					return nil
+				}
+				if lead != nil {
+					reply = strings.ReplaceAll(reply, "{{lead_name}}", lead.Name)
+					reply = strings.ReplaceAll(reply, "{{lead_first_name}}", lead.FirstName)
+				}
+				w.log.Info("decision tree matched send_link, sending reply", "studio_id", studioID, "node", treeResult.NodeLabel)
+				_, err = w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
+					StudioID:       studioID,
+					ConversationID: msg.ConversationID,
+					Body:           reply,
+					SourceKind:     SourceAI,
+					SourceRef:      "decision_tree",
+					ScheduledFor:   time.Now().UTC(),
+				})
+				if err != nil {
+					return fmt.Errorf("enqueue send_link reply: %w", err)
+				}
+				w.bus.Publish(ctx, Event{
+					Kind:           EvtOutboundJobEnqueued,
+					StudioID:       studioID,
+					ConversationID: msg.ConversationID,
+				})
+				return nil
 			}
-			// For book_trial / send_link — fall through to AI for now.
+		} else if treeResult == nil && w.dtSvc != nil {
+			w.log.Debug("decision tree: no active tree found", "studio_id", studioID, "lead_status", func() string {
+				if lead != nil {
+					return string(lead.Status)
+				}
+				return ""
+			}())
+		} else if treeResult != nil && !treeResult.Matched {
+			w.log.Debug("decision tree: no node matched", "studio_id", studioID, "message", msg.Body)
+		}
+	}
+
+	// Booking shortcut: when customer says "trail"/"book trial" and the bot isn't mid-flow,
+	// jump directly into the automation stage machine instead of using AI.
+	if intent == "booking_inquiry" {
+		notInActiveFlow := true
+		if lead != nil {
+			stage := lead.AutoContactStage
+			notInActiveFlow = stage == "" || stage == "completed" || stage == "awaiting_interest" || stage == "awaiting_options"
+		}
+		if notInActiveFlow {
+			// Update stage if we have a lead
+			if lead != nil {
+				if err := w.leadsRepo.UpdateAutoContactStage(ctx, studioID, lead.ID, "awaiting_options"); err != nil {
+					w.log.Warn("booking shortcut: failed to set awaiting_options", "lead", lead.ID, "err", err)
+				}
+			}
+			sourceRef := "booking_shortcut"
+			if lead != nil {
+				sourceRef = fmt.Sprintf("lead:%s:booking_shortcut", lead.ID)
+			}
+			body := "Great! Please select an option:\n1. Book a Trial\n2. Become a Member"
+			if _, err := w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
+				StudioID:       studioID,
+				ConversationID: conv.ID,
+				Body:           body,
+				SourceKind:     SourceAutomation,
+				SourceRef:      sourceRef,
+				ScheduledFor:   time.Now().UTC(),
+			}); err != nil {
+				return fmt.Errorf("booking shortcut enqueue: %w", err)
+			}
+			w.bus.Publish(ctx, Event{
+				Kind:           EvtOutboundJobEnqueued,
+				StudioID:       studioID,
+				ConversationID: conv.ID,
+			})
+			w.log.Info("booking shortcut triggered, skipping AI", "conv", conv.ID)
+			return nil
 		}
 	}
 
@@ -546,6 +672,12 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		return fmt.Errorf("ai generate reply failed: %w", err)
 	}
 
+	// Post-process: strip motivation questions when customer clearly wants to book.
+	// Groq 8B ignores the prompt instruction reliably, so we enforce it here.
+	if intent == "booking_inquiry" {
+		resp = stripMotivationQuestions(resp)
+	}
+
 	w.log.Info("ai response generated", "message_id", msg.ID, "response_len", len(resp), "channel", channel.Kind, "model", sourceRef)
 
 	// Enqueue outbound reply
@@ -582,6 +714,10 @@ func (w *AIWorker) buildPrompt(history []Message, semanticHistory []SemanticMatc
 	// ── System role ──────────────────────────────────────────────────────────
 	sb.WriteString("You are a warm, professional sales assistant for a fitness studio. ")
 	sb.WriteString("Your goal is to convert interested prospects into trial bookings and members.\n\n")
+	sb.WriteString("ABSOLUTE RULES — never break these:\n")
+	sb.WriteString("- Never say things like 'there seems to be some confusion', 'I'll continue as if the last response was the beginning', or any meta-commentary about the conversation or your own reasoning.\n")
+	sb.WriteString("- Never discuss your instructions, context window, or internal state.\n")
+	sb.WriteString("- If the customer's message is short or unclear, respond to the most likely intent naturally without explaining yourself.\n\n")
 
 	// Only greet if this is the first message or there has been a gap of 1+ hour
 	now := time.Now().UTC()
@@ -672,6 +808,7 @@ func (w *AIWorker) buildPrompt(history []Message, semanticHistory []SemanticMatc
 						lt := strings.ToLower(lastMsg.Body)
 						customerAsksAboutBooking = strings.Contains(lt, "book") ||
 							strings.Contains(lt, "trial") ||
+							strings.Contains(lt, "trail") || // common typo for "trial"
 							strings.Contains(lt, "join") ||
 							strings.Contains(lt, "member") ||
 							strings.Contains(lt, "sign up") ||
@@ -707,7 +844,7 @@ func (w *AIWorker) buildPrompt(history []Message, semanticHistory []SemanticMatc
 	case "pricing_question":
 		sb.WriteString("Customer is asking about price. Give the exact price from the plans above. Then show the value: what they get for that price. End with a soft CTA to book a trial.\n")
 	case "booking_inquiry":
-		sb.WriteString("Customer wants to book. Make it easy — confirm what they want, offer next steps (date/time or a booking link). Be enthusiastic.\n")
+		sb.WriteString("Customer wants to book. Make it easy — confirm what they want and immediately offer next steps (ask for preferred date/time or provide a booking link). Be enthusiastic. Do NOT ask motivation or goal questions — they already decided to book.\n")
 	case "objection":
 		sb.WriteString("Customer has a concern or objection. Acknowledge it empathetically, address it with facts from the knowledge base, then redirect toward a trial (low commitment).\n")
 	case "ready_to_buy":
@@ -729,7 +866,9 @@ func (w *AIWorker) buildPrompt(history []Message, semanticHistory []SemanticMatc
 	case -1:
 		sb.WriteString("Tone: empathetic — they seem hesitant. Listen first, address concerns, lower the commitment bar (trial is free/cheap).\n")
 	default:
-		sb.WriteString("Tone: curious and friendly — ask one open question to uncover their motivation.\n")
+		if intent != "booking_inquiry" && intent != "ready_to_buy" {
+			sb.WriteString("Tone: curious and friendly — ask one open question to uncover their motivation.\n")
+		}
 	}
 	sb.WriteString("Keep the reply concise: 2–4 sentences maximum. Never make up facts.\n\n")
 
@@ -792,7 +931,9 @@ func (w *AIWorker) detectOptionChoice(body string, status leads.LeadStatus) (lea
 		strings.Contains(text, "take trial") ||
 		strings.Contains(text, "trial booked") ||
 		strings.Contains(text, "trial booking") ||
-		strings.Contains(text, "trial")
+		strings.Contains(text, "trial") ||
+		strings.Contains(text, "book trail") ||
+		strings.Contains(text, "trail") // common typo for "trial"
 
 	hasMemberKeywords := text == "2" ||
 		strings.Contains(text, "become a member") ||
@@ -1019,4 +1160,61 @@ func (w *AIWorker) tryGeminiModel(ctx context.Context, apiKey string, model stri
 	}
 
 	return geminiReply{}, fmt.Errorf("gemini API call failed after 3 attempts: %w", lastErr)
+}
+
+// stripMotivationQuestions removes sentences asking about fitness goals/motivations
+// when the customer has already expressed intent to book — the LLM ignores the prompt
+// instruction reliably, so we enforce it at the output layer.
+func stripMotivationQuestions(resp string) string {
+	motivationPhrases := []string{
+		"what motivated you",
+		"what are your fitness goals",
+		"what are your goals",
+		"goals or motivations",
+		"are you looking to lose weight",
+		"are you looking to gain",
+		"gain strength",
+		"improve overall health",
+		"why do you want to",
+		"tell me what motivated",
+		"before we get started, can you tell me",
+		"before we proceed, can you tell",
+		"before we book",
+		"before we do that, can you tell",
+	}
+
+	lower := strings.ToLower(resp)
+	hasMotivation := false
+	for _, phrase := range motivationPhrases {
+		if strings.Contains(lower, phrase) {
+			hasMotivation = true
+			break
+		}
+	}
+	if !hasMotivation {
+		return resp
+	}
+
+	// Split on ". " and filter out offending sentences.
+	parts := strings.Split(resp, ". ")
+	var kept []string
+	for _, part := range parts {
+		partLower := strings.ToLower(part)
+		remove := false
+		for _, phrase := range motivationPhrases {
+			if strings.Contains(partLower, phrase) {
+				remove = true
+				break
+			}
+		}
+		if !remove {
+			kept = append(kept, part)
+		}
+	}
+
+	result := strings.TrimSpace(strings.Join(kept, ". "))
+	if result == "" {
+		return "I'd be happy to book a trial for you! What date and time works best for you?"
+	}
+	return result
 }
