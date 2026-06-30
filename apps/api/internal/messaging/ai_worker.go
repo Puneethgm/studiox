@@ -583,20 +583,36 @@ func (w *AIWorker) buildPrompt(history []Message, semanticHistory []SemanticMatc
 	sb.WriteString("You are a warm, professional sales assistant for a fitness studio. ")
 	sb.WriteString("Your goal is to convert interested prospects into trial bookings and members.\n\n")
 
-	// Time-aware greeting
-	hour := time.Now().UTC().Hour()
-	if studio != nil && studio.AvailabilityTimezone != "" {
-		if loc, err := time.LoadLocation(studio.AvailabilityTimezone); err == nil {
-			hour = time.Now().In(loc).Hour()
+	// Only greet if this is the first message or there has been a gap of 1+ hour
+	now := time.Now().UTC()
+	var lastOutboundAt time.Time
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Direction == DirectionOutbound {
+			lastOutboundAt = history[i].SentAt
+			break
 		}
 	}
-	greeting := "Good evening"
-	if hour < 12 {
-		greeting = "Good morning"
-	} else if hour < 17 {
-		greeting = "Good afternoon"
+	isFirstContact := lastOutboundAt.IsZero()
+	isLongGap := !lastOutboundAt.IsZero() && now.Sub(lastOutboundAt) > time.Hour
+
+	if isFirstContact || isLongGap {
+		hour := now.Hour()
+		if studio != nil && studio.AvailabilityTimezone != "" {
+			if loc, err := time.LoadLocation(studio.AvailabilityTimezone); err == nil {
+				hour = time.Now().In(loc).Hour()
+			}
+		}
+		greeting := "Good evening"
+		if hour < 12 {
+			greeting = "Good morning"
+		} else if hour < 17 {
+			greeting = "Good afternoon"
+		}
+		sb.WriteString(fmt.Sprintf("Open your reply with '%s'. ", greeting))
+	} else {
+		sb.WriteString("Do NOT start with a greeting like Good morning/afternoon/evening — jump straight into the response. ")
 	}
-	sb.WriteString(fmt.Sprintf("Always open your reply with '%s'.\n\n", greeting))
+	sb.WriteString("\n\n")
 
 	// ── Knowledge base ───────────────────────────────────────────────────────
 	kbText := ""
