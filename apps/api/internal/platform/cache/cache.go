@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
@@ -67,4 +68,15 @@ func (c *MemoryCache) Clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.items = make(map[string]*cacheItem)
+}
+
+// ClearByPrefix deletes all entries whose key starts with the given prefix.
+func (c *MemoryCache) ClearByPrefix(prefix string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k := range c.items {
+		if strings.HasPrefix(k, prefix) {
+			delete(c.items, k)
+		}
+	}
 }

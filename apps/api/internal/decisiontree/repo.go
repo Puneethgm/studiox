@@ -5,17 +5,28 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/projectx/api/internal/platform/cache"
 )
 
 type Repo struct {
-	pool *pgxpool.Pool
+	pool  *pgxpool.Pool
+	cache *cache.MemoryCache
 }
 
-func NewRepo(pool *pgxpool.Pool) *Repo { return &Repo{pool: pool} }
+func NewRepo(pool *pgxpool.Pool) *Repo {
+	return &Repo{pool: pool, cache: cache.New()}
+}
+
+// InvalidateCache clears all cached trees for a studio (call after any tree/node mutation).
+func (r *Repo) InvalidateCache(studioID uuid.UUID) {
+	r.cache.ClearByPrefix("dt:" + studioID.String())
+}
 
 // ----- trees -----
 
@@ -88,6 +99,18 @@ func (r *Repo) GetTree(ctx context.Context, studioID, treeID uuid.UUID) (*Tree, 
 // Specific-status trees (target_statuses non-empty matching lead) take priority over
 // catch-all trees (target_statuses empty). Returns ErrTreeNotFound if none match.
 func (r *Repo) GetActiveTreeForLead(ctx context.Context, studioID uuid.UUID, leadStatus string) (*Tree, error) {
+	cacheKey := "dt:" + studioID.String() + ":" + leadStatus
+	if v, ok := r.cache.Get(cacheKey); ok {
+		if t, ok := v.(*Tree); ok {
+			if t == nil {
+				// nil sentinel means we cached "tree not found" for this studio/status
+				return nil, ErrTreeNotFound
+			}
+			return t, nil
+		}
+		return nil, ErrTreeNotFound
+	}
+
 	t := &Tree{}
 	err := r.pool.QueryRow(ctx, `
 		SELECT id, studio_id, name, is_active, target_statuses, created_at, updated_at
@@ -103,6 +126,8 @@ func (r *Repo) GetActiveTreeForLead(ctx context.Context, studioID uuid.UUID, lea
 		&t.ID, &t.StudioID, &t.Name, &t.IsActive, &t.TargetStatuses, &t.CreatedAt, &t.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
+		// Cache the "not found" result to avoid hammering DB when no tree is configured.
+		r.cache.Set(cacheKey, (*Tree)(nil), 3*time.Minute)
 		return nil, ErrTreeNotFound
 	}
 	if err != nil {
@@ -113,6 +138,7 @@ func (r *Repo) GetActiveTreeForLead(ctx context.Context, studioID uuid.UUID, lea
 		return nil, err
 	}
 	t.Nodes = buildTree(nodes)
+	r.cache.Set(cacheKey, t, 3*time.Minute)
 	return t, nil
 }
 

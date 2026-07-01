@@ -1307,6 +1307,15 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 	targetNotes := leadNotes
 	var outboundBody string
 
+	// Derive first name for personalised messages
+	firstName := leadName
+	if idx := strings.Index(firstName, " "); idx >= 0 {
+		firstName = firstName[:idx]
+	}
+	if firstName == "" {
+		firstName = "there"
+	}
+
 	// Parse availability timezone and slots
 	loc, errLoc := time.LoadLocation(timezone)
 	if errLoc != nil {
@@ -1380,7 +1389,7 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 		if isInterested && !isNotInterested {
 			targetStage = "awaiting_options"
 			targetStatus = "contacted"
-			outboundBody = "Hi {{contact.first_name}}, great! Please select an option:\n1. Book a Trial\n2. Become a Member"
+			outboundBody = fmt.Sprintf("Hi %s! Great to hear from you. Please select an option:\n1. Book a Trial\n2. Become a Member", firstName)
 		} else if isNotInterested {
 			targetStage = "awaiting_reason"
 			targetStatus = "dropped"
@@ -1388,13 +1397,14 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 		}
 	} else if autoContactStage == "awaiting_options" {
 		if isTrial && !isMember {
-			targetStage = "awaiting_trial_date"
-			targetStatus = "trial_booked"
 			days, _ := getAvailableDays()
 			if len(days) == 0 {
+				// No availability configured — team reaches out; mark booked now
 				targetStage = "completed"
+				targetStatus = "trial_booked"
 				outboundBody = "Great! Our team will reach out to you within 24 hours to schedule your trial. We look forward to seeing you!"
 			} else {
+				targetStage = "awaiting_trial_date"
 				var sb strings.Builder
 				sb.WriteString("Please select a date for your trial:")
 				for i, d := range days {
@@ -1622,6 +1632,7 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 		targetNotes = strings.ReplaceAll(targetNotes, "[Selected Trial Date]: "+dateStr, "")
 		targetNotes = strings.TrimSpace(targetNotes + "\n[Selected Trial Slot]: " + dateStr + " " + selectedTime)
 		targetStage = "completed"
+		targetStatus = "trial_booked"
 
 		secretKey, _, studioName, studioSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
 		if errStripe == nil && secretKey != "" {
@@ -1691,6 +1702,42 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 		targetNotes = strings.TrimSpace(targetNotes + "\n[Dropped Reason]: " + body)
 		targetStage = "completed"
 		outboundBody = "Thank you for your time we would get back to u."
+	} else if autoContactStage == "completed" && leadStatus == "trial_booked" {
+		// Customer is responding to the 1-day trial followup.
+		// Any non-declining message → show membership plans and move to plan selection.
+		isDecline := text == "2" || text == "no" ||
+			strings.Contains(text, "not now") ||
+			strings.Contains(text, "maybe later") ||
+			strings.Contains(text, "not interested")
+		wantsMembership := !isDecline && (text == "1" ||
+			strings.Contains(text, "yes") ||
+			strings.Contains(text, "ready") ||
+			strings.Contains(text, "sign") ||
+			strings.Contains(text, "member") ||
+			strings.Contains(text, "plan") ||
+			strings.Contains(text, "join") ||
+			strings.Contains(text, "basic") ||
+			strings.Contains(text, "pro") ||
+			strings.Contains(text, "premium") ||
+			strings.Contains(text, "package"))
+		if wantsMembership {
+			plans, errPlans := s.repo.ListActivePlans(ctx, studioID)
+			if errPlans != nil || len(plans) == 0 {
+				targetStage = "awaiting_plan_selection"
+				outboundBody = "Our team will reach out to you ASAP to discuss membership options."
+			} else {
+				targetStage = "awaiting_plan_selection"
+				var sb strings.Builder
+				sb.WriteString("Awesome! Please select a membership plan:\n")
+				for idx, p := range plans {
+					sb.WriteString(fmt.Sprintf("%d. %s (S$ %.2f/%s)\n", idx+1, p.PlanName, float64(p.PriceSGD)/100.0, p.BillingCycle))
+					if len(p.Features) > 0 {
+						sb.WriteString(fmt.Sprintf("*- %s:* %s\n", p.PlanName, strings.Join(p.Features, ", ")))
+					}
+				}
+				outboundBody = sb.String()
+			}
+		}
 	}
 
 	slog.Info("auto-contact: result", "lead_id", conv.LeadID, "old_stage", autoContactStage, "new_stage", targetStage, "has_reply", outboundBody != "")
@@ -1719,9 +1766,10 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 		}
 	}
 
-	// If they just transitioned to trial_booked, schedule the 1-day check-in follow-up
-	if targetStatus == "trial_booked" && leadStatus != "trial_booked" {
-		followupBody := "Hi {{contact.first_name}}, we hope you're enjoying your trial! Are you ready to take the next step and become a member? Please select an option:\n1. Book a Trial\n2. Become a Member"
+	// If they just transitioned to trial_booked AND completed (trial actually confirmed),
+	// schedule the 1-day check-in follow-up.
+	if targetStatus == "trial_booked" && leadStatus != "trial_booked" && targetStage == "completed" {
+		followupBody := fmt.Sprintf("Hi %s! We hope you had a great trial session! 🎉 Are you ready to take the next step and become a member? Reply:\n1. Yes, sign me up!\n2. Maybe later", firstName)
 		_, err = tx.Exec(ctx, `
 			INSERT INTO outbound_jobs (studio_id, conversation_id, body, attachments,
 			                           source_kind, source_ref, scheduled_for, next_attempt_at)

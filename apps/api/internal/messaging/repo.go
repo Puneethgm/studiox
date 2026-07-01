@@ -13,16 +13,18 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/projectx/api/internal/platform/cache"
 	"github.com/projectx/api/internal/platform/secrets"
 )
 
 type Repo struct {
-	pool   *pgxpool.Pool
-	cipher *secrets.Cipher
+	pool       *pgxpool.Pool
+	cipher     *secrets.Cipher
+	planCache  *cache.MemoryCache
 }
 
 func NewRepo(pool *pgxpool.Pool, cipher *secrets.Cipher) *Repo {
-	return &Repo{pool: pool, cipher: cipher}
+	return &Repo{pool: pool, cipher: cipher, planCache: cache.New()}
 }
 
 func (r *Repo) Pool() *pgxpool.Pool { return r.pool }
@@ -1184,6 +1186,13 @@ type Plan struct {
 }
 
 func (r *Repo) ListActivePlans(ctx context.Context, studioID uuid.UUID) ([]Plan, error) {
+	cacheKey := "plans:" + studioID.String()
+	if v, ok := r.planCache.Get(cacheKey); ok {
+		if plans, ok := v.([]Plan); ok {
+			return plans, nil
+		}
+	}
+
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, studio_id, plan_name, price_sgd, billing_cycle, features
 		FROM plans
@@ -1203,7 +1212,11 @@ func (r *Repo) ListActivePlans(ctx context.Context, studioID uuid.UUID) ([]Plan,
 		}
 		out = append(out, p)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	r.planCache.Set(cacheKey, out, 5*time.Minute)
+	return out, nil
 }
 
 // LogLLMUsage inserts a fire-and-forget LLM usage record. Errors are silently

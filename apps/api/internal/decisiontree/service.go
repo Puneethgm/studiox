@@ -18,6 +18,9 @@ func (s *Service) CreateTree(ctx context.Context, studioID uuid.UUID, input Crea
 		return nil, errs, nil
 	}
 	t, err := s.repo.CreateTree(ctx, studioID, input)
+	if err == nil {
+		s.repo.InvalidateCache(studioID)
+	}
 	return t, nil, err
 }
 
@@ -58,7 +61,11 @@ func (s *Service) UpdateTree(ctx context.Context, studioID, treeID uuid.UUID, in
 			}
 		}
 	}
-	return s.repo.UpdateTree(ctx, studioID, treeID, input)
+	t, err := s.repo.UpdateTree(ctx, studioID, treeID, input)
+	if err == nil {
+		s.repo.InvalidateCache(studioID)
+	}
+	return t, err
 }
 
 // overlaps returns true if two status lists share any element, or both are empty (both catch-all).
@@ -77,7 +84,11 @@ func overlaps(a, b []string) bool {
 }
 
 func (s *Service) DeleteTree(ctx context.Context, studioID, treeID uuid.UUID) error {
-	return s.repo.DeleteTree(ctx, studioID, treeID)
+	err := s.repo.DeleteTree(ctx, studioID, treeID)
+	if err == nil {
+		s.repo.InvalidateCache(studioID)
+	}
+	return err
 }
 
 func (s *Service) CreateNode(ctx context.Context, studioID, treeID uuid.UUID, input CreateNodeInput) (*Node, map[string]string, error) {
@@ -90,6 +101,9 @@ func (s *Service) CreateNode(ctx context.Context, studioID, treeID uuid.UUID, in
 	}
 	input.TreeID = treeID
 	n, err := s.repo.CreateNode(ctx, input)
+	if err == nil {
+		s.repo.InvalidateCache(studioID)
+	}
 	return n, nil, err
 }
 
@@ -97,14 +111,22 @@ func (s *Service) UpdateNode(ctx context.Context, studioID, treeID, nodeID uuid.
 	if _, err := s.repo.GetTree(ctx, studioID, treeID); err != nil {
 		return nil, err
 	}
-	return s.repo.UpdateNode(ctx, treeID, nodeID, input)
+	n, err := s.repo.UpdateNode(ctx, treeID, nodeID, input)
+	if err == nil {
+		s.repo.InvalidateCache(studioID)
+	}
+	return n, err
 }
 
 func (s *Service) DeleteNode(ctx context.Context, studioID, treeID, nodeID uuid.UUID) error {
 	if _, err := s.repo.GetTree(ctx, studioID, treeID); err != nil {
 		return err
 	}
-	return s.repo.DeleteNode(ctx, treeID, nodeID)
+	err := s.repo.DeleteNode(ctx, treeID, nodeID)
+	if err == nil {
+		s.repo.InvalidateCache(studioID)
+	}
+	return err
 }
 
 // Simulate traverses the tree against a test message and optional lead status.

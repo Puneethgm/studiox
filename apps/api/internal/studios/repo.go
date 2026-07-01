@@ -257,18 +257,29 @@ func (r *Repo) UpdatePlatformSetting(ctx context.Context, key, value string) err
 		VALUES ($1, $2, now())
 		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
 	`, key, value)
+	if err == nil {
+		r.cache.Evict("pset:" + key)
+	}
 	return err
 }
 
 func (r *Repo) GetPlatformSetting(ctx context.Context, key string) (string, error) {
+	cacheKey := "pset:" + key
+	if v, ok := r.cache.Get(cacheKey); ok {
+		if s, ok := v.(string); ok {
+			return s, nil
+		}
+	}
 	var value string
 	err := r.pool.QueryRow(ctx, "SELECT value FROM platform_settings WHERE key = $1", key).Scan(&value)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			r.cache.Set(cacheKey, "", 10*time.Minute)
 			return "", nil
 		}
 		return "", err
 	}
+	r.cache.Set(cacheKey, value, 10*time.Minute)
 	return value, nil
 }
 
