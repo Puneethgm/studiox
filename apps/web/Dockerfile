@@ -9,6 +9,7 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
+COPY tsconfig.base.json /tsconfig.base.json
 COPY apps/web/ .
 
 # Build args for public env vars
