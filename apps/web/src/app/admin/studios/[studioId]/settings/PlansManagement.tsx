@@ -132,7 +132,7 @@ export function PlansManagement({
           isActive: newPlan.isActive,
         },
       });
-      const created: Plan = res.plan;
+      const created: Plan = (res as { plan: Plan }).plan;
       setPlans((prev) => [...prev, created]);
       setShowAdd(false);
       setNewPlan(emptyNew());

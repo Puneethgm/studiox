@@ -320,94 +320,105 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	}
 
 	if apiKey != "" && msg.Body != "" {
-		// Step 1: LLM intent + sentiment classification (only overrides keyword intent if LLM is more specific)
-		llmIntent, llmSentiment, llmConf := studios.ClassifyIntent(ctx, apiKey, msg.Body)
-		if intent == "" {
-			intent = llmIntent
+		// Step 1+2 in parallel: classify intent and expand query simultaneously.
+		// Neither depends on the other so we save one full LLM round-trip.
+		type classifyResult struct {
+			intent    string
+			sentiment int
+			conf      float64
 		}
-		sentiment = llmSentiment
-		confidence = llmConf
-		keywords = []string{intent}
-		w.log.Debug("llm intent classified", "message_id", msg.ID, "intent", intent, "sentiment", sentiment, "confidence", llmConf)
+		classifyCh := make(chan classifyResult, 1)
+		expandCh := make(chan string, 1)
+		go func() {
+			i, s, c := studios.ClassifyIntent(ctx, apiKey, msg.Body)
+			classifyCh <- classifyResult{i, s, c}
+		}()
+		go func() {
+			expandCh <- studios.ExpandQuery(ctx, apiKey, msg.Body)
+		}()
 
+		cr := <-classifyCh
+		if intent == "" {
+			intent = cr.intent
+		}
+		sentiment = cr.sentiment
+		confidence = cr.conf
+		keywords = []string{intent}
 		// Re-apply keyword override in case LLM classification overwrote it.
 		if strings.Contains(lowerBody, "trail") ||
 			strings.Contains(lowerBody, "book trial") || strings.Contains(lowerBody, "book a trial") {
 			intent = "booking_inquiry"
 		}
 
-		// Step 2: Query expansion — rewrite query with 3 alternative phrasings before embedding.
-		// This fixes vocabulary mismatch (customer says "cost", KB says "price").
-		expandedQuery := studios.ExpandQuery(ctx, apiKey, msg.Body)
-		w.log.Debug("query expanded", "message_id", msg.ID, "expanded_len", len(expandedQuery))
+		expandedQuery := <-expandCh
 
-		// Step 3: Embed the expanded query (richer signal than the raw message alone)
+		// Step 3: Embed the expanded query.
 		queryVec, err := studios.GetGeminiEmbedding(ctx, apiKey, expandedQuery)
 		if err == nil {
-			// Step 3b: Async — persist original message embedding + classification for HNSW lookups.
-			// We store the original-message embedding (not expanded) so history similarity is user-intent based.
-			origVec, origErr := studios.GetGeminiEmbedding(ctx, apiKey, msg.Body)
+			// Step 3b: Persist original message embedding fully async — not needed for this response.
+			capturedIntent, capturedSentiment, capturedConf := intent, sentiment, confidence
 			go func() {
 				saveCtx := context.Background()
-				vec := queryVec
-				if origErr == nil {
-					vec = origVec
+				vec, origErr := studios.GetGeminiEmbedding(saveCtx, apiKey, msg.Body)
+				if origErr != nil {
+					vec = queryVec
 				}
-				if err := w.msgRepo.SaveMessageEmbedding(saveCtx, msg.ID, vec, intent, sentiment, float32(confidence)); err != nil {
-					w.log.Warn("save message embedding failed", "message_id", msg.ID, "err", err)
+				if saveErr := w.msgRepo.SaveMessageEmbedding(saveCtx, msg.ID, vec, capturedIntent, capturedSentiment, float32(capturedConf)); saveErr != nil {
+					w.log.Warn("save message embedding failed", "message_id", msg.ID, "err", saveErr)
 				}
 			}()
 
-			// Step 4: Hybrid retrieval — BM25 + vector + RRF, 12 candidates (wider than before)
-			matched, err := w.studiosRepo.SearchKnowledgeChunksHybrid(ctx, studioID, queryVec, expandedQuery, 12)
-			if err == nil && len(matched) > 0 {
-				// Step 5: Cross-encoder rerank by Gemini — narrow 12 → 6 by true relevance
-				reranked := studios.RerankChunks(ctx, apiKey, msg.Body, matched, 6)
-
-				// Step 6: MMR diversity pass — select top 4 from 6, balancing relevance vs redundancy.
-				// We need embeddings for each reranked chunk to compute inter-chunk similarity.
-				chunkEmbeddings := make([][]float32, len(reranked))
-				allEmbedded := true
-				for i, chunk := range reranked {
-					vec, err := studios.GetGeminiEmbedding(ctx, apiKey, chunk)
-					if err != nil {
-						allEmbedded = false
-						break
-					}
-					chunkEmbeddings[i] = vec
-				}
-				if allEmbedded {
-					kbChunks = studios.MaxMarginalRelevance(queryVec, reranked, chunkEmbeddings, 4, 0.7)
-				} else {
-					kbChunks = reranked
-					if len(kbChunks) > 4 {
-						kbChunks = kbChunks[:4]
-					}
-				}
-
-				// Step 7: Confidence gate — if the top chunk's score from the reranker is reasonable,
-				// mark as confident. We use chunk count as a proxy (if we found ≥2 chunks, it's confident).
-				kbConfident = len(kbChunks) >= 2
-				w.log.Info("rag pipeline complete", "studio_id", studioID,
-					"candidates", len(matched), "reranked", len(reranked),
-					"final", len(kbChunks), "confident", kbConfident)
-			} else if err != nil {
-				w.log.Warn("failed to search knowledge chunks", "studio_id", studioID, "err", err)
+			// Step 4+8 in parallel: KB retrieval/rerank and semantic history simultaneously.
+			type kbResult struct {
+				chunks    []string
+				confident bool
 			}
+			kbCh := make(chan kbResult, 1)
+			semHistCh := make(chan []SemanticMatch, 1)
 
-			// Step 8: Semantic history via pre-computed HNSW index
-			recentIDs := make([]uuid.UUID, len(history))
-			for i, m := range history {
-				recentIDs[i] = m.ID
-			}
-			semHist, err := w.msgRepo.SearchSemanticHistory(ctx, studioID, conv.ID, queryVec, recentIDs, 3)
-			if err == nil && len(semHist) > 0 {
-				// Only include past messages with score ≥ 0.75 — low-similarity history adds noise
+			go func() {
+				// Hybrid retrieval (8 candidates) → rerank to top 4 directly.
+				// MMR diversity pass removed: saves 4-6 sequential embedding API calls per request.
+				matched, searchErr := w.studiosRepo.SearchKnowledgeChunksHybrid(ctx, studioID, queryVec, expandedQuery, 8)
+				if searchErr != nil || len(matched) == 0 {
+					if searchErr != nil {
+						w.log.Warn("failed to search knowledge chunks", "studio_id", studioID, "err", searchErr)
+					}
+					kbCh <- kbResult{}
+					return
+				}
+				reranked := studios.RerankChunks(ctx, apiKey, msg.Body, matched, 4)
+				kbCh <- kbResult{chunks: reranked, confident: len(reranked) >= 2}
+			}()
+
+			go func() {
+				recentIDs := make([]uuid.UUID, len(history))
+				for i, m := range history {
+					recentIDs[i] = m.ID
+				}
+				semHist, semErr := w.msgRepo.SearchSemanticHistory(ctx, studioID, conv.ID, queryVec, recentIDs, 3)
+				if semErr != nil || len(semHist) == 0 {
+					semHistCh <- nil
+					return
+				}
+				var filtered []SemanticMatch
 				for _, sm := range semHist {
 					if sm.Score >= 0.75 {
-						semanticHistory = append(semanticHistory, sm)
+						filtered = append(filtered, sm)
 					}
 				}
+				semHistCh <- filtered
+			}()
+
+			kb := <-kbCh
+			kbChunks = kb.chunks
+			kbConfident = kb.confident
+			if len(kbChunks) > 0 {
+				w.log.Info("rag pipeline complete", "studio_id", studioID, "final", len(kbChunks), "confident", kbConfident)
+			}
+
+			if semResults := <-semHistCh; len(semResults) > 0 {
+				semanticHistory = semResults
 				w.log.Info("retrieved semantic history", "studio_id", studioID, "count", len(semanticHistory))
 			}
 		} else {
