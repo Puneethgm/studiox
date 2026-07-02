@@ -133,7 +133,9 @@ func (h *Handler) SelfRoutes(r chi.Router) {
 
 	// Plans routes
 	r.Get("/studios/{id}/plans", h.listPlans)
+	r.Post("/studios/{id}/plans", h.createPlan)
 	r.Put("/studios/{id}/plans/{planId}", h.updatePlan)
+	r.Delete("/studios/{id}/plans/{planId}", h.deletePlan)
 	r.Get("/studios/{id}/payments", h.getPayments)
 	r.Post("/studios/{id}/payments/stripe", h.linkStripe)
 	// Platform Plans route
@@ -1783,9 +1785,11 @@ func (h *Handler) listPlans(w http.ResponseWriter, r *http.Request) {
 }
 
 type updatePlanReq struct {
-	PriceSGD *int      `json:"priceSgd"`
-	Features *[]string `json:"features"`
-	IsActive *bool     `json:"isActive"`
+	PlanName     *string   `json:"planName"`
+	PriceSGD     *int      `json:"priceSgd"`
+	BillingCycle *string   `json:"billingCycle"`
+	Features     *[]string `json:"features"`
+	IsActive     *bool     `json:"isActive"`
 }
 
 func (h *Handler) updatePlan(w http.ResponseWriter, r *http.Request) {
@@ -1805,9 +1809,11 @@ func (h *Handler) updatePlan(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	err = h.svc.UpdatePlan(r.Context(), studioID, planID, UpdatePlanInput{
-		PriceSGD: req.PriceSGD,
-		Features: req.Features,
-		IsActive: req.IsActive,
+		PlanName:     req.PlanName,
+		PriceSGD:     req.PriceSGD,
+		BillingCycle: req.BillingCycle,
+		Features:     req.Features,
+		IsActive:     req.IsActive,
 	})
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -1819,6 +1825,64 @@ func (h *Handler) updatePlan(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	httpx.JSON(w, http.StatusOK, map[string]string{"status": "success"})
+}
+
+type createPlanReq struct {
+	PlanName     string   `json:"planName"`
+	PriceSGD     int      `json:"priceSgd"`
+	BillingCycle string   `json:"billingCycle"`
+	Features     []string `json:"features"`
+	IsActive     bool     `json:"isActive"`
+}
+
+func (h *Handler) createPlan(w http.ResponseWriter, r *http.Request) {
+	studioID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid studio id")
+		return
+	}
+	var req createPlanReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if req.PlanName == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "validation", "planName is required")
+		return
+	}
+	plan, err := h.svc.CreatePlan(r.Context(), studioID, CreatePlanInput{
+		PlanName:     req.PlanName,
+		PriceSGD:     req.PriceSGD,
+		BillingCycle: req.BillingCycle,
+		Features:     req.Features,
+		IsActive:     req.IsActive,
+	})
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to create plan")
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, map[string]any{"plan": plan})
+}
+
+func (h *Handler) deletePlan(w http.ResponseWriter, r *http.Request) {
+	studioID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid studio id")
+		return
+	}
+	planID, err := uuid.Parse(chi.URLParam(r, "planId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_plan_id", "invalid plan id")
+		return
+	}
+	if err := h.svc.DeletePlan(r.Context(), studioID, planID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "plan not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to delete plan")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request) {

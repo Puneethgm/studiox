@@ -367,8 +367,16 @@ func (s *Service) ListPlans(ctx context.Context, studioID uuid.UUID) ([]Plan, er
 	return s.repo.ListPlans(ctx, studioID)
 }
 
+func (s *Service) CreatePlan(ctx context.Context, studioID uuid.UUID, in CreatePlanInput) (Plan, error) {
+	return s.repo.CreatePlan(ctx, studioID, in)
+}
+
 func (s *Service) UpdatePlan(ctx context.Context, studioID, planID uuid.UUID, in UpdatePlanInput) error {
 	return s.repo.UpdatePlan(ctx, studioID, planID, in)
+}
+
+func (s *Service) DeletePlan(ctx context.Context, studioID, planID uuid.UUID) error {
+	return s.repo.DeletePlan(ctx, studioID, planID)
 }
 
 func (s *Service) GetPlatformSetting(ctx context.Context, key string) (string, error) {

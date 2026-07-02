@@ -43,16 +43,66 @@ func (r *Repo) ListPlans(ctx context.Context, studioID uuid.UUID) ([]Plan, error
 	return out, rows.Err()
 }
 
+type CreatePlanInput struct {
+	PlanName     string   `json:"planName"`
+	PriceSGD     int      `json:"priceSgd"`
+	BillingCycle string   `json:"billingCycle"`
+	Features     []string `json:"features"`
+	IsActive     bool     `json:"isActive"`
+}
+
+func (r *Repo) CreatePlan(ctx context.Context, studioID uuid.UUID, in CreatePlanInput) (Plan, error) {
+	if in.BillingCycle == "" {
+		in.BillingCycle = "monthly"
+	}
+	if in.Features == nil {
+		in.Features = []string{}
+	}
+	var p Plan
+	err := r.pool.QueryRow(ctx, `
+		INSERT INTO plans (studio_id, plan_name, price_sgd, billing_cycle, features, is_active)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id, studio_id, plan_name, price_sgd, billing_cycle, features, is_active, created_at, updated_at
+	`, studioID, in.PlanName, in.PriceSGD, in.BillingCycle, in.Features, in.IsActive).Scan(
+		&p.ID, &p.StudioID, &p.PlanName, &p.PriceSGD, &p.BillingCycle, &p.Features, &p.IsActive, &p.CreatedAt, &p.UpdatedAt,
+	)
+	if err != nil {
+		return Plan{}, fmt.Errorf("create plan: %w", err)
+	}
+	return p, nil
+}
+
+func (r *Repo) DeletePlan(ctx context.Context, studioID, planID uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM plans WHERE studio_id = $1 AND id = $2`, studioID, planID)
+	if err != nil {
+		return fmt.Errorf("delete plan: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 type UpdatePlanInput struct {
-	PriceSGD *int      `json:"priceSgd"`
-	Features *[]string `json:"features"`
-	IsActive *bool     `json:"isActive"`
+	PlanName     *string   `json:"planName"`
+	PriceSGD     *int      `json:"priceSgd"`
+	BillingCycle *string   `json:"billingCycle"`
+	Features     *[]string `json:"features"`
+	IsActive     *bool     `json:"isActive"`
 }
 
 func (r *Repo) UpdatePlan(ctx context.Context, studioID, planID uuid.UUID, in UpdatePlanInput) error {
 	q := "UPDATE plans SET updated_at = now()"
 	args := []any{studioID, planID}
 	
+	if in.PlanName != nil {
+		args = append(args, *in.PlanName)
+		q += fmt.Sprintf(", plan_name = $%d", len(args))
+	}
+	if in.BillingCycle != nil {
+		args = append(args, *in.BillingCycle)
+		q += fmt.Sprintf(", billing_cycle = $%d", len(args))
+	}
 	if in.PriceSGD != nil {
 		args = append(args, *in.PriceSGD)
 		q += fmt.Sprintf(", price_sgd = $%d", len(args))
