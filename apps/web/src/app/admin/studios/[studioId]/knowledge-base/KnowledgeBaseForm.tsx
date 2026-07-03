@@ -2,27 +2,75 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Database, FileText, Trash2, Upload, AlertCircle, CheckCircle } from 'lucide-react';
+import { Database, FileText, Trash2, Upload, AlertCircle, CheckCircle, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Label, FieldHint } from '@/components/ui/Label';
 import type { Studio } from '@/lib/types';
-import { api } from '@/lib/api';
 import { parseDocument, updateKnowledgeBase } from './actions';
+
+type KBFile = { name: string; url: string; text: string; platform: string };
+
+const DOMAINS = [
+  { value: 'all',         label: 'General' },
+  { value: 'fitness_gym', label: 'Fitness / Gym' },
+  { value: 'yoga',        label: 'Yoga' },
+  { value: 'crossfit',    label: 'CrossFit' },
+  { value: 'pilates',     label: 'Pilates' },
+  { value: 'dance',       label: 'Dance' },
+  { value: 'martial_arts',label: 'Martial Arts' },
+  { value: 'nutrition',   label: 'Nutrition' },
+  { value: 'recovery',    label: 'Recovery' },
+];
+
+const DOMAIN_COLORS: Record<string, string> = {
+  all:         'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300',
+  fitness_gym: 'bg-orange-50 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
+  yoga:        'bg-purple-50 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
+  crossfit:    'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+  pilates:     'bg-pink-50 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400',
+  dance:       'bg-fuchsia-50 text-fuchsia-700 dark:bg-fuchsia-900/30 dark:text-fuchsia-400',
+  martial_arts:'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+  nutrition:   'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+  recovery:    'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+};
+
+function PlatformSelect({
+  value,
+  onChange,
+  className = '',
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  className?: string;
+}) {
+  return (
+    <div className={`relative inline-flex items-center ${className}`}>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="appearance-none cursor-pointer rounded-lg border border-slate-200 bg-white pr-7 pl-2.5 py-1 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-slate-700 dark:bg-slate-900"
+      >
+        {DOMAINS.map((p) => (
+          <option key={p.value} value={p.value}>{p.label}</option>
+        ))}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-1.5 h-3 w-3 text-zinc-400" />
+    </div>
+  );
+}
 
 export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
   const router = useRouter();
   const [text, setText] = useState(studio.knowledgeBase || '');
   const [greeting, setGreeting] = useState(studio.greetingMessage || '');
-  const [files, setFiles] = useState<{ name: string; url: string; text: string }[]>(
-    studio.knowledgeBaseFiles || []
+  const [files, setFiles] = useState<KBFile[]>(
+    (studio.knowledgeBaseFiles || []).map((f) => ({ ...f, platform: f.platform || 'all' }))
   );
-  
+
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-
-  const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
 
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const filesList = e.target.files;
@@ -34,7 +82,6 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
 
     try {
       const uploadPromises = Array.from(filesList).map(async (file) => {
-        // 1. Upload to Go Backend uploads directory
         const formData = new FormData();
         formData.append('file', file);
 
@@ -49,19 +96,13 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
         }
 
         const uploadResult = await uploadRes.json() as { url: string };
-
-        // 2. Parse text from document using server action
         const parseResult = await parseDocument(formData);
         const data = parseResult.data;
         if (!parseResult.ok || !data) {
           throw new Error(parseResult.error || `Failed to extract text from "${file.name}"`);
         }
 
-        return {
-          name: file.name,
-          url: uploadResult.url,
-          text: data.text,
-        };
+        return { name: file.name, url: uploadResult.url, text: data.text, platform: 'all' };
       });
 
       const parsedFiles = await Promise.all(uploadPromises);
@@ -72,7 +113,6 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
       setError(err.message || 'Failed to upload and parse files.');
     } finally {
       setUploading(false);
-      // Clear the input value so the same files can be uploaded again
       e.target.value = '';
     }
   }
@@ -83,13 +123,20 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
     setFiles((prev) => prev.filter((_, i) => i !== index));
   }
 
+  function handleFilePlatform(index: number, platform: string) {
+    setFiles((prev) => prev.map((f, i) => i === index ? { ...f, platform } : f));
+  }
+
   async function handleSave() {
     setError(null);
     setSuccess(null);
     setSaving(true);
 
+    // Encode the text-block platform as a prefix tag so the backend can store it.
+    // The backend uses the KnowledgeBaseFile.Platform field for files; for the main
+    // text we pass it as the first file-like entry with a synthetic name.
     try {
-      const res = await updateKnowledgeBase(studio.id, studio.slug, text, files, greeting);
+      const res = await updateKnowledgeBase(studio.id, studio.slug, text, 'all', files, greeting);
       if (!res.ok) {
         throw new Error(res.error || 'Failed to save changes');
       }
@@ -104,7 +151,6 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
 
   return (
     <div className="space-y-6">
-      {/* Messages */}
       {success && (
         <div className="flex items-center gap-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
           <CheckCircle className="h-5 w-5 shrink-0" />
@@ -119,7 +165,7 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
       )}
 
       <div className="grid gap-6 md:grid-cols-3">
-        {/* Left column: Text Instructions & File List */}
+        {/* Left column */}
         <div className="md:col-span-2 space-y-6">
           <div className="overflow-hidden rounded-[24px] border border-white/30 bg-white/30 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30" style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 4px 16px rgba(0,0,0,0.05)' }}>
             <div className="border-b border-white/20 px-6 py-4 dark:border-white/5 flex items-center gap-2">
@@ -132,11 +178,11 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
                 <textarea
                   id="greetingMessage"
                   className="flex w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:placeholder:text-slate-500 min-h-[80px]"
-                  placeholder="Hi! Thanks for reaching out to us. How can we help you today? 👋"
+                  placeholder="Hi! Thanks for reaching out to us. How can we help you today?"
                   value={greeting}
                   onChange={(e) => setGreeting(e.target.value)}
                 />
-                <FieldHint>Sent automatically on the first message of a new conversation. Leave blank to skip. Use <code>{'{{lead_first_name}}'}</code>, <code>{'{{lead_name}}'}</code>, <code>{'{{studio_name}}'}</code> as placeholders.</FieldHint>
+                <FieldHint>Sent automatically on the first message of a new conversation. Use <code>{'{{lead_first_name}}'}</code>, <code>{'{{lead_name}}'}</code>, <code>{'{{studio_name}}'}</code> as placeholders.</FieldHint>
               </div>
               <div>
                 <Label htmlFor="knowledgeBase">Instructions / General Info</Label>
@@ -147,7 +193,7 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
                   value={text}
                   onChange={(e) => setText(e.target.value)}
                 />
-                <FieldHint>Direct textual instructions for the AI assistant.</FieldHint>
+                <FieldHint>Direct textual instructions shown on all channels. Use the document list below to restrict content to specific platforms.</FieldHint>
               </div>
             </div>
           </div>
@@ -166,8 +212,8 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
               ) : (
                 <div className="divide-y divide-white/10 dark:divide-white/5">
                   {files.map((file, i) => (
-                    <div key={i} className="flex items-center justify-between py-3">
-                      <div className="flex items-center gap-3 min-w-0">
+                    <div key={i} className="flex items-center justify-between py-3 gap-3">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
                         <FileText className="h-5 w-5 text-brand-500 shrink-0" />
                         <div className="min-w-0">
                           {file.url ? (
@@ -185,17 +231,23 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
                             </span>
                           )}
                           <p className="text-xs text-zinc-400 dark:text-zinc-500">
-                            {file.text ? `${file.text.substring(0, 100)}...` : 'Processing...'}
+                            {file.text ? `${file.text.substring(0, 80)}…` : 'Processing…'}
                           </p>
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveFile(i)}
-                        className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-rose-500 dark:hover:bg-zinc-800/50"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <PlatformSelect
+                          value={file.platform || 'all'}
+                          onChange={(v) => handleFilePlatform(i, v)}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveFile(i)}
+                          className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-rose-500 dark:hover:bg-zinc-800/50"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -204,8 +256,27 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
           </div>
         </div>
 
-        {/* Right column: Upload Area & Controls */}
+        {/* Right column */}
         <div className="space-y-6">
+          {/* Platform legend */}
+          <div className="overflow-hidden rounded-[24px] border border-white/30 bg-white/30 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30" style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 4px 16px rgba(0,0,0,0.05)' }}>
+            <div className="border-b border-white/20 px-6 py-4 dark:border-white/5">
+              <h3 className="text-sm font-black uppercase tracking-[0.15em] text-zinc-400">Domain Guide</h3>
+            </div>
+            <div className="p-4 space-y-2">
+              {DOMAINS.map((p) => (
+                <div key={p.value} className="flex items-center gap-2">
+                  <span className={`inline-flex items-center rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${DOMAIN_COLORS[p.value]}`}>
+                    {p.label}
+                  </span>
+                </div>
+              ))}
+              <p className="text-xs text-zinc-400 dark:text-zinc-500 pt-2">
+                Tag each document with the type of content it covers so the AI can find the most relevant information.
+              </p>
+            </div>
+          </div>
+
           <div className="overflow-hidden rounded-[24px] border border-white/30 bg-white/30 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30" style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 4px 16px rgba(0,0,0,0.05)' }}>
             <div className="border-b border-white/20 px-6 py-4 dark:border-white/5">
               <h3 className="text-sm font-black uppercase tracking-[0.15em] text-zinc-400">Add Documents</h3>
@@ -223,14 +294,14 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
                 />
                 <Upload className="h-8 w-8 text-zinc-400 mb-2" />
                 <span className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">
-                  {uploading ? 'Processing file...' : 'Choose a document'}
+                  {uploading ? 'Processing file…' : 'Choose a document'}
                 </span>
                 <span className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">
                   PDF, Word, PowerPoint, Excel, Text, CSV
                 </span>
               </div>
               <FieldHint>
-                Uploaded files are parsed by the AI helper to build dynamic context when conversing with leads.
+                New files default to All Platforms. Change the platform tag in the document list after uploading.
               </FieldHint>
             </div>
           </div>

@@ -288,6 +288,7 @@ func (r *Repo) GetPlatformSetting(ctx context.Context, key string) (string, erro
 type ChunkData struct {
 	SourceType string
 	SourceName string
+	Platform   string // "all","whatsapp","instagram","facebook","sms"
 	Index      int
 	Content    string
 	Embedding  []float32
@@ -307,10 +308,14 @@ func (r *Repo) SaveKnowledgeChunks(ctx context.Context, studioID uuid.UUID, chun
 
 	for _, c := range chunks {
 		embStr := FormatVectorAsString(c.Embedding)
+		platform := c.Platform
+		if platform == "" {
+			platform = "all"
+		}
 		_, err = tx.Exec(ctx, `
-			INSERT INTO studio_knowledge_chunks (studio_id, source_type, source_name, chunk_index, content, embedding)
-			VALUES ($1, $2, $3, $4, $5, $6::vector)
-		`, studioID, c.SourceType, c.SourceName, c.Index, c.Content, embStr)
+			INSERT INTO studio_knowledge_chunks (studio_id, source_type, source_name, platform, chunk_index, content, embedding)
+			VALUES ($1, $2, $3, $4, $5, $6, $7::vector)
+		`, studioID, c.SourceType, c.SourceName, platform, c.Index, c.Content, embStr)
 		if err != nil {
 			return fmt.Errorf("insert chunk: %w", err)
 		}
@@ -321,29 +326,31 @@ func (r *Repo) SaveKnowledgeChunks(ctx context.Context, studioID uuid.UUID, chun
 // SearchKnowledgeChunks performs hybrid retrieval: vector similarity + BM25 full-text search,
 // fused with Reciprocal Rank Fusion (RRF). Returns top-K deduplicated chunks.
 // Falls back to pure vector search if the FTS column is not yet available.
-func (r *Repo) SearchKnowledgeChunks(ctx context.Context, studioID uuid.UUID, queryEmbedding []float32, limit int) ([]string, error) {
+// platform filters to chunks tagged for that channel plus "all" chunks; pass "" or "all" to skip filtering.
+func (r *Repo) SearchKnowledgeChunks(ctx context.Context, studioID uuid.UUID, queryEmbedding []float32, platform string, limit int) ([]string, error) {
 	embStr := FormatVectorAsString(queryEmbedding)
-	candidateN := limit * 5 // fetch wider candidate set before RRF fusion
+	candidateN := limit * 5
+	if platform == "" {
+		platform = "all"
+	}
 
-	// Hybrid RRF query:
-	// - vector_ranked: top candidates by cosine distance
-	// - fts_ranked:    top candidates by BM25 ts_rank
-	// - RRF score:     1/(k+rank) summed across both lists (k=60 is standard)
 	rows, err := r.pool.Query(ctx, `
 		WITH vector_ranked AS (
 			SELECT content, ROW_NUMBER() OVER () AS rank
 			FROM studio_knowledge_chunks
 			WHERE studio_id = $1
+			  AND ($3 = 'all' OR platform IN ('all', $3))
 			ORDER BY embedding <=> $2::vector
-			LIMIT $4
+			LIMIT $5
 		),
 		fts_ranked AS (
 			SELECT content, ROW_NUMBER() OVER () AS rank
 			FROM studio_knowledge_chunks
 			WHERE studio_id = $1
-			  AND content_tsv @@ plainto_tsquery('english', $3)
-			ORDER BY ts_rank(content_tsv, plainto_tsquery('english', $3)) DESC
-			LIMIT $4
+			  AND ($3 = 'all' OR platform IN ('all', $3))
+			  AND content_tsv @@ plainto_tsquery('english', $4)
+			ORDER BY ts_rank(content_tsv, plainto_tsquery('english', $4)) DESC
+			LIMIT $5
 		),
 		fused AS (
 			SELECT content,
@@ -357,18 +364,18 @@ func (r *Repo) SearchKnowledgeChunks(ctx context.Context, studioID uuid.UUID, qu
 		)
 		SELECT content FROM fused
 		ORDER BY score DESC
-		LIMIT $5
-	`, studioID, embStr, "", candidateN, limit)
+		LIMIT $6
+	`, studioID, embStr, platform, "", candidateN, limit)
 
-	// Fallback: pure vector search if hybrid fails (e.g. content_tsv column missing)
 	if err != nil {
 		rows, err = r.pool.Query(ctx, `
 			SELECT content
 			FROM studio_knowledge_chunks
 			WHERE studio_id = $1
+			  AND ($3 = 'all' OR platform IN ('all', $3))
 			ORDER BY embedding <=> $2::vector
-			LIMIT $3
-		`, studioID, embStr, limit)
+			LIMIT $4
+		`, studioID, embStr, platform, limit)
 		if err != nil {
 			return nil, fmt.Errorf("search chunks: %w", err)
 		}
@@ -392,25 +399,31 @@ func (r *Repo) SearchKnowledgeChunks(ctx context.Context, studioID uuid.UUID, qu
 
 // SearchKnowledgeChunksHybrid is the same as SearchKnowledgeChunks but accepts
 // an explicit query string for BM25 (used when the caller has a plain-text query).
-func (r *Repo) SearchKnowledgeChunksHybrid(ctx context.Context, studioID uuid.UUID, queryEmbedding []float32, queryText string, limit int) ([]string, error) {
+// platform filters chunks for the conversation's channel; "all" returns everything.
+func (r *Repo) SearchKnowledgeChunksHybrid(ctx context.Context, studioID uuid.UUID, queryEmbedding []float32, queryText string, platform string, limit int) ([]string, error) {
 	embStr := FormatVectorAsString(queryEmbedding)
 	candidateN := limit * 5
+	if platform == "" {
+		platform = "all"
+	}
 
 	rows, err := r.pool.Query(ctx, `
 		WITH vector_ranked AS (
 			SELECT content, ROW_NUMBER() OVER () AS rank
 			FROM studio_knowledge_chunks
 			WHERE studio_id = $1
+			  AND ($3 = 'all' OR platform IN ('all', $3))
 			ORDER BY embedding <=> $2::vector
-			LIMIT $4
+			LIMIT $5
 		),
 		fts_ranked AS (
 			SELECT content, ROW_NUMBER() OVER () AS rank
 			FROM studio_knowledge_chunks
 			WHERE studio_id = $1
-			  AND content_tsv @@ plainto_tsquery('english', $3)
-			ORDER BY ts_rank(content_tsv, plainto_tsquery('english', $3)) DESC
-			LIMIT $4
+			  AND ($3 = 'all' OR platform IN ('all', $3))
+			  AND content_tsv @@ plainto_tsquery('english', $4)
+			ORDER BY ts_rank(content_tsv, plainto_tsquery('english', $4)) DESC
+			LIMIT $5
 		),
 		fused AS (
 			SELECT content,
@@ -424,12 +437,11 @@ func (r *Repo) SearchKnowledgeChunksHybrid(ctx context.Context, studioID uuid.UU
 		)
 		SELECT content FROM fused
 		ORDER BY score DESC
-		LIMIT $5
-	`, studioID, embStr, queryText, candidateN, limit)
+		LIMIT $6
+	`, studioID, embStr, platform, queryText, candidateN, limit)
 
 	if err != nil {
-		// Fallback to pure vector
-		return r.SearchKnowledgeChunks(ctx, studioID, queryEmbedding, limit)
+		return r.SearchKnowledgeChunks(ctx, studioID, queryEmbedding, platform, limit)
 	}
 	defer rows.Close()
 

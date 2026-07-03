@@ -1031,7 +1031,7 @@ func (h *Handler) aiGenerateTemplate(w http.ResponseWriter, r *http.Request) {
 
 	var systemInstruction string
 	if req.Type == "social" {
-		systemInstruction = `You are a social media manager for a fitness/yoga studio.
+		systemInstruction = `You are a social media manager for a fitness studio.
 Important:
 1. Do not use generic greetings or sign-offs.
 2. Keep it energetic, modern, and perfectly formatted for a social media post (X/Twitter, Facebook).
@@ -1040,7 +1040,7 @@ Important:
 
 Generate the social media copy based on this instruction: ` + req.Prompt
 	} else {
-		systemInstruction = `Generate a professional, friendly customer message template for a fitness/yoga studio.
+		systemInstruction = `Generate a professional, friendly customer message template for a fitness studio.
 Important:
 1. The message must NOT contain any salutation or greeting (e.g. do not start with "Hi" or "Dear" or "Hello").
 2. The message must NOT contain any sign-off or signature (e.g. do not end with "Best" or "Regards" or "Studio Team").

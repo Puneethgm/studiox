@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"time"
 )
 
 type ctxKey int
@@ -14,7 +15,12 @@ const (
 	keyUserID
 )
 
+// sgt is Singapore Standard Time (UTC+8). All log timestamps use this zone
+// so timestamps match what the team sees in local dashboards and Glofox.
+var sgt = time.FixedZone("SGT", 8*60*60)
+
 // New builds a JSON slog logger respecting the configured level.
+// Timestamps appear as "2006-01-02 15:04:05 SGT" — human-readable, local time.
 func New(level string) *slog.Logger {
 	var lvl slog.Level
 	switch level {
@@ -27,7 +33,15 @@ func New(level string) *slog.Logger {
 	default:
 		lvl = slog.LevelInfo
 	}
-	h := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl})
+	h := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: lvl,
+		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+			if a.Key == slog.TimeKey {
+				a.Value = slog.StringValue(a.Value.Time().In(sgt).Format("2006-01-02 15:04:05 SGT"))
+			}
+			return a
+		},
+	})
 	return slog.New(h)
 }
 

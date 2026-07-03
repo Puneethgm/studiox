@@ -1084,6 +1084,50 @@ func (r *Repo) GetAnalytics(ctx context.Context, studioID uuid.UUID, durationDay
 	}, nil
 }
 
+// FindLeadByEmail looks up the most-recent lead for a given email within a studio.
+// Returns ErrLeadNotFound when no match exists.
+func (r *Repo) FindLeadByEmail(ctx context.Context, studioID uuid.UUID, email string) (*Lead, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT l.id, l.studio_id, s.name, s.slug, l.campaign_id, c.name, c.slug,
+		       l.name, COALESCE(l.first_name, ''), COALESCE(l.last_name, ''), l.email, l.phone, l.fitness_plan, l.goals,
+		       l.source, l.status, l.currency, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage,
+		       COALESCE(l.assigned_to, ''), l.trial_attended, l.member_sold, l.monthly_fee, COALESCE(l.offer, ''), COALESCE(l.further_notes, ''),
+		       l.created_at, l.updated_at
+		FROM leads l
+		JOIN campaigns c ON c.id = l.campaign_id
+		JOIN studios s ON s.id = l.studio_id
+		WHERE l.studio_id = $1 AND LOWER(l.email) = LOWER($2)
+		ORDER BY l.created_at DESC
+		LIMIT 1
+	`, studioID, email)
+	var l Lead
+	if err := row.Scan(&l.ID, &l.StudioID, &l.StudioName, &l.StudioSlug, &l.CampaignID, &l.CampaignName, &l.CampaignSlug,
+		&l.Name, &l.FirstName, &l.LastName, &l.Email, &l.Phone, &l.FitnessPlan, &l.Goals,
+		&l.Source, &l.Status, &l.Currency, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage,
+		&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.CreatedAt, &l.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrLeadNotFound
+		}
+		return nil, fmt.Errorf("find lead by email: %w", err)
+	}
+	return &l, nil
+}
+
+// MarkGlofoxFirstSessionNotified atomically sets glofox_first_session_notified_at on a lead
+// only if it has not already been set. Returns true if this was the first time (i.e., the
+// row was actually updated), false if already marked (duplicate guard).
+func (r *Repo) MarkGlofoxFirstSessionNotified(ctx context.Context, leadID uuid.UUID) (bool, error) {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE leads
+		SET glofox_first_session_notified_at = now(), updated_at = now()
+		WHERE id = $1 AND glofox_first_session_notified_at IS NULL
+	`, leadID)
+	if err != nil {
+		return false, fmt.Errorf("mark glofox first session notified: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 func (r *Repo) GetUniqueSources(ctx context.Context, studioID uuid.UUID) ([]string, error) {
 	var rows pgx.Rows
 	var err error

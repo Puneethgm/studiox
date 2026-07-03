@@ -44,7 +44,7 @@ export interface Studio {
   campaignCount?: number;
   leadCount?: number;
   knowledgeBase?: string;
-  knowledgeBaseFiles?: { name: string; url: string; text: string }[];
+  knowledgeBaseFiles?: { name: string; url: string; text: string; platform?: string }[];
   greetingMessage?: string;
   bookingHeroImageUrl?: string;
   bookingHeroVideoUrl?: string;

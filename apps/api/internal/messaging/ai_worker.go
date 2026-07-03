@@ -379,7 +379,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 			go func() {
 				// Hybrid retrieval (8 candidates) → rerank to top 4 directly.
 				// MMR diversity pass removed: saves 4-6 sequential embedding API calls per request.
-				matched, searchErr := w.studiosRepo.SearchKnowledgeChunksHybrid(ctx, studioID, queryVec, expandedQuery, 8)
+				matched, searchErr := w.studiosRepo.SearchKnowledgeChunksHybrid(ctx, studioID, queryVec, expandedQuery, "all", 8)
 				if searchErr != nil || len(matched) == 0 {
 					if searchErr != nil {
 						w.log.Warn("failed to search knowledge chunks", "studio_id", studioID, "err", searchErr)
@@ -1232,3 +1232,4 @@ func stripMotivationQuestions(resp string) string {
 	}
 	return result
 }
+

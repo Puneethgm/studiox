@@ -7,13 +7,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/mail"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/projectx/api/internal/integrations/glofox"
 )
 
 var ErrNotFound = errors.New("not found")
@@ -21,10 +25,13 @@ var ErrNotFound = errors.New("not found")
 const sheetsDestination = "google_sheets"
 
 type Service struct {
-	repo *Repo
+	repo   *Repo
+	glofox *glofox.Client
 }
 
-func NewService(repo *Repo) *Service { return &Service{repo: repo} }
+func NewService(repo *Repo, gf *glofox.Client) *Service {
+	return &Service{repo: repo, glofox: gf}
+}
 
 // ----- campaigns -----
 
@@ -224,7 +231,73 @@ func (s *Service) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status
 	} else if status == StatusMember {
 		memberSold = true
 	}
-	return s.repo.UpdateLead(ctx, studioID, id, status, currency, notes, contactMade, hotLead, trialPurchased, firstName, lastName, fitnessPlan, assignedTo, trialAttended, memberSold, monthlyFee, offer, furtherNotes)
+
+	// Fetch the current lead before updating so we have email + phone for Glofox.
+	var existing *Lead
+	if s.glofox != nil && (status == StatusTrialBooked || status == StatusMember) {
+		if l, err := s.repo.GetLead(ctx, studioID, id); err == nil {
+			existing = l
+		}
+	}
+
+	if err := s.repo.UpdateLead(ctx, studioID, id, status, currency, notes, contactMade, hotLead, trialPurchased, firstName, lastName, fitnessPlan, assignedTo, trialAttended, memberSold, monthlyFee, offer, furtherNotes); err != nil {
+		return err
+	}
+
+	// Push to Glofox when a lead converts to trial or member.
+	// Fire-and-forget: log on error, never block the HTTP response.
+	if existing != nil {
+		fn := firstName
+		if fn == "" {
+			fn = existing.FirstName
+		}
+		ln := lastName
+		if ln == "" {
+			ln = existing.LastName
+		}
+		gfStatus := glofox.GlofoxStatusTrial
+		if status == StatusMember {
+			gfStatus = glofox.GlofoxStatusMember
+		}
+		leadID := id
+		leadName := fn + " " + ln
+		leadEmail := existing.Email
+		leadPhone := existing.Phone
+		go func() {
+			gCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			out, err := s.glofox.CreateLead(gCtx, glofox.CreateLeadInput{
+				Email:      leadEmail,
+				FirstName:  fn,
+				LastName:   ln,
+				Phone:      leadPhone,
+				LeadStatus: gfStatus,
+			})
+			if err != nil {
+				slog.Warn("Glofox | Lead sync failed — lead conversion not reflected in Glofox CRM",
+					"component", "glofox",
+					"lead_id", leadID,
+					"lead_name", leadName,
+					"lead_email", leadEmail,
+					"new_status", string(status),
+					"glofox_status", string(gfStatus),
+					"error", err.Error(),
+				)
+			} else {
+				slog.Info("Glofox | Lead synced to Glofox CRM",
+					"component", "glofox",
+					"lead_id", leadID,
+					"lead_name", leadName,
+					"lead_email", leadEmail,
+					"new_status", string(status),
+					"glofox_status", string(gfStatus),
+					"glofox_id", out.Entity.ID,
+				)
+			}
+		}()
+	}
+
+	return nil
 }
 
 func (s *Service) GetUniqueSources(ctx context.Context, studioID uuid.UUID) ([]string, error) {

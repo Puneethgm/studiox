@@ -13,9 +13,10 @@ type AvailabilitySlot struct {
 }
 
 type KnowledgeBaseFile struct {
-	Name string `json:"name"`
-	URL  string `json:"url"`
-	Text string `json:"text"`
+	Name     string `json:"name"`
+	URL      string `json:"url"`
+	Text     string `json:"text"`
+	Platform string `json:"platform"` // "all","whatsapp","instagram","facebook","sms"
 }
 
 type Studio struct {

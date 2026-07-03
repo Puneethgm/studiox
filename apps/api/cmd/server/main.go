@@ -20,6 +20,8 @@ import (
 	"github.com/projectx/api/internal/decisiontree"
 	"github.com/projectx/api/internal/identity"
 	"github.com/projectx/api/internal/integrations/claude"
+	"github.com/projectx/api/internal/integrations/glofox"
+	"github.com/projectx/api/internal/integrations/glofox/firstsession"
 	"github.com/projectx/api/internal/integrations/google"
 	"github.com/projectx/api/internal/integrations/sheets"
 	"github.com/projectx/api/internal/leads"
@@ -29,8 +31,8 @@ import (
 	"github.com/projectx/api/internal/platform/db"
 	"github.com/projectx/api/internal/platform/httpx"
 	"github.com/projectx/api/internal/platform/logger"
-	"github.com/projectx/api/internal/platform/secrets"
 	s3pkg "github.com/projectx/api/internal/platform/s3"
+	"github.com/projectx/api/internal/platform/secrets"
 	"github.com/projectx/api/internal/reviews"
 	"github.com/projectx/api/internal/studios"
 )
@@ -71,7 +73,19 @@ func main() {
 
 	tokens := identity.NewTokenIssuer(cfg.JWT.Secret, cfg.JWT.TTL)
 
-	studiosSvc := studios.NewService(studiosRepo, identityRepo)
+	glofoxClient := glofox.New(cfg.Glofox.APIKey, cfg.Glofox.APIToken, cfg.Glofox.BranchID)
+	if glofoxClient != nil {
+		log.Info("Glofox | Integration enabled — studio admins and lead conversions will sync to Glofox CRM",
+			"component", "glofox",
+			"branch_id", cfg.Glofox.BranchID,
+		)
+	} else {
+		log.Info("Glofox | Integration disabled — set GLOFOX_API_KEY, GLOFOX_API_TOKEN, GLOFOX_BRANCH_ID to enable",
+			"component", "glofox",
+		)
+	}
+
+	studiosSvc := studios.NewService(studiosRepo, identityRepo, glofoxClient)
 	reviewsHandler := reviews.NewHandler(reviewsRepo)
 
 	// Initialize S3 uploader if configured
@@ -116,7 +130,7 @@ func main() {
 	})
 	identityHandler := identity.NewHandler(identityRepo, tokens, cfg.Cookie, brandLookup)
 
-	leadsSvc := leads.NewService(leadsRepo)
+	leadsSvc := leads.NewService(leadsRepo, glofoxClient)
 	leadsHandler := leads.NewHandler(leadsSvc, cfg)
 
 	sheetsClient, err := sheets.NewClient(rootCtx, cfg.Sheets.CredentialsPath)
@@ -143,6 +157,29 @@ func main() {
 	// Auto-contact worker: picks up lead_autocontact outbox items
 	autoWorker := messaging.NewAutoContactWorker(leadsRepo, msgRepo, msgSvc, log.With("component", "autocontact_worker"))
 	go autoWorker.Run(rootCtx)
+
+	// Glofox first-session worker: polls Glofox for members who purchased a plan
+	// and attended at least one session, then sends a WhatsApp via the decision tree.
+	// Auto-detect the studio by finding whichever studio has an active WhatsApp channel.
+	var glofoxStudioID uuid.UUID
+	if glofoxClient != nil {
+		var sid uuid.UUID
+		err := pool.QueryRow(rootCtx,
+			`SELECT studio_id FROM channel_accounts
+			 WHERE kind IN ('whatsapp_meta','whatsapp_web') AND status = 'active'
+			 ORDER BY created_at ASC LIMIT 1`).Scan(&sid)
+		if err == nil {
+			glofoxStudioID = sid
+			log.Info("Glofox | Auto-detected studio for first-session worker",
+				"component", "glofox_first_session", "studio_id", glofoxStudioID)
+		} else {
+			log.Warn("Glofox | Could not auto-detect studio (no active WhatsApp channel found) — first-session worker will not start",
+				"component", "glofox_first_session", "err", err)
+		}
+	}
+	firstSessionWorker := firstsession.New(glofoxClient, pool, leadsRepo, msgSvc, msgRepo,
+		glofoxStudioID, cfg.Glofox.BranchID, log.With("component", "glofox_first_session"))
+	go firstSessionWorker.Run(rootCtx)
 
 	// Claude AI worker
 	claudeClient, err := claude.New(cfg.Claude.APIURL, cfg.Claude.APIKey)
@@ -229,7 +266,7 @@ func main() {
 		r.Post("/webhooks/twilio", twilioWebhook.HandleInbound)
 		r.Get("/webhooks/x", xWebhook.HandleInbound)
 		r.Post("/webhooks/x", xWebhook.HandleInbound)
-		
+
 		stripeWebhook := studios.NewStripeWebhookHandler(studiosSvc, os.Getenv("STRIPE_WEBHOOK_SECRET"))
 		r.Post("/webhooks/stripe", stripeWebhook.HandleInbound)
 		r.Post("/webhooks/stripe/{studioId}", stripeWebhook.HandleInbound)

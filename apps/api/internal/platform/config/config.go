@@ -38,7 +38,16 @@ type Config struct {
 	Claude ClaudeConfig
 	Groq   GroqConfig
 	S3     S3Config
+	Glofox GlofoxConfig
 }
+
+type GlofoxConfig struct {
+	APIKey   string
+	APIToken string
+	BranchID string // Glofox _id of the branch/location (x-glofox-branch-id)
+}
+
+func (g GlofoxConfig) Enabled() bool { return g.APIKey != "" && g.APIToken != "" && g.BranchID != "" }
 
 type MetaConfig struct {
 	AppID              string
@@ -172,6 +181,11 @@ func Load() (Config, error) {
 			SecretKey:     getEnv("AWS_SECRET_ACCESS_KEY", ""),
 			Bucket:        getEnv("S3_BUCKET", ""),
 			PublicURLBase: getEnv("S3_PUBLIC_URL", ""),
+		},
+		Glofox: GlofoxConfig{
+			APIKey:   getEnv("GLOFOX_API_KEY", ""),
+			APIToken: getEnv("GLOFOX_API_TOKEN", ""),
+			BranchID: getEnv("GLOFOX_BRANCH_ID", ""),
 		},
 	}
 

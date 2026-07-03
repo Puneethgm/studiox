@@ -52,7 +52,8 @@ export async function updateKnowledgeBase(
   studioId: string,
   studioSlug: string,
   knowledgeBase: string,
-  knowledgeBaseFiles: { name: string; url: string; text: string }[],
+  _textPlatform: string,
+  knowledgeBaseFiles: { name: string; url: string; text: string; platform?: string }[],
   greetingMessage: string
 ) {
   const cookieStore = await cookies();

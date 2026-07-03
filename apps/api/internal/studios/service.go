@@ -14,15 +14,17 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/projectx/api/internal/identity"
+	"github.com/projectx/api/internal/integrations/glofox"
 )
 
 type Service struct {
 	repo     *Repo
 	identity *identity.Repo
+	glofox   *glofox.Client
 }
 
-func NewService(repo *Repo, id *identity.Repo) *Service {
-	return &Service{repo: repo, identity: id}
+func NewService(repo *Repo, id *identity.Repo, gf *glofox.Client) *Service {
+	return &Service{repo: repo, identity: id, glofox: gf}
 }
 
 // ----- create studio + first admin (atomic) -----
@@ -146,6 +148,43 @@ func (s *Service) CreateStudioWithAdmin(ctx context.Context, in CreateStudioInpu
 	if err := tx.Commit(ctx); err != nil {
 		return nil, nil, fmt.Errorf("commit: %w", err)
 	}
+
+	// Register the studio admin in Glofox asynchronously.
+	// Failure here must never block or roll back studio creation.
+	if s.glofox != nil {
+		firstName, lastName := splitName(in.Name)
+		studioName := studio.Name
+		adminEmail := in.AdminEmail
+		studioID := studio.ID
+		go func() {
+			gCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_, err := s.glofox.RegisterUser(gCtx, glofox.RegisterUserInput{
+				Email:     adminEmail,
+				FirstName: firstName,
+				LastName:  lastName,
+				Phone:     in.ContactPhone,
+				Password:  in.AdminPassword,
+			})
+			if err != nil {
+				slog.Warn("Glofox | Studio admin account creation failed — admin will not appear in Glofox CRM",
+					"component", "glofox",
+					"studio_id", studioID,
+					"studio_name", studioName,
+					"admin_email", adminEmail,
+					"error", err.Error(),
+				)
+			} else {
+				slog.Info("Glofox | Studio admin account created successfully",
+					"component", "glofox",
+					"studio_id", studioID,
+					"studio_name", studioName,
+					"admin_email", adminEmail,
+				)
+			}
+		}()
+	}
+
 	return &CreateStudioResult{Studio: studio, AdminID: adminID}, nil, nil
 }
 
@@ -271,15 +310,20 @@ func (s *Service) asyncSyncKnowledgeChunks(studioID uuid.UUID, kbText string, kb
 			return
 		}
 
-		type rawChunk struct{ sourceType, sourceName, content string }
+		type rawChunk struct{ sourceType, sourceName, platform, content string }
 		var raw []rawChunk
 
+		// Main text always applies to every platform.
 		for _, content := range ChunkText(kbText, 800, 150) {
-			raw = append(raw, rawChunk{"text", "knowledge_base", content})
+			raw = append(raw, rawChunk{"text", "knowledge_base", "all", content})
 		}
 		for _, f := range kbFiles {
+			platform := f.Platform
+			if platform == "" {
+				platform = "all"
+			}
 			for _, content := range ChunkText(f.Text, 800, 150) {
-				raw = append(raw, rawChunk{"file", f.Name, content})
+				raw = append(raw, rawChunk{"file", f.Name, platform, content})
 			}
 		}
 
@@ -300,6 +344,7 @@ func (s *Service) asyncSyncKnowledgeChunks(studioID uuid.UUID, kbText string, kb
 			chunks = append(chunks, ChunkData{
 				SourceType: rc.sourceType,
 				SourceName: rc.sourceName,
+				Platform:   rc.platform,
 				Index:      i,
 				Content:    rc.content,
 				Embedding:  vec,
@@ -349,6 +394,17 @@ func generateSlug(name string) string {
 }
 
 var nonAlnum = regexp.MustCompile(`[^a-z0-9]+`)
+
+// splitName splits a full name string into first and last components.
+// If there is only one word it is used as firstName with lastName empty.
+func splitName(name string) (first, last string) {
+	name = strings.TrimSpace(name)
+	idx := strings.LastIndex(name, " ")
+	if idx < 0 {
+		return name, ""
+	}
+	return strings.TrimSpace(name[:idx]), strings.TrimSpace(name[idx+1:])
+}
 
 func isPgUnique(err error) bool {
 	type pgErr interface{ SQLState() string }
