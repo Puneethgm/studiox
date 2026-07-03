@@ -604,6 +604,44 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		}
 	}
 
+	// "Yes to trial" shortcut: when the bot's last outbound message offered a trial
+	// and the customer replies affirmatively, skip AI and send the payment link directly.
+	if lead != nil {
+		lowerMsg := strings.ToLower(strings.TrimSpace(msg.Body))
+		isAffirmative := lowerMsg == "yes" || lowerMsg == "yeah" || lowerMsg == "sure" ||
+			lowerMsg == "ok" || lowerMsg == "okay" || lowerMsg == "yep" || lowerMsg == "yup" ||
+			lowerMsg == "y" || strings.HasPrefix(lowerMsg, "yes ") || strings.HasPrefix(lowerMsg, "sure ")
+		if isAffirmative {
+			// Find the last outbound message in history
+			for i := len(history) - 1; i >= 0; i-- {
+				m := history[i]
+				if m.Direction == DirectionOutbound {
+					lastBot := strings.ToLower(m.Body)
+					offeredTrial := strings.Contains(lastBot, "trial") &&
+						(strings.Contains(lastBot, "would you like") ||
+							strings.Contains(lastBot, "book a trial") ||
+							strings.Contains(lastBot, "sign up for a trial") ||
+							strings.Contains(lastBot, "try") ||
+							strings.Contains(lastBot, "experience"))
+					if offeredTrial {
+						firstName := lead.FirstName
+						if firstName == "" {
+							firstName = lead.Name
+						}
+						if _, err := w.msgSvc.SendTrialPaymentLink(ctx, studioID, conv.ID, conv.LeadID, firstName); err != nil {
+							w.log.Error("yes-to-trial: failed to send payment link", "err", err, "conv", conv.ID)
+						} else {
+							w.bus.Publish(ctx, Event{Kind: EvtOutboundJobEnqueued, StudioID: studioID, ConversationID: conv.ID})
+							w.log.Info("yes-to-trial shortcut triggered", "conv", conv.ID)
+						}
+						return nil
+					}
+					break
+				}
+			}
+		}
+	}
+
 	// Generate AI response with context
 	prompt := w.buildPrompt(history, semanticHistory, conv, lead, studio, plans, sentiment, keywords, kbChunks, intent, kbConfident)
 

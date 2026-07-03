@@ -1399,67 +1399,8 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 		if isTrial && !isMember {
 			targetStage = "completed"
 			targetStatus = "trial_booked"
-
-			secretKey, trialAmountSGD, studioName, studioSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
-			if errStripe == nil && secretKey != "" {
-				var leadPhone, leadNameStr string
-				_ = tx.QueryRow(ctx, "SELECT phone, name FROM leads WHERE id = $1", *conv.LeadID).Scan(&leadPhone, &leadNameStr)
-
-				frontendURL := os.Getenv("FRONTEND_URL")
-				if frontendURL == "" {
-					frontendURL = "http://localhost:3000"
-				}
-
-				amount := int64(trialAmountSGD)
-				if amount == 0 {
-					amount = 2500 // default 25.00 SGD in cents
-				}
-
-				sc := &client.API{}
-				sc.Init(secretKey, nil)
-				params := &stripe.CheckoutSessionParams{
-					PaymentMethodTypes: stripe.StringSlice([]string{"card"}),
-					LineItems: []*stripe.CheckoutSessionLineItemParams{
-						{
-							PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{
-								Currency:   stripe.String("sgd"),
-								UnitAmount: stripe.Int64(amount),
-								ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
-									Name:        stripe.String(fmt.Sprintf("%s Trial Session", studioName)),
-									Description: stripe.String("Secure your trial workout session at " + studioName),
-								},
-							},
-							Quantity: stripe.Int64(1),
-						},
-					},
-					Mode:       stripe.String("payment"),
-					SuccessURL: stripe.String(fmt.Sprintf("%s/payment-success?studio=%s&session_id={CHECKOUT_SESSION_ID}", frontendURL, studioSlug)),
-					CancelURL:  stripe.String(fmt.Sprintf("%s/payment-cancelled?studio=%s", frontendURL, studioSlug)),
-					Metadata: map[string]string{
-						"customer_phone": leadPhone,
-						"customer_name":  leadNameStr,
-						"studio_id":      studioID.String(),
-					},
-				}
-				session, errSess := sc.CheckoutSessions.New(params)
-				if errSess == nil && session != nil && session.URL != "" {
-					tl := &TriggerLink{
-						StudioID: studioID,
-						Name:     fmt.Sprintf("Trial - %s", leadNameStr),
-						URL:      session.URL,
-					}
-					if errLink := s.repo.CreateTriggerLink(ctx, tl); errLink == nil {
-						shortURL := fmt.Sprintf("%s/api/v1/links/%s", frontendURL, tl.ID.String())
-						outboundBody = fmt.Sprintf("Hi %s! Great choice. Here's your secure trial booking link for %s:\n\n%s\n\nComplete your payment to confirm your spot. We look forward to seeing you!", firstName, studioName, shortURL)
-					} else {
-						outboundBody = fmt.Sprintf("Hi %s! Great choice. Here's your secure trial booking link for %s:\n\n%s\n\nWe look forward to seeing you!", firstName, studioName, session.URL)
-					}
-				} else {
-					outboundBody = fmt.Sprintf("Hi %s! Great choice. Our team will reach out to you within 24 hours to confirm your trial at %s. We look forward to seeing you!", firstName, studioName)
-				}
-			} else {
-				outboundBody = fmt.Sprintf("Hi %s! Great choice. Our team will reach out to you within 24 hours to schedule your trial. We look forward to seeing you!", firstName)
-			}
+			// SendTrialPaymentLink enqueues the outbound itself; capture body for notes.
+			outboundBody, _ = s.SendTrialPaymentLink(ctx, studioID, conv.ID, conv.LeadID, firstName)
 		} else if isMember && !isTrial {
 			plans, errPlans := s.repo.ListActivePlans(ctx, studioID)
 			if errPlans != nil || len(plans) == 0 {
@@ -1895,4 +1836,93 @@ func (s *Service) ConnectXChannel(ctx context.Context, studioID uuid.UUID, in Co
 		DisplayHandle: in.XHandle,
 		AccessToken:   string(accessTokenJSON),
 	})
+}
+
+// SendTrialPaymentLink creates a Stripe one-time checkout for a trial session,
+// shortens it via trigger_links, enqueues the outbound message, and returns the
+// message body. Called by both the automation flow and the AI worker.
+func (s *Service) SendTrialPaymentLink(ctx context.Context, studioID, convID uuid.UUID, leadID *uuid.UUID, firstName string) (string, error) {
+	secretKey, trialAmountSGD, studioName, studioSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
+	if errStripe != nil || secretKey == "" {
+		body := fmt.Sprintf("Hi %s! Great choice. Our team will reach out to you within 24 hours to schedule your trial. We look forward to seeing you!", firstName)
+		_, err := s.repo.EnqueueOutbound(ctx, OutboundJob{
+			StudioID: studioID, ConversationID: convID,
+			Body: body, SourceKind: SourceAI, SourceRef: "trial_link",
+			ScheduledFor: time.Now().UTC(),
+		})
+		return body, err
+	}
+
+	// Resolve amount: studio trial_amount_sgd → lowest active plan → 2500 fallback
+	amount := int64(trialAmountSGD)
+	if amount == 0 {
+		plans, _ := s.repo.ListActivePlans(ctx, studioID)
+		for _, p := range plans {
+			if amount == 0 || int64(p.PriceSGD) < amount {
+				amount = int64(p.PriceSGD)
+			}
+		}
+	}
+	if amount == 0 {
+		amount = 2500
+	}
+
+	var leadPhone, leadName string
+	if leadID != nil {
+		_ = s.repo.pool.QueryRow(ctx, "SELECT phone, name FROM leads WHERE id = $1", *leadID).Scan(&leadPhone, &leadName)
+	}
+
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "http://localhost:3000"
+	}
+
+	sc := &client.API{}
+	sc.Init(secretKey, nil)
+	params := &stripe.CheckoutSessionParams{
+		PaymentMethodTypes: stripe.StringSlice([]string{"card"}),
+		LineItems: []*stripe.CheckoutSessionLineItemParams{
+			{
+				PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{
+					Currency:   stripe.String("sgd"),
+					UnitAmount: stripe.Int64(amount),
+					ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
+						Name:        stripe.String(fmt.Sprintf("%s Trial Session", studioName)),
+						Description: stripe.String("Secure your trial workout session at " + studioName),
+					},
+				},
+				Quantity: stripe.Int64(1),
+			},
+		},
+		Mode:       stripe.String("payment"),
+		SuccessURL: stripe.String(fmt.Sprintf("%s/payment-success?studio=%s&session_id={CHECKOUT_SESSION_ID}", frontendURL, studioSlug)),
+		CancelURL:  stripe.String(fmt.Sprintf("%s/payment-cancelled?studio=%s", frontendURL, studioSlug)),
+		Metadata: map[string]string{
+			"customer_phone": leadPhone,
+			"customer_name":  leadName,
+			"studio_id":      studioID.String(),
+		},
+	}
+
+	session, errSess := sc.CheckoutSessions.New(params)
+
+	var body string
+	if errSess == nil && session != nil && session.URL != "" {
+		tl := &TriggerLink{StudioID: studioID, Name: fmt.Sprintf("Trial - %s", leadName), URL: session.URL}
+		if errLink := s.repo.CreateTriggerLink(ctx, tl); errLink == nil {
+			shortURL := fmt.Sprintf("%s/api/v1/links/%s", frontendURL, tl.ID.String())
+			body = fmt.Sprintf("Hi %s! Great choice. Here's your secure trial booking link for %s:\n\n%s\n\nComplete your payment to confirm your spot. We look forward to seeing you!", firstName, studioName, shortURL)
+		} else {
+			body = fmt.Sprintf("Hi %s! Great choice. Here's your secure trial booking link for %s:\n\n%s\n\nWe look forward to seeing you!", firstName, studioName, session.URL)
+		}
+	} else {
+		body = fmt.Sprintf("Hi %s! Great choice. Our team will reach out to you within 24 hours to confirm your trial at %s. We look forward to seeing you!", firstName, studioName)
+	}
+
+	_, err := s.repo.EnqueueOutbound(ctx, OutboundJob{
+		StudioID: studioID, ConversationID: convID,
+		Body: body, SourceKind: SourceAI, SourceRef: "trial_link",
+		ScheduledFor: time.Now().UTC(),
+	})
+	return body, err
 }
