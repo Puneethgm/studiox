@@ -236,10 +236,11 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
       />
 
       <div className="lg:flex lg:h-screen lg:gap-4 lg:p-4">
-        <Sidebar 
-          me={me} 
-          mobileOpen={mobileOpen} 
-          onClose={() => setMobileOpen(false)} 
+        <Sidebar
+          me={me}
+          pathname={pathname}
+          mobileOpen={mobileOpen}
+          onClose={() => setMobileOpen(false)}
           isCollapsed={isCollapsed}
           onToggle={handleToggleSidebar}
         />
@@ -287,18 +288,19 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
 
 function Sidebar({
   me,
+  pathname,
   mobileOpen,
   onClose,
   isCollapsed,
   onToggle,
 }: {
   me: Me;
+  pathname: string;
   mobileOpen: boolean;
   onClose: () => void;
   isCollapsed: boolean;
   onToggle: () => void;
 }) {
-  const pathname = usePathname();
   const items = navItemsFor(me, pathname);
   const isStudio = me.role === 'studio_admin' && !!me.studio;
   const studio = isStudio ? me.studio! : null;
@@ -338,7 +340,7 @@ function Sidebar({
       {/* Brand block */}
       {isStudio ? (
         <div className={cn(
-          "mb-10 flex animate-in items-center gap-3 lg:transition-all lg:duration-300",
+          "mb-4 lg:mb-6 flex animate-in items-center gap-3 lg:transition-all lg:duration-300 shrink-0",
           isCollapsed ? "lg:flex-col lg:gap-1" : "lg:flex-row lg:gap-3"
         )} style={{ animationDelay: '100ms' }}>
           <div
@@ -366,7 +368,7 @@ function Sidebar({
         </div>
       ) : (
         <div className={cn(
-          "mb-10 flex animate-in items-center gap-3 lg:transition-all lg:duration-300",
+          "mb-4 lg:mb-6 flex animate-in items-center gap-3 lg:transition-all lg:duration-300 shrink-0",
           isCollapsed ? "lg:flex-col lg:gap-1" : "lg:flex-row lg:gap-3"
         )} style={{ animationDelay: '100ms' }}>
           <img src="/logo.png" alt="1herosocial.ai Logo" className="h-12 w-12 shrink-0 animate-float object-contain rounded-2xl shadow-lg shadow-brand-500/20 ring-4 ring-white/30" />
@@ -384,7 +386,8 @@ function Sidebar({
 
       {/* Nav */}
       <nav className={cn(
-        "flex flex-1 flex-col gap-3 overflow-y-auto no-scrollbar lg:w-full",
+        "flex flex-1 flex-col gap-1 overflow-y-auto lg:w-full",
+        "scrollbar-thin scrollbar-thumb-zinc-200 scrollbar-track-transparent dark:scrollbar-thumb-zinc-700",
         isCollapsed ? "lg:items-center" : "lg:items-stretch"
       )}>
         {isSuperAdminInStudio && (
@@ -410,7 +413,7 @@ function Sidebar({
               key={item.href}
               href={item.href}
               className={cn(
-                'group flex animate-in items-center gap-3 rounded-[20px] px-3 py-3 text-sm font-semibold transition-colors duration-300 lg:transition-[background-color,color,box-shadow,padding,transform] lg:duration-300',
+                'group flex animate-in items-center gap-3 rounded-[20px] px-3 py-2.5 text-sm font-semibold transition-colors duration-300 lg:transition-[background-color,color,box-shadow,padding,transform] lg:duration-300',
                 active
                   ? 'text-white shadow-lg'
                   : 'text-zinc-500 hover:bg-white/50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-white/5 dark:hover:text-zinc-100',
@@ -435,25 +438,6 @@ function Sidebar({
         })}
       </nav>
 
-      {/* Footer hint */}
-      <div className={cn(
-        "mt-6 mb-4 animate-in rounded-3xl border text-xs backdrop-blur-md lg:block lg:transition-all lg:duration-300",
-        isCollapsed ? "lg:max-h-0 lg:overflow-hidden lg:p-0 lg:opacity-0" : "lg:max-h-40 lg:p-4 lg:opacity-100"
-      )} style={{ 
-        animationDelay: '500ms',
-        background: `linear-gradient(135deg, var(--brand-soft, rgba(124, 58, 237, 0.05)) 0%, rgba(255, 255, 255, 0.1) 100%)`,
-        borderColor: `var(--brand-softer, rgba(124, 58, 237, 0.1))`
-      }}>
-        <div className="flex items-center gap-2 font-black text-zinc-800 dark:text-zinc-200">
-          <Sparkles className="h-3.5 w-3.5 text-brand-500" style={{ color: `var(--brand)` }} />
-          Tip
-        </div>
-        <p className="mt-1.5 leading-relaxed font-semibold text-zinc-600 dark:text-zinc-400">
-          {isStudio
-            ? 'Drop your campaign link in your Instagram bio to start collecting leads.'
-            : 'Studios sign in at the same /login URL — their account routes them to their own dashboard.'}
-        </p>
-      </div>
 
       {/* Sidebar Footer Controls */}
       <div className="mt-auto flex items-center justify-center w-full pt-4 border-t border-white/20 dark:border-white/5 shrink-0">

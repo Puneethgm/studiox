@@ -300,6 +300,9 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 				Kind:     EvtOutboundJobEnqueued,
 				StudioID: studioID,
 			})
+			// Greeting is the only reply for a brand-new conversation.
+			// Stop here — don't also fire the decision tree or AI.
+			return nil
 		}
 	}
 

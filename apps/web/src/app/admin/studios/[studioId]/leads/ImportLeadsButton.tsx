@@ -140,18 +140,25 @@ export function ImportLeadsButton({ studioId, campaigns }: ImportLeadsButtonProp
               </div>
               <div>
                 <Label htmlFor="campaign-select">Default Campaign</Label>
-                <select
-                  id="campaign-select"
-                  value={campaignId}
-                  onChange={(e) => setCampaignId(e.target.value)}
-                  className="mt-1.5 w-full rounded-2xl border border-zinc-200 bg-white/50 px-4 py-3 text-sm focus:border-brand-500 focus:outline-none dark:border-zinc-800 dark:bg-zinc-950/50"
-                >
-                  {campaigns.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
+                {campaigns.length === 0 ? (
+                  <div className="mt-1.5 flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-700 dark:border-amber-800/50 dark:bg-amber-900/20 dark:text-amber-400">
+                    No campaigns found. Please create a campaign first before importing leads.
+                  </div>
+                ) : (
+                  <select
+                    id="campaign-select"
+                    value={campaignId}
+                    onChange={(e) => setCampaignId(e.target.value)}
+                    className="mt-1.5 w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm font-semibold text-zinc-800 focus:border-brand-500 focus:outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                  >
+                    <option value="">— Select a campaign —</option>
+                    {campaigns.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 <p className="mt-1 text-[11px] text-zinc-400">
                   Leads will be assigned to this campaign if not specified in the file.
                 </p>
