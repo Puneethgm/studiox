@@ -22,13 +22,15 @@ const (
 	EvtMessageSent         EventKind = "message.sent"     // outbound delivered to channel
 	EvtConversationUpdated EventKind = "conversation.updated"
 	EvtOutboundJobEnqueued EventKind = "outbound_job.enqueued"
+	EvtWAWebBackfillDone   EventKind = "wa_web_backfill.done" // chat history import finished for a studio
 )
 
 type Event struct {
-	Kind           EventKind  `json:"kind"`
-	StudioID       uuid.UUID  `json:"studioId"`
-	ConversationID uuid.UUID  `json:"conversationId"`
-	MessageID      *uuid.UUID `json:"messageId,omitempty"`
+	Kind             EventKind  `json:"kind"`
+	StudioID         uuid.UUID  `json:"studioId"`
+	ConversationID   uuid.UUID  `json:"conversationId"`
+	MessageID        *uuid.UUID `json:"messageId,omitempty"`
+	ChannelAccountID *uuid.UUID `json:"channelAccountId,omitempty"` // set on EvtWAWebBackfillDone
 }
 
 func (e Event) JSON() string {

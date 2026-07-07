@@ -7,7 +7,14 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { FieldError, FieldHint, Label } from '@/components/ui/Label';
 import type { Studio } from '@/lib/types';
-import { changeMyPassword, updateStudioSettings, getSheetsSettings, saveSheetsSettings } from './actions';
+import {
+  changeMyPassword,
+  updateStudioSettings,
+  getSheetsSettings,
+  saveSheetsSettings,
+  getExternalLeadsSheetSettings,
+  saveExternalLeadsSheetSettings,
+} from './actions';
 import { AvailabilitySettings } from './AvailabilitySettings';
 import { PlansManagement } from './PlansManagement';
 
@@ -98,6 +105,21 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
   const [sheetsActive, setSheetsActive] = useState(false);
   const [sheetsSaving, setSheetsSaving] = useState(false);
   const [sheetsError, setSheetsError] = useState<string | null>(null);
+
+  // External (third-party company) leads sheet — read-only polling, separate
+  // from the Google Sheets Sync export above.
+  const [extSpreadsheetId, setExtSpreadsheetId] = useState('');
+  const [extTabName, setExtTabName] = useState('Sheet1');
+  const [extNameColumn, setExtNameColumn] = useState('');
+  const [extFirstNameColumn, setExtFirstNameColumn] = useState('A');
+  const [extLastNameColumn, setExtLastNameColumn] = useState('B');
+  const [extEmailColumn, setExtEmailColumn] = useState('C');
+  const [extPhoneColumn, setExtPhoneColumn] = useState('D');
+  const [extSourceColumn, setExtSourceColumn] = useState('');
+  const [extNotesColumn, setExtNotesColumn] = useState('');
+  const [extActive, setExtActive] = useState(false);
+  const [extSaving, setExtSaving] = useState(false);
+  const [extError, setExtError] = useState<string | null>(null);
   const [metaSaving, setMetaSaving] = useState(false);
   const [geminiSaving, setGeminiSaving] = useState(false);
   const [groqSaving, setGroqSaving] = useState(false);
@@ -122,7 +144,51 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
         setSheetsActive(res.data.active || false);
       }
     })();
+    void (async () => {
+      const res = await getExternalLeadsSheetSettings(studio.id);
+      if (res.ok && res.data) {
+        setExtSpreadsheetId(res.data.spreadsheetId || '');
+        setExtTabName(res.data.tabName || 'Sheet1');
+        setExtNameColumn(res.data.nameColumn || '');
+        setExtFirstNameColumn(res.data.firstNameColumn || 'A');
+        setExtLastNameColumn(res.data.lastNameColumn || 'B');
+        setExtEmailColumn(res.data.emailColumn || 'C');
+        setExtPhoneColumn(res.data.phoneColumn || 'D');
+        setExtSourceColumn(res.data.sourceColumn || '');
+        setExtNotesColumn(res.data.notesColumn || '');
+        setExtActive(res.data.active || false);
+      }
+    })();
   }, [studio.id]);
+
+  async function onSaveExternalLeadsSheetSettings(e: React.FormEvent) {
+    e.preventDefault();
+    setExtError(null);
+    setExtSaving(true);
+    try {
+      const res = await saveExternalLeadsSheetSettings(studio.id, {
+        spreadsheetId: extSpreadsheetId,
+        tabName: extTabName,
+        nameColumn: extNameColumn,
+        firstNameColumn: extFirstNameColumn,
+        lastNameColumn: extLastNameColumn,
+        emailColumn: extEmailColumn,
+        phoneColumn: extPhoneColumn,
+        sourceColumn: extSourceColumn,
+        notesColumn: extNotesColumn,
+        active: extActive,
+      });
+      if (res.ok) {
+        showToast('External leads sheet connection saved successfully.');
+      } else {
+        setExtError(res.error || 'Failed to save settings.');
+      }
+    } catch (err: any) {
+      setExtError(err.message || 'An error occurred.');
+    } finally {
+      setExtSaving(false);
+    }
+  }
 
   async function onSaveSheetsSettings(e: React.FormEvent) {
     e.preventDefault();
@@ -847,6 +913,139 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                   <Button 
                     type="submit" 
                     loading={sheetsSaving}
+                    className="bg-gradient-to-r from-brand-500 to-violet-600 hover:from-brand-600 hover:to-violet-700 text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-500/25 rounded-xl h-10 px-6"
+                  >
+                    Save Connection
+                  </Button>
+                </div>
+              </form>
+            </div>
+
+            {/* External Leads Sheet Card — read-only import from a third-party company's sheet */}
+            <div className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30">
+              <div className="border-b border-white/20 px-6 py-4 dark:border-white/5 flex items-center gap-2">
+                <Database className="h-4 w-4 text-brand-500" />
+                <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">External Leads Sheet (Import)</h3>
+              </div>
+              <form onSubmit={onSaveExternalLeadsSheetSettings} className="space-y-4 p-6">
+                <p className="text-[10px] text-zinc-400">
+                  Poll a read-only Google Sheet owned by an external company for new lead rows.
+                  Share the sheet with our service account as <strong>Viewer</strong> — we never write to it.
+                  New rows are imported as leads and automatically trigger the WhatsApp automation.
+                </p>
+
+                <div>
+                  <Label htmlFor="extSpreadsheetId">Spreadsheet ID</Label>
+                  <Input
+                    id="extSpreadsheetId"
+                    placeholder="1aBc...Xyz"
+                    value={extSpreadsheetId}
+                    onChange={(e) => setExtSpreadsheetId(e.target.value)}
+                  />
+                  <FieldHint>The ID of the external company&apos;s Google Sheet (from its URL)</FieldHint>
+                </div>
+
+                <div>
+                  <Label htmlFor="extTabName">Tab Name</Label>
+                  <Input
+                    id="extTabName"
+                    placeholder="Sheet1"
+                    value={extTabName}
+                    onChange={(e) => setExtTabName(e.target.value)}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+                  <div>
+                    <Label htmlFor="extFirstNameColumn">First Name Col</Label>
+                    <Input
+                      id="extFirstNameColumn"
+                      placeholder="A"
+                      value={extFirstNameColumn}
+                      onChange={(e) => setExtFirstNameColumn(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="extLastNameColumn">Last Name Col</Label>
+                    <Input
+                      id="extLastNameColumn"
+                      placeholder="B"
+                      value={extLastNameColumn}
+                      onChange={(e) => setExtLastNameColumn(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="extNameColumn">Full Name Col</Label>
+                    <Input
+                      id="extNameColumn"
+                      placeholder="(optional)"
+                      value={extNameColumn}
+                      onChange={(e) => setExtNameColumn(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="extEmailColumn">Email Col</Label>
+                    <Input
+                      id="extEmailColumn"
+                      placeholder="C"
+                      value={extEmailColumn}
+                      onChange={(e) => setExtEmailColumn(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="extPhoneColumn">Phone Col</Label>
+                    <Input
+                      id="extPhoneColumn"
+                      placeholder="D"
+                      value={extPhoneColumn}
+                      onChange={(e) => setExtPhoneColumn(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="extSourceColumn">Source Col</Label>
+                    <Input
+                      id="extSourceColumn"
+                      placeholder="(optional)"
+                      value={extSourceColumn}
+                      onChange={(e) => setExtSourceColumn(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="extNotesColumn">Notes Col</Label>
+                    <Input
+                      id="extNotesColumn"
+                      placeholder="(optional)"
+                      value={extNotesColumn}
+                      onChange={(e) => setExtNotesColumn(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <FieldHint>
+                  Use the full name column if the sheet has one combined column instead of separate first/last name columns.
+                </FieldHint>
+
+                <div className="flex items-center gap-3 p-3 rounded-2xl border border-white/10 bg-white/10 dark:bg-neutral-800/10">
+                  <input
+                    type="checkbox"
+                    id="extActive"
+                    checked={extActive}
+                    onChange={(e) => setExtActive(e.target.checked)}
+                    className="h-4 w-4 rounded border-white/20 text-brand-500 focus:ring-brand-500 bg-white/10 cursor-pointer"
+                  />
+                  <div>
+                    <Label htmlFor="extActive" className="mb-0 cursor-pointer text-xs font-black uppercase tracking-wider">Enable External Sheet Import</Label>
+                    <p className="text-[10px] text-zinc-400">Automatically poll this sheet every few minutes and import new leads.</p>
+                  </div>
+                </div>
+
+                {extError ? (
+                  <p className="text-xs font-black text-rose-500 uppercase tracking-wider">{extError}</p>
+                ) : null}
+
+                <div className="flex items-center justify-end border-t border-white/10 pt-4">
+                  <Button
+                    type="submit"
+                    loading={extSaving}
                     className="bg-gradient-to-r from-brand-500 to-violet-600 hover:from-brand-600 hover:to-violet-700 text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-500/25 rounded-xl h-10 px-6"
                   >
                     Save Connection

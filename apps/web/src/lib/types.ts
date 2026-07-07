@@ -131,6 +131,7 @@ export interface Lead {
   monthlyFee: number;
   offer: string;
   furtherNotes: string;
+  dndEnabled: boolean;
   createdAt: string;
   updatedAt: string;
 }

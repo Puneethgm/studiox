@@ -62,6 +62,35 @@ func (h *Handler) waWebStatus(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("%s/sessions/%s/status", waWebServiceURL(), studioID))
 }
 
+// waWebBackfillTrigger kicks off a one-time chat-history import for a
+// QR-linked session. Fire-and-forget from the admin's perspective — progress
+// is polled via waWebBackfillStatus.
+func (h *Handler) waWebBackfillTrigger(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	if err := h.svc.repo.SetWAWebBackfillStatus(r.Context(), studioID, "running", 0); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	proxyToWAWeb(w, r.Context(), http.MethodPost,
+		fmt.Sprintf("%s/sessions/%s/backfill", waWebServiceURL(), studioID))
+}
+
+func (h *Handler) waWebBackfillStatus(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	status, count, err := h.svc.repo.GetWAWebBackfillStatus(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"status": status, "messageCount": count})
+}
+
 func proxyToWAWeb(w http.ResponseWriter, ctx context.Context, method, url string) {
 	req, err := http.NewRequestWithContext(ctx, method, url, nil)
 	if err != nil {
@@ -152,6 +181,92 @@ func (h *Handler) waWebInbound(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// waWebBackfill receives a batch of historical messages for one chat, imported
+// by the wa-web Node service after a QR-linked session connects. Called
+// repeatedly, once per chat (or in chat-sized pages), not all-at-once.
+func (h *Handler) waWebBackfill(w http.ResponseWriter, r *http.Request) {
+	var p struct {
+		StudioID string `json:"studioId"`
+		Messages []struct {
+			From      string `json:"from"`
+			Text      string `json:"text"`
+			MessageID string `json:"messageId"`
+			Timestamp int64  `json:"timestamp"`
+			FromMe    bool   `json:"fromMe"`
+		} `json:"messages"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_json", err.Error())
+		return
+	}
+	studioID, err := uuid.Parse(p.StudioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid studioId")
+		return
+	}
+	msgs := make([]BackfillMessage, 0, len(p.Messages))
+	for _, m := range p.Messages {
+		if m.Text == "" {
+			continue // skip media/empty messages — text-only for now
+		}
+		msgs = append(msgs, BackfillMessage{
+			From:      m.From,
+			Text:      m.Text,
+			MessageID: m.MessageID,
+			Timestamp: m.Timestamp,
+			FromMe:    m.FromMe,
+		})
+	}
+	imported, err := h.svc.HandleInboundWAWebBackfill(r.Context(), studioID, msgs)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true, "imported": imported})
+}
+
+// waWebBackfillDone lets the Node service report that it has finished walking
+// every chat, so the admin UI can stop showing "running".
+func (h *Handler) waWebBackfillDone(w http.ResponseWriter, r *http.Request) {
+	var p struct {
+		StudioID     string `json:"studioId"`
+		MessageCount int    `json:"messageCount"`
+		Failed       bool   `json:"failed"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_json", err.Error())
+		return
+	}
+	studioID, err := uuid.Parse(p.StudioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid studioId")
+		return
+	}
+	status := "done"
+	if p.Failed {
+		status = "failed"
+	}
+	if err := h.svc.repo.SetWAWebBackfillStatus(r.Context(), studioID, status, p.MessageCount); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+
+	// Kick off post-backfill AI summarization of imported conversations, but
+	// only on a genuine success — a failed/partial import shouldn't spend LLM
+	// calls summarizing incomplete history.
+	if status == "done" {
+		if channel, err := h.svc.repo.GetActiveChannelByKind(r.Context(), studioID, KindWhatsAppWeb); err == nil && channel != nil {
+			h.bus.Publish(r.Context(), Event{
+				Kind:             EvtWAWebBackfillDone,
+				StudioID:         studioID,
+				ChannelAccountID: &channel.ID,
+			})
+		}
+	}
+
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

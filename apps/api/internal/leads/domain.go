@@ -44,30 +44,31 @@ func (s LeadStatus) Valid() bool {
 }
 
 type Lead struct {
-	ID              uuid.UUID  `json:"id"`
-	StudioID        uuid.UUID  `json:"studioId"`
-	StudioName      string     `json:"studioName,omitempty"`
-	StudioSlug      string     `json:"studioSlug,omitempty"`
-	CampaignID      uuid.UUID  `json:"campaignId"`
-	CampaignName    string     `json:"campaignName,omitempty"`
-	CampaignSlug    string     `json:"campaignSlug,omitempty"`
-	Name            string     `json:"name"`
-	FirstName       string     `json:"firstName"`
-	LastName        string     `json:"lastName"`
-	Email           string     `json:"email"`
-	Phone           string     `json:"phone"`
-	FitnessPlan     string     `json:"fitnessPlan"`
-	Goals           string     `json:"goals"`
-	Source          string     `json:"source"`
-	Status          LeadStatus `json:"status"`
-	Currency        string     `json:"currency"`
-	Notes           string     `json:"notes"`
-	ContactAttempts int        `json:"contactAttempts"`
-	LastContactedAt *time.Time `json:"lastContactedAt,omitempty"`
-	ContactMade     bool       `json:"contactMade"`
-	HotLead         bool       `json:"hotLead"`
-	TrialPurchased  bool       `json:"trialPurchased"`
+	ID               uuid.UUID  `json:"id"`
+	StudioID         uuid.UUID  `json:"studioId"`
+	StudioName       string     `json:"studioName,omitempty"`
+	StudioSlug       string     `json:"studioSlug,omitempty"`
+	CampaignID       uuid.UUID  `json:"campaignId"`
+	CampaignName     string     `json:"campaignName,omitempty"`
+	CampaignSlug     string     `json:"campaignSlug,omitempty"`
+	Name             string     `json:"name"`
+	FirstName        string     `json:"firstName"`
+	LastName         string     `json:"lastName"`
+	Email            string     `json:"email"`
+	Phone            string     `json:"phone"`
+	FitnessPlan      string     `json:"fitnessPlan"`
+	Goals            string     `json:"goals"`
+	Source           string     `json:"source"`
+	Status           LeadStatus `json:"status"`
+	Currency         string     `json:"currency"`
+	Notes            string     `json:"notes"`
+	ContactAttempts  int        `json:"contactAttempts"`
+	LastContactedAt  *time.Time `json:"lastContactedAt,omitempty"`
+	ContactMade      bool       `json:"contactMade"`
+	HotLead          bool       `json:"hotLead"`
+	TrialPurchased   bool       `json:"trialPurchased"`
 	AutoContactStage string     `json:"autoContactStage"`
+	DNDEnabled       bool       `json:"dndEnabled"`
 	AssignedTo       string     `json:"assignedTo"`
 	TrialAttended    bool       `json:"trialAttended"`
 	MemberSold       bool       `json:"memberSold"`
@@ -89,6 +90,27 @@ type StudioSheetsSettings struct {
 	Active        bool      `json:"active"`
 	CreatedAt     time.Time `json:"createdAt"`
 	UpdatedAt     time.Time `json:"updatedAt"`
+}
+
+// ExternalLeadsSheetSettings configures read-only polling of a third-party
+// company's Google Sheet for new leads. Unlike StudioSheetsSettings (which is
+// our own export destination), we never write to this sheet — column letters
+// are configurable since we don't control its layout.
+type ExternalLeadsSheetSettings struct {
+	ID              uuid.UUID `json:"id"`
+	StudioID        uuid.UUID `json:"studioId"`
+	SpreadsheetID   string    `json:"spreadsheetId"`
+	TabName         string    `json:"tabName"`
+	NameColumn      string    `json:"nameColumn"`
+	FirstNameColumn string    `json:"firstNameColumn"`
+	LastNameColumn  string    `json:"lastNameColumn"`
+	EmailColumn     string    `json:"emailColumn"`
+	PhoneColumn     string    `json:"phoneColumn"`
+	SourceColumn    string    `json:"sourceColumn"`
+	NotesColumn     string    `json:"notesColumn"`
+	Active          bool      `json:"active"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
 var (
@@ -132,4 +154,3 @@ type PlatformAnalytics struct {
 	ConvertedLeads int     `json:"convertedLeads"`
 	ConversionRate float64 `json:"conversionRate"`
 }
-

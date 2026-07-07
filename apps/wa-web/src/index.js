@@ -89,11 +89,24 @@ app.post('/sessions/:studioId/prewarm', async (req, res) => {
   res.json({ ok: true });
 });
 
+// POST /sessions/:studioId/backfill — one-time chat-history import, kicked
+// off from the admin UI. Runs in the background; progress/completion is
+// reported to the Go API as it goes (see SessionManager.backfillHistory).
+app.post('/sessions/:studioId/backfill', async (req, res) => {
+  const { studioId } = req.params;
+  sessions.backfillHistory(studioId).catch(err => log.error({ err, studioId }, 'backfill failed'));
+  res.json({ ok: true, status: 'running' });
+});
+
 app.listen(PORT, () => {
   log.info({ port: PORT }, 'wa-web service started');
   // Pre-warm Chrome for all studios that have a whatsapp_web channel.
   // This runs in background — service is immediately ready to handle requests.
   prewarmAll();
+  // Backstop so channel_accounts.status can't permanently drift out of sync
+  // with the real session state if a connect/disconnect notification was
+  // ever missed (e.g. the Go API was briefly down).
+  sessions.startStatusReconciliation();
 });
 
 async function prewarmAll() {

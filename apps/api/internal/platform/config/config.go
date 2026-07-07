@@ -66,10 +66,10 @@ type GroqConfig struct {
 }
 
 type S3Config struct {
-	Region       string
-	AccessKeyID  string
-	SecretKey    string
-	Bucket       string
+	Region        string
+	AccessKeyID   string
+	SecretKey     string
+	Bucket        string
 	PublicURLBase string
 }
 

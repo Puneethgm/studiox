@@ -24,6 +24,7 @@ import (
 	"github.com/projectx/api/internal/integrations/glofox/firstsession"
 	"github.com/projectx/api/internal/integrations/google"
 	"github.com/projectx/api/internal/integrations/sheets"
+	"github.com/projectx/api/internal/integrations/sheets/inbound"
 	"github.com/projectx/api/internal/leads"
 	"github.com/projectx/api/internal/messaging"
 	"github.com/projectx/api/internal/messaging/channels"
@@ -140,11 +141,21 @@ func main() {
 	sheetsWorker := sheets.NewWorker(leadsRepo, sheetsClient, cfg.Sheets.CredentialsPath, log.With("component", "sheets_worker"))
 	go sheetsWorker.Run(rootCtx)
 
+	// External leads sheet worker: polls each studio's configured, read-only
+	// third-party company Google Sheet for new rows and imports them as
+	// leads, which automatically enqueues the WhatsApp autocontact automation.
+	externalLeadsWorker := inbound.New(sheetsClient, leadsRepo, log.With("component", "external_leads_sheet"))
+	go externalLeadsWorker.Run(rootCtx)
+
 	// --- messaging (channels + inbox) ---
 	msgRepo := messaging.NewRepo(pool, cipher)
 	msgBus := messaging.NewInProcBus()
 	msgSvc := messaging.NewService(msgRepo, msgBus, cfg.PublicFormBaseURL)
 	msgHandler := messaging.NewHandler(msgSvc, msgBus)
+
+	// Wire DND job-cancellation callback into leads, keeping the import
+	// direction one-way (leads doesn't import messaging).
+	leadsSvc.SetCancelPendingMessagesFunc(msgRepo.CancelPendingJobsForLead)
 
 	whatsappClient := channels.NewMetaWhatsApp(cfg.Meta.GraphAPIVersion)
 	messengerClient := channels.NewMetaMessenger(cfg.Meta.GraphAPIVersion)

@@ -209,6 +209,21 @@ func (c *Client) AppendLead(ctx context.Context, spreadsheetID, tab string, payl
 	return nil
 }
 
+// ReadRows returns every data row (starting after the header) in the given
+// tab, as raw cell values. Row 0 in the result corresponds to sheet row 2.
+// Reads through column Z to comfortably cover both our own sheets and
+// externally-owned sheets with a handful of extra columns.
+func (c *Client) ReadRows(ctx context.Context, spreadsheetID, tab string) ([][]any, error) {
+	if tab == "" {
+		tab = "Leads"
+	}
+	resp, err := c.svc.Spreadsheets.Values.Get(spreadsheetID, tab+"!A2:Z").Context(ctx).Do()
+	if err != nil {
+		return nil, fmt.Errorf("read rows from %s: %w", tab, err)
+	}
+	return resp.Values, nil
+}
+
 func (c *Client) ensureTabExists(ctx context.Context, spreadsheetID, tabName string) (string, error) {
 	spreadsheet, err := c.svc.Spreadsheets.Get(spreadsheetID).Context(ctx).Do()
 	if err != nil {

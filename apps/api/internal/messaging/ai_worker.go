@@ -121,16 +121,153 @@ func (w *AIWorker) listenStudio(ctx context.Context, studioID uuid.UUID, ch <-ch
 			if !ok {
 				return
 			}
-			if evt.Kind != EvtMessageReceived || evt.MessageID == nil {
-				continue
-			}
-			go func(msgID uuid.UUID) {
-				if err := w.handleMessage(ctx, studioID, msgID); err != nil {
-					w.log.Error("ai handle message", "err", err)
+			switch evt.Kind {
+			case EvtMessageReceived:
+				if evt.MessageID == nil {
+					continue
 				}
-			}(*evt.MessageID)
+				go func(msgID uuid.UUID) {
+					if err := w.handleMessage(ctx, studioID, msgID); err != nil {
+						w.log.Error("ai handle message", "err", err)
+					}
+				}(*evt.MessageID)
+			case EvtWAWebBackfillDone:
+				if evt.ChannelAccountID == nil {
+					continue
+				}
+				go func(channelAccountID uuid.UUID) {
+					if err := w.summarizeConversationsAfterBackfill(ctx, studioID, channelAccountID); err != nil {
+						w.log.Error("ai summarize conversations after backfill", "err", err)
+					}
+				}(*evt.ChannelAccountID)
+			}
 		}
 	}
+}
+
+// summarizeConversationsAfterBackfill generates and stores a short internal
+// AI summary of each conversation's recent history for a studio's
+// whatsapp_web channel, right after a chat-history import completes. The
+// summary is never shown to the admin — it's folded into buildPrompt as
+// extra context so the first live reply after connecting isn't blind to
+// everything that was discussed before.
+func (w *AIWorker) summarizeConversationsAfterBackfill(ctx context.Context, studioID, channelAccountID uuid.UUID) error {
+	convIDs, err := w.msgRepo.ListConversationIDsByChannel(ctx, studioID, channelAccountID)
+	if err != nil {
+		return fmt.Errorf("list conversations for summarization: %w", err)
+	}
+	if len(convIDs) == 0 {
+		return nil
+	}
+
+	studio, err := w.studiosRepo.GetByID(ctx, studioID)
+	if err != nil {
+		return fmt.Errorf("load studio for summarization: %w", err)
+	}
+
+	w.log.Info("ai: summarizing conversations after wa-web backfill", "studio_id", studioID, "conversations", len(convIDs))
+	for _, convID := range convIDs {
+		if err := w.summarizeConversation(ctx, studioID, convID, studio); err != nil {
+			w.log.Warn("ai: summarize conversation failed, continuing", "studio_id", studioID, "conversation_id", convID, "err", err)
+		}
+	}
+	return nil
+}
+
+// summarizeConversation fetches the last 10 messages of a conversation and
+// asks the same LLM waterfall used for replies to produce a 2-3 sentence
+// summary, stored for later use as AI reply context. No-ops (with a log
+// line, matching the reply-generation silent-failure pattern) if no LLM
+// provider is configured for the studio.
+func (w *AIWorker) summarizeConversation(ctx context.Context, studioID, convID uuid.UUID, studio *studios.Studio) error {
+	history, err := w.msgRepo.ListMessages(ctx, studioID, convID, 10)
+	if err != nil {
+		return fmt.Errorf("fetch message history: %w", err)
+	}
+	if len(history) == 0 {
+		return nil
+	}
+
+	var b strings.Builder
+	b.WriteString("Summarize this WhatsApp conversation history in 2-3 short sentences, focused on what the customer wants and where things were left off. Be concise and factual — no greeting, no filler.\n\n")
+	for _, m := range history {
+		speaker := "Customer"
+		if m.Direction == DirectionOutbound {
+			speaker = "Studio"
+		}
+		fmt.Fprintf(&b, "%s: %s\n", speaker, m.Body)
+	}
+	prompt := b.String()
+
+	summary, sourceRef := w.runSummaryWaterfall(ctx, studioID, studio, prompt)
+	if summary == "" {
+		w.log.Warn("ai: skipping conversation summary, all providers failed or not configured", "studio_id", studioID, "conversation_id", convID)
+		return nil
+	}
+	w.log.Info("ai: conversation summarized", "studio_id", studioID, "conversation_id", convID, "source", sourceRef)
+	return w.msgRepo.SetConversationAISummary(ctx, studioID, convID, strings.TrimSpace(summary))
+}
+
+// runSummaryWaterfall mirrors the reply-generation waterfall in handleMessage
+// (Groq 8B -> Groq 70B -> Gemini -> Claude) but is factored out standalone
+// since summarization has no Message/decision-tree/KB context to gather.
+func (w *AIWorker) runSummaryWaterfall(ctx context.Context, studioID uuid.UUID, studio *studios.Studio, prompt string) (text string, sourceRef string) {
+	groqKey := studio.GroqAPIKey
+	if groqKey == "" {
+		if pk, e := w.studiosRepo.GetPlatformSetting(ctx, "groq_api_key"); e == nil {
+			groqKey = pk
+		}
+	}
+	if groqKey != "" {
+		groqClient := groq.New(groqKey)
+		t0 := time.Now()
+		gr, gerr := groqClient.GenerateReply(ctx, prompt, groq.Model8B)
+		latMs := int(time.Since(t0).Milliseconds())
+		errMsg := ""
+		if gerr != nil {
+			errMsg = gerr.Error()
+		}
+		w.msgRepo.LogLLMUsage(ctx, studioID, "groq", groq.Model8B, latMs, gerr == nil && strings.TrimSpace(gr.Text) != "", errMsg, gr.TokensIn, gr.TokensOut)
+		if gerr == nil && strings.TrimSpace(gr.Text) != "" {
+			return gr.Text, "groq-8b"
+		}
+	}
+
+	apiKey := studio.GeminiAPIKey
+	if apiKey == "" {
+		if pk, e := w.studiosRepo.GetPlatformSetting(ctx, "gemini_api_key"); e == nil {
+			apiKey = pk
+		}
+	}
+	if apiKey != "" {
+		t0 := time.Now()
+		gemReply, gerr := w.generateGeminiReply(ctx, apiKey, prompt)
+		latMs := int(time.Since(t0).Milliseconds())
+		errMsg := ""
+		if gerr != nil {
+			errMsg = gerr.Error()
+		}
+		w.msgRepo.LogLLMUsage(ctx, studioID, "gemini", "gemini-2.5-flash", latMs, gerr == nil && gemReply.text != "", errMsg, gemReply.tokensIn, gemReply.tokensOut)
+		if gerr == nil && gemReply.text != "" {
+			return gemReply.text, "gemini"
+		}
+	}
+
+	if w.claude != nil {
+		t0 := time.Now()
+		cr, cerr := w.claude.GenerateReply(ctx, prompt)
+		latMs := int(time.Since(t0).Milliseconds())
+		errMsg := ""
+		if cerr != nil {
+			errMsg = cerr.Error()
+		}
+		w.msgRepo.LogLLMUsage(ctx, studioID, "claude", "claude-haiku-4-5", latMs, cerr == nil && cr.Text != "", errMsg, cr.TokensIn, cr.TokensOut)
+		if cerr == nil && cr.Text != "" {
+			return cr.Text, "claude"
+		}
+	}
+
+	return "", ""
 }
 
 // analyzeSentiment returns: sentiment (-1=negative, 0=neutral, 1=positive), confidence score, and detected keywords
@@ -174,6 +311,22 @@ func (w *AIWorker) analyzeSentiment(text string) (int, float64, []string) {
 	return sentiment, confidence, detectedKeywords
 }
 
+// stopKeywords are opt-out words a lead can reply with to end all automated
+// contact. Matched as the entire trimmed message (case-insensitive) so
+// ordinary sentences containing "stop" (e.g. "stop by later") don't trigger it.
+var stopKeywords = map[string]bool{
+	"stop":        true,
+	"unsubscribe": true,
+	"opt out":     true,
+	"optout":      true,
+}
+
+func isStopMessage(body string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(body))
+	normalized = strings.Trim(normalized, ".!? ")
+	return stopKeywords[normalized]
+}
+
 func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messageID uuid.UUID) error {
 	msg, err := w.msgRepo.GetMessageByID(ctx, studioID, messageID)
 	if err != nil {
@@ -211,36 +364,55 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		lead, err = w.leadsRepo.GetLead(ctx, studioID, *conv.LeadID)
 		if err != nil {
 			w.log.Error("fetch lead for ai context", "err", err)
-		} else {
-			// Skip AI only for mid-flow stages where the bot owns the conversation
-			// (date/time selection, plan selection, reason collection).
-			// At awaiting_interest and awaiting_options the bot only reacts to exact
-			// numeric/keyword choices; anything else (questions, greetings) falls to AI.
-			stage := lead.AutoContactStage
-			w.log.Info("ai worker: lead stage check", "lead_id", lead.ID, "stage", stage, "lead_status", string(lead.Status), "message", msg.Body)
-			botOwnedStage := stage != "" &&
-				stage != "completed" &&
-				stage != "awaiting_options" &&
-				stage != "awaiting_interest"
-			if botOwnedStage {
-				w.log.Info("ai worker: skipping — bot owns this stage", "lead", lead.ID, "stage", stage)
-				return nil
+		}
+	}
+
+	// Do Not Disturb: either the lead already opted in to DND (manually, or
+	// from a previous "stop"), or this message is itself an opt-out keyword.
+	// Either way: enable DND, cancel every pending scheduled message for this
+	// lead, and never send a reply. Pipeline status is left untouched.
+	if (lead != nil && lead.DNDEnabled) || isStopMessage(msg.Body) {
+		if lead != nil && !lead.DNDEnabled {
+			if err := w.leadsRepo.SetDNDEnabled(ctx, studioID, lead.ID, true); err != nil {
+				w.log.Error("stop keyword: failed to enable dnd", "lead", lead.ID, "err", err)
 			}
-			// At awaiting_options / awaiting_interest / no-stage: skip only if the bot
-			// already queued an outbound reply for this specific inbound message.
-			var botReplied bool
-			_ = w.msgRepo.Pool().QueryRow(ctx, `
-				SELECT EXISTS(
-					SELECT 1 FROM outbound_jobs
-					WHERE conversation_id = $1 AND source_kind = 'automation'
-					AND created_at >= $2
-				)
-			`, conv.ID, msg.CreatedAt).Scan(&botReplied)
-			w.log.Info("ai worker: bot_replied check", "lead_id", lead.ID, "bot_replied", botReplied, "msg_created_at", msg.CreatedAt)
-			if botReplied {
-				w.log.Info("ai worker: skipping — automation already replied", "lead", lead.ID)
-				return nil
-			}
+		}
+		if _, err := w.msgRepo.CancelPendingJobsForConversation(ctx, studioID, conv.ID); err != nil {
+			w.log.Error("dnd: failed to cancel pending jobs", "conversation", conv.ID, "err", err)
+		}
+		w.log.Info("ai worker: dnd active — no reply sent", "conversation", conv.ID, "lead_id", conv.LeadID)
+		return nil
+	}
+
+	if lead != nil {
+		// Skip AI only for mid-flow stages where the bot owns the conversation
+		// (date/time selection, plan selection, reason collection).
+		// At awaiting_interest and awaiting_options the bot only reacts to exact
+		// numeric/keyword choices; anything else (questions, greetings) falls to AI.
+		stage := lead.AutoContactStage
+		w.log.Info("ai worker: lead stage check", "lead_id", lead.ID, "stage", stage, "lead_status", string(lead.Status), "message", msg.Body)
+		botOwnedStage := stage != "" &&
+			stage != "completed" &&
+			stage != "awaiting_options" &&
+			stage != "awaiting_interest"
+		if botOwnedStage {
+			w.log.Info("ai worker: skipping — bot owns this stage", "lead", lead.ID, "stage", stage)
+			return nil
+		}
+		// At awaiting_options / awaiting_interest / no-stage: skip only if the bot
+		// already queued an outbound reply for this specific inbound message.
+		var botReplied bool
+		_ = w.msgRepo.Pool().QueryRow(ctx, `
+			SELECT EXISTS(
+				SELECT 1 FROM outbound_jobs
+				WHERE conversation_id = $1 AND source_kind = 'automation'
+				AND created_at >= $2
+			)
+		`, conv.ID, msg.CreatedAt).Scan(&botReplied)
+		w.log.Info("ai worker: bot_replied check", "lead_id", lead.ID, "bot_replied", botReplied, "msg_created_at", msg.CreatedAt)
+		if botReplied {
+			w.log.Info("ai worker: skipping — automation already replied", "lead", lead.ID)
+			return nil
 		}
 	}
 
@@ -643,7 +815,12 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	}
 
 	// Generate AI response with context
-	prompt := w.buildPrompt(history, semanticHistory, conv, lead, studio, plans, sentiment, keywords, kbChunks, intent, kbConfident)
+	aiContextSummary, err := w.msgRepo.GetConversationAISummary(ctx, studioID, conv.ID)
+	if err != nil {
+		w.log.Warn("fetch conversation ai summary failed", "err", err)
+		aiContextSummary = ""
+	}
+	prompt := w.buildPrompt(history, semanticHistory, conv, lead, studio, plans, sentiment, keywords, kbChunks, intent, kbConfident, aiContextSummary)
 
 	// Waterfall: Groq 8B → Groq 70B → Gemini → Claude
 	var resp string
@@ -763,7 +940,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	return nil
 }
 
-func (w *AIWorker) buildPrompt(history []Message, semanticHistory []SemanticMatch, conv *Conversation, lead *leads.Lead, studio *studios.Studio, plans []Plan, sentiment int, keywords []string, kbChunks []string, intent string, kbConfident bool) string {
+func (w *AIWorker) buildPrompt(history []Message, semanticHistory []SemanticMatch, conv *Conversation, lead *leads.Lead, studio *studios.Studio, plans []Plan, sentiment int, keywords []string, kbChunks []string, intent string, kbConfident bool, aiContextSummary string) string {
 	var sb strings.Builder
 
 	// ── System role ──────────────────────────────────────────────────────────
@@ -938,6 +1115,13 @@ func (w *AIWorker) buildPrompt(history []Message, semanticHistory []SemanticMatc
 			sb.WriteString(fmt.Sprintf("%s [similarity %.2f]: %s\n", label, sm.Score, sm.Body))
 		}
 		sb.WriteString("\n")
+	}
+
+	// ── Prior context summary (from imported chat history, if any) ───────────
+	if aiContextSummary != "" {
+		sb.WriteString("--- SUMMARY OF EARLIER HISTORY (before this recent window) ---\n")
+		sb.WriteString(aiContextSummary)
+		sb.WriteString("\n\n")
 	}
 
 	// ── Recent conversation window ────────────────────────────────────────────
@@ -1273,4 +1457,3 @@ func stripMotivationQuestions(resp string) string {
 	}
 	return result
 }
-

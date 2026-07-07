@@ -983,6 +983,121 @@ func (s *Service) HandleInboundWAWeb(ctx context.Context, studioID uuid.UUID, fr
 	return nil
 }
 
+// BackfillMessage is one historical message pulled from a WhatsApp Web chat
+// after a QR-linked session connects. fromMe distinguishes messages the
+// studio previously sent (outbound) from ones the customer sent (inbound).
+type BackfillMessage struct {
+	From      string
+	Text      string
+	MessageID string
+	Timestamp int64
+	FromMe    bool
+}
+
+// HandleInboundWAWebBackfill imports historical WhatsApp Web messages for a
+// single chat. It reuses the same identity/conversation resolution as
+// HandleInboundWAWeb, but deliberately:
+//   - never calls processInboundLeadAutomation (a backfill must never trigger
+//     the AI auto-reply or lead-stage engine against old, already-resolved
+//     conversations),
+//   - uses InsertMessageBackfill so unread counts and last-message snapshots
+//     can't be corrupted by out-of-order or old data,
+//   - does not auto-create a lead for contacts that have none — old chats
+//     with no existing lead are still imported and visible in the inbox,
+//     but importing history alone should not spawn a phantom lead.
+func (s *Service) HandleInboundWAWebBackfill(ctx context.Context, studioID uuid.UUID, msgs []BackfillMessage) (int, error) {
+	if len(msgs) == 0 {
+		return 0, nil
+	}
+	channel, err := s.repo.GetActiveChannelByKind(ctx, studioID, KindWhatsAppWeb)
+	if errors.Is(err, ErrNotFound) {
+		return 0, nil // session not connected — nothing to attach history to
+	}
+	if err != nil {
+		return 0, fmt.Errorf("look up whatsapp_web channel: %w", err)
+	}
+
+	imported := 0
+	for _, m := range msgs {
+		inserted, err := s.handleWAWebBackfillOne(ctx, studioID, channel.ID, m)
+		if err != nil {
+			return imported, err
+		}
+		if inserted {
+			imported++
+		}
+	}
+	return imported, nil
+}
+
+// handleWAWebBackfillOne imports a single historical message and reports
+// whether a new row was actually inserted (false if it was already imported —
+// dedupe is keyed on the WhatsApp message ID).
+func (s *Service) handleWAWebBackfillOne(ctx context.Context, studioID, channelID uuid.UUID, m BackfillMessage) (bool, error) {
+	tx, err := s.repo.Pool().BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return false, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	displayName := m.From
+	numericPart := m.From
+	if idx := strings.Index(m.From, "@"); idx > 0 {
+		numericPart = m.From[:idx]
+		displayName = numericPart
+	}
+	identityKey := m.From
+	if strings.HasSuffix(m.From, "@c.us") {
+		var lidValue string
+		_ = tx.QueryRow(ctx, `
+			SELECT value FROM contact_identities
+			WHERE studio_id = $1 AND kind = 'phone' AND value LIKE $2
+			LIMIT 1
+		`, studioID, numericPart+"%@lid").Scan(&lidValue)
+		if lidValue != "" {
+			identityKey = lidValue
+		}
+	}
+	identity, err := s.repo.FindOrCreateIdentity(ctx, tx, studioID, IdentityPhone, identityKey, displayName)
+	if err != nil {
+		return false, err
+	}
+
+	conv, err := s.repo.FindOrCreateConversation(ctx, tx, studioID, channelID, identity.ID, identityKey)
+	if err != nil {
+		return false, err
+	}
+
+	sentAt := time.Now().UTC()
+	if m.Timestamp > 0 {
+		sentAt = time.Unix(m.Timestamp, 0).UTC()
+	}
+	direction := DirectionInbound
+	sourceKind := SourceCustomer
+	if m.FromMe {
+		direction = DirectionOutbound
+		sourceKind = SourceStudioUser
+	}
+
+	stored, err := s.repo.InsertMessageBackfill(ctx, tx, CreateMessageInput{
+		ConversationID: conv.ID,
+		StudioID:       studioID,
+		Direction:      direction,
+		SourceKind:     sourceKind,
+		Body:           m.Text,
+		ExternalID:     m.MessageID,
+		SentAt:         sentAt,
+	})
+	if err != nil {
+		return false, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit: %w", err)
+	}
+	return stored != nil, nil
+}
+
 // HandleStatus updates an outbound message's delivery state when Meta tells
 // us it was delivered/read/failed. Looked up by Meta wamid.
 func (s *Service) HandleStatus(ctx context.Context, st channels.WhatsAppWebhookStatus) error {

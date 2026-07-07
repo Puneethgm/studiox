@@ -188,3 +188,91 @@ export async function saveSheetsSettings(
   revalidatePath(`/admin/studios/${studioId}/settings`);
   return { ok: true };
 }
+
+export interface ExternalLeadsSheetSettingsResult {
+  ok: boolean;
+  error?: string;
+  data?: {
+    spreadsheetId: string;
+    tabName: string;
+    nameColumn: string;
+    firstNameColumn: string;
+    lastNameColumn: string;
+    emailColumn: string;
+    phoneColumn: string;
+    sourceColumn: string;
+    notesColumn: string;
+    active: boolean;
+  };
+}
+
+export async function getExternalLeadsSheetSettings(studioId: string): Promise<ExternalLeadsSheetSettingsResult> {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/leads/external-sheet-settings`, {
+      method: 'GET',
+      headers: {
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      },
+      cache: 'no-store',
+    });
+    if (!res.ok) {
+      return { ok: false, error: `HTTP ${res.status}` };
+    }
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (err: any) {
+    return { ok: false, error: err.message };
+  }
+}
+
+export async function saveExternalLeadsSheetSettings(
+  studioId: string,
+  data: {
+    spreadsheetId: string;
+    tabName: string;
+    nameColumn: string;
+    firstNameColumn: string;
+    lastNameColumn: string;
+    emailColumn: string;
+    phoneColumn: string;
+    sourceColumn: string;
+    notesColumn: string;
+    active: boolean;
+  }
+): Promise<UpdateStudioResult> {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
+  const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/leads/external-sheet-settings`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+    },
+    body: JSON.stringify(data),
+    cache: 'no-store',
+  });
+
+  type ErrBody = { error?: string; details?: Record<string, string> };
+  const body = (await res.json().catch(() => null)) as ErrBody | null;
+
+  if (!res.ok) {
+    return {
+      ok: false,
+      error: body?.error ?? `HTTP ${res.status}`,
+      details: body?.details,
+    };
+  }
+
+  revalidatePath(`/admin/studios/${studioId}/settings`);
+  return { ok: true };
+}

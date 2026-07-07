@@ -18,9 +18,9 @@ import (
 )
 
 type Repo struct {
-	pool       *pgxpool.Pool
-	cipher     *secrets.Cipher
-	planCache  *cache.MemoryCache
+	pool      *pgxpool.Pool
+	cipher    *secrets.Cipher
+	planCache *cache.MemoryCache
 }
 
 func NewRepo(pool *pgxpool.Pool, cipher *secrets.Cipher) *Repo {
@@ -340,6 +340,32 @@ func (r *Repo) DisconnectWAWebChannel(ctx context.Context, studioID uuid.UUID) e
 	return err
 }
 
+// SetWAWebBackfillStatus records history-import progress for a studio's
+// whatsapp_web channel so the admin UI can poll it (running/done/failed).
+func (r *Repo) SetWAWebBackfillStatus(ctx context.Context, studioID uuid.UUID, status string, messageCount int) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE channel_accounts
+		SET backfill_status = $2, backfill_message_count = $3, backfill_updated_at = now()
+		WHERE studio_id = $1 AND kind = 'whatsapp_web'
+	`, studioID, status, messageCount)
+	return err
+}
+
+// GetWAWebBackfillStatus reports the current history-import status for a studio.
+func (r *Repo) GetWAWebBackfillStatus(ctx context.Context, studioID uuid.UUID) (status string, messageCount int, err error) {
+	err = r.pool.QueryRow(ctx, `
+		SELECT backfill_status, backfill_message_count
+		FROM channel_accounts
+		WHERE studio_id = $1 AND kind = 'whatsapp_web'
+		ORDER BY connected_at DESC
+		LIMIT 1
+	`, studioID).Scan(&status, &messageCount)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "none", 0, nil
+	}
+	return status, messageCount, err
+}
+
 // ============================================================
 // contact_identities
 // ============================================================
@@ -494,6 +520,55 @@ func scanConversationRow(row pgx.Row) (*Conversation, error) {
 	return &c, nil
 }
 
+// ListConversationIDsByChannel returns every conversation ID for a studio's
+// channel account, unpaginated — used by the post-backfill summarization
+// pass, which needs to walk every conversation once rather than page through
+// ListConversations' admin-facing 100-row cap.
+func (r *Repo) ListConversationIDsByChannel(ctx context.Context, studioID, channelAccountID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id FROM conversations
+		WHERE studio_id = $1 AND channel_account_id = $2
+	`, studioID, channelAccountID)
+	if err != nil {
+		return nil, fmt.Errorf("list conversation ids: %w", err)
+	}
+	defer rows.Close()
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// SetConversationAISummary stores an internal-only AI-generated summary of a
+// conversation's recent history, used as extra context for the AI auto-reply
+// worker. Never exposed in admin-facing JSON responses.
+func (r *Repo) SetConversationAISummary(ctx context.Context, studioID, convID uuid.UUID, summary string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE conversations
+		SET ai_context_summary = $3, ai_context_summary_updated_at = now()
+		WHERE studio_id = $1 AND id = $2
+	`, studioID, convID, summary)
+	return err
+}
+
+// GetConversationAISummary returns the stored internal AI summary for a
+// conversation, or "" if none has been generated yet.
+func (r *Repo) GetConversationAISummary(ctx context.Context, studioID, convID uuid.UUID) (string, error) {
+	var summary string
+	err := r.pool.QueryRow(ctx, `
+		SELECT ai_context_summary FROM conversations WHERE studio_id = $1 AND id = $2
+	`, studioID, convID).Scan(&summary)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return summary, err
+}
+
 func (r *Repo) MarkConversationRead(ctx context.Context, studioID, id uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE conversations SET unread_count = 0, updated_at = now()
@@ -590,6 +665,77 @@ func (r *Repo) InsertMessage(ctx context.Context, tx pgx.Tx, in CreateMessageInp
 		WHERE id = $1
 	`, in.ConversationID, in.SentAt, preview, in.Direction, bumpUnread); err != nil {
 		return nil, fmt.Errorf("bump conversation: %w", err)
+	}
+
+	return out, nil
+}
+
+// InsertMessageBackfill persists a historical message imported from a WhatsApp
+// Web chat backfill. It shares InsertMessage's dedupe key (conversation_id,
+// external_id) but deliberately never bumps unread_count and only advances
+// the conversation's last-message snapshot if the backfilled message is
+// actually newer than what's already there (GREATEST-guarded) — so importing
+// old history can never regress or spam unread counts for a conversation
+// that's already had live traffic.
+func (r *Repo) InsertMessageBackfill(ctx context.Context, tx pgx.Tx, in CreateMessageInput) (*Message, error) {
+	attsBytes, err := json.Marshal(in.Attachments)
+	if err != nil {
+		return nil, fmt.Errorf("marshal attachments: %w", err)
+	}
+	atts := string(attsBytes)
+	if in.SentAt.IsZero() {
+		in.SentAt = time.Now().UTC()
+	}
+	if in.Status == "" {
+		in.Status = MsgSent
+	}
+
+	row := tx.QueryRow(ctx, `
+		INSERT INTO messages (conversation_id, studio_id, direction, source_kind,
+		                      source_user_id, source_ref, body, attachments,
+		                      external_id, in_reply_to, status, sent_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+		ON CONFLICT (conversation_id, external_id) DO NOTHING
+		RETURNING id, created_at
+	`, in.ConversationID, in.StudioID, in.Direction, in.SourceKind,
+		in.SourceUserID, in.SourceRef, in.Body, atts,
+		nullIfEmpty(in.ExternalID), nullIfEmpty(in.InReplyTo), in.Status, in.SentAt)
+
+	out := &Message{
+		ConversationID: in.ConversationID,
+		StudioID:       in.StudioID,
+		Direction:      in.Direction,
+		SourceKind:     in.SourceKind,
+		SourceUserID:   in.SourceUserID,
+		SourceRef:      in.SourceRef,
+		Body:           in.Body,
+		Attachments:    in.Attachments,
+		ExternalID:     in.ExternalID,
+		InReplyTo:      in.InReplyTo,
+		Status:         in.Status,
+		SentAt:         in.SentAt,
+	}
+	if err := row.Scan(&out.ID, &out.CreatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Already imported or already seen live — no-op.
+			return nil, nil
+		}
+		return nil, fmt.Errorf("insert backfill message: %w", err)
+	}
+
+	preview := in.Body
+	if len(preview) > 120 {
+		preview = preview[:120]
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE conversations
+		SET last_message_at = GREATEST(last_message_at, $2),
+		    last_message_preview = CASE WHEN $2 >= last_message_at THEN $3 ELSE last_message_preview END,
+		    last_message_direction = CASE WHEN $2 >= last_message_at THEN $4 ELSE last_message_direction END,
+		    updated_at = now()
+		WHERE id = $1
+	`, in.ConversationID, in.SentAt, preview, in.Direction); err != nil {
+		return nil, fmt.Errorf("bump conversation (backfill): %w", err)
 	}
 
 	return out, nil
@@ -1100,6 +1246,37 @@ func (r *Repo) ListPendingJobs(ctx context.Context, studioID uuid.UUID) ([]Pendi
 		out = append(out, ji)
 	}
 	return out, rows.Err()
+}
+
+// CancelPendingJobsForConversation deletes every still-pending outbound job
+// for a conversation (e.g. queued autocontact follow-ups) so a lead who has
+// opted out doesn't receive any further scheduled messages. Returns the
+// number of jobs removed.
+func (r *Repo) CancelPendingJobsForConversation(ctx context.Context, studioID, conversationID uuid.UUID) (int, error) {
+	tag, err := r.pool.Exec(ctx, `
+		DELETE FROM outbound_jobs
+		WHERE studio_id = $1 AND conversation_id = $2 AND status = 'pending'
+	`, studioID, conversationID)
+	if err != nil {
+		return 0, fmt.Errorf("cancel pending jobs: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
+// CancelPendingJobsForLead deletes every still-pending outbound job across
+// ALL of a lead's conversations (a lead may have more than one channel).
+// Used when Do Not Disturb is turned on. Returns the number of jobs removed.
+func (r *Repo) CancelPendingJobsForLead(ctx context.Context, studioID, leadID uuid.UUID) (int, error) {
+	tag, err := r.pool.Exec(ctx, `
+		DELETE FROM outbound_jobs o
+		USING conversations c
+		WHERE o.conversation_id = c.id
+		  AND o.studio_id = $1 AND c.lead_id = $2 AND o.status = 'pending'
+	`, studioID, leadID)
+	if err != nil {
+		return 0, fmt.Errorf("cancel pending jobs for lead: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 func (r *Repo) DeleteJob(ctx context.Context, studioID uuid.UUID, id int64) error {

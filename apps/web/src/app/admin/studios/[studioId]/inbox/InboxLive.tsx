@@ -34,6 +34,7 @@ import type {
   Attachment,
   Studio,
 } from '@/lib/types';
+import { ContactDetailsPanel } from './ContactDetailsPanel';
 
 // Strip @c.us / @lid / @s.whatsapp.net suffixes from WA chat IDs for display
 function displayContact(value: string): string {
@@ -1323,6 +1324,8 @@ export function InboxLive({
                 </div>
               )}
             </section>
+
+            {selected && <ContactDetailsPanel studioId={studioId} conversation={selected} />}
           </>
         )}
 

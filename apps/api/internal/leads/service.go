@@ -24,13 +24,27 @@ var ErrNotFound = errors.New("not found")
 
 const sheetsDestination = "google_sheets"
 
+// CancelPendingMessagesFunc cancels every still-pending scheduled/automated
+// message for a lead (across all of its conversations) — called when DND is
+// turned on so already-queued follow-ups don't slip through. Wired in from
+// the messaging package via a callback to keep the import direction one-way.
+type CancelPendingMessagesFunc func(ctx context.Context, studioID, leadID uuid.UUID) (int, error)
+
 type Service struct {
-	repo   *Repo
-	glofox *glofox.Client
+	repo                  *Repo
+	glofox                *glofox.Client
+	cancelPendingMessages CancelPendingMessagesFunc
 }
 
 func NewService(repo *Repo, gf *glofox.Client) *Service {
 	return &Service{repo: repo, glofox: gf}
+}
+
+// SetCancelPendingMessagesFunc wires in the messaging package's job-cancellation
+// callback after construction, mirroring how studios wires brandLookup into
+// identity in main.go.
+func (s *Service) SetCancelPendingMessagesFunc(fn CancelPendingMessagesFunc) {
+	s.cancelPendingMessages = fn
 }
 
 // ----- campaigns -----
@@ -222,6 +236,22 @@ func (s *Service) GetLead(ctx context.Context, studioID, id uuid.UUID) (*Lead, e
 	return s.repo.GetLead(ctx, studioID, id)
 }
 
+// SetDND toggles Do Not Disturb for a lead. Turning it on also cancels every
+// already-queued automated message for that lead so nothing slips through
+// after the toggle — turning it off never re-schedules anything; automation
+// resumes naturally the next time the lead is contacted or replies.
+func (s *Service) SetDND(ctx context.Context, studioID, id uuid.UUID, enabled bool) (*Lead, error) {
+	if err := s.repo.SetDNDEnabled(ctx, studioID, id, enabled); err != nil {
+		return nil, err
+	}
+	if enabled && s.cancelPendingMessages != nil {
+		if _, err := s.cancelPendingMessages(ctx, studioID, id); err != nil {
+			return nil, fmt.Errorf("cancel pending messages: %w", err)
+		}
+	}
+	return s.repo.GetLead(ctx, studioID, id)
+}
+
 func (s *Service) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status LeadStatus, currency string, notes string, contactMade, hotLead, trialPurchased bool, firstName, lastName, fitnessPlan, assignedTo string, trialAttended, memberSold bool, monthlyFee float64, offer, furtherNotes string) error {
 	if !status.Valid() {
 		return fmt.Errorf("invalid status %q", status)
@@ -319,6 +349,47 @@ func (s *Service) SaveSheetsSettings(ctx context.Context, studioID uuid.UUID, sp
 		settings.TabName = "Leads"
 	}
 	if err := s.repo.SaveSheetsSettings(ctx, settings); err != nil {
+		return nil, err
+	}
+	return settings, nil
+}
+
+func (s *Service) GetExternalLeadsSheetSettings(ctx context.Context, studioID uuid.UUID) (*ExternalLeadsSheetSettings, error) {
+	return s.repo.GetExternalLeadsSheetSettings(ctx, studioID)
+}
+
+func (s *Service) SaveExternalLeadsSheetSettings(ctx context.Context, studioID uuid.UUID, in ExternalLeadsSheetSettings) (*ExternalLeadsSheetSettings, error) {
+	settings := &ExternalLeadsSheetSettings{
+		StudioID:        studioID,
+		SpreadsheetID:   strings.TrimSpace(in.SpreadsheetID),
+		TabName:         strings.TrimSpace(in.TabName),
+		NameColumn:      strings.ToUpper(strings.TrimSpace(in.NameColumn)),
+		FirstNameColumn: strings.ToUpper(strings.TrimSpace(in.FirstNameColumn)),
+		LastNameColumn:  strings.ToUpper(strings.TrimSpace(in.LastNameColumn)),
+		EmailColumn:     strings.ToUpper(strings.TrimSpace(in.EmailColumn)),
+		PhoneColumn:     strings.ToUpper(strings.TrimSpace(in.PhoneColumn)),
+		SourceColumn:    strings.ToUpper(strings.TrimSpace(in.SourceColumn)),
+		NotesColumn:     strings.ToUpper(strings.TrimSpace(in.NotesColumn)),
+		Active:          in.Active,
+	}
+	if settings.TabName == "" {
+		settings.TabName = "Sheet1"
+	}
+	if settings.NameColumn == "" {
+		if settings.FirstNameColumn == "" {
+			settings.FirstNameColumn = "A"
+		}
+		if settings.LastNameColumn == "" {
+			settings.LastNameColumn = "B"
+		}
+	}
+	if settings.EmailColumn == "" {
+		settings.EmailColumn = "C"
+	}
+	if settings.PhoneColumn == "" {
+		settings.PhoneColumn = "D"
+	}
+	if err := s.repo.SaveExternalLeadsSheetSettings(ctx, settings); err != nil {
 		return nil, err
 	}
 	return settings, nil
@@ -596,4 +667,3 @@ func (s *Service) BookTrialSlot(ctx context.Context, leadID uuid.UUID, slot stri
 func (s *Service) GetAnalytics(ctx context.Context, studioID uuid.UUID, durationDays int, startDate, endDate string) (*AnalyticsSummary, error) {
 	return s.repo.GetAnalytics(ctx, studioID, durationDays, startDate, endDate)
 }
-

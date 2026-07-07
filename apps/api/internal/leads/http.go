@@ -42,10 +42,13 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Get("/analytics", h.getAnalytics)
 	r.Get("/leads/sheets-settings", h.getSheetsSettings)
 	r.Post("/leads/sheets-settings", h.saveSheetsSettings)
+	r.Get("/leads/external-sheet-settings", h.getExternalLeadsSheetSettings)
+	r.Post("/leads/external-sheet-settings", h.saveExternalLeadsSheetSettings)
 	r.Post("/leads/import", h.importLeads)
 	r.Get("/leads/sources", h.listUniqueSources)
 	r.Get("/leads/{id}", h.getLead)
 	r.Patch("/leads/{id}", h.patchLead)
+	r.Patch("/leads/{id}/dnd", h.setLeadDND)
 }
 
 // PublicRoutes are unauthenticated.
@@ -359,7 +362,7 @@ func (h *Handler) getAnalytics(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	
+
 	durationStr := r.URL.Query().Get("duration")
 	startDate := r.URL.Query().Get("startDate")
 	endDate := r.URL.Query().Get("endDate")
@@ -431,6 +434,40 @@ type patchLeadReq struct {
 	Currency       *string     `json:"currency"`
 	Offer          *string     `json:"offer"`
 	FurtherNotes   *string     `json:"furtherNotes"`
+}
+
+type setLeadDNDReq struct {
+	Enabled bool `json:"enabled"`
+}
+
+// setLeadDND toggles Do Not Disturb for a lead. Turning it on silences all
+// automated messaging (autocontact follow-ups, AI/decision-tree replies) and
+// cancels every already-queued send for this lead; the lead's pipeline
+// status is left untouched.
+func (h *Handler) setLeadDND(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := h.resolveStudioID(w, r)
+	if !ok {
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	var req setLeadDNDReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	lead, err := h.svc.SetDND(r.Context(), studioID, id, req.Enabled)
+	if err != nil {
+		if errors.Is(err, ErrLeadNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "lead not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, lead)
 }
 
 func (h *Handler) patchLead(w http.ResponseWriter, r *http.Request) {
@@ -665,7 +702,6 @@ func (h *Handler) publicBookSlot(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
-
 // ----- helpers -----
 
 func (h *Handler) toCampaignRes(c *Campaign) campaignRes {
@@ -710,6 +746,73 @@ func (h *Handler) saveSheetsSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	settings, err := h.svc.SaveSheetsSettings(r.Context(), studioID, req.SpreadsheetID, req.TabName, req.Active)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, settings)
+}
+
+type saveExternalLeadsSheetSettingsReq struct {
+	SpreadsheetID   string `json:"spreadsheetId"`
+	TabName         string `json:"tabName"`
+	NameColumn      string `json:"nameColumn"`
+	FirstNameColumn string `json:"firstNameColumn"`
+	LastNameColumn  string `json:"lastNameColumn"`
+	EmailColumn     string `json:"emailColumn"`
+	PhoneColumn     string `json:"phoneColumn"`
+	SourceColumn    string `json:"sourceColumn"`
+	NotesColumn     string `json:"notesColumn"`
+	Active          bool   `json:"active"`
+}
+
+func (h *Handler) getExternalLeadsSheetSettings(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := h.resolveStudioID(w, r)
+	if !ok {
+		return
+	}
+	settings, err := h.svc.GetExternalLeadsSheetSettings(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	if settings == nil {
+		httpx.JSON(w, http.StatusOK, map[string]any{
+			"spreadsheetId": "", "tabName": "Sheet1",
+			"nameColumn": "", "firstNameColumn": "A", "lastNameColumn": "B",
+			"emailColumn": "C", "phoneColumn": "D", "sourceColumn": "", "notesColumn": "",
+			"active": false,
+		})
+		return
+	}
+	httpx.JSON(w, http.StatusOK, settings)
+}
+
+func (h *Handler) saveExternalLeadsSheetSettings(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := h.resolveStudioID(w, r)
+	if !ok {
+		return
+	}
+	var req saveExternalLeadsSheetSettingsReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if req.SpreadsheetID == "" {
+		httpx.WriteValidationError(w, map[string]string{"spreadsheetId": "required"})
+		return
+	}
+	settings, err := h.svc.SaveExternalLeadsSheetSettings(r.Context(), studioID, ExternalLeadsSheetSettings{
+		SpreadsheetID:   req.SpreadsheetID,
+		TabName:         req.TabName,
+		NameColumn:      req.NameColumn,
+		FirstNameColumn: req.FirstNameColumn,
+		LastNameColumn:  req.LastNameColumn,
+		EmailColumn:     req.EmailColumn,
+		PhoneColumn:     req.PhoneColumn,
+		SourceColumn:    req.SourceColumn,
+		NotesColumn:     req.NotesColumn,
+		Active:          req.Active,
+	})
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return

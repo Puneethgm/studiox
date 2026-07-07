@@ -131,6 +131,97 @@ export class SessionManager {
     await this._startSession(studioId);
   }
 
+  // Imports existing chat history after a QR link, best-effort. WhatsApp Web
+  // only syncs a limited recent window to linked (non-primary) devices by
+  // default — syncHistory() asks the server to push more down for chats that
+  // aren't fully synced yet, then fetchMessages() reads what's available.
+  // Text-only for now (media forwarding isn't implemented on the inbound
+  // side). Reports progress and completion back to the Go API as it goes,
+  // one chat at a time, so a huge contact list can't block the shared
+  // Puppeteer page indefinitely without any visibility.
+  async backfillHistory(studioId, { perChatLimit = 200, maxChats = 50 } = {}) {
+    const s = this.sessions.get(studioId);
+    if (!s || s.status !== 'connected') throw new Error(`session not connected for studio ${studioId}`);
+    const { client } = s;
+
+    let totalImported = 0;
+    let failed = false;
+    try {
+      const chats = await client.getChats();
+      const toProcess = chats.slice(0, maxChats);
+      this.log.info({ studioId, chatCount: chats.length, processing: toProcess.length }, 'wa-web: backfill starting');
+
+      for (const chat of toProcess) {
+        try {
+          if (chat.endOfHistoryTransferType === 0) {
+            await chat.syncHistory().catch(() => {});
+            await sleep(2000);
+          }
+
+          // Resolve @lid chat IDs to real phone numbers, same as the live
+          // message path (_forwardInbound) — otherwise the inbox shows
+          // WhatsApp's opaque Linked-ID instead of a phone number. Group
+          // chats (@g.us) have no phone number and are left as-is.
+          let chatFrom = chat.id._serialized;
+          if (!chat.isGroup && chatFrom.endsWith('@lid')) {
+            try {
+              const contact = await chat.getContact();
+              // contact.number mirrors the LID itself for @lid-only contacts —
+              // the real phone number instead comes back as contact.id
+              // (a @c.us wid) once WhatsApp resolves it.
+              const resolvedId = contact?.id?._serialized;
+              if (resolvedId && resolvedId.endsWith('@c.us')) {
+                chatFrom = resolvedId;
+              }
+            } catch (_) {
+              // couldn't resolve — fall back to the raw @lid id
+            }
+          }
+
+          const history = await chat.fetchMessages({ limit: perChatLimit });
+          const messages = history
+            .filter(msg => !!msg.body)
+            .map(msg => ({
+              from: chatFrom,
+              text: msg.body,
+              messageId: msg.id._serialized,
+              timestamp: msg.timestamp,
+              fromMe: msg.fromMe,
+            }));
+          if (messages.length === 0) continue;
+
+          const res = await fetch(`${this.projectxApiUrl}/internal/wa-web/backfill`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ studioId, messages }),
+          });
+          if (res.ok) {
+            const body = await res.json().catch(() => ({}));
+            totalImported += body.imported || 0;
+          } else {
+            this.log.warn({ studioId, chatId: chat.id._serialized, status: res.status }, 'wa-web: backfill chat push non-ok');
+          }
+        } catch (err) {
+          this.log.warn({ err: err.message, studioId, chatId: chat.id?._serialized }, 'wa-web: backfill chat failed, continuing');
+        }
+      }
+    } catch (err) {
+      this.log.error({ err: err.message, studioId }, 'wa-web: backfill failed');
+      failed = true;
+    }
+
+    try {
+      await fetch(`${this.projectxApiUrl}/internal/wa-web/backfill-done`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studioId, messageCount: totalImported, failed }),
+      });
+    } catch (err) {
+      this.log.error({ err, studioId }, 'wa-web: notify backfill done failed');
+    }
+    this.log.info({ studioId, totalImported, failed }, 'wa-web: backfill finished');
+  }
+
   async _startSession(studioId) {
     const dataPath = path.join(AUTH_DIR, studioId);
     mkdirSync(dataPath, { recursive: true });
@@ -222,12 +313,15 @@ export class SessionManager {
     client.on('message', async (msg) => {
       this.log.info({ studioId, from: msg.from, body: msg.body?.slice(0, 50) }, 'wa-web: message received');
       if (msg.fromMe) return;
-      // Resolve phone number from LID if needed
+      // Resolve phone number from LID if needed. contact.number mirrors the
+      // LID itself for @lid-only contacts — the real phone number instead
+      // comes back as contact.id (a @c.us wid) once WhatsApp resolves it.
       if (msg.from.endsWith('@lid')) {
         try {
           const contact = await msg.getContact();
-          if (contact?.number) {
-            msg._resolvedPhone = contact.number;
+          const resolvedId = contact?.id?._serialized;
+          if (resolvedId && resolvedId.endsWith('@c.us')) {
+            msg._resolvedPhone = contact.id.user;
           }
         } catch (e) {
           this.log.warn({ studioId, from: msg.from }, 'wa-web: could not resolve phone from LID');
@@ -247,29 +341,52 @@ export class SessionManager {
     });
   }
 
-  async _notifyConnected(studioId, phone) {
-    try {
-      const res = await fetch(`${this.projectxApiUrl}/internal/wa-web/connected`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ studioId, phone }),
-      });
-      if (!res.ok) this.log.warn({ studioId, status: res.status }, 'wa-web: notify connected non-ok');
-    } catch (err) {
-      this.log.error({ err, studioId }, 'wa-web: notify connected failed');
+  // POSTs with a few retries (backing off) so a transient Go-API restart
+  // right when a session connects/disconnects doesn't leave channel_accounts
+  // permanently out of sync with the real session state. Each attempt is
+  // logged; a final failure is logged as an error but never throws — the
+  // periodic reconciliation loop (see _reconcileStatuses) is the backstop
+  // that eventually corrects the DB even if every retry here fails.
+  async _notifyWithRetry(path, body, { attempts = 4 } = {}) {
+    for (let i = 1; i <= attempts; i++) {
+      try {
+        const res = await fetch(`${this.projectxApiUrl}${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (res.ok) return true;
+        this.log.warn({ path, body, status: res.status, attempt: i }, 'wa-web: notify non-ok');
+      } catch (err) {
+        this.log.warn({ err: err.message, path, body, attempt: i }, 'wa-web: notify failed, retrying');
+      }
+      if (i < attempts) await sleep(i * 1000);
     }
+    this.log.error({ path, body }, 'wa-web: notify failed after all retries — will self-heal on next status reconciliation');
+    return false;
+  }
+
+  async _notifyConnected(studioId, phone) {
+    await this._notifyWithRetry('/internal/wa-web/connected', { studioId, phone });
   }
 
   async _notifyDisconnected(studioId) {
-    try {
-      await fetch(`${this.projectxApiUrl}/internal/wa-web/disconnected`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ studioId }),
-      });
-    } catch (err) {
-      this.log.error({ err, studioId }, 'wa-web: notify disconnected failed');
-    }
+    await this._notifyWithRetry('/internal/wa-web/disconnected', { studioId });
+  }
+
+  // Periodic backstop: re-pushes the real in-memory session status for every
+  // known session to the Go API, so channel_accounts.status can never drift
+  // permanently out of sync even if a connect/disconnect notification was
+  // missed entirely (e.g. Go API was down through all retry attempts above).
+  startStatusReconciliation(intervalMs = 60_000) {
+    setInterval(() => {
+      for (const [studioId, s] of this.sessions.entries()) {
+        if (s.status === 'connected' && s.phone) {
+          this._notifyWithRetry('/internal/wa-web/connected', { studioId, phone: s.phone }, { attempts: 1 })
+            .catch(() => {});
+        }
+      }
+    }, intervalMs);
   }
 
   async _forwardInbound(studioId, msg) {

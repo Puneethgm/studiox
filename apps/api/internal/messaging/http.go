@@ -87,6 +87,8 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Get("/channels/whatsapp-web/qr", h.waWebQR)
 	r.Post("/channels/whatsapp-web/disconnect", h.waWebDisconnect)
 	r.Get("/channels/whatsapp-web/status", h.waWebStatus)
+	r.Post("/channels/whatsapp-web/backfill", h.waWebBackfillTrigger)
+	r.Get("/channels/whatsapp-web/backfill", h.waWebBackfillStatus)
 }
 
 // InternalRoutes are mounted at /internal (not exposed through nginx to public).
@@ -96,6 +98,8 @@ func (h *Handler) InternalRoutes(r chi.Router) {
 	r.Post("/wa-web/disconnected", h.waWebDisconnected)
 	r.Post("/wa-web/inbound", h.waWebInbound)
 	r.Get("/wa-web/studios", h.waWebStudios)
+	r.Post("/wa-web/backfill", h.waWebBackfill)
+	r.Post("/wa-web/backfill-done", h.waWebBackfillDone)
 }
 
 // ============================================================

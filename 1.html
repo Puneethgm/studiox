@@ -1,0 +1,1060 @@
+<title>1HeroSocial.ai — The AI Growth Engine for Fitness Studios</title>
+<style>
+  :root {
+    --bg: #050505;
+    --bg-panel: #0a0a0a;
+    --bg-panel-2: #111114;
+    --border: rgba(255,255,255,0.10);
+    --border-soft: rgba(255,255,255,0.06);
+    --text: #ffffff;
+    --text-dim: #a3a3ad;
+    --text-dimmer: #71717a;
+    --indigo: #6366f1;
+    --indigo-soft: rgba(99,102,241,0.12);
+    --violet: #8b5cf6;
+    --pink: #ec4899;
+    --emerald: #34d399;
+    --amber: #fbbf24;
+    --surface-hover: rgba(255,255,255,0.08);
+    --surface: rgba(255,255,255,0.04);
+    --shadow-color: rgba(0,0,0,0.4);
+    color-scheme: dark;
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #faf9fb;
+      --bg-panel: #ffffff;
+      --bg-panel-2: #f4f3f8;
+      --border: rgba(20,20,30,0.10);
+      --border-soft: rgba(20,20,30,0.06);
+      --text: #16161d;
+      --text-dim: #56566b;
+      --text-dimmer: #8a8a9c;
+      --indigo-soft: rgba(99,102,241,0.09);
+      --surface-hover: rgba(20,20,30,0.045);
+      --surface: rgba(20,20,30,0.03);
+      --shadow-color: rgba(80,70,140,0.12);
+      color-scheme: light;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #faf9fb;
+    --bg-panel: #ffffff;
+    --bg-panel-2: #f4f3f8;
+    --border: rgba(20,20,30,0.10);
+    --border-soft: rgba(20,20,30,0.06);
+    --text: #16161d;
+    --text-dim: #56566b;
+    --text-dimmer: #8a8a9c;
+    --indigo-soft: rgba(99,102,241,0.09);
+    --surface-hover: rgba(20,20,30,0.045);
+    --surface: rgba(20,20,30,0.03);
+    --shadow-color: rgba(80,70,140,0.12);
+    color-scheme: light;
+  }
+  :root[data-theme="dark"] {
+    --bg: #050505;
+    --bg-panel: #0a0a0a;
+    --bg-panel-2: #111114;
+    --border: rgba(255,255,255,0.10);
+    --border-soft: rgba(255,255,255,0.06);
+    --text: #ffffff;
+    --text-dim: #a3a3ad;
+    --text-dimmer: #71717a;
+    --indigo-soft: rgba(99,102,241,0.12);
+    --surface-hover: rgba(255,255,255,0.08);
+    --surface: rgba(255,255,255,0.04);
+    --shadow-color: rgba(0,0,0,0.4);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    overflow-x: hidden;
+  }
+  body {
+    font-family: 'Jakarta', ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.5;
+    transition: background .35s ease, color .35s ease;
+  }
+  ::selection { background: rgba(99,102,241,0.35); }
+
+  @font-face {
+    font-family: 'Jakarta';
+    font-weight: 200 800;
+    src: local('Plus Jakarta Sans');
+  }
+  @font-face {
+    font-family: 'Mono';
+    src: local('JetBrains Mono'), local('SFMono-Regular');
+  }
+
+  a { color: inherit; text-decoration: none; }
+  button { font-family: inherit; cursor: pointer; }
+
+  .glow-field {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    opacity: 0.4;
+    pointer-events: none;
+    transition: opacity .35s ease;
+  }
+  :root[data-theme="light"] .glow-field { opacity: 0.5; }
+  .glow-a, .glow-b {
+    position: absolute;
+    width: 40vw;
+    height: 40vw;
+    border-radius: 999px;
+    filter: blur(150px);
+    mix-blend-mode: screen;
+  }
+  :root[data-theme="light"] .glow-a,
+  :root[data-theme="light"] .glow-b { mix-blend-mode: multiply; opacity: 0.18 !important; }
+  .glow-a { top: -10%; left: -10%; background: #4f46e5; animation: pulse 6s ease-in-out infinite; }
+  .glow-b { bottom: -10%; right: -10%; background: #7c3aed; opacity: 0.5; }
+  @keyframes pulse { 0%, 100% { opacity: .55; } 50% { opacity: .95; } }
+  @media (prefers-reduced-motion: reduce) {
+    .glow-a { animation: none; }
+  }
+
+  .wrap {
+    position: relative;
+    z-index: 1;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 48px 24px 96px;
+  }
+  @media (min-width: 640px) { .wrap { padding-left: 48px; padding-right: 48px; } }
+  @media (min-width: 1024px) { .wrap { padding-left: 96px; padding-right: 96px; } }
+
+  nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 72px;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+  .logo {
+    font-size: 24px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+  }
+  .logo .dot { color: var(--indigo); }
+  .navlinks { display: flex; align-items: center; gap: 22px; font-size: 14px; color: var(--text-dim); }
+  .navlinks a:hover { color: var(--text); }
+  @media (max-width: 700px) { .navlinks .navlink { display: none; } }
+
+  .theme-toggle {
+    position: relative;
+    width: 52px; height: 30px;
+    border-radius: 999px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 3px;
+    display: inline-flex;
+    align-items: center;
+    transition: background .25s;
+    flex-shrink: 0;
+  }
+  .theme-toggle:hover { background: var(--surface-hover); }
+  .theme-knob {
+    width: 22px; height: 22px; border-radius: 999px;
+    background: var(--indigo);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff;
+    transform: translateX(0);
+    transition: transform .3s cubic-bezier(.34,1.4,.64,1), background .3s;
+  }
+  :root[data-theme="light"] .theme-knob { transform: translateX(22px); background: var(--amber); }
+  .theme-knob svg { width: 13px; height: 13px; }
+
+  .btn-ghost {
+    padding: 10px 22px;
+    border-radius: 999px;
+    font-size: 14px;
+    font-weight: 500;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    backdrop-filter: blur(8px);
+    transition: background .3s, box-shadow .3s;
+  }
+  .btn-ghost:hover { background: var(--surface-hover); box-shadow: 0 0 25px rgba(99,102,241,0.2); }
+
+  .hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 28px;
+    margin: 24px 0 120px;
+  }
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border-radius: 999px;
+    background: var(--indigo-soft);
+    border: 1px solid rgba(99,102,241,0.25);
+    color: #818cf8;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  :root[data-theme="light"] .eyebrow { color: #4f46e5; }
+  .eyebrow .ping {
+    width: 8px; height: 8px; border-radius: 999px; background: var(--indigo);
+    animation: ping 1.8s ease-in-out infinite;
+  }
+  @keyframes ping { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+
+  h1 {
+    font-size: clamp(2.4rem, 5.6vw, 5rem);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.08;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .grad-text {
+    background: linear-gradient(90deg, #818cf8, #a78bfa, #f472b6);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-size: 200% auto;
+    animation: gradshift 6s ease-in-out infinite;
+  }
+  @keyframes gradshift {
+    0%, 100% { background-position: 0% center; }
+    50% { background-position: 100% center; }
+  }
+  @media (prefers-reduced-motion: reduce) { .grad-text { animation: none; } }
+
+  .sub {
+    max-width: 680px;
+    font-size: clamp(1.05rem, 1.6vw, 1.3rem);
+    font-weight: 300;
+    color: var(--text-dim);
+    margin: 4px 0 0;
+    text-wrap: balance;
+  }
+
+  .cta-row { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; margin-top: 22px; }
+  .btn-primary {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 32px;
+    border-radius: 999px;
+    font-weight: 600;
+    color: #fff;
+    background: var(--indigo);
+    box-shadow: 0 0 40px rgba(99,102,241,0.4);
+    transition: background .25s, box-shadow .25s, transform .25s;
+    overflow: hidden;
+  }
+  .btn-primary:hover { background: #4f46e5; box-shadow: 0 0 60px rgba(99,102,241,0.6); transform: translateY(-1px); }
+  .btn-primary svg { width: 18px; height: 18px; transition: transform .25s; }
+  .btn-primary:hover svg { transform: translateX(3px); }
+  .btn-secondary {
+    padding: 16px 32px;
+    border-radius: 999px;
+    font-weight: 600;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    backdrop-filter: blur(8px);
+    transition: background .25s;
+  }
+  .btn-secondary:hover { background: var(--surface-hover); }
+
+  /* ---------- Live stat strip ---------- */
+  .stat-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1px;
+    background: var(--border-soft);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+    margin: 12px 0 -60px;
+    max-width: 820px;
+    width: 100%;
+  }
+  .stat-cell {
+    background: var(--bg-panel);
+    padding: 22px 18px;
+    text-align: center;
+  }
+  .stat-cell .n {
+    font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums;
+    background: linear-gradient(90deg, #818cf8, #c4b5fd);
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .stat-cell .l { font-size: 12px; color: var(--text-dimmer); margin-top: 4px; }
+
+  /* ---------- Section scaffolding ---------- */
+  .eyebrow-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #818cf8;
+    margin-bottom: 14px;
+  }
+  :root[data-theme="light"] .eyebrow-label { color: #4f46e5; }
+  .eyebrow-label::before { content: ''; width: 16px; height: 1px; background: currentColor; }
+  .section-head { text-align: center; margin-bottom: 56px; max-width: 720px; margin-left: auto; margin-right: auto; }
+  .section-head h2 { font-size: clamp(1.8rem, 3.6vw, 2.6rem); font-weight: 700; margin: 0 0 16px; text-wrap: balance; }
+  .section-head p { color: var(--text-dim); font-size: 17px; }
+  section { margin-bottom: 128px; margin-top: 120px; }
+  section:first-of-type { margin-top: 0; }
+
+  .reveal { opacity: 0; transform: translateY(24px); transition: opacity .7s ease, transform .7s ease; }
+  .reveal.in { opacity: 1; transform: translateY(0); }
+  @media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; transition: none; } }
+
+  /* ---------- Dashboard preview panel ---------- */
+  .panel-frame { position: relative; }
+  .panel-halo {
+    position: absolute;
+    inset: -4px;
+    background: linear-gradient(90deg, #6366f1, #8b5cf6);
+    border-radius: 20px;
+    filter: blur(18px);
+    opacity: 0.22;
+  }
+  .panel {
+    position: relative;
+    border-radius: 20px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    overflow: hidden;
+    padding: 8px;
+    box-shadow: 0 30px 60px -20px var(--shadow-color);
+  }
+  .panel-inner {
+    background: var(--bg-panel-2);
+    border-radius: 14px;
+    border: 1px solid var(--border-soft);
+    overflow: hidden;
+  }
+  .panel-bar {
+    display: flex;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-soft);
+    background: var(--bg-panel);
+  }
+  .dots { display: flex; gap: 8px; }
+  .dots span { width: 11px; height: 11px; border-radius: 999px; }
+  .dots .r { background: rgba(239,68,68,0.8); }
+  .dots .y { background: rgba(234,179,8,0.8); }
+  .dots .g { background: rgba(34,197,94,0.8); }
+  .panel-url {
+    margin: 0 auto;
+    font-size: 12px;
+    color: var(--text-dimmer);
+    background: var(--surface);
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-family: 'Mono', ui-monospace, monospace;
+  }
+  .panel-body {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 28px;
+    padding: 32px;
+  }
+  @media (max-width: 760px) { .panel-body { grid-template-columns: 1fr; } }
+
+  .panel-h { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+  .panel-h h3 { font-size: 19px; font-weight: 500; margin: 0; }
+  .live-tag {
+    font-size: 12px; font-weight: 500; color: var(--emerald);
+    background: rgba(52,211,153,0.1); padding: 4px 10px; border-radius: 6px;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .live-tag .dot-live { width: 6px; height: 6px; border-radius: 999px; background: var(--emerald); animation: ping 1.6s ease-in-out infinite; }
+  .lead-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px; border-radius: 12px;
+    background: var(--surface); border: 1px solid var(--border-soft);
+    margin-bottom: 14px;
+    transition: background .2s, transform .2s;
+  }
+  .lead-row:hover { background: var(--surface-hover); transform: translateX(3px); }
+  .lead-left { display: flex; align-items: center; gap: 16px; }
+  .avatar {
+    width: 40px; height: 40px; border-radius: 999px;
+    background: rgba(99,102,241,0.18); color: #818cf8;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 13px; flex-shrink: 0;
+  }
+  :root[data-theme="light"] .avatar { color: #4f46e5; }
+  .lead-name { margin: 0; font-size: 14px; font-weight: 500; }
+  .lead-status { margin: 2px 0 0; font-size: 12px; color: var(--text-dim); }
+  .lead-time { font-size: 12px; color: var(--text-dimmer); white-space: nowrap; }
+
+  .stat-card { padding: 20px; border-radius: 14px; margin-bottom: 18px; }
+  .stat-card.hi {
+    background: linear-gradient(180deg, rgba(99,102,241,0.14), transparent);
+    border: 1px solid rgba(99,102,241,0.2);
+  }
+  .stat-card.lo { background: var(--surface); border: 1px solid var(--border-soft); }
+  .stat-label { margin: 0 0 4px; font-size: 13px; color: var(--text-dim); }
+  .stat-value { margin: 0 0 6px; font-size: 32px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat-delta { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--emerald); margin: 0; }
+  .stat-note { font-size: 12px; color: var(--text-dimmer); margin: 0; }
+
+  /* ---------- Flow diagram ---------- */
+  .flow {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    overflow: hidden;
+  }
+  .flow-step {
+    display: grid;
+    grid-template-columns: 56px 1fr;
+    gap: 20px;
+    padding: 28px 32px;
+    position: relative;
+    cursor: default;
+    transition: background .25s;
+  }
+  .flow-step:hover { background: var(--surface); }
+  .flow-step + .flow-step { border-top: 1px solid var(--border-soft); }
+  .flow-num {
+    width: 40px; height: 40px; border-radius: 12px;
+    background: var(--indigo-soft); border: 1px solid rgba(99,102,241,0.3);
+    color: #818cf8; font-weight: 700; font-size: 15px;
+    display: flex; align-items: center; justify-content: center;
+    font-variant-numeric: tabular-nums;
+    transition: transform .3s, background .3s;
+  }
+  :root[data-theme="light"] .flow-num { color: #4f46e5; }
+  .flow-step:hover .flow-num { transform: scale(1.1); background: rgba(99,102,241,0.22); }
+  .flow-body h4 { margin: 4px 0 8px; font-size: 17px; font-weight: 600; }
+  .flow-body p { margin: 0; font-size: 14.5px; color: var(--text-dim); line-height: 1.65; max-width: 640px; }
+  .flow-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em;
+    padding: 4px 10px; border-radius: 999px; margin: 10px 6px 0 0;
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--text-dim); font-family: 'Mono', ui-monospace, monospace;
+    transition: border-color .2s, color .2s;
+  }
+  .flow-step:hover .flow-chip { border-color: rgba(99,102,241,0.4); }
+  .flow-connector {
+    position: absolute; left: 47px; top: 68px; bottom: -1px; width: 1px;
+    background: linear-gradient(to bottom, rgba(99,102,241,0.5), transparent);
+  }
+  .flow-step:last-child .flow-connector { display: none; }
+
+  /* ---------- Capability matrix ---------- */
+  .cap-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 20px;
+  }
+  .cap-card {
+    padding: 26px 26px 22px;
+    border-radius: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    transition: transform .25s, border-color .25s, box-shadow .25s;
+  }
+  .cap-card:hover {
+    transform: translateY(-4px);
+    border-color: rgba(99,102,241,0.35);
+    box-shadow: 0 20px 40px -24px var(--shadow-color);
+  }
+  .cap-card h3 {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 16px; font-weight: 600; margin: 0 0 16px;
+  }
+  .cap-card h3 .ico {
+    width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
+    background: rgba(99,102,241,0.12); color: #818cf8;
+    display: flex; align-items: center; justify-content: center;
+  }
+  :root[data-theme="light"] .cap-card h3 .ico { color: #4f46e5; }
+  .cap-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .cap-list li {
+    display: flex; align-items: flex-start; gap: 10px;
+    font-size: 13.5px; color: var(--text-dim); line-height: 1.5;
+  }
+  .status-dot { flex-shrink: 0; margin-top: 4px; width: 9px; height: 9px; border-radius: 999px; }
+  .status-dot.live { background: var(--emerald); box-shadow: 0 0 8px rgba(52,211,153,0.6); }
+  .status-dot.partial { background: var(--amber); box-shadow: 0 0 8px rgba(251,191,36,0.5); }
+  .status-dot.soon { background: var(--text-dimmer); }
+  .legend { display: flex; gap: 24px; justify-content: center; flex-wrap: wrap; margin-bottom: 40px; font-size: 13px; color: var(--text-dim); }
+  .legend span { display: inline-flex; align-items: center; gap: 8px; }
+
+  /* ---------- Stack strip ---------- */
+  .stack-strip {
+    display: flex; flex-wrap: wrap; gap: 10px; justify-content: center;
+  }
+  .stack-pill {
+    font-family: 'Mono', ui-monospace, monospace;
+    font-size: 12.5px; padding: 8px 16px; border-radius: 999px;
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--text-dim);
+    transition: transform .2s, border-color .2s, color .2s;
+  }
+  .stack-pill:hover { transform: translateY(-2px); border-color: rgba(99,102,241,0.4); color: var(--text); }
+
+  /* ---------- Features grid ---------- */
+  .features {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 24px;
+  }
+  .feature {
+    padding: 30px; border-radius: 18px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    transition: background .3s, border-color .3s, transform .3s;
+  }
+  .feature:hover { background: var(--surface-hover); border-color: rgba(99,102,241,0.5); transform: translateY(-4px); }
+  .feature-icon {
+    width: 48px; height: 48px; border-radius: 12px;
+    background: rgba(99,102,241,0.10); color: #818cf8;
+    display: flex; align-items: center; justify-content: center; margin-bottom: 22px;
+  }
+  :root[data-theme="light"] .feature-icon { color: #4f46e5; }
+  .feature h3 { font-size: 19px; font-weight: 600; margin: 0 0 10px; }
+  .feature p { font-size: 14px; color: var(--text-dim); margin: 0; line-height: 1.65; }
+
+  /* ---------- Roadmap ---------- */
+  .roadmap { display: flex; flex-direction: column; gap: 14px; }
+  .road-row {
+    display: grid; grid-template-columns: 90px 1fr; gap: 20px;
+    align-items: start; padding: 18px 22px; border-radius: 14px;
+    background: var(--surface); border: 1px solid var(--border-soft);
+    transition: background .2s;
+  }
+  .road-row:hover { background: var(--surface-hover); }
+  .road-tag {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.03em;
+    color: #818cf8; padding-top: 2px;
+  }
+  :root[data-theme="light"] .road-tag { color: #4f46e5; }
+  .road-body h4 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+  .road-body p { margin: 0; font-size: 13.5px; color: var(--text-dim); }
+
+  /* ---------- CTA ---------- */
+  .cta-block {
+    position: relative;
+    border-radius: 28px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background: linear-gradient(135deg, var(--bg-panel), var(--bg-panel-2));
+    padding: 56px 40px;
+  }
+  @media (min-width: 768px) { .cta-block { padding: 80px 72px; } }
+  .cta-glow {
+    position: absolute; right: 0; top: 0; width: 50%; height: 100%;
+    background: linear-gradient(to left, rgba(99,102,241,0.20), transparent);
+    filter: blur(60px);
+  }
+  .cta-flex {
+    position: relative; display: flex; flex-direction: column; gap: 40px;
+    align-items: center; text-align: center;
+  }
+  @media (min-width: 768px) { .cta-flex { flex-direction: row; justify-content: space-between; text-align: left; } }
+  .cta-flex h2 { font-size: clamp(1.8rem, 3.4vw, 2.4rem); font-weight: 700; margin: 0 0 14px; max-width: 560px; text-wrap: balance; }
+  .cta-flex p { font-size: 18px; font-weight: 300; color: var(--text-dim); margin: 0; max-width: 480px; }
+  .btn-cta {
+    display: inline-block; flex-shrink: 0;
+    padding: 20px 40px; border-radius: 999px;
+    font-weight: 700; color: #fff; background: var(--indigo);
+    box-shadow: 0 0 40px rgba(99,102,241,0.5);
+    transition: background .25s, transform .25s;
+  }
+  .btn-cta:hover { background: #4f46e5; transform: scale(1.04); }
+
+  footer {
+    margin-top: 20px; padding-top: 40px; border-top: 1px solid var(--border);
+    display: flex; flex-wrap: wrap; gap: 20px; align-items: center; justify-content: space-between;
+    font-size: 14px; color: var(--text-dimmer);
+  }
+  .foot-brand { display: flex; align-items: center; gap: 10px; }
+  .foot-mark {
+    width: 26px; height: 26px; border-radius: 7px;
+    background: linear-gradient(135deg, #6366f1, #7c3aed);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-weight: 700; font-size: 10px;
+  }
+  .foot-links { display: flex; gap: 24px; }
+  .foot-links a:hover { color: var(--text); }
+
+  :focus-visible { outline: 2px solid var(--indigo); outline-offset: 3px; }
+</style>
+
+<div class="glow-field">
+  <div class="glow-a"></div>
+  <div class="glow-b"></div>
+</div>
+
+<div class="wrap">
+  <nav>
+    <div class="logo">1HeroSocial<span class="dot">.ai</span></div>
+    <div class="navlinks">
+      <a class="navlink" href="#flow">How it works</a>
+      <a class="navlink" href="#capabilities">Capabilities</a>
+      <a class="navlink" href="#roadmap">Roadmap</a>
+      <button class="theme-toggle" id="themeToggle" aria-label="Toggle light and dark theme" title="Toggle theme">
+        <span class="theme-knob" id="themeKnob">
+          <svg id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+        </span>
+      </button>
+      <a class="btn-ghost" href="mailto:a.shaikfawaz@gmail.com?subject=Partnering%20with%201HeroSocial.ai">Partner with us</a>
+    </div>
+  </nav>
+
+  <section class="hero">
+    <div class="eyebrow"><span class="ping"></span><span>The Ultimate Orchestration Layer for Fitness Studios</span></div>
+    <h1>Turn your Studio into an<br><span class="grad-text">Automated Growth Engine.</span></h1>
+    <p class="sub">1HeroSocial.ai plugs into WhatsApp, Messenger, your lead forms, Google Sheets, Glofox, and Stripe — then uses a 4-tier AI waterfall to reply to every lead instantly, qualify them, and send a payment link the moment they say yes.</p>
+    <div class="cta-row">
+      <a class="btn-primary" href="mailto:a.shaikfawaz@gmail.com?subject=See%201HeroSocial.ai%20in%20action">
+        See the Platform in Action
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
+      </a>
+      <a class="btn-secondary" href="#flow">See How It Connects</a>
+    </div>
+    <div class="stat-strip">
+      <div class="stat-cell"><div class="n" data-count="4">0</div><div class="l">AI models in the waterfall</div></div>
+      <div class="stat-cell"><div class="n" data-count="7">0</div><div class="l">step automated lead flow</div></div>
+      <div class="stat-cell"><div class="n" data-count="60" data-suffix="s">0</div><div class="l">avg. reply time</div></div>
+      <div class="stat-cell"><div class="n" data-count="0" data-label="forms">0</div><div class="l">forms to book a trial</div></div>
+    </div>
+  </section>
+
+  <section class="panel-frame reveal" id="preview">
+    <div class="panel-halo"></div>
+    <div class="panel">
+      <div class="panel-inner">
+        <div class="panel-bar">
+          <div class="dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+          <div class="panel-url">mythos.1herosocial.ai</div>
+        </div>
+        <div class="panel-body">
+          <div>
+            <div class="panel-h">
+              <h3>Active Leads Pipeline</h3>
+              <span class="live-tag"><span class="dot-live"></span>Live AI Agent</span>
+            </div>
+            <div class="lead-row">
+              <div class="lead-left">
+                <div class="avatar">SJ</div>
+                <div><p class="lead-name">Sarah J.</p><p class="lead-status">Replied via WhatsApp</p></div>
+              </div>
+              <span class="lead-time">2 min ago</span>
+            </div>
+            <div class="lead-row">
+              <div class="lead-left">
+                <div class="avatar">MT</div>
+                <div><p class="lead-name">Mike T.</p><p class="lead-status">Paid trial link sent (Stripe)</p></div>
+              </div>
+              <span class="lead-time">15 min ago</span>
+            </div>
+            <div class="lead-row">
+              <div class="lead-left">
+                <div class="avatar">ER</div>
+                <div><p class="lead-name">Emily R.</p><p class="lead-status">AI Follow-up Sent</p></div>
+              </div>
+              <span class="lead-time">1 hour ago</span>
+            </div>
+          </div>
+          <div>
+            <div class="panel-h"><h3>Studio Health</h3></div>
+            <div class="stat-card hi">
+              <p class="stat-label">Conversion Rate</p>
+              <p class="stat-value">42.8%</p>
+              <p class="stat-delta">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
+                +12.5% this week
+              </p>
+            </div>
+            <div class="stat-card lo">
+              <p class="stat-label">AI Handled Messages</p>
+              <p class="stat-value">1,204</p>
+              <p class="stat-note">Hours saved: 45h</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ HOW IT CONNECTS ============ -->
+  <section id="flow">
+    <div class="section-head reveal">
+      <div class="eyebrow-label">The Flow</div>
+      <h2>From first message to paid trial, fully automated.</h2>
+      <p>This is the actual path a lead takes through the system today — not a concept diagram. Every step below is live in production.</p>
+    </div>
+
+    <div class="flow reveal">
+      <div class="flow-step">
+        <div class="flow-connector"></div>
+        <div class="flow-num">1</div>
+        <div class="flow-body">
+          <h4>Lead arrives from any channel</h4>
+          <p>A prospect fills out your branded lead-capture page, or messages your studio directly on WhatsApp or Facebook Messenger. Either way, they land in the same place: one lead record, tagged with source and campaign.</p>
+          <span class="flow-chip">Branded lead form</span>
+          <span class="flow-chip">WhatsApp (Meta Cloud API)</span>
+          <span class="flow-chip">Facebook Messenger</span>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-connector"></div>
+        <div class="flow-num">2</div>
+        <div class="flow-body">
+          <h4>Instant sync, zero data loss</h4>
+          <p>The lead is written to your dashboard and queued to your Google Sheet in the same transaction. If Sheets is briefly unavailable, the sync retries automatically — nothing is ever dropped.</p>
+          <span class="flow-chip">Postgres + outbox pattern</span>
+          <span class="flow-chip">Google Sheets auto-sync</span>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-connector"></div>
+        <div class="flow-num">3</div>
+        <div class="flow-body">
+          <h4>Decision-tree engine checks first</h4>
+          <p>Before any AI is involved, a rules engine handles structured moments — greetings, booking menus, FAQ shortcuts — so common paths reply instantly and consistently, every time.</p>
+          <span class="flow-chip">Admin-configurable rules</span>
+          <span class="flow-chip">Runs pre-LLM</span>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-connector"></div>
+        <div class="flow-num">4</div>
+        <div class="flow-body">
+          <h4>Studio knowledge base is consulted</h4>
+          <p>Your pricing, class schedule, trainer bios, and FAQs are chunked, embedded, and stored as vectors. When a question needs studio-specific facts, the system retrieves and reranks the most relevant chunks before the AI answers.</p>
+          <span class="flow-chip">Semantic chunking</span>
+          <span class="flow-chip">Vector search (pgvector)</span>
+          <span class="flow-chip">Reranking</span>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-connector"></div>
+        <div class="flow-num">5</div>
+        <div class="flow-body">
+          <h4>A 4-tier AI waterfall writes the reply</h4>
+          <p>The message is routed through the fastest capable model first, escalating only when needed — so replies stay both quick and reliable, and every attempt is logged for cost and latency.</p>
+          <span class="flow-chip">Groq Llama 3.1 8B</span>
+          <span class="flow-chip">Groq Llama 3.3 70B</span>
+          <span class="flow-chip">Gemini 2.5 / 2.0 Flash</span>
+          <span class="flow-chip">Claude (final fallback)</span>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-connector"></div>
+        <div class="flow-num">6</div>
+        <div class="flow-body">
+          <h4>Sentiment reads the room, pipeline updates itself</h4>
+          <p>Each reply is scored for intent — positive, neutral, negative — and the lead's stage moves automatically: New → Contacted → Trial Booked → Member, or Dropped if it's a clear no. Your Kanban board updates live, no one has to drag a card.</p>
+          <span class="flow-chip">Auto-advancing pipeline</span>
+          <span class="flow-chip">Live board (SSE)</span>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num">7</div>
+        <div class="flow-body">
+          <h4>"Yes" becomes a paid trial in one message</h4>
+          <p>The moment a lead agrees to a trial, the system pulls the studio's real plan price, generates a Stripe checkout link, shortens it, and sends it straight into the same WhatsApp thread — no forms, no phone tag, no separate booking flow.</p>
+          <span class="flow-chip">Stripe Checkout</span>
+          <span class="flow-chip">Dynamic plan pricing</span>
+          <span class="flow-chip">Shortened links</span>
+          <span class="flow-chip">Glofox first-session automation</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CAPABILITIES ============ -->
+  <section id="capabilities">
+    <div class="section-head reveal">
+      <div class="eyebrow-label">Capabilities</div>
+      <h2>Everything the platform can do today.</h2>
+      <p>Grouped by area. Status shown per capability — this is what's live right now, not a wishlist.</p>
+    </div>
+
+    <div class="legend reveal">
+      <span><span class="status-dot live"></span>Live in production</span>
+      <span><span class="status-dot partial"></span>Partially wired</span>
+      <span><span class="status-dot soon"></span>Planned</span>
+    </div>
+
+    <div class="cap-grid reveal">
+      <div class="cap-card">
+        <h3><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg></span>Messaging Channels</h3>
+        <ul class="cap-list">
+          <li><span class="status-dot live"></span>WhatsApp — direct Meta Cloud API, no third-party BSP</li>
+          <li><span class="status-dot live"></span>Facebook Messenger — full AI auto-reply</li>
+          <li><span class="status-dot partial"></span>Instagram DMs — inbox visibility, AI reply not yet enabled</li>
+          <li><span class="status-dot soon"></span>X / Twitter DMs — designed, on the roadmap</li>
+        </ul>
+      </div>
+
+      <div class="cap-card">
+        <h3><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg></span>AI &amp; Knowledge Base</h3>
+        <ul class="cap-list">
+          <li><span class="status-dot live"></span>4-tier LLM waterfall (Groq → Groq → Gemini → Claude) for speed + reliability</li>
+          <li><span class="status-dot live"></span>Per-message cost &amp; latency logging with a usage dashboard</li>
+          <li><span class="status-dot live"></span>Studio-specific knowledge base: semantic chunking, vector embeddings, reranked retrieval</li>
+          <li><span class="status-dot live"></span>Decision-tree automation for structured flows ahead of the LLM</li>
+          <li><span class="status-dot live"></span>Keyword-based sentiment &amp; intent detection driving pipeline stage changes</li>
+        </ul>
+      </div>
+
+      <div class="cap-card">
+        <h3><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></span>Payments &amp; Trials</h3>
+        <ul class="cap-list">
+          <li><span class="status-dot live"></span>Stripe checkout sessions generated inline, mid-conversation</li>
+          <li><span class="status-dot live"></span>Trial price pulled dynamically from the studio's real membership plans</li>
+          <li><span class="status-dot live"></span>Shortened payment links sent directly in the WhatsApp/Messenger thread</li>
+          <li><span class="status-dot live"></span>Per-studio Stripe webhook handling (checkout completion)</li>
+        </ul>
+      </div>
+
+      <div class="cap-card">
+        <h3><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg></span>Lead Pipeline &amp; CRM</h3>
+        <ul class="cap-list">
+          <li><span class="status-dot live"></span>Branded, per-studio public lead-capture pages</li>
+          <li><span class="status-dot live"></span>Live Kanban pipeline: New → Contacted → Trial Booked → Member / Dropped</li>
+          <li><span class="status-dot live"></span>Auto-advancing stages driven by AI sentiment, updating in real time</li>
+          <li><span class="status-dot live"></span>Unified inbox across connected channels with live updates</li>
+        </ul>
+      </div>
+
+      <div class="cap-card">
+        <h3><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg></span>Integrations</h3>
+        <ul class="cap-list">
+          <li><span class="status-dot live"></span>Google Sheets — every lead synced automatically, no manual export</li>
+          <li><span class="status-dot live"></span>Glofox — auto-registers studio admins, drives first-session automation</li>
+          <li><span class="status-dot live"></span>Amazon S3 — logo and media asset storage</li>
+          <li><span class="status-dot soon"></span>Google / Meta / TikTok Ads management</li>
+          <li><span class="status-dot soon"></span>SEO engine and AI-generated organic content publishing</li>
+        </ul>
+      </div>
+
+      <div class="cap-card">
+        <h3><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg></span>Platform Foundation</h3>
+        <ul class="cap-list">
+          <li><span class="status-dot live"></span>Multi-tenant studio onboarding (super-admin creates studios)</li>
+          <li><span class="status-dot live"></span>Per-studio branding on public-facing pages</li>
+          <li><span class="status-dot live"></span>Role-based access: super-admin and studio-admin</li>
+          <li><span class="status-dot soon"></span>Multi-location vendor management, full RBAC hierarchy</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FEATURES (marketing summary) ============ -->
+  <section>
+    <div class="section-head reveal">
+      <div class="eyebrow-label">Why Studios Choose Us</div>
+      <h2>Built for Studio Growth.</h2>
+      <p>Stop managing tools and start managing your business. 1HeroSocial.ai brings everything into one unified, intelligent workspace.</p>
+    </div>
+    <div class="features reveal">
+      <div class="feature">
+        <div class="feature-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
+        </div>
+        <h3>Omnichannel Inbox</h3>
+        <p>WhatsApp, Messenger, and web leads route directly to one centralized inbox. Never miss a message again.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+        </div>
+        <h3>Custom AI Knowledge Base</h3>
+        <p>Train an AI agent on your studio's pricing, schedules, and FAQs. It automatically answers inquiries 24/7, grounded in your real data.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+        </div>
+        <h3>Instant Trial-to-Payment</h3>
+        <p>The moment a lead says yes, they get a real Stripe payment link in the same chat — priced from your actual plans, no manual follow-up.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ ROADMAP ============ -->
+  <section id="roadmap">
+    <div class="section-head reveal">
+      <div class="eyebrow-label">What's Next</div>
+      <h2>Where the platform is headed.</h2>
+      <p>1HeroSocial.ai already runs the full "message → qualify → get paid" loop. Here's what we're building next toward the full AI-run marketing agency vision.</p>
+    </div>
+    <div class="roadmap reveal">
+      <div class="road-row">
+        <div class="road-tag">NEXT</div>
+        <div class="road-body">
+          <h4>Instagram DM auto-reply</h4>
+          <p>Data model is already in place — wiring the same AI waterfall into Instagram DMs.</p>
+        </div>
+      </div>
+      <div class="road-row">
+        <div class="road-tag">NEXT</div>
+        <div class="road-body">
+          <h4>Paid ads &amp; SEO management</h4>
+          <p>Google, Meta, and TikTok ad campaign creation and budget optimization, plus an SEO engine for studio landing pages.</p>
+        </div>
+      </div>
+      <div class="road-row">
+        <div class="road-tag">LATER</div>
+        <div class="road-body">
+          <h4>AI-generated organic content</h4>
+          <p>Automatic post copy and creative generation, scheduled and published across channels with human approval.</p>
+        </div>
+      </div>
+      <div class="road-row">
+        <div class="road-tag">LATER</div>
+        <div class="road-body">
+          <h4>Full CRM, booking engine &amp; predictive insights</h4>
+          <p>Class scheduling, churn prediction, lifetime-value modeling, and demand forecasting on top of the data already flowing through the platform.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ STACK ============ -->
+  <section>
+    <div class="section-head reveal">
+      <div class="eyebrow-label">Under the Hood</div>
+      <h2>Real infrastructure, not a prototype.</h2>
+      <p>Built on production-grade technology from day one.</p>
+    </div>
+    <div class="stack-strip reveal">
+      <span class="stack-pill">Go + Postgres</span>
+      <span class="stack-pill">pgvector</span>
+      <span class="stack-pill">Next.js + TypeScript</span>
+      <span class="stack-pill">Meta Cloud API</span>
+      <span class="stack-pill">Groq</span>
+      <span class="stack-pill">Gemini</span>
+      <span class="stack-pill">Claude</span>
+      <span class="stack-pill">Stripe</span>
+      <span class="stack-pill">Glofox</span>
+      <span class="stack-pill">Google Sheets API</span>
+      <span class="stack-pill">Amazon S3</span>
+    </div>
+  </section>
+
+  <section class="cta-block reveal">
+    <div class="cta-glow"></div>
+    <div class="cta-flex">
+      <div>
+        <h2>Ready to dominate your local market?</h2>
+        <p>Join the studios using 1HeroSocial.ai to automate their communication and fill their classes on autopilot.</p>
+      </div>
+      <a class="btn-cta" href="mailto:a.shaikfawaz@gmail.com?subject=Early%20Access%20to%201HeroSocial.ai">Get Early Access</a>
+    </div>
+  </section>
+
+  <footer>
+    <div class="foot-brand">
+      <div class="foot-mark">1H</div>
+      <span>© 2026 1HeroSocial.ai. All rights reserved.</span>
+    </div>
+    <div class="foot-links">
+      <a href="mailto:a.shaikfawaz@gmail.com?subject=1HeroSocial.ai%20Privacy%20Question">Privacy</a>
+      <a href="mailto:a.shaikfawaz@gmail.com?subject=1HeroSocial.ai%20Terms%20Question">Terms</a>
+      <a href="mailto:a.shaikfawaz@gmail.com?subject=1HeroSocial.ai%20Contact">Contact</a>
+    </div>
+  </footer>
+</div>
+
+<script>
+(function () {
+  var root = document.documentElement;
+  var toggle = document.getElementById('themeToggle');
+  var icon = document.getElementById('themeIcon');
+  var SUN = 'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z';
+  var MOON = 'M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z';
+
+  function apply(theme) {
+    root.setAttribute('data-theme', theme);
+    icon.setAttribute('d', theme === 'light' ? SUN : MOON);
+  }
+
+  var stored = null;
+  try { stored = localStorage.getItem('1hs-theme'); } catch (e) {}
+  var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  apply(stored || (prefersDark ? 'dark' : 'light'));
+
+  toggle.addEventListener('click', function () {
+    var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    apply(next);
+    try { localStorage.setItem('1hs-theme', next); } catch (e) {}
+  });
+
+  // Scroll reveal
+  var reveals = document.querySelectorAll('.reveal');
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+      });
+    }, { threshold: 0.12 });
+    reveals.forEach(function (el) { io.observe(el); });
+  } else {
+    reveals.forEach(function (el) { el.classList.add('in'); });
+  }
+
+  // Count-up stat strip
+  var counters = document.querySelectorAll('.stat-cell .n');
+  var animated = false;
+  function animateCounters() {
+    if (animated) return;
+    animated = true;
+    counters.forEach(function (el) {
+      var target = parseFloat(el.getAttribute('data-count'));
+      var suffix = el.getAttribute('data-suffix') || '';
+      var label = el.getAttribute('data-label');
+      if (label) { el.textContent = target + ' ' + label; return; }
+      var start = null;
+      var duration = 900;
+      function step(ts) {
+        if (!start) start = ts;
+        var progress = Math.min((ts - start) / duration, 1);
+        var eased = 1 - Math.pow(1 - progress, 3);
+        var value = Math.round(target * eased);
+        el.textContent = value + suffix;
+        if (progress < 1) requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    });
+  }
+  var statStrip = document.querySelector('.stat-strip');
+  if (statStrip && 'IntersectionObserver' in window) {
+    var io2 = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) { if (e.isIntersecting) { animateCounters(); io2.disconnect(); } });
+    }, { threshold: 0.4 });
+    io2.observe(statStrip);
+  } else {
+    animateCounters();
+  }
+})();
+</script>

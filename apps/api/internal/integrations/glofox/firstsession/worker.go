@@ -62,8 +62,13 @@ func New(
 }
 
 func (w *Worker) Run(ctx context.Context) {
-	if w.gf == nil || w.studioID == uuid.Nil {
-		w.log.Info("Glofox | First-session worker disabled — set GLOFOX_STUDIO_ID to enable",
+	if w.gf == nil {
+		w.log.Info("Glofox | First-session worker disabled — set GLOFOX_API_KEY, GLOFOX_API_TOKEN, and GLOFOX_BRANCH_ID to enable",
+			"component", "glofox_first_session")
+		return
+	}
+	if w.studioID == uuid.Nil {
+		w.log.Warn("Glofox | First-session worker disabled — no studio with an active WhatsApp or SMS channel found to auto-detect",
 			"component", "glofox_first_session")
 		return
 	}
@@ -152,13 +157,17 @@ func (w *Worker) processUser(ctx context.Context, glofoxUserID string) (bool, er
 		return false, nil // no phone in Glofox — cannot message
 	}
 
-	// --- 4. Atomic de-dup via log table: claim the slot or skip if already done ---
-	inserted, err := w.claimNotificationSlot(ctx, glofoxUserID)
+	// --- 4. Check whether this member was already notified in a previous
+	// poll. This is a read-only check here — the actual atomic claim happens
+	// right before we enqueue the message (step 9), so a member who fails an
+	// earlier step (no matching channel, conversation creation error, etc.)
+	// is never permanently marked as done and gets retried on the next poll.
+	alreadyNotified, err := w.isAlreadyNotified(ctx, glofoxUserID)
 	if err != nil {
-		return false, fmt.Errorf("claim notification slot: %w", err)
+		return false, fmt.Errorf("check notification status: %w", err)
 	}
-	if !inserted {
-		return false, nil // already notified in a previous poll
+	if alreadyNotified {
+		return false, nil
 	}
 
 	// --- 5. Build display name from Glofox data ---
@@ -209,7 +218,22 @@ func (w *Worker) processUser(ctx context.Context, glofoxUserID string) (bool, er
 		return false, fmt.Errorf("create conversation: %w", err)
 	}
 
-	// --- 9. Enqueue first-session message ---
+	// --- 9. Atomically claim the notification slot right before enqueueing —
+	// this is the last thing that can still race with a concurrent poll, and
+	// everything before it (fetch member, resolve channel, create
+	// conversation) is safe to simply retry on the next tick if it fails.
+	// Claiming any earlier (e.g. before the channel-availability check) would
+	// permanently skip a member who was never actually sent a message, which
+	// is exactly the bug this ordering fixes.
+	claimed, err := w.claimNotificationSlot(ctx, glofoxUserID)
+	if err != nil {
+		return false, fmt.Errorf("claim notification slot: %w", err)
+	}
+	if !claimed {
+		return false, nil // another poll already claimed this member first
+	}
+
+	// --- 10. Enqueue first-session message ---
 	// Uses {{contact.first_name}} which resolves from the Glofox display name above.
 	body := "Hi {{contact.first_name}}, congrats on completing your first session at {{studio.name}}! We hope you loved it. Are you ready to commit to your fitness journey? Please select:\n1. Yes, let's do this!\n2. Tell me more about membership"
 
@@ -221,6 +245,12 @@ func (w *Worker) processUser(ctx context.Context, glofoxUserID string) (bool, er
 		SourceRef:      fmt.Sprintf("glofox:%s:%s:first_session", w.branchID, glofoxUserID),
 		ScheduledFor:   time.Now().UTC(),
 	}); err != nil {
+		// The slot is already claimed at this point. This is an accepted
+		// trade-off: a failure here (rare — enqueue is a simple local
+		// insert) means this member won't be retried. The alternative,
+		// claiming after a successful enqueue, would reopen a window where
+		// two concurrent ticks could both pass the claim check and send the
+		// message twice, which is worse than a rare missed message.
 		return false, fmt.Errorf("enqueue outbound: %w", err)
 	}
 
@@ -233,6 +263,24 @@ func (w *Worker) processUser(ctx context.Context, glofoxUserID string) (bool, er
 		"lead_linked", leadID != nil,
 	)
 	return true, nil
+}
+
+// isAlreadyNotified reports whether this member has already been sent a
+// first-session message in a previous poll. Read-only — does not claim
+// anything, so it's safe to call early without risk of permanently skipping
+// a member who hasn't actually been messaged yet.
+func (w *Worker) isAlreadyNotified(ctx context.Context, glofoxUserID string) (bool, error) {
+	var exists bool
+	err := w.pool.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM glofox_first_session_log
+			WHERE glofox_user_id = $1 AND branch_id = $2
+		)
+	`, glofoxUserID, w.branchID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check log: %w", err)
+	}
+	return exists, nil
 }
 
 // claimNotificationSlot inserts a row into glofox_first_session_log.

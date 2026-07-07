@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Smartphone, CheckCircle2, XCircle, RefreshCw, Wifi } from 'lucide-react';
+import { Smartphone, CheckCircle2, XCircle, RefreshCw, Wifi, History } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { api } from '@/lib/api';
@@ -13,6 +13,8 @@ type QRState =
   | { status: 'connected'; phone: string }
   | { status: 'error'; message: string };
 
+type BackfillState = 'none' | 'running' | 'done' | 'failed';
+
 export function ConnectWhatsAppWeb({
   studioId,
   showToast,
@@ -21,7 +23,10 @@ export function ConnectWhatsAppWeb({
   showToast: (msg: string) => void;
 }) {
   const [state, setState] = useState<QRState>({ status: 'idle' });
+  const [backfill, setBackfill] = useState<BackfillState>('none');
+  const [backfillCount, setBackfillCount] = useState(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const backfillPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const prewarmQR = useRef<string | null>(null);
 
   const stopPolling = useCallback(() => {
@@ -91,6 +96,56 @@ export function ConnectWhatsAppWeb({
       .catch(() => {});
   }, [studioId]);
 
+  const fetchBackfillStatus = useCallback(async () => {
+    try {
+      const data = await api<{ status: BackfillState; messageCount: number }>(
+        `/api/v1/studios/${studioId}/messaging/channels/whatsapp-web/backfill`
+      );
+      setBackfill(data.status);
+      setBackfillCount(data.messageCount || 0);
+      if (data.status !== 'running' && backfillPollRef.current) {
+        clearInterval(backfillPollRef.current);
+        backfillPollRef.current = null;
+        if (data.status === 'done') showToast(`Imported ${data.messageCount} historical messages.`);
+        if (data.status === 'failed') showToast('History import failed.');
+      }
+    } catch {
+      // ignore — status just stays as-is until next poll
+    }
+  }, [studioId, showToast]);
+
+  // Check backfill status on mount, and resume polling if one is already running.
+  useEffect(() => {
+    fetchBackfillStatus().then(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [studioId]);
+
+  useEffect(() => {
+    if (backfill === 'running' && !backfillPollRef.current) {
+      backfillPollRef.current = setInterval(fetchBackfillStatus, 4000);
+    }
+    return () => {
+      if (backfillPollRef.current) {
+        clearInterval(backfillPollRef.current);
+        backfillPollRef.current = null;
+      }
+    };
+  }, [backfill, fetchBackfillStatus]);
+
+  const startBackfill = useCallback(async () => {
+    setBackfill('running');
+    setBackfillCount(0);
+    try {
+      await api(`/api/v1/studios/${studioId}/messaging/channels/whatsapp-web/backfill`, {
+        method: 'POST',
+      });
+      backfillPollRef.current = setInterval(fetchBackfillStatus, 4000);
+    } catch {
+      setBackfill('failed');
+      showToast('Could not start history import.');
+    }
+  }, [studioId, fetchBackfillStatus, showToast]);
+
   // Silently pre-warm Chrome and cache the QR in the background so clicking
   // "Show QR Code" is instant (<1s) instead of waiting for Chrome to start.
   useEffect(() => {
@@ -127,6 +182,9 @@ export function ConnectWhatsAppWeb({
 
   // Cleanup on unmount
   useEffect(() => () => stopPolling(), [stopPolling]);
+  useEffect(() => () => {
+    if (backfillPollRef.current) clearInterval(backfillPollRef.current);
+  }, []);
 
   return (
     <Card
@@ -192,6 +250,42 @@ export function ConnectWhatsAppWeb({
             <p className="text-xs text-slate-500 text-center">
               WhatsApp is linked. Messages will appear in your inbox automatically.
             </p>
+
+            {backfill === 'none' && (
+              <div className="flex flex-col items-center gap-1.5">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  leftIcon={<History className="h-4 w-4" />}
+                  onClick={startBackfill}
+                >
+                  Import chat history
+                </Button>
+                <p className="text-[11px] text-slate-400 text-center max-w-xs">
+                  Best-effort — WhatsApp only shares a recent window of history with linked devices, not your full archive.
+                </p>
+              </div>
+            )}
+            {backfill === 'running' && (
+              <div className="flex items-center gap-2 text-sm text-slate-500">
+                <RefreshCw className="h-4 w-4 animate-spin" />
+                Importing chat history… this can take a few minutes.
+              </div>
+            )}
+            {backfill === 'done' && (
+              <p className="text-xs text-green-600 dark:text-green-400">
+                Imported {backfillCount} historical messages.
+              </p>
+            )}
+            {backfill === 'failed' && (
+              <div className="flex items-center gap-2">
+                <p className="text-xs text-red-500">History import failed.</p>
+                <Button variant="ghost" size="sm" onClick={startBackfill}>
+                  Retry
+                </Button>
+              </div>
+            )}
+
             <Button
               variant="ghost"
               size="sm"
