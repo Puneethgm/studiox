@@ -322,6 +322,7 @@ func main() {
 				r.Put("/social-posts/{postId}", studiosHandler.UpdateSocialPost)
 				r.Delete("/social-posts/{postId}", studiosHandler.DeleteSocialPost)
 				r.Post("/social-posts/upload-image", studiosHandler.UploadSocialPostImage)
+				identityHandler.StudioRoutes(r)
 				r.Route("/messaging", func(r chi.Router) {
 					msgHandler.AdminRoutes(r)
 				})

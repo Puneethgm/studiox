@@ -189,21 +189,24 @@ export async function saveSheetsSettings(
   return { ok: true };
 }
 
+export interface ExternalLeadsSheetSettingsData {
+  spreadsheetId: string;
+  tabName: string;
+  nameColumn: string;
+  firstNameColumn: string;
+  lastNameColumn: string;
+  emailColumn: string;
+  phoneColumn: string;
+  sourceColumn: string;
+  notesColumn: string;
+  dateColumn: string;
+  active: boolean;
+}
+
 export interface ExternalLeadsSheetSettingsResult {
   ok: boolean;
   error?: string;
-  data?: {
-    spreadsheetId: string;
-    tabName: string;
-    nameColumn: string;
-    firstNameColumn: string;
-    lastNameColumn: string;
-    emailColumn: string;
-    phoneColumn: string;
-    sourceColumn: string;
-    notesColumn: string;
-    active: boolean;
-  };
+  data?: ExternalLeadsSheetSettingsData;
 }
 
 export async function getExternalLeadsSheetSettings(studioId: string): Promise<ExternalLeadsSheetSettingsResult> {
@@ -233,18 +236,7 @@ export async function getExternalLeadsSheetSettings(studioId: string): Promise<E
 
 export async function saveExternalLeadsSheetSettings(
   studioId: string,
-  data: {
-    spreadsheetId: string;
-    tabName: string;
-    nameColumn: string;
-    firstNameColumn: string;
-    lastNameColumn: string;
-    emailColumn: string;
-    phoneColumn: string;
-    sourceColumn: string;
-    notesColumn: string;
-    active: boolean;
-  }
+  data: ExternalLeadsSheetSettingsData
 ): Promise<UpdateStudioResult> {
   const cookieStore = await cookies();
   const cookieHeader = cookieStore

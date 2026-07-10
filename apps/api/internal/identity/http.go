@@ -51,6 +51,11 @@ func (h *Handler) Routes(r chi.Router) {
 	r.With(h.RequireAuth, httpx.AuthRateLimiter).Post("/auth/password", h.changePassword)
 }
 
+func (h *Handler) StudioRoutes(r chi.Router) {
+	r.Get("/users", h.listStudioUsers)
+}
+
+
 type loginReq struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
@@ -140,7 +145,7 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "session no longer valid")
 		return
 	}
-	
+
 	// If the user has a studio, ensure it actually exists/is accessible.
 	// If the database was reset but the JWT is still valid, this prevents
 	// the user from getting stuck in a 403 loop on all other pages.
@@ -296,3 +301,46 @@ func RequireRole(allowed ...Role) func(http.Handler) http.Handler {
 		})
 	}
 }
+
+func (h *Handler) listStudioUsers(w http.ResponseWriter, r *http.Request) {
+	studioIDStr := chi.URLParam(r, "studioId")
+	if studioIDStr == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "studioId parameter required")
+		return
+	}
+	studioID, err := uuid.Parse(studioIDStr)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "invalid studioId format")
+		return
+	}
+
+	c := MustClaims(r.Context())
+	if !c.IsSuper() && (c.StudioID == nil || *c.StudioID != studioID) {
+		httpx.WriteError(w, http.StatusForbidden, "forbidden", "cannot access this studio")
+		return
+	}
+
+	users, err := h.repo.ListByStudioID(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to list users")
+		return
+	}
+
+	type userRes struct {
+		ID    uuid.UUID `json:"id"`
+		Email string    `json:"email"`
+		Role  Role      `json:"role"`
+	}
+
+	res := make([]userRes, len(users))
+	for i, u := range users {
+		res[i] = userRes{
+			ID:    u.ID,
+			Email: u.Email,
+			Role:  u.Role,
+		}
+	}
+
+	httpx.JSON(w, http.StatusOK, map[string]any{"users": res})
+}
+

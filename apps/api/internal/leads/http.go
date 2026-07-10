@@ -763,6 +763,7 @@ type saveExternalLeadsSheetSettingsReq struct {
 	PhoneColumn     string `json:"phoneColumn"`
 	SourceColumn    string `json:"sourceColumn"`
 	NotesColumn     string `json:"notesColumn"`
+	DateColumn      string `json:"dateColumn"`
 	Active          bool   `json:"active"`
 }
 
@@ -780,7 +781,7 @@ func (h *Handler) getExternalLeadsSheetSettings(w http.ResponseWriter, r *http.R
 		httpx.JSON(w, http.StatusOK, map[string]any{
 			"spreadsheetId": "", "tabName": "Sheet1",
 			"nameColumn": "", "firstNameColumn": "A", "lastNameColumn": "B",
-			"emailColumn": "C", "phoneColumn": "D", "sourceColumn": "", "notesColumn": "",
+			"emailColumn": "C", "phoneColumn": "D", "sourceColumn": "", "notesColumn": "", "dateColumn": "",
 			"active": false,
 		})
 		return
@@ -811,6 +812,7 @@ func (h *Handler) saveExternalLeadsSheetSettings(w http.ResponseWriter, r *http.
 		PhoneColumn:     req.PhoneColumn,
 		SourceColumn:    req.SourceColumn,
 		NotesColumn:     req.NotesColumn,
+		DateColumn:      req.DateColumn,
 		Active:          req.Active,
 	})
 	if err != nil {

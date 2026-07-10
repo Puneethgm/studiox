@@ -73,7 +73,7 @@ export default async function DecisionTreesPage({
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
                   {tree.targetStatuses && tree.targetStatuses.length > 0 ? (
                     tree.targetStatuses.map((s) => (
-                      <span key={s} className="rounded-full bg-violet-50 text-violet-600 border border-violet-200 px-2 py-0.5 text-xs font-medium capitalize">
+                      <span key={s} className="rounded bg-violet-50 text-violet-600 border border-violet-200 dark:bg-violet-500/10 dark:border-violet-500/20 dark:text-violet-400 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider">
                         {s.replace('_', ' ')}
                       </span>
                     ))

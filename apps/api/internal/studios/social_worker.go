@@ -543,9 +543,9 @@ func (w *SocialWorker) createGoogleAdsBudget(ctx context.Context, customerID, ac
 		"operations": []map[string]any{
 			{
 				"create": map[string]any{
-					"name":                  fmt.Sprintf("%s Budget %d", campaignName, time.Now().Unix()),
-					"amountMicros":          10000000, // $10.00 USD daily budget
-					"deliveryMethod":        "STANDARD",
+					"name":           fmt.Sprintf("%s Budget %d", campaignName, time.Now().Unix()),
+					"amountMicros":   10000000, // $10.00 USD daily budget
+					"deliveryMethod": "STANDARD",
 				},
 			},
 		},
@@ -592,15 +592,15 @@ func (w *SocialWorker) createGoogleAdsCampaign(ctx context.Context, customerID, 
 		"operations": []map[string]any{
 			{
 				"create": map[string]any{
-					"name":                  fmt.Sprintf("%s %d", campaignName, time.Now().Unix()),
+					"name":                   fmt.Sprintf("%s %d", campaignName, time.Now().Unix()),
 					"advertisingChannelType": "SEARCH",
-					"status":                "PAUSED",
-					"campaignBudget":        budgetResourceName,
-					"manualCpc":             map[string]any{},
+					"status":                 "PAUSED",
+					"campaignBudget":         budgetResourceName,
+					"manualCpc":              map[string]any{},
 					"networkSettings": map[string]any{
-						"targetGoogleSearch":      true,
-						"targetSearchNetwork":      true,
-						"targetContentNetwork":     true,
+						"targetGoogleSearch":         true,
+						"targetSearchNetwork":        true,
+						"targetContentNetwork":       true,
 						"targetPartnerSearchNetwork": false,
 					},
 				},

@@ -235,7 +235,7 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
         aria-hidden
       />
 
-      <div className="lg:flex lg:h-screen lg:gap-4 lg:p-4">
+      <div className="lg:flex lg:h-screen lg:gap-0 lg:p-0">
         <Sidebar
           me={me}
           pathname={pathname}
@@ -244,12 +244,15 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
           isCollapsed={isCollapsed}
           onToggle={handleToggleSidebar}
         />
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden lg:glass-container">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-white dark:bg-zinc-950">
           <Topbar me={me} scrolled={scrolled} onMenuClick={() => setMobileOpen(true)} />
           <main
             ref={mainRef}
             onScroll={handleScroll}
-            className="relative flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8 lg:py-8"
+            className={cn(
+              "relative flex-1 overflow-y-auto",
+              pathname.includes('/inbox') ? "p-0 overflow-hidden" : "px-4 py-6 sm:px-6 lg:px-8 lg:py-8"
+            )}
           >
             {children}
           </main>
@@ -315,14 +318,13 @@ function Sidebar({
     <aside
       className={cn(
         // Mobile: fixed drawer that slides in from the left
-        'fixed inset-y-4 left-4 z-50 flex w-72 flex-col overflow-hidden rounded-[32px] border border-white/40 bg-white/40 px-4 py-6 backdrop-blur-3xl transition-all duration-500 ease-[cubic-bezier(0.34,1.56,0.64,1)]',
-        'dark:border-white/10 dark:bg-neutral-900/40',
+        'fixed inset-y-0 left-0 z-50 flex w-72 flex-col overflow-hidden border-r border-zinc-200 bg-white px-4 py-6 transition-all duration-300 dark:border-zinc-800 dark:bg-zinc-950',
         // Desktop: sticky in flow, always visible
-        'lg:relative lg:inset-y-0 lg:left-0 lg:z-auto lg:h-full lg:translate-x-0 lg:rounded-[40px] lg:shadow-liquid lg:transition-[width,padding] lg:duration-300 lg:ease-out',
+        'lg:relative lg:inset-y-0 lg:left-0 lg:z-auto lg:h-full lg:translate-x-0 lg:border-r lg:border-zinc-200 lg:bg-[#f8f9fa] lg:dark:bg-zinc-900 lg:dark:border-zinc-800 lg:shadow-none lg:rounded-none lg:transition-[width,padding] lg:duration-300 lg:ease-out',
         isCollapsed 
           ? 'lg:w-20 lg:items-center lg:px-2' 
           : 'lg:w-64 lg:items-stretch lg:px-4',
-        mobileOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-[calc(100%+20px)]',
+        mobileOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full',
       )}
       aria-label="Primary navigation"
     >
@@ -340,16 +342,16 @@ function Sidebar({
       {/* Brand block */}
       {isStudio ? (
         <div className={cn(
-          "mb-4 lg:mb-6 flex animate-in items-center gap-3 lg:transition-all lg:duration-300 shrink-0",
+          "mb-4 lg:mb-6 flex items-center gap-3 lg:transition-all lg:duration-300 shrink-0",
           isCollapsed ? "lg:flex-col lg:gap-1" : "lg:flex-row lg:gap-3"
-        )} style={{ animationDelay: '100ms' }}>
+        )}>
           <div
-            className="grid h-12 w-12 shrink-0 animate-float place-items-center overflow-hidden rounded-2xl text-sm font-bold text-white shadow-lg shadow-brand-500/20 ring-4 ring-white/30"
+            className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded text-sm font-bold text-white shadow-sm"
             style={{ background: studio!.brandColor }}
           >
             {studio!.logoUrl && !logoError ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={studio!.logoUrl} alt="" className="h-12 w-12 object-cover" onError={() => setLogoError(true)} />
+              <img src={studio!.logoUrl} alt="" className="h-10 w-10 object-cover" onError={() => setLogoError(true)} />
             ) : (
               brandInitials(studio!.name)
             )}
@@ -368,10 +370,10 @@ function Sidebar({
         </div>
       ) : (
         <div className={cn(
-          "mb-4 lg:mb-6 flex animate-in items-center gap-3 lg:transition-all lg:duration-300 shrink-0",
+          "mb-4 lg:mb-6 flex items-center gap-3 lg:transition-all lg:duration-300 shrink-0",
           isCollapsed ? "lg:flex-col lg:gap-1" : "lg:flex-row lg:gap-3"
-        )} style={{ animationDelay: '100ms' }}>
-          <img src="/logo.png" alt="1herosocial.ai Logo" className="h-12 w-12 shrink-0 animate-float object-contain rounded-2xl shadow-lg shadow-brand-500/20 ring-4 ring-white/30" />
+        )}>
+          <img src="/logo.png" alt="1herosocial.ai Logo" className="h-10 w-10 shrink-0 object-contain rounded shadow-sm" />
           <div className={cn(
             "min-w-0 lg:block lg:transition-all lg:duration-300",
             isCollapsed ? "lg:max-w-0 lg:overflow-hidden lg:opacity-0" : "lg:max-w-[11rem] lg:opacity-100"
@@ -394,7 +396,7 @@ function Sidebar({
           <Link
             href="/admin/studios"
             className={cn(
-              'group flex animate-in items-center gap-2 rounded-[20px] px-3 py-2.5 text-xs font-semibold text-zinc-400 transition-colors hover:bg-white/50 hover:text-zinc-700 dark:text-zinc-500 dark:hover:bg-white/5 dark:hover:text-zinc-300 mb-1',
+              'group flex animate-in items-center gap-2 rounded px-3 py-2 text-xs font-semibold text-zinc-400 transition-colors hover:bg-zinc-105 hover:text-zinc-700 dark:text-zinc-500 dark:hover:bg-zinc-800 dark:hover:text-zinc-300 mb-1',
               isCollapsed ? 'lg:justify-center' : 'lg:justify-start',
             )}
             title="All Studios"
@@ -413,15 +415,15 @@ function Sidebar({
               key={item.href}
               href={item.href}
               className={cn(
-                'group flex animate-in items-center gap-3 rounded-[20px] px-3 py-2.5 text-sm font-semibold transition-colors duration-300 lg:transition-[background-color,color,box-shadow,padding,transform] lg:duration-300',
+                'group flex animate-in items-center gap-3 rounded px-3 py-2 text-sm font-semibold transition-colors duration-200',
                 active
-                  ? 'text-white shadow-lg'
-                  : 'text-zinc-500 hover:bg-white/50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-white/5 dark:hover:text-zinc-100',
+                  ? 'text-white'
+                  : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100',
                 isCollapsed ? 'lg:justify-center' : 'lg:justify-start',
               )}
               style={{
                 animationDelay: `${150 + idx * 50}ms`,
-                ...(active ? { background: 'linear-gradient(135deg, var(--brand) 0%, #a78bfa 100%)', boxShadow: '0 8px 16px -4px rgba(124, 58, 237, 0.3)' } : {}),
+                ...(active ? { background: 'var(--brand)' } : {}),
               }}
             >
               <span className={cn('shrink-0 transition-transform duration-300 group-hover:scale-110', active && '[&>svg]:stroke-[2.5]')}>
@@ -438,19 +440,18 @@ function Sidebar({
         })}
       </nav>
 
-
       {/* Sidebar Footer Controls */}
-      <div className="mt-auto flex items-center justify-center w-full pt-4 border-t border-white/20 dark:border-white/5 shrink-0">
+      <div className="mt-auto hidden lg:flex items-center justify-center w-full pt-4 border-t border-zinc-200 dark:border-zinc-800 shrink-0">
         <button
           type="button"
           onClick={onToggle}
-          className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/20 hover:bg-white/50 border border-white/20 dark:bg-black/20 dark:hover:bg-white/5 dark:border-white/5 text-zinc-500 hover:text-zinc-800 dark:hover:text-white transition-all duration-300"
+          className="flex h-8 w-8 items-center justify-center rounded border border-zinc-200 bg-white hover:bg-zinc-100 dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:border-zinc-800 text-zinc-500 hover:text-zinc-800 dark:hover:text-white transition-colors"
           title={isCollapsed ? "Expand" : "Collapse"}
         >
           {isCollapsed ? (
-            <ChevronRight className="h-5 w-5" />
+            <ChevronRight className="h-4 w-4" />
           ) : (
-            <ChevronLeft className="h-5 w-5" />
+            <ChevronLeft className="h-4 w-4" />
           )}
         </button>
       </div>
@@ -481,14 +482,14 @@ function ThemeToggle() {
   return (
     <button
       onClick={toggleTheme}
-      className="grid h-10 w-10 place-items-center rounded-xl border border-white/20 bg-white/20 dark:bg-black/20 dark:border-white/5 text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-white transition-all duration-300 shadow-sm shrink-0"
+      className="grid h-8 w-8 place-items-center rounded border border-zinc-200 bg-white dark:bg-zinc-900 dark:border-zinc-800 text-zinc-500 hover:text-zinc-850 dark:text-zinc-400 dark:hover:text-white transition-all duration-305 shadow-sm shrink-0"
       aria-label="Toggle theme"
       title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
     >
       {theme === 'light' ? (
-        <Moon className="h-[18px] w-[18px]" />
+        <Moon className="h-4 w-4" />
       ) : (
-        <Sun className="h-[18px] w-[18px]" />
+        <Sun className="h-4 w-4" />
       )}
     </button>
   );
@@ -582,14 +583,13 @@ function Topbar({
     pageTitle = 'Dashboard';
     pageIcon = <Home className="h-[18px] w-[18px] text-slate-600 dark:text-slate-400" />;
   }
-
   return (
-    <header className="sticky top-0 z-20 flex h-20 items-end pb-3.5 justify-between gap-3 px-4 sm:px-6 lg:px-10 bg-transparent pt-3.5">
+    <header className="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-zinc-200 bg-white px-6 dark:border-zinc-800 dark:bg-zinc-950 shrink-0">
       {/* Mobile menu button */}
       <button
         type="button"
         onClick={onMenuClick}
-        className="grid h-10 w-10 place-items-center rounded-xl text-slate-700 hover:bg-slate-100 lg:hidden dark:text-slate-200 dark:hover:bg-slate-800 shrink-0"
+        className="grid h-8 w-8 place-items-center rounded text-slate-700 hover:bg-slate-100 lg:hidden dark:text-slate-200 dark:hover:bg-slate-800 shrink-0"
         aria-label="Open menu"
         suppressHydrationWarning
       >
@@ -599,12 +599,12 @@ function Topbar({
       {/* Dynamic Page Header Title & Status Badges */}
       <div className="flex items-center gap-3">
         {pageIcon && (
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 border border-slate-200/50 shadow-sm dark:bg-slate-800/60 dark:border-slate-700/30">
+          <div className="flex h-8 w-8 items-center justify-center rounded border border-zinc-200 bg-zinc-50 dark:bg-zinc-900 dark:border-zinc-800">
             {pageIcon}
           </div>
         )}
         {pageTitle && (
-          <h1 className="text-lg font-black tracking-tight text-zinc-900 dark:text-white sm:text-xl lg:text-2xl">
+          <h1 className="text-base font-black tracking-tight text-zinc-900 dark:text-white">
             {pageTitle}
           </h1>
         )}
@@ -624,23 +624,22 @@ function Topbar({
         <div className="relative">
           <button
             onClick={() => setOpen(!open)}
-            className="flex items-center gap-3 rounded-2xl p-1 pr-3 transition-all duration-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+            className="flex items-center gap-3 rounded p-1 pr-3 transition-all duration-300 hover:bg-slate-100 dark:hover:bg-slate-800"
             suppressHydrationWarning
           >
             <div 
-              className="grid h-9 w-9 place-items-center rounded-xl text-sm font-extrabold text-white shadow-lg transition-transform duration-300 hover:scale-105"
+              className="grid h-8 w-8 place-items-center rounded text-sm font-extrabold text-white"
               style={{
-                background: `linear-gradient(135deg, var(--brand, #7c3aed) 0%, #a78bfa 100%)`,
-                boxShadow: `0 4px 12px var(--brand-softer)`
+                background: `var(--brand, #7c3aed)`,
               }}
             >
               {(me.email[0] ?? '').toUpperCase()}
             </div>
             <div className="hidden flex-col items-start sm:flex">
-              <span className="max-w-[150px] truncate text-sm font-bold text-slate-900 dark:text-slate-100">
+              <span className="max-w-[150px] truncate text-xs font-bold text-slate-900 dark:text-slate-100">
                 {me.email.split('@')[0]}
               </span>
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              <span className="text-[9px] font-bold uppercase tracking-wider text-slate-505">
                 {me.role.replace('_', ' ')}
               </span>
             </div>
@@ -650,22 +649,22 @@ function Topbar({
           {open && (
             <>
               <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-              <div className="absolute right-0 top-full mt-3 w-64 animate-in overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/90 z-20">
-                <div className="border-b border-slate-100 p-5 dark:border-slate-800/60">
+              <div className="absolute right-0 top-full mt-2 w-64 animate-in overflow-hidden rounded border border-zinc-200 bg-white shadow-lg dark:border-zinc-800 dark:bg-zinc-900 z-20">
+                <div className="border-b border-zinc-200 p-4 dark:border-zinc-800">
                   <div className="flex items-center gap-3">
-                    <div className="grid h-12 w-12 place-items-center rounded-2xl bg-brand-500 text-lg font-bold text-white">
+                    <div className="grid h-10 w-10 place-items-center rounded bg-brand-500 text-base font-bold text-white">
                       {(me.email[0] ?? '').toUpperCase()}
                     </div>
                     <div className="min-w-0">
-                      <div className="truncate text-base font-bold text-slate-900 dark:text-slate-100">{me.email.split('@')[0]}</div>
+                      <div className="truncate text-sm font-bold text-slate-900 dark:text-slate-100">{me.email.split('@')[0]}</div>
                       <div className="truncate text-xs text-slate-500">{me.email}</div>
                     </div>
                   </div>
                 </div>
-                <div className="p-2">
+                <div className="p-1">
                   <button
                     onClick={logout}
-                    className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-bold text-red-600 transition-colors hover:bg-red-50 dark:hover:bg-red-500/10"
+                    className="flex w-full items-center gap-3 rounded px-4 py-2.5 text-xs font-bold text-red-600 transition-colors hover:bg-red-50 dark:hover:bg-red-500/10"
                     suppressHydrationWarning
                   >
                     <LogOut className="h-4 w-4" />

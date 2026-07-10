@@ -586,12 +586,12 @@ export default function SocialPlannerClient({ studioId, studio, isSuperAdmin }: 
     <div className="space-y-8 animate-in fade-in duration-500">
 
       {/* Navigation Tabs */}
-      <div className="flex items-center gap-1.5 rounded-2xl bg-zinc-100/80 p-1.5 dark:bg-neutral-800/80 backdrop-blur-md max-w-xl">
+      <div className="flex items-center gap-1.5 border-b border-zinc-200 dark:border-zinc-800 pb-4 max-w-xl">
         <button
           onClick={() => setActiveTab('scheduler')}
-          className={`flex items-center gap-2 rounded-xl px-5 py-3 text-xs font-black uppercase tracking-wider transition-all duration-300 ${
+          className={`flex items-center gap-2 rounded px-4 py-2 text-xs font-black uppercase tracking-wider transition-all duration-300 ${
             activeTab === 'scheduler'
-              ? 'bg-white text-brand-600 shadow-md dark:bg-neutral-900 dark:text-brand-400'
+              ? 'bg-zinc-100 text-brand-600 dark:bg-zinc-900 dark:text-brand-400'
               : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200'
           }`}
         >
@@ -600,9 +600,9 @@ export default function SocialPlannerClient({ studioId, studio, isSuperAdmin }: 
         </button>
         <button
           onClick={() => setActiveTab('ai-creator')}
-          className={`flex items-center gap-2 rounded-xl px-5 py-3 text-xs font-black uppercase tracking-wider transition-all duration-300 ${
+          className={`flex items-center gap-2 rounded px-4 py-2 text-xs font-black uppercase tracking-wider transition-all duration-300 ${
             activeTab === 'ai-creator'
-              ? 'bg-white text-brand-600 shadow-md dark:bg-neutral-900 dark:text-brand-400'
+              ? 'bg-zinc-100 text-brand-600 dark:bg-zinc-900 dark:text-brand-400'
               : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200'
           }`}
         >
@@ -611,9 +611,9 @@ export default function SocialPlannerClient({ studioId, studio, isSuperAdmin }: 
         </button>
         <button
           onClick={() => setActiveTab('connections')}
-          className={`flex items-center gap-2 rounded-xl px-5 py-3 text-xs font-black uppercase tracking-wider transition-all duration-300 ${
+          className={`flex items-center gap-2 rounded px-4 py-2 text-xs font-black uppercase tracking-wider transition-all duration-300 ${
             activeTab === 'connections'
-              ? 'bg-white text-brand-600 shadow-md dark:bg-neutral-900 dark:text-brand-400'
+              ? 'bg-zinc-100 text-brand-600 dark:bg-zinc-900 dark:text-brand-400'
               : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200'
           }`}
         >
@@ -627,7 +627,7 @@ export default function SocialPlannerClient({ studioId, studio, isSuperAdmin }: 
         <div className="grid gap-8 lg:grid-cols-3">
           {/* Quick Schedule Form */}
           <div className="lg:col-span-1 space-y-6">
-            <Card className={`overflow-hidden rounded-[28px] border shadow-2xl backdrop-blur-2xl dark:bg-neutral-900/35 p-6 transition-all hover:shadow-brand-500/5 duration-300 ${editingPostId ? 'border-blue-200/50 bg-blue-50/40 dark:border-blue-900/50 dark:bg-blue-950/20' : 'border-violet-100/50 bg-white/40 dark:border-white/5'}`}>
+            <Card className={`overflow-hidden rounded border bg-white dark:bg-zinc-950 p-6 shadow-sm transition-all duration-300 ${editingPostId ? 'border-brand-500' : 'border-zinc-200 dark:border-zinc-800'}`} noPadding>
               <div className="flex items-center gap-2 mb-6">
                 {editingPostId ? <Pencil className="h-4 w-4 text-blue-500" /> : <Plus className="h-4 w-4 text-brand-500" />}
                 <div className="flex-1">
@@ -658,7 +658,7 @@ export default function SocialPlannerClient({ studioId, studio, isSuperAdmin }: 
                     id="scheduler-campaign"
                     value={newPostCampaign}
                     onChange={(e) => setNewPostCampaign(e.target.value)}
-                    className="mt-1.5 block w-full rounded-xl border border-zinc-200/60 dark:border-white/10 bg-white/10 dark:bg-neutral-800/40 px-3.5 py-2.5 text-xs font-semibold text-zinc-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all"
+                    className="mt-1.5 block w-full rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900 px-3 py-2 text-xs font-semibold text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all"
                   >
                     <option value="">Select a campaign...</option>
                     {campaigns.map((c) => (
@@ -672,7 +672,7 @@ export default function SocialPlannerClient({ studioId, studio, isSuperAdmin }: 
                     id="scheduler-platform"
                     value={newPostPlatform}
                     onChange={(e) => setNewPostPlatform(e.target.value as any)}
-                    className="mt-1.5 block w-full rounded-xl border border-zinc-200/60 dark:border-white/10 bg-white/10 dark:bg-neutral-800/40 px-3.5 py-2.5 text-xs font-semibold text-zinc-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="mt-1.5 block w-full rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900 px-3 py-2 text-xs font-semibold text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <option value="">Select a platform...</option>
                     <option value="Instagram" disabled={!connectedChannels.instagram}>Instagram {!connectedChannels.instagram && '(not connected)'}</option>
@@ -702,7 +702,7 @@ export default function SocialPlannerClient({ studioId, studio, isSuperAdmin }: 
                     onChange={(e) => setNewPostContent(e.target.value)}
                     placeholder="Write copy or generate it using AI..."
                     rows={5}
-                    className="mt-1 focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all rounded-2xl"
+                    className="mt-1 focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all rounded"
                     required
                   />
                 </div>

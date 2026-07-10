@@ -132,6 +132,8 @@ export interface Lead {
   offer: string;
   furtherNotes: string;
   dndEnabled: boolean;
+  referrer?: string;
+  autoContactStage?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -185,6 +187,7 @@ export interface Conversation {
   contactValue: string;
   externalThreadId: string;
   leadId?: string;
+  leadStatus?: LeadStatus;
   status: ConversationStatus;
   assignedTo?: string;
   unreadCount: number;

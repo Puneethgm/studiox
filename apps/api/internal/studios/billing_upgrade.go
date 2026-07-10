@@ -95,8 +95,8 @@ func (h *Handler) UpgradeStudioPlan(w http.ResponseWriter, r *http.Request) {
 		SuccessURL: stripe.String(fmt.Sprintf("%s/admin/studios/%s/settings?upgrade=success", frontendURL, studioID)),
 		CancelURL:  stripe.String(fmt.Sprintf("%s/admin/studios/%s/settings", frontendURL, studioID)),
 		Metadata: map[string]string{
-			"plan_tier": req.Tier,
-			"studio_id": studioID,
+			"plan_tier":  req.Tier,
+			"studio_id":  studioID,
 			"is_upgrade": "true",
 		},
 		SubscriptionData: &stripe.CheckoutSessionSubscriptionDataParams{

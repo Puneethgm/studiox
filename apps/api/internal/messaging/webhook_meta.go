@@ -18,8 +18,8 @@ import (
 
 // MetaWebhookHandler exposes:
 //
-//   GET  /api/v1/webhooks/meta/whatsapp   — Meta verification handshake
-//   POST /api/v1/webhooks/meta/whatsapp   — inbound events (messages, statuses)
+//	GET  /api/v1/webhooks/meta/whatsapp   — Meta verification handshake
+//	POST /api/v1/webhooks/meta/whatsapp   — inbound events (messages, statuses)
 //
 // Both endpoints are single, app-level (one Meta App = one webhook URL = many
 // connected studios). Studio-level routing happens via the phone_number_id in
@@ -96,7 +96,6 @@ func (h *MetaWebhookHandler) HandleDataDeletion(w http.ResponseWriter, r *http.R
 		"url": "https://1herosocial.ai/privacy",
 	})
 }
-
 
 // POST handler: receive WhatsApp events. Verify HMAC, parse, dispatch to service.
 // We always 200 to Meta even on internal errors so they don't retry forever

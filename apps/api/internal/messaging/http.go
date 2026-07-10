@@ -55,6 +55,7 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Get("/conversations/{id}/messages", h.listMessages)
 	r.Post("/conversations/{id}/messages", h.sendMessage)
 	r.Post("/conversations/{id}/read", h.markRead)
+	r.Delete("/conversations/{id}", h.deleteConversation)
 
 	// Templates
 	r.Get("/templates", h.listTemplates)
@@ -474,6 +475,25 @@ func (h *Handler) markRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.MarkRead(r.Context(), studioID, id); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.NoContent(w)
+}
+
+// deleteConversation archives (closes) a conversation. The inbox UI presents
+// this as "delete" but message history is preserved rather than hard-deleted.
+func (h *Handler) deleteConversation(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	if err := h.svc.CloseConversation(r.Context(), studioID, id); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return
 	}
@@ -1066,7 +1086,7 @@ Generate the message content based on this instruction: ` + req.Prompt
 	} else {
 		body = fmt.Sprintf("Hi {{contact.first_name}},\n\n%s\n\nBest,\n{{studio.name}} Team", strings.TrimSpace(generatedText))
 	}
-	
+
 	httpx.JSON(w, http.StatusOK, map[string]string{"body": body, "text": body})
 }
 

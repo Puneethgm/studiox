@@ -85,6 +85,29 @@ func (r *Repo) CreateStudioAdmin(ctx context.Context, studioID uuid.UUID, email,
 	return id, nil
 }
 
+func (r *Repo) ListByStudioID(ctx context.Context, studioID uuid.UUID) ([]User, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, studio_id, email, password_hash, role, created_at, updated_at
+		FROM users
+		WHERE studio_id = $1
+		ORDER BY email ASC
+	`, studioID)
+	if err != nil {
+		return nil, fmt.Errorf("list users by studio: %w", err)
+	}
+	defer rows.Close()
+
+	var out []User
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *u)
+	}
+	return out, rows.Err()
+}
+
 func scanUser(row pgx.Row) (*User, error) {
 	var u User
 	if err := row.Scan(&u.ID, &u.StudioID, &u.Email, &u.PasswordHash, &u.Role, &u.CreatedAt, &u.UpdatedAt); err != nil {

@@ -210,22 +210,22 @@ type UpdateStudioInput struct {
 	ContactPhone         string `json:"contactPhone"`
 	Active               bool
 	ManagedBy1Hero       bool
-	AvailabilitySlots    []AvailabilitySlot `json:"availabilitySlots"`
-	AvailabilityTimezone string             `json:"availabilityTimezone"`
-	GeminiAPIKey         string             `json:"geminiApiKey"`
-	GroqAPIKey           string             `json:"groqApiKey"`
-	MetaAppID            string             `json:"metaAppId"`
-	MetaAppSecret        string             `json:"metaAppSecret"`
-	GoogleClientID       string             `json:"googleClientId"`
-	GoogleClientSecret   string             `json:"googleClientSecret"`
-	GoogleDeveloperToken string             `json:"googleDeveloperToken"`
-	SocialPlannerEnabled bool               `json:"socialPlannerEnabled"`
-	KnowledgeBase        string             `json:"knowledgeBase"`
+	AvailabilitySlots    []AvailabilitySlot  `json:"availabilitySlots"`
+	AvailabilityTimezone string              `json:"availabilityTimezone"`
+	GeminiAPIKey         string              `json:"geminiApiKey"`
+	GroqAPIKey           string              `json:"groqApiKey"`
+	MetaAppID            string              `json:"metaAppId"`
+	MetaAppSecret        string              `json:"metaAppSecret"`
+	GoogleClientID       string              `json:"googleClientId"`
+	GoogleClientSecret   string              `json:"googleClientSecret"`
+	GoogleDeveloperToken string              `json:"googleDeveloperToken"`
+	SocialPlannerEnabled bool                `json:"socialPlannerEnabled"`
+	KnowledgeBase        string              `json:"knowledgeBase"`
 	KnowledgeBaseFiles   []KnowledgeBaseFile `json:"knowledgeBaseFiles"`
-	GreetingMessage      string             `json:"greetingMessage"`
-	TrialAmountSGD       int                `json:"trialAmountSgd"`
-	BookingHeroImageURL  string             `json:"bookingHeroImageUrl"`
-	BookingHeroVideoURL  string             `json:"bookingHeroVideoUrl"`
+	GreetingMessage      string              `json:"greetingMessage"`
+	TrialAmountSGD       int                 `json:"trialAmountSgd"`
+	BookingHeroImageURL  string              `json:"bookingHeroImageUrl"`
+	BookingHeroVideoURL  string              `json:"bookingHeroVideoUrl"`
 }
 
 func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput) (map[string]string, error) {

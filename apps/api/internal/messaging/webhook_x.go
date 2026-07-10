@@ -54,7 +54,7 @@ func (h *TwitterWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Req
 	}
 
 	var payload struct {
-		ForUserId       string `json:"for_user_id"`
+		ForUserId           string `json:"for_user_id"`
 		DirectMessageEvents []struct {
 			Type          string `json:"type"`
 			MessageCreate struct {

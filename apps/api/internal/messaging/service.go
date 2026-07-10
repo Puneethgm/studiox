@@ -68,8 +68,8 @@ func (s *Service) ConnectMetaChannel(ctx context.Context, studioID uuid.UUID, in
 }
 
 type ConnectTwilioInput struct {
-	AccountSID string
-	AuthToken  string
+	AccountSID  string
+	AuthToken   string
 	PhoneNumber string
 }
 
@@ -98,7 +98,40 @@ func (s *Service) ListChannels(ctx context.Context, studioID uuid.UUID) ([]Chann
 }
 
 func (s *Service) DisconnectChannel(ctx context.Context, studioID, id uuid.UUID) error {
-	return s.repo.DisconnectChannel(ctx, studioID, id)
+	// Look up the channel's kind before disconnecting so we know whether it
+	// needs a follow-up call to log out an external session (WhatsApp Web).
+	// Uses the token-free lookup so a corrupted/unrotated access_token_enc
+	// can't silently suppress the wa-web logout.
+	kind, lookupErr := s.repo.GetChannelKind(ctx, studioID, id)
+
+	if err := s.repo.DisconnectChannel(ctx, studioID, id); err != nil {
+		return err
+	}
+
+	// A DB-only disconnect leaves the wa-web Node service's WhatsApp Web
+	// session logged in — it would keep receiving messages against a channel
+	// Postgres now considers disconnected. Tell wa-web to drop the session too.
+	if lookupErr == nil && kind == KindWhatsAppWeb {
+		notifyWAWebDisconnect(ctx, studioID)
+	}
+	return nil
+}
+
+// notifyWAWebDisconnect tells the wa-web Node service to log out a studio's
+// QR-linked WhatsApp Web session. Best-effort: the channel is already marked
+// disconnected in Postgres regardless of whether wa-web is reachable.
+func notifyWAWebDisconnect(ctx context.Context, studioID uuid.UUID) {
+	url := fmt.Sprintf("%s/sessions/%s/disconnect", waWebServiceURL(), studioID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("x-internal-key", waWebInternalKey())
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return
+	}
+	_ = resp.Body.Close()
 }
 
 func (s *Service) UpdateChannel(ctx context.Context, studioID, id uuid.UUID, externalID, parentID, displayHandle, accessToken string) (*ChannelAccount, error) {
@@ -265,8 +298,8 @@ func (s *Service) HandleInboundWhatsAppMessage(ctx context.Context,
 		err = tx.QueryRow(ctx, `
 			SELECT id FROM leads 
 			WHERE studio_id = $1 AND (
-				REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), ' ', ''), '-', ''), '(', '') = $2 
-				OR REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), ' ', ''), '-', ''), '(', '') = $3
+				regexp_replace(phone, '\D', '', 'g') = $2 
+				OR regexp_replace(phone, '\D', '', 'g') = $3
 			)
 			LIMIT 1
 		`, channel.StudioID, msg.From, sanitizedFrom).Scan(&leadID)
@@ -288,7 +321,7 @@ func (s *Service) HandleInboundWhatsAppMessage(ctx context.Context,
 					LIMIT 1
 				`, channel.StudioID).Scan(&campaignID, &fitnessPlans)
 			}
-			
+
 			defaultPlan := "Trial Class"
 			if len(fitnessPlans) > 0 {
 				defaultPlan = fitnessPlans[0]
@@ -615,7 +648,7 @@ func (s *Service) HandleInboundMessaging(ctx context.Context, kind ChannelKind, 
 				LIMIT 1
 			`, channel.StudioID).Scan(&campaignID, &fitnessPlans)
 		}
-		
+
 		defaultPlan := "Trial Class"
 		if len(fitnessPlans) > 0 {
 			defaultPlan = fitnessPlans[0]
@@ -674,7 +707,7 @@ func (s *Service) HandleInboundMessaging(ctx context.Context, kind ChannelKind, 
 		} else if a.Type == "file" || a.Type == "document" {
 			mimeType = "application/octet-stream"
 		}
-		
+
 		atts = append(atts, Attachment{
 			Type: a.Type,
 			URL:  a.Payload.URL,
@@ -774,7 +807,7 @@ func (s *Service) HandleInboundSMS(ctx context.Context, messageSid, from, to, bo
 				LIMIT 1
 			`, channel.StudioID).Scan(&campaignID, &fitnessPlans)
 		}
-		
+
 		defaultPlan := "Trial Class"
 		if len(fitnessPlans) > 0 {
 			defaultPlan = fitnessPlans[0]
@@ -869,11 +902,16 @@ func (s *Service) HandleInboundWAWeb(ctx context.Context, studioID uuid.UUID, fr
 
 	// 2. Identity stitching — strip @suffix for display, but also try to merge
 	// LID-based identities with phone-based ones for the same numeric ID.
-	displayName := from
+	//
+	// displayName is intentionally left blank rather than set to the raw
+	// phone/JID: FindOrCreateIdentity only writes display_name when the
+	// existing value is empty, so passing the phone number here would
+	// permanently lock it in as the display name even after a real name
+	// (e.g. from an imported lead) becomes known.
+	displayName := ""
 	numericPart := from
 	if idx := strings.Index(from, "@"); idx > 0 {
 		numericPart = from[:idx]
-		displayName = numericPart
 	}
 	// If incoming is a phone (@c.us), check if we already have a LID identity
 	// with the same numeric prefix and reuse it (merge duplicate contacts).
@@ -909,34 +947,51 @@ func (s *Service) HandleInboundWAWeb(ctx context.Context, studioID uuid.UUID, fr
 	}
 
 	if activeLeadID == nil {
-		var campaignID uuid.UUID
-		var fitnessPlans []string
-		errCampaign := tx.QueryRow(ctx, `
-			SELECT id, fitness_plans FROM campaigns
-			WHERE studio_id = $1 AND active = true
-			ORDER BY created_at DESC LIMIT 1
-		`, studioID).Scan(&campaignID, &fitnessPlans)
-		if errCampaign != nil {
-			_ = tx.QueryRow(ctx, `
-				SELECT id, fitness_plans FROM campaigns WHERE studio_id = $1 LIMIT 1
-			`, studioID).Scan(&campaignID, &fitnessPlans)
-		}
-		defaultPlan := "Trial Class"
-		if len(fitnessPlans) > 0 {
-			defaultPlan = fitnessPlans[0]
-		}
-		leadID := uuid.New()
+		var leadID uuid.UUID
 		// Use the clean numeric part (no @c.us / @lid suffix) for human-readable fields.
 		cleanPhone := numericPart
-		emailPlaceholder := fmt.Sprintf("wa-%s@example.com", cleanPhone)
-		_, err = tx.Exec(ctx, `
-			INSERT INTO leads (id, studio_id, campaign_id, name, first_name, last_name,
-			                   email, phone, fitness_plan, status, source,
-			                   auto_contact_stage, created_at, updated_at)
-			VALUES ($1,$2,$3,$4,$5,'', $6,$7,$8,'contacted','whatsapp_web','awaiting_options',now(),now())
-		`, leadID, studioID, campaignID, cleanPhone, cleanPhone, emailPlaceholder, cleanPhone, defaultPlan)
-		if err != nil {
-			return fmt.Errorf("auto-create wa-web lead: %w", err)
+		// Search for an existing lead with this phone number in this studio
+		// (e.g. one imported from the Google Sheet) before minting a new one,
+		// so we inherit its real name/email instead of duplicating the contact.
+		lookupErr := tx.QueryRow(ctx, `
+			SELECT id FROM leads
+			WHERE studio_id = $1 AND (
+				regexp_replace(phone, '\D', '', 'g') = $2
+				OR regexp_replace(phone, '\D', '', 'g') = $3
+			)
+			LIMIT 1
+		`, studioID, from, cleanPhone).Scan(&leadID)
+
+		if lookupErr != nil && errors.Is(lookupErr, pgx.ErrNoRows) {
+			var campaignID uuid.UUID
+			var fitnessPlans []string
+			errCampaign := tx.QueryRow(ctx, `
+				SELECT id, fitness_plans FROM campaigns
+				WHERE studio_id = $1 AND active = true
+				ORDER BY created_at DESC LIMIT 1
+			`, studioID).Scan(&campaignID, &fitnessPlans)
+			if errCampaign != nil {
+				_ = tx.QueryRow(ctx, `
+					SELECT id, fitness_plans FROM campaigns WHERE studio_id = $1 LIMIT 1
+				`, studioID).Scan(&campaignID, &fitnessPlans)
+			}
+			defaultPlan := "Trial Class"
+			if len(fitnessPlans) > 0 {
+				defaultPlan = fitnessPlans[0]
+			}
+			leadID = uuid.New()
+			emailPlaceholder := fmt.Sprintf("wa-%s@example.com", cleanPhone)
+			_, err = tx.Exec(ctx, `
+				INSERT INTO leads (id, studio_id, campaign_id, name, first_name, last_name,
+				                   email, phone, fitness_plan, status, source,
+				                   auto_contact_stage, created_at, updated_at)
+				VALUES ($1,$2,$3,$4,$5,'', $6,$7,$8,'contacted','whatsapp_web','awaiting_options',now(),now())
+			`, leadID, studioID, campaignID, cleanPhone, cleanPhone, emailPlaceholder, cleanPhone, defaultPlan)
+			if err != nil {
+				return fmt.Errorf("auto-create wa-web lead: %w", err)
+			}
+		} else if lookupErr != nil {
+			return fmt.Errorf("lookup wa-web lead by phone: %w", lookupErr)
 		}
 		activeLeadID = &leadID
 	}
@@ -1194,6 +1249,18 @@ func (s *Service) ListMessages(ctx context.Context, studioID, conversationID uui
 
 func (s *Service) MarkRead(ctx context.Context, studioID, conversationID uuid.UUID) error {
 	if err := s.repo.MarkConversationRead(ctx, studioID, conversationID); err != nil {
+		return err
+	}
+	s.bus.Publish(ctx, Event{
+		Kind:           EvtConversationUpdated,
+		StudioID:       studioID,
+		ConversationID: conversationID,
+	})
+	return nil
+}
+
+func (s *Service) CloseConversation(ctx context.Context, studioID, conversationID uuid.UUID) error {
+	if err := s.repo.CloseConversation(ctx, studioID, conversationID); err != nil {
 		return err
 	}
 	s.bus.Publish(ctx, Event{
@@ -1545,12 +1612,12 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 				choiceStr := fmt.Sprintf("%d", idx+1)
 				lowerText := strings.ToLower(text)
 				cleanPlanName := strings.TrimSpace(strings.ReplaceAll(strings.ToLower(plans[idx].PlanName), "plan", ""))
-				
+
 				if text == choiceStr || strings.Contains(text, "choice_"+choiceStr) {
 					selectedIndex = idx
 					break
 				}
-				
+
 				if strings.Contains(lowerText, strings.ToLower(plans[idx].PlanName)) || (cleanPlanName != "" && strings.Contains(lowerText, cleanPlanName)) {
 					if len(plans[idx].PlanName) > matchedPlanLength {
 						selectedIndex = idx
@@ -1569,7 +1636,7 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 			if errStripe == nil && secretKey != "" {
 				var leadPhone, leadNameStr string
 				_ = tx.QueryRow(ctx, "SELECT phone, name FROM leads WHERE id = $1", *conv.LeadID).Scan(&leadPhone, &leadNameStr)
-				
+
 				frontendURL := os.Getenv("FRONTEND_URL")
 				if frontendURL == "" {
 					frontendURL = "http://localhost:3000"
@@ -1589,7 +1656,7 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 									Interval: stripe.String("month"),
 								},
 								ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
-									Name:        stripe.String(fmt.Sprintf("%s - %s Plan", studioName, selectedPlan.PlanName)),
+									Name: stripe.String(fmt.Sprintf("%s - %s Plan", studioName, selectedPlan.PlanName)),
 								},
 							},
 							Quantity: stripe.Int64(1),
@@ -1626,53 +1693,53 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 			targetStage = "completed"
 			outboundBody = "Great! Our team will reach out to you within 24 hours to schedule your trial."
 		} else {
-		selectedDate := ""
-		selectedWeekday := ""
-		dayOf := func(i int, s []string) string {
-			if i < len(s) {
-				return strings.ToLower(s[i])
+			selectedDate := ""
+			selectedWeekday := ""
+			dayOf := func(i int, s []string) string {
+				if i < len(s) {
+					return strings.ToLower(s[i])
+				}
+				return ""
 			}
-			return ""
-		}
-		isOption1 := text == "1" || strings.Contains(text, "choice_1") || (dayOf(0, days) != "" && strings.Contains(text, dayOf(0, days)))
-		isOption2 := text == "2" || strings.Contains(text, "choice_2") || (dayOf(1, days) != "" && strings.Contains(text, dayOf(1, days)))
-		isOption3 := text == "3" || strings.Contains(text, "choice_3") || (dayOf(2, days) != "" && strings.Contains(text, dayOf(2, days)))
+			isOption1 := text == "1" || strings.Contains(text, "choice_1") || (dayOf(0, days) != "" && strings.Contains(text, dayOf(0, days)))
+			isOption2 := text == "2" || strings.Contains(text, "choice_2") || (dayOf(1, days) != "" && strings.Contains(text, dayOf(1, days)))
+			isOption3 := text == "3" || strings.Contains(text, "choice_3") || (dayOf(2, days) != "" && strings.Contains(text, dayOf(2, days)))
 
-		if isOption1 {
-			selectedDate = days[0]
-			selectedWeekday = daysWeekdayStr[0]
-		} else if isOption2 && len(days) > 1 {
-			selectedDate = days[1]
-			selectedWeekday = daysWeekdayStr[1]
-		} else if isOption3 && len(days) > 2 {
-			selectedDate = days[2]
-			selectedWeekday = daysWeekdayStr[2]
-		} else {
-			selectedDate = days[0]
-			selectedWeekday = daysWeekdayStr[0]
-		}
+			if isOption1 {
+				selectedDate = days[0]
+				selectedWeekday = daysWeekdayStr[0]
+			} else if isOption2 && len(days) > 1 {
+				selectedDate = days[1]
+				selectedWeekday = daysWeekdayStr[1]
+			} else if isOption3 && len(days) > 2 {
+				selectedDate = days[2]
+				selectedWeekday = daysWeekdayStr[2]
+			} else {
+				selectedDate = days[0]
+				selectedWeekday = daysWeekdayStr[0]
+			}
 
-		targetNotes = strings.TrimSpace(targetNotes + "\n[Selected Trial Date]: " + selectedDate)
-		targetStage = "awaiting_trial_time"
+			targetNotes = strings.TrimSpace(targetNotes + "\n[Selected Trial Date]: " + selectedDate)
+			targetStage = "awaiting_trial_time"
 
-		var timeSlots []string
-		if len(slotsMap) > 0 {
-			if times, ok := slotsMap[selectedWeekday]; ok && len(times) > 0 {
-				for _, tm := range times {
-					timeSlots = append(timeSlots, format12Hour(tm))
+			var timeSlots []string
+			if len(slotsMap) > 0 {
+				if times, ok := slotsMap[selectedWeekday]; ok && len(times) > 0 {
+					for _, tm := range times {
+						timeSlots = append(timeSlots, format12Hour(tm))
+					}
 				}
 			}
-		}
-		if len(timeSlots) == 0 {
-			timeSlots = []string{"09:00 AM", "12:00 PM", "04:00 PM"}
-		}
+			if len(timeSlots) == 0 {
+				timeSlots = []string{"09:00 AM", "12:00 PM", "04:00 PM"}
+			}
 
-		var sb strings.Builder
-		sb.WriteString("Please select a time slot:")
-		for idx, ts := range timeSlots {
-			sb.WriteString(fmt.Sprintf("\n%d. %s", idx+1, ts))
-		}
-		outboundBody = sb.String()
+			var sb strings.Builder
+			sb.WriteString("Please select a time slot:")
+			for idx, ts := range timeSlots {
+				sb.WriteString(fmt.Sprintf("\n%d. %s", idx+1, ts))
+			}
+			outboundBody = sb.String()
 		} // end else (days available)
 	} else if autoContactStage == "awaiting_trial_time" {
 		dateStr := ""
@@ -1779,7 +1846,7 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 						Quantity: stripe.Int64(1),
 					},
 				},
-				Mode:       stripe.String("payment"),
+				Mode: stripe.String("payment"),
 				InvoiceCreation: &stripe.CheckoutSessionInvoiceCreationParams{
 					Enabled: stripe.Bool(true),
 				},

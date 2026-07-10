@@ -15,7 +15,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from 'recharts';
-import { Activity, CheckCircle2, ChevronLeft, ChevronRight, Clock, Cpu, DollarSign } from 'lucide-react';
+import { Activity, CheckCircle2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Clock, Cpu, DollarSign, Search } from 'lucide-react';
 
 const PAGE_SIZE = 10;
 
@@ -50,6 +50,67 @@ interface LLMStat {
   tokensIn: number;
   tokensOut: number;
   date: string;
+}
+
+interface LLMStudioStat {
+  studioId: string | null;
+  studioName: string;
+  provider: string;
+  model: string;
+  count: number;
+  successCount: number;
+  avgLatencyMs: number;
+  tokensIn: number;
+  tokensOut: number;
+}
+
+interface AggregatedStudio {
+  studioId: string;
+  studioName: string;
+  totalRequests: number;
+  totalSuccess: number;
+  avgLatencyMs: number;
+  totalTokensIn: number;
+  totalTokensOut: number;
+  totalCostUSD: number;
+  breakdown: LLMStudioStat[];
+}
+
+function aggregateStudioStats(studioStats: LLMStudioStat[]): AggregatedStudio[] {
+  const groups: Record<string, AggregatedStudio> = {};
+  for (const row of studioStats) {
+    const key = row.studioId || 'platform';
+    if (!groups[key]) {
+      groups[key] = {
+        studioId: key,
+        studioName: row.studioName,
+        totalRequests: 0,
+        totalSuccess: 0,
+        avgLatencyMs: 0,
+        totalTokensIn: 0,
+        totalTokensOut: 0,
+        totalCostUSD: 0,
+        breakdown: [],
+      };
+    }
+    const group = groups[key];
+    const cost = computeCostUSD(row.model, row.tokensIn, row.tokensOut);
+
+    group.totalRequests += row.count;
+    group.totalSuccess += row.successCount;
+    group.avgLatencyMs += row.avgLatencyMs * row.count;
+    group.totalTokensIn += row.tokensIn;
+    group.totalTokensOut += row.tokensOut;
+    group.totalCostUSD += cost;
+    group.breakdown.push(row);
+  }
+
+  return Object.values(groups).map((group) => {
+    if (group.totalRequests > 0) {
+      group.avgLatencyMs = Math.round(group.avgLatencyMs / group.totalRequests);
+    }
+    return group;
+  }).sort((a, b) => b.totalRequests - a.totalRequests);
 }
 
 interface Summary {
@@ -158,18 +219,23 @@ function providerColor(p: string) {
 
 export default function LLMMonitoringPage() {
   const [stats, setStats] = useState<LLMStat[]>([]);
+  const [studioStats, setStudioStats] = useState<LLMStudioStat[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
+  const [studioPage, setStudioPage] = useState(0);
+  const [studioSearch, setStudioSearch] = useState('');
+  const [expandedStudios, setExpandedStudios] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     fetch('/api/v1/admin/llm-stats', { credentials: 'include' })
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json() as Promise<{ stats: LLMStat[] }>;
+        return r.json() as Promise<{ stats: LLMStat[]; studioStats: LLMStudioStat[] }>;
       })
       .then((d) => {
         setStats(d.stats ?? []);
+        setStudioStats(d.studioStats ?? []);
         setLoading(false);
       })
       .catch((e: Error) => {
@@ -177,6 +243,10 @@ export default function LLMMonitoringPage() {
         setLoading(false);
       });
   }, []);
+
+  const toggleStudioExpand = (id: string) => {
+    setExpandedStudios((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
 
   const summary = computeSummary(stats);
   const { data: barData, providers: barProviders } = buildBarData(stats);
@@ -344,6 +414,211 @@ export default function LLMMonitoringPage() {
             </ResponsiveContainer>
           )}
         </div>
+      </div>
+
+      {/* Studio usage table */}
+      <div className="rounded-2xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-white/5 overflow-hidden">
+        <div className="px-6 py-4 border-b border-zinc-200 dark:border-white/10 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h2 className="text-sm font-bold text-zinc-700 dark:text-zinc-300">Studio Usage Tracking</h2>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">LLM consumption broken down by studio tenant</p>
+          </div>
+          <div className="relative w-full sm:w-64">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-zinc-400" />
+            <input
+              type="text"
+              placeholder="Search studios..."
+              value={studioSearch}
+              onChange={(e) => {
+                setStudioSearch(e.target.value);
+                setStudioPage(0);
+              }}
+              className="w-full rounded-lg border border-zinc-200 dark:border-white/10 bg-transparent py-1.5 pl-9 pr-4 text-xs placeholder-zinc-400 focus:border-violet-500 focus:outline-none dark:text-white"
+            />
+          </div>
+        </div>
+        {(() => {
+          const aggregatedStudios = aggregateStudioStats(studioStats);
+          const filteredStudios = aggregatedStudios.filter((s) =>
+            s.studioName.toLowerCase().includes(studioSearch.toLowerCase())
+          );
+          const studioTotalPages = Math.ceil(filteredStudios.length / PAGE_SIZE);
+          const studioPageRows = filteredStudios.slice(studioPage * PAGE_SIZE, studioPage * PAGE_SIZE + PAGE_SIZE);
+
+          if (filteredStudios.length === 0) {
+            return <div className="p-8 text-center text-zinc-400 text-sm">No studio usage recorded in this period.</div>;
+          }
+
+          return (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-zinc-100 dark:border-white/10 text-zinc-500 dark:text-zinc-500 text-xs uppercase tracking-wider bg-zinc-50 dark:bg-transparent">
+                      <th className="w-10 px-6 py-3" />
+                      <th className="px-6 py-3 text-left font-semibold">Studio Name</th>
+                      <th className="px-6 py-3 text-right font-semibold">Requests</th>
+                      <th className="px-6 py-3 text-right font-semibold">Success Rate</th>
+                      <th className="px-6 py-3 text-right font-semibold">Avg Latency</th>
+                      <th className="px-6 py-3 text-right font-semibold">Tokens In</th>
+                      <th className="px-6 py-3 text-right font-semibold">Tokens Out</th>
+                      <th className="px-6 py-3 text-right font-semibold">Est. Cost</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100 dark:divide-white/5">
+                    {studioPageRows.map((studio) => {
+                      const isExpanded = !!expandedStudios[studio.studioId];
+                      return (
+                        <tr key={studio.studioId} className="hover:bg-zinc-50 dark:hover:bg-white/5 transition-colors cursor-pointer" onClick={() => toggleStudioExpand(studio.studioId)}>
+                          <td className="px-6 py-3 text-center">
+                            {isExpanded ? (
+                              <ChevronUp className="h-4 w-4 text-zinc-400 inline" />
+                            ) : (
+                              <ChevronDown className="h-4 w-4 text-zinc-400 inline" />
+                            )}
+                          </td>
+                          <td className="px-6 py-3 font-semibold text-zinc-800 dark:text-zinc-200">
+                            {studio.studioName}
+                          </td>
+                          <td className="px-6 py-3 text-right text-zinc-800 dark:text-zinc-200 tabular-nums font-medium">
+                            {studio.totalRequests.toLocaleString()}
+                          </td>
+                          <td className="px-6 py-3 text-right">
+                            <span
+                              className={`text-xs font-semibold ${
+                                studio.totalRequests > 0 && studio.totalSuccess / studio.totalRequests >= 0.9
+                                  ? 'text-emerald-600 dark:text-emerald-400'
+                                  : 'text-amber-600 dark:text-amber-400'
+                              }`}
+                            >
+                              {studio.totalRequests > 0 ? Math.round((studio.totalSuccess / studio.totalRequests) * 100) : 0}%
+                            </span>
+                          </td>
+                          <td className="px-6 py-3 text-right text-zinc-500 dark:text-zinc-400 tabular-nums font-mono text-xs">
+                            {studio.avgLatencyMs} ms
+                          </td>
+                          <td className="px-6 py-3 text-right text-zinc-500 dark:text-zinc-400 tabular-nums font-mono text-xs">
+                            {studio.totalTokensIn.toLocaleString()}
+                          </td>
+                          <td className="px-6 py-3 text-right text-zinc-500 dark:text-zinc-400 tabular-nums font-mono text-xs">
+                            {studio.totalTokensOut.toLocaleString()}
+                          </td>
+                          <td className="px-6 py-3 text-right text-zinc-700 dark:text-zinc-300 tabular-nums font-mono text-xs font-semibold">
+                            {fmtCost(studio.totalCostUSD)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Render expanded details outside the main table rows */}
+              {studioPageRows.map((studio) => {
+                const isExpanded = !!expandedStudios[studio.studioId];
+                if (!isExpanded) return null;
+                return (
+                  <div key={`${studio.studioId}-expanded`} className="px-6 py-4 border-t border-zinc-100 dark:border-white/5 bg-zinc-50/50 dark:bg-white/[0.02]">
+                    <div className="rounded-xl border border-zinc-200/60 dark:border-white/5 overflow-hidden bg-white dark:bg-zinc-900/40 p-4">
+                      <h4 className="text-xs font-bold text-zinc-500 dark:text-zinc-400 mb-3 uppercase tracking-wider">Model Breakdown for {studio.studioName}</h4>
+                      <table className="w-full text-xs text-left">
+                        <thead>
+                          <tr className="border-b border-zinc-100 dark:border-white/5 text-zinc-400 text-[10px] uppercase bg-zinc-50/70 dark:bg-transparent">
+                            <th className="px-4 py-2 font-medium">Provider</th>
+                            <th className="px-4 py-2 font-medium">Model</th>
+                            <th className="px-4 py-2 text-right font-medium">Requests</th>
+                            <th className="px-4 py-2 text-right font-medium">Success</th>
+                            <th className="px-4 py-2 text-right font-medium">Latency</th>
+                            <th className="px-4 py-2 text-right font-medium">Tokens In</th>
+                            <th className="px-4 py-2 text-right font-medium">Tokens Out</th>
+                            <th className="px-4 py-2 text-right font-medium">Cost</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-100/60 dark:divide-white/5">
+                          {studio.breakdown.map((item, idx) => {
+                            const itemCost = computeCostUSD(item.model, item.tokensIn, item.tokensOut);
+                            return (
+                              <tr key={idx} className="hover:bg-zinc-50/50 dark:hover:bg-white/5 transition-colors">
+                                <td className="px-4 py-2">
+                                  <span
+                                    className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                                    style={{
+                                      background: `${providerColor(item.provider)}18`,
+                                      color: providerColor(item.provider),
+                                    }}
+                                  >
+                                    {item.provider}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-2 font-mono text-zinc-600 dark:text-zinc-300">{item.model}</td>
+                                <td className="px-4 py-2 text-right text-zinc-700 dark:text-zinc-200 tabular-nums">{item.count}</td>
+                                <td className="px-4 py-2 text-right">
+                                  <span
+                                    className={
+                                      item.count > 0 && item.successCount / item.count >= 0.9
+                                        ? 'text-emerald-600 dark:text-emerald-400'
+                                        : 'text-amber-600 dark:text-amber-400'
+                                    }
+                                  >
+                                    {item.count > 0 ? Math.round((item.successCount / item.count) * 100) : 0}%
+                                  </span>
+                                </td>
+                                <td className="px-4 py-2 text-right font-mono text-zinc-500">{Math.round(item.avgLatencyMs)} ms</td>
+                                <td className="px-4 py-2 text-right font-mono text-zinc-500">{item.tokensIn.toLocaleString()}</td>
+                                <td className="px-4 py-2 text-right font-mono text-zinc-500">{item.tokensOut.toLocaleString()}</td>
+                                <td className="px-4 py-2 text-right font-mono text-zinc-600 dark:text-zinc-300 font-medium">{fmtCost(itemCost)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Pagination for studios */}
+              {studioTotalPages > 1 && (
+                <div className="flex items-center justify-between px-6 py-4 border-t border-zinc-100 dark:border-white/10 bg-white dark:bg-transparent">
+                  <span className="text-xs text-zinc-400">
+                    Page {studioPage + 1} of {studioTotalPages}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setStudioPage((p) => Math.max(0, p - 1))}
+                      disabled={studioPage === 0}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-200 dark:border-white/10 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    {Array.from({ length: studioTotalPages }, (_, i) => i)
+                      .filter((i) => Math.abs(i - studioPage) <= 2)
+                      .map((i) => (
+                        <button
+                          key={i}
+                          onClick={() => setStudioPage(i)}
+                          className={`flex h-8 w-8 items-center justify-center rounded-lg text-xs font-semibold transition-colors ${
+                            i === studioPage
+                              ? 'bg-violet-600 text-white'
+                              : 'border border-zinc-200 dark:border-white/10 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-white/10'
+                          }`}
+                        >
+                          {i + 1}
+                        </button>
+                      ))}
+                    <button
+                      onClick={() => setStudioPage((p) => Math.min(studioTotalPages - 1, p + 1))}
+                      disabled={studioPage === studioTotalPages - 1}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-200 dark:border-white/10 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          );
+        })()}
       </div>
 
       {/* Table with pagination */}

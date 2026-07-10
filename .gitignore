@@ -9,6 +9,7 @@
 deploy/.env.backup
 deploy/.env.*.backup
 deploy/.env.domain.backup
+deploy/.env.*
 /secrets/
 *.pem
 *.key
@@ -49,6 +50,7 @@ coverage.txt
 
 # WhatsApp Web session auth (mounted as Docker volume in prod)
 apps/wa-web/auth/
+apps/wa-web/.wwebjs_cache/
 heroic-artifact-434914-d4-1b7152cf7bec.json
 # Exclude all json except package manifests
 *.json

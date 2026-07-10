@@ -2,6 +2,7 @@ package decisiontree
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
@@ -105,6 +106,140 @@ func (s *Service) CreateNode(ctx context.Context, studioID, treeID uuid.UUID, in
 		s.repo.InvalidateCache(studioID)
 	}
 	return n, nil, err
+}
+
+// ImportRow is one parsed spreadsheet row for bulk node import. Label and
+// ParentLabel are matched case-insensitively; ParentLabel empty means a root
+// node. ConditionValue/ActionValue are plain text as typed in the sheet —
+// interpretation depends on ConditionType/Action (see parseImportRow-adjacent
+// helpers in http.go).
+type ImportRow struct {
+	RowNum         int // 1-based spreadsheet row, for error messages
+	Label          string
+	ParentLabel    string
+	ConditionType  ConditionType
+	ConditionValue ConditionValue
+	ReplyTemplate  string
+	Action         Action
+	ActionValue    ConditionValue
+	SortOrder      int
+}
+
+type ImportRowError struct {
+	RowNum int    `json:"rowNum"`
+	Label  string `json:"label"`
+	Error  string `json:"error"`
+}
+
+// ImportNodes creates one tree_nodes row per ImportRow, resolving
+// ParentLabel -> parent node ID across as many passes as needed so rows can
+// appear in the sheet in any order (a child can be listed before its
+// parent). Rows whose parent never resolves (typo, or a genuine cycle) are
+// reported as errors rather than silently dropped or attached to the root.
+func (s *Service) ImportNodes(ctx context.Context, studioID, treeID uuid.UUID, rows []ImportRow) (created int, errs []ImportRowError, err error) {
+	tree, err := s.repo.GetTree(ctx, studioID, treeID)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	// labelToID tracks nodes available as parents so far — seeded with
+	// every node already in the tree (case-insensitively), then extended as
+	// rows in this import succeed, so later rows can reference either an
+	// existing node or one created earlier in the same import.
+	labelToID := map[string]uuid.UUID{}
+	var seedExisting func(nodes []Node)
+	seedExisting = func(nodes []Node) {
+		for _, n := range nodes {
+			labelToID[strings.ToLower(n.Label)] = n.ID
+			seedExisting(n.Children)
+		}
+	}
+	seedExisting(tree.Nodes)
+
+	// failedLabels tracks rows in this import that failed validation/creation,
+	// so a child whose parent is one of these gets an error that points at
+	// the real cause instead of a misleading "not found".
+	failedLabels := map[string]bool{}
+
+	remaining := make([]ImportRow, len(rows))
+	copy(remaining, rows)
+
+	for len(remaining) > 0 {
+		var next []ImportRow
+		progressed := false
+
+		for _, row := range remaining {
+			var parentID *uuid.UUID
+			if row.ParentLabel != "" {
+				id, ok := labelToID[strings.ToLower(row.ParentLabel)]
+				if !ok {
+					// Parent not created yet (maybe later in the sheet) — retry next pass.
+					next = append(next, row)
+					continue
+				}
+				parentID = &id
+			}
+
+			input := CreateNodeInput{
+				TreeID:         treeID,
+				ParentID:       parentID,
+				Label:          row.Label,
+				ConditionType:  row.ConditionType,
+				ConditionValue: row.ConditionValue,
+				ReplyTemplate:  row.ReplyTemplate,
+				Action:         row.Action,
+				ActionValue:    row.ActionValue,
+				SortOrder:      row.SortOrder,
+			}
+			if verrs := validateNode(input); verrs != nil {
+				msgs := make([]string, 0, len(verrs))
+				for field, msg := range verrs {
+					msgs = append(msgs, fmt.Sprintf("%s: %s", field, msg))
+				}
+				errs = append(errs, ImportRowError{RowNum: row.RowNum, Label: row.Label, Error: strings.Join(msgs, "; ")})
+				failedLabels[strings.ToLower(row.Label)] = true
+				progressed = true
+				continue
+			}
+
+			n, err := s.repo.CreateNode(ctx, input)
+			if err != nil {
+				errs = append(errs, ImportRowError{RowNum: row.RowNum, Label: row.Label, Error: err.Error()})
+				failedLabels[strings.ToLower(row.Label)] = true
+				progressed = true
+				continue
+			}
+			labelToID[strings.ToLower(row.Label)] = n.ID
+			created++
+			progressed = true
+		}
+
+		if !progressed || len(next) == len(remaining) {
+			// No row in this pass resolved — every remaining row has an
+			// unresolvable Parent Label (typo, a genuine cycle, or the
+			// parent row itself failed earlier in this same import).
+			for _, row := range next {
+				if failedLabels[strings.ToLower(row.ParentLabel)] {
+					errs = append(errs, ImportRowError{
+						RowNum: row.RowNum, Label: row.Label,
+						Error: fmt.Sprintf("parent row %q failed to import — see its error above", row.ParentLabel),
+					})
+					continue
+				}
+				errs = append(errs, ImportRowError{
+					RowNum: row.RowNum, Label: row.Label,
+					Error: fmt.Sprintf("parent label %q not found among rows in this import or the tree", row.ParentLabel),
+				})
+			}
+			break
+		}
+		remaining = next
+	}
+
+	if created > 0 {
+		s.repo.InvalidateCache(studioID)
+	}
+	return created, errs, nil
 }
 
 func (s *Service) UpdateNode(ctx context.Context, studioID, treeID, nodeID uuid.UUID, input UpdateNodeInput) (*Node, error) {

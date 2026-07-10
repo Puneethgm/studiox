@@ -370,6 +370,7 @@ func (s *Service) SaveExternalLeadsSheetSettings(ctx context.Context, studioID u
 		PhoneColumn:     strings.ToUpper(strings.TrimSpace(in.PhoneColumn)),
 		SourceColumn:    strings.ToUpper(strings.TrimSpace(in.SourceColumn)),
 		NotesColumn:     strings.ToUpper(strings.TrimSpace(in.NotesColumn)),
+		DateColumn:      strings.ToUpper(strings.TrimSpace(in.DateColumn)),
 		Active:          in.Active,
 	}
 	if settings.TabName == "" {

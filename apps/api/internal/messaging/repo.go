@@ -108,6 +108,20 @@ func (r *Repo) ListChannels(ctx context.Context, studioID uuid.UUID) ([]ChannelA
 
 // GetChannelByID returns a channel WITH the decrypted access token. Use for
 // outbound dispatching only.
+// GetChannelKind returns just a channel's kind, without decrypting its
+// access token — used where callers only need to branch on kind and
+// shouldn't fail if the token happens to be undecryptable.
+func (r *Repo) GetChannelKind(ctx context.Context, studioID, id uuid.UUID) (ChannelKind, error) {
+	var kind ChannelKind
+	err := r.pool.QueryRow(ctx, `
+		SELECT kind FROM channel_accounts WHERE studio_id = $1 AND id = $2
+	`, studioID, id).Scan(&kind)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return kind, err
+}
+
 func (r *Repo) GetChannelByID(ctx context.Context, studioID, id uuid.UUID) (*ChannelAccount, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, studio_id, kind, bsp, external_id, parent_id, display_handle,
@@ -378,7 +392,7 @@ func (r *Repo) FindOrCreateIdentity(ctx context.Context, tx pgx.Tx, studioID uui
 		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (studio_id, kind, value) DO UPDATE
 		  SET display_name = CASE
-		    WHEN EXCLUDED.display_name <> '' THEN EXCLUDED.display_name
+		    WHEN contact_identities.display_name = '' AND EXCLUDED.display_name <> '' THEN EXCLUDED.display_name
 		    ELSE contact_identities.display_name
 		  END,
 		  updated_at = now()
@@ -457,13 +471,14 @@ func (r *Repo) ListConversations(ctx context.Context, studioID uuid.UUID, f List
 	args = append(args, f.Limit, f.Offset)
 	q := `
 		SELECT c.id, c.studio_id, c.channel_account_id, ch.kind, ch.display_handle,
-		       c.contact_identity_id, ci.display_name, ci.value, c.external_thread_id,
+		       c.contact_identity_id, COALESCE(NULLIF(l.name, ''), ci.display_name), ci.value, c.external_thread_id,
 		       c.lead_id, c.status, c.assigned_to, c.unread_count,
 		       c.last_message_at, c.last_message_preview, c.last_message_direction,
-		       c.created_at, c.updated_at
+		       c.created_at, c.updated_at, l.status
 		FROM conversations c
 		JOIN channel_accounts ch ON ch.id = c.channel_account_id
 		JOIN contact_identities ci ON ci.id = c.contact_identity_id
+		LEFT JOIN leads l ON l.id = c.lead_id
 		WHERE ` + cond + `
 		ORDER BY c.last_message_at DESC
 		LIMIT $` + fmt.Sprint(len(args)-1) + ` OFFSET $` + fmt.Sprint(len(args))
@@ -488,13 +503,14 @@ func (r *Repo) ListConversations(ctx context.Context, studioID uuid.UUID, f List
 func (r *Repo) GetConversation(ctx context.Context, studioID, id uuid.UUID) (*Conversation, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT c.id, c.studio_id, c.channel_account_id, ch.kind, ch.display_handle,
-		       c.contact_identity_id, ci.display_name, ci.value, c.external_thread_id,
+		       c.contact_identity_id, COALESCE(NULLIF(l.name, ''), ci.display_name), ci.value, c.external_thread_id,
 		       c.lead_id, c.status, c.assigned_to, c.unread_count,
 		       c.last_message_at, c.last_message_preview, c.last_message_direction,
-		       c.created_at, c.updated_at
+		       c.created_at, c.updated_at, l.status
 		FROM conversations c
 		JOIN channel_accounts ch ON ch.id = c.channel_account_id
 		JOIN contact_identities ci ON ci.id = c.contact_identity_id
+		LEFT JOIN leads l ON l.id = c.lead_id
 		WHERE c.studio_id = $1 AND c.id = $2
 	`, studioID, id)
 	return scanConversationRow(row)
@@ -507,7 +523,7 @@ func scanConversationRow(row pgx.Row) (*Conversation, error) {
 		&c.ContactIdentityID, &c.ContactDisplayName, &c.ContactValue, &c.ExternalThreadID,
 		&c.LeadID, &c.Status, &c.AssignedTo, &c.UnreadCount,
 		&c.LastMessageAt, &c.LastMessagePreview, &dir,
-		&c.CreatedAt, &c.UpdatedAt); err != nil {
+		&c.CreatedAt, &c.UpdatedAt, &c.LeadStatus); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -572,6 +588,17 @@ func (r *Repo) GetConversationAISummary(ctx context.Context, studioID, convID uu
 func (r *Repo) MarkConversationRead(ctx context.Context, studioID, id uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE conversations SET unread_count = 0, updated_at = now()
+		WHERE studio_id = $1 AND id = $2
+	`, studioID, id)
+	return err
+}
+
+// CloseConversation marks a conversation closed — used by the inbox's
+// "delete" action, which archives rather than hard-deletes so message
+// history is preserved.
+func (r *Repo) CloseConversation(ctx context.Context, studioID, id uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE conversations SET status = 'closed', updated_at = now()
 		WHERE studio_id = $1 AND id = $2
 	`, studioID, id)
 	return err

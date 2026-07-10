@@ -21,7 +21,7 @@ func GetFeaturesForStudio(ctx context.Context, repo *Repo, studioID uuid.UUID) P
 	var tier string
 	// Check if the studio has an active subscription
 	err := repo.pool.QueryRow(ctx, "SELECT plan_tier FROM studio_subscriptions WHERE studio_id = $1 AND status = 'active' LIMIT 1", studioID).Scan(&tier)
-	
+
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, sql.ErrNoRows) {
 			tier = "trial" // default fallback

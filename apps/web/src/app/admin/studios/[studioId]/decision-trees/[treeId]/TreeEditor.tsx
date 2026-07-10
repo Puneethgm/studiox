@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/Badge';
 import { MultiSelect } from '@/components/ui/MultiSelect';
 import { api } from '@/lib/api';
 import type { DecisionTree, TreeNode, ConditionType, NodeAction, SimulateResult } from '@/lib/types';
+import { ImportNodesButton } from './ImportNodesButton';
 
 const CONDITION_LABELS: Record<ConditionType, string> = {
   keyword: 'Keyword match',
@@ -332,6 +333,7 @@ export function TreeEditor({ studioId, initialTree }: Props) {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <ImportNodesButton studioId={studioId} treeId={tree.id} />
           <Button
             variant="ghost"
             size="sm"

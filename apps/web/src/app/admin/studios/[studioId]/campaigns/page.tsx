@@ -92,13 +92,13 @@ export default async function CampaignsPage({
             {currentPage === 1 && (
               <Link 
                 href={`/admin/studios/${studioId}/campaigns/new`}
-                className="group flex flex-col items-center justify-center rounded-[32px] border-2 border-dashed border-white/20 bg-white/10 p-8 transition-all hover:border-brand-500/50 hover:bg-white/20 dark:border-white/5 dark:bg-neutral-900/20 dark:hover:bg-neutral-900/30"
+                className="group flex flex-col items-center justify-center rounded border border-dashed border-zinc-300 bg-zinc-50/50 p-6 transition-all hover:border-brand-500 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900/50 dark:hover:bg-zinc-900"
               >
-                <div className="mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-white/80 shadow-lg backdrop-blur-md transition-transform group-hover:scale-110 dark:bg-neutral-800">
-                  <Plus className="h-8 w-8 text-brand-500" />
+                <div className="mb-3 grid h-12 w-12 place-items-center rounded bg-white shadow-sm border border-zinc-200 transition-transform group-hover:scale-110 dark:bg-zinc-800 dark:border-zinc-700">
+                  <Plus className="h-6 w-6 text-brand-500" />
                 </div>
-                <span className="text-sm font-bold text-zinc-900 dark:text-zinc-100">Create New Campaign</span>
-                <span className="mt-1 text-xs text-zinc-500">Add another lead magnet</span>
+                <span className="text-xs font-bold text-zinc-900 dark:text-zinc-100">Create New Campaign</span>
+                <span className="mt-1 text-[10px] text-zinc-500">Add another lead magnet</span>
               </Link>
             )}
           </div>
@@ -168,23 +168,20 @@ function CampaignCard({ campaign, studioId, index, posts }: { campaign: Campaign
       className="group relative animate-in"
       style={{ animationDelay: delay }}
     >
-      {/* Glow on hover */}
-      <div className="absolute -inset-1 rounded-[36px] bg-gradient-to-br from-brand-500/20 to-sky-500/20 opacity-0 blur-xl transition duration-500 group-hover:opacity-100" />
-
-      <Card className="relative h-full border border-white/30 bg-white/30 shadow-xl backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30" noPadding elevated>
+      <div className="relative h-full rounded border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950 flex flex-col transition-all duration-200 group-hover:border-brand-500 group-hover:shadow-md dark:group-hover:border-brand-500/50 dark:group-hover:bg-zinc-900/50">
         {/* ── Full-card clickable overlay ── */}
         <Link
           href={detailHref}
-          className="absolute inset-0 z-10 rounded-[inherit]"
+          className="absolute inset-0 z-10"
           aria-label={`Open campaign: ${campaign.name}`}
         />
 
-        <div className="flex h-full flex-col p-8">
-          <div className="mb-6 flex items-start justify-between">
-            <div className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-brand-500 to-brand-600 text-white shadow-lg shadow-brand-500/20">
-              <Zap className="h-6 w-6" />
+        <div className="flex h-full flex-col p-5">
+          <div className="mb-4 flex items-start justify-between">
+            <div className="grid h-10 w-10 place-items-center rounded bg-brand-50 text-brand-600 dark:bg-brand-500/10 dark:text-brand-400">
+              <Zap className="h-5 w-5" />
             </div>
-            <Badge tone={campaign.active ? 'success' : 'neutral'} className="rounded-xl px-3 py-1 text-[10px] font-black uppercase tracking-widest shadow-sm">
+            <Badge tone={campaign.active ? 'success' : 'neutral'} className="rounded px-2 py-0.5 text-[9px] font-black uppercase tracking-widest border border-current">
               {campaign.active ? 'Active' : 'Draft'}
             </Badge>
           </div>
@@ -207,22 +204,22 @@ function CampaignCard({ campaign, studioId, index, posts }: { campaign: Campaign
             {campaign.description || "Start collecting leads with this premium capture form."}
           </p>
 
-          <div className="mb-8 grid grid-cols-2 gap-4">
-            <div className="rounded-3xl bg-white/40 p-4 backdrop-blur-md dark:bg-neutral-950/40">
-              <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-wider text-zinc-400">
-                <Users className="h-3.5 w-3.5" />
+          <div className="mb-5 grid grid-cols-2 gap-3">
+            <div className="rounded border border-zinc-100 bg-zinc-50 p-3 dark:border-zinc-800/50 dark:bg-zinc-900/50">
+              <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wider text-zinc-500">
+                <Users className="h-3 w-3" />
                 Leads
               </div>
-              <div className="mt-1 text-2xl font-black text-zinc-900 dark:text-white">
+              <div className="mt-1 text-lg font-black text-zinc-900 dark:text-white">
                 {campaign.leadCount ?? 0}
               </div>
             </div>
-            <div className="rounded-3xl bg-white/40 p-4 backdrop-blur-md dark:bg-neutral-950/40">
-              <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-wider text-zinc-400">
-                <Zap className="h-3.5 w-3.5" />
+            <div className="rounded border border-zinc-100 bg-zinc-50 p-3 dark:border-zinc-800/50 dark:bg-zinc-900/50">
+              <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wider text-zinc-500">
+                <Zap className="h-3 w-3" />
                 Plans
               </div>
-              <div className="mt-1 text-2xl font-black text-zinc-900 dark:text-white">
+              <div className="mt-1 text-lg font-black text-zinc-900 dark:text-white">
                 {campaign.fitnessPlans.length}
               </div>
             </div>
@@ -253,15 +250,15 @@ function CampaignCard({ campaign, studioId, index, posts }: { campaign: Campaign
           )}
 
           {/* ── Footer: raised above overlay so buttons still work ── */}
-          <div className="relative z-20 mt-auto border-t border-slate-100 pt-6 dark:border-white/5">
-            <div className="flex items-center gap-3">
+          <div className="relative z-20 mt-auto border-t border-zinc-200 pt-4 dark:border-zinc-800">
+            <div className="flex items-center gap-2">
               <div className="min-w-0 flex-1">
                 <CopyLink url={campaign.shareUrl} />
               </div>
               <Link
                 href={campaign.shareUrl}
                 target="_blank"
-                className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-500 transition-all hover:bg-slate-200 hover:text-slate-900 dark:bg-neutral-800 dark:text-zinc-400 dark:hover:bg-neutral-700 dark:hover:text-white"
+                className="grid h-8 w-8 shrink-0 place-items-center rounded border border-zinc-200 bg-white text-zinc-500 transition-all hover:bg-zinc-50 hover:text-zinc-900 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-white shadow-sm"
                 title="Preview live page"
               >
                 <ExternalLink className="h-4 w-4" />
@@ -269,7 +266,7 @@ function CampaignCard({ campaign, studioId, index, posts }: { campaign: Campaign
             </div>
           </div>
         </div>
-      </Card>
+      </div>
     </div>
   );
 }

@@ -33,11 +33,11 @@ func (c ConditionType) Valid() bool {
 type Action string
 
 const (
-	ActionReply         Action = "reply"
-	ActionEscalate      Action = "escalate_human"
-	ActionBookTrial     Action = "book_trial"
-	ActionSendLink      Action = "send_link"
-	ActionChangeStatus  Action = "change_status"
+	ActionReply        Action = "reply"
+	ActionEscalate     Action = "escalate_human"
+	ActionBookTrial    Action = "book_trial"
+	ActionSendLink     Action = "send_link"
+	ActionChangeStatus Action = "change_status"
 )
 
 func (a Action) Valid() bool {
@@ -49,10 +49,10 @@ func (a Action) Valid() bool {
 }
 
 type Tree struct {
-	ID             uuid.UUID `json:"id"`
-	StudioID       uuid.UUID `json:"studioId"`
-	Name           string    `json:"name"`
-	IsActive       bool      `json:"isActive"`
+	ID       uuid.UUID `json:"id"`
+	StudioID uuid.UUID `json:"studioId"`
+	Name     string    `json:"name"`
+	IsActive bool      `json:"isActive"`
 	// TargetStatuses limits which lead pipeline stages this tree responds to.
 	// Empty = responds to all leads. Non-empty = only those statuses.
 	TargetStatuses []string  `json:"targetStatuses"`
@@ -78,11 +78,11 @@ type Node struct {
 	ReplyTemplate  string         `json:"replyTemplate"`
 	Action         Action         `json:"action"`
 	// ActionValue stores action-specific config, e.g. {"target_status":"member"} for change_status.
-	ActionValue    ConditionValue `json:"actionValue"`
-	SortOrder      int            `json:"sortOrder"`
-	Children       []Node         `json:"children,omitempty"`
-	CreatedAt      time.Time      `json:"createdAt"`
-	UpdatedAt      time.Time      `json:"updatedAt"`
+	ActionValue ConditionValue `json:"actionValue"`
+	SortOrder   int            `json:"sortOrder"`
+	Children    []Node         `json:"children,omitempty"`
+	CreatedAt   time.Time      `json:"createdAt"`
+	UpdatedAt   time.Time      `json:"updatedAt"`
 }
 
 type CreateTreeInput struct {
@@ -121,12 +121,12 @@ type UpdateNodeInput struct {
 
 // SimulateResult holds which node fired for a test message.
 type SimulateResult struct {
-	Matched       bool       `json:"matched"`
-	NodeID        *uuid.UUID `json:"nodeId,omitempty"`
-	NodeLabel     string     `json:"nodeLabel,omitempty"`
-	Reply         string     `json:"reply,omitempty"`
-	Action        Action     `json:"action,omitempty"`
+	Matched   bool       `json:"matched"`
+	NodeID    *uuid.UUID `json:"nodeId,omitempty"`
+	NodeLabel string     `json:"nodeLabel,omitempty"`
+	Reply     string     `json:"reply,omitempty"`
+	Action    Action     `json:"action,omitempty"`
 	// TargetStatus is set when Action == ActionChangeStatus.
-	TargetStatus  string     `json:"targetStatus,omitempty"`
-	TraversalPath []string   `json:"traversalPath"`
+	TargetStatus  string   `json:"targetStatus,omitempty"`
+	TraversalPath []string `json:"traversalPath"`
 }

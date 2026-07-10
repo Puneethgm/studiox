@@ -24,7 +24,7 @@ export default async function InboxPage({
     : `/api/v1/me/studios/${studioId}`;
 
   const [data, studio] = await Promise.all([
-    serverFetch<ListResp>(`/api/v1/studios/${studioId}/messaging/conversations?limit=50`),
+    serverFetch<ListResp>(`/api/v1/studios/${studioId}/messaging/conversations?limit=50&status=open`),
     serverFetch<Studio>(studioEndpoint),
   ]);
 

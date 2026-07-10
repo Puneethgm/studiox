@@ -6,14 +6,14 @@ export type ButtonSize = 'sm' | 'md' | 'lg';
 
 const variantClasses: Record<ButtonVariant, string> = {
   primary: cn(
-    'bg-gradient-to-br from-brand-500 to-brand-700 text-white shadow-lg shadow-brand-500/20',
-    'hover:shadow-xl hover:shadow-brand-500/30 hover:-translate-y-0.5 hover:scale-[1.02]',
-    'active:translate-y-0 active:scale-[0.98]',
+    'bg-brand-500 text-white',
+    'hover:bg-brand-600',
+    'active:scale-[0.98]',
   ),
   secondary: cn(
-    'bg-white/60 text-zinc-800 dark:bg-white/10 dark:text-zinc-100 shadow-sm backdrop-blur-md border border-white/20 dark:border-white/5',
-    'hover:bg-white/80 dark:hover:bg-white/20 hover:-translate-y-0.5 hover:scale-[1.02]',
-    'active:translate-y-0 active:scale-[0.98]',
+    'bg-white text-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-800',
+    'hover:bg-zinc-50 dark:hover:bg-zinc-800/50',
+    'active:scale-[0.98]',
   ),
   ghost: cn(
     'bg-transparent text-zinc-600 dark:text-zinc-400',
@@ -22,21 +22,21 @@ const variantClasses: Record<ButtonVariant, string> = {
   ),
   outline: cn(
     'bg-transparent text-zinc-700 dark:text-zinc-200',
-    'border-2 border-zinc-200 dark:border-white/10',
-    'hover:bg-white/50 dark:hover:bg-white/5 hover:border-brand-500 hover:-translate-y-0.5',
-    'active:translate-y-0 active:scale-[0.98]',
+    'border border-zinc-200 dark:border-zinc-800',
+    'hover:bg-zinc-50 dark:hover:bg-zinc-900/50 hover:border-zinc-300 dark:hover:border-zinc-700',
+    'active:scale-[0.98]',
   ),
   danger: cn(
-    'bg-red-500 text-white shadow-lg shadow-red-500/20',
-    'hover:bg-red-600 hover:shadow-xl hover:shadow-red-500/30 hover:-translate-y-0.5',
-    'active:translate-y-0 active:scale-[0.98]',
+    'bg-red-500 text-white',
+    'hover:bg-red-600',
+    'active:scale-[0.98]',
   ),
 };
 
 const sizeClasses: Record<ButtonSize, string> = {
-  sm: 'h-9 px-4 text-xs gap-1.5 rounded-2xl',
-  md: 'h-11 px-6 text-sm gap-2 rounded-[20px]',
-  lg: 'h-14 px-8 text-base gap-2.5 rounded-[24px]',
+  sm: 'h-9 px-4 text-xs gap-1.5 rounded',
+  md: 'h-10 px-6 text-sm gap-2 rounded',
+  lg: 'h-12 px-8 text-base gap-2.5 rounded',
 };
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {

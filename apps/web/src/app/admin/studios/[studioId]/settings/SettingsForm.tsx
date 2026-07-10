@@ -68,6 +68,8 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
   const [groqApiKey, setGroqApiKey] = useState('');
   const [metaAppId, setMetaAppId] = useState(studio.metaAppId || '');
   const [metaAppSecret, setMetaAppSecret] = useState('');
+  const [googleClientId, setGoogleClientId] = useState(studio.googleClientId || '');
+  const [googleClientSecret, setGoogleClientSecret] = useState('');
   const [active, setActive] = useState(studio.active);
   const [managedBy1Hero, setManagedBy1Hero] = useState(studio.managedBy1Hero || false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -117,10 +119,13 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
   const [extPhoneColumn, setExtPhoneColumn] = useState('D');
   const [extSourceColumn, setExtSourceColumn] = useState('');
   const [extNotesColumn, setExtNotesColumn] = useState('');
+  const [extDateColumn, setExtDateColumn] = useState('');
   const [extActive, setExtActive] = useState(false);
   const [extSaving, setExtSaving] = useState(false);
   const [extError, setExtError] = useState<string | null>(null);
   const [metaSaving, setMetaSaving] = useState(false);
+  const [googleSaving, setGoogleSaving] = useState(false);
+  const [showGoogleClientSecret, setShowGoogleClientSecret] = useState(false);
   const [geminiSaving, setGeminiSaving] = useState(false);
   const [groqSaving, setGroqSaving] = useState(false);
   const [showGroqApiKey, setShowGroqApiKey] = useState(false);
@@ -156,6 +161,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
         setExtPhoneColumn(res.data.phoneColumn || 'D');
         setExtSourceColumn(res.data.sourceColumn || '');
         setExtNotesColumn(res.data.notesColumn || '');
+        setExtDateColumn(res.data.dateColumn || '');
         setExtActive(res.data.active || false);
       }
     })();
@@ -176,6 +182,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
         phoneColumn: extPhoneColumn,
         sourceColumn: extSourceColumn,
         notesColumn: extNotesColumn,
+        dateColumn: extDateColumn,
         active: extActive,
       });
       if (res.ok) {
@@ -297,6 +304,25 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
     }
   }
 
+  async function onSaveGoogleConfig(e: React.FormEvent) {
+    e.preventDefault();
+    setErrors({});
+    setGoogleSaving(true);
+    try {
+      const result = await updateStudioSettings(studio.id, studio.slug, {
+        googleClientId,
+        googleClientSecret,
+      });
+      if (!result.ok) {
+        setErrors(result.details ?? { _: result.error });
+        return;
+      }
+      showToast('Google Ads config saved successfully.');
+    } finally {
+      setGoogleSaving(false);
+    }
+  }
+
   async function onChangePassword(e: React.FormEvent) {
     e.preventDefault();
     setPasswordErrors({});
@@ -383,7 +409,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
               key={item.id}
               type="button"
               onClick={() => setActiveSection(item.id as any)}
-              className={`flex items-center gap-3 rounded-2xl px-4 py-3 text-xs font-black uppercase tracking-wider transition-all duration-200 shrink-0 whitespace-nowrap ${
+              className={`flex items-center gap-3 rounded px-4 py-3 text-xs font-black uppercase tracking-wider transition-all duration-200 shrink-0 whitespace-nowrap ${
                 isActive
                   ? 'bg-gradient-to-r from-brand-500 to-violet-600 text-white shadow-lg shadow-brand-500/20'
                   : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-white/10 dark:hover:bg-neutral-800/30'
@@ -401,7 +427,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
         {activeSection === 'general' && (
           <div className="grid gap-6 lg:grid-cols-3">
             <div className="lg:col-span-2">
-              <form onSubmit={onSubmit} className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30 p-6 space-y-5">
+              <form onSubmit={onSubmit} className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 p-6 space-y-5">
                 <div>
                   <Label htmlFor="name">Studio name</Label>
                   <Input
@@ -503,13 +529,13 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                   <FieldError message={errors.contactPhone} />
                 </div>
 
-                <div className="flex items-center gap-3 p-3 rounded-2xl border border-white/10 bg-white/10 dark:bg-neutral-800/10">
+                <div className="flex items-center gap-3 p-3 rounded border border-zinc-100 bg-zinc-50 dark:bg-zinc-900/50 dark:border-zinc-800/50">
                   <input
                     type="checkbox"
                     id="active"
                     checked={active}
                     onChange={(e) => setActive(e.target.checked)}
-                    className="h-4 w-4 rounded border-white/20 text-brand-500 focus:ring-brand-500 bg-white/10 cursor-pointer"
+                    className="h-4 w-4 rounded border-zinc-300 text-brand-500 focus:ring-brand-500 cursor-pointer"
                     suppressHydrationWarning
                   />
                   <div>
@@ -518,13 +544,13 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3 p-3 rounded-2xl border border-white/10 bg-white/10 dark:bg-neutral-800/10">
+                <div className="flex items-center gap-3 p-3 rounded border border-zinc-100 bg-zinc-50 dark:bg-zinc-900/50 dark:border-zinc-800/50">
                   <input
                     type="checkbox"
                     id="managedBy1Hero"
                     checked={managedBy1Hero}
                     onChange={(e) => setManagedBy1Hero(e.target.checked)}
-                    className="h-4 w-4 rounded border-white/20 text-brand-500 focus:ring-brand-500 bg-white/10 cursor-pointer"
+                    className="h-4 w-4 rounded border-zinc-300 text-brand-500 focus:ring-brand-500 cursor-pointer"
                     suppressHydrationWarning
                   />
                   <div>
@@ -542,7 +568,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                   <Button 
                     type="submit" 
                     loading={saving}
-                    className="bg-gradient-to-r from-brand-500 to-violet-600 hover:from-brand-600 hover:to-violet-700 text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-500/25 rounded-xl h-10 px-6"
+                    className="bg-brand-500 hover:bg-brand-600 text-white text-xs font-black uppercase tracking-widest rounded h-10 px-6"
                   >
                     Save Changes
                   </Button>
@@ -552,12 +578,12 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
 
             {/* Live Preview Column */}
             <div className="lg:col-span-1">
-              <div className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30">
-                <div className="border-b border-white/20 px-6 py-4 dark:border-white/5">
+              <div className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+                <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
                   <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Live Preview</h3>
                 </div>
                 <div className="p-6 space-y-4">
-                  <div className="rounded-2xl border border-white/10 bg-white/10 p-4 dark:bg-neutral-800/20">
+                  <div className="rounded border border-zinc-100 bg-zinc-50 p-4 dark:bg-neutral-800/20">
                     <div className="flex items-center gap-3">
                       <span
                         className="grid h-12 w-12 place-items-center rounded-2xl text-base font-bold text-white shadow-md"
@@ -619,7 +645,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
 
         {activeSection === 'booking' && (
           <div className="space-y-6">
-            <div className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30 p-6 space-y-5">
+            <div className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 p-6 space-y-5">
               <div>
                 <h3 className="text-sm font-black text-zinc-950 dark:text-white">Booking Page Media</h3>
                 <p className="text-xs text-zinc-400 mt-1">Add a hero image or background video shown to leads on your public booking/checkout page.</p>
@@ -720,7 +746,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
           <div className="grid gap-6 lg:grid-cols-2 items-start">
             <div className="space-y-6">
               {/* Meta App Settings Card */}
-              <form onSubmit={onSaveMetaConfig} className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30 p-6 space-y-5">
+              <form onSubmit={onSaveMetaConfig} className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 p-6 space-y-5">
                 <div>
                   <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Meta App Settings</h3>
                 </div>
@@ -765,19 +791,76 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
 
                 <FieldError message={errors._} />
 
-                <div className="flex items-center justify-end border-t border-white/10 pt-4">
+                <div className="flex items-center justify-end border-t border-zinc-200 dark:border-zinc-800 pt-4">
                   <Button 
                     type="submit" 
                     loading={metaSaving}
-                    className="bg-gradient-to-r from-brand-500 to-violet-600 hover:from-brand-600 hover:to-violet-700 text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-500/25 rounded-xl h-10 px-6"
+                    className="bg-brand-500 hover:bg-brand-600 text-white text-xs font-black uppercase tracking-widest rounded h-10 px-6"
                   >
                     Save Meta Config
                   </Button>
                 </div>
               </form>
 
+              {/* Google Ads Integration Card */}
+              <form onSubmit={onSaveGoogleConfig} className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 p-6 space-y-5">
+                <div>
+                  <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Google Ads Integration</h3>
+                </div>
+
+                <div>
+                  <Label htmlFor="googleClientId">Google Client ID</Label>
+                  <Input
+                    id="googleClientId"
+                    type="text"
+                    placeholder="e.g. 123456789-abc.apps.googleusercontent.com"
+                    invalid={!!errors.googleClientId}
+                    value={googleClientId}
+                    onChange={(e) => setGoogleClientId(e.target.value)}
+                  />
+                  <FieldHint>The OAuth Client ID for the Google Ads integration.</FieldHint>
+                  <FieldError message={errors.googleClientId} />
+                </div>
+
+                <div>
+                  <Label htmlFor="googleClientSecret">Google Client Secret</Label>
+                  <div className="relative mt-1">
+                    <Input
+                      id="googleClientSecret"
+                      type={showGoogleClientSecret ? 'text' : 'password'}
+                      placeholder={studio.hasGoogleClientSecret ? '••••••••••••••••' : 'GOCSPX-...'}
+                      invalid={!!errors.googleClientSecret}
+                      value={googleClientSecret}
+                      onChange={(e) => setGoogleClientSecret(e.target.value)}
+                      className="pr-12"
+                    />
+                    <button
+                      type="button"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 transition hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+                      onClick={() => setShowGoogleClientSecret(!showGoogleClientSecret)}
+                    >
+                      {showGoogleClientSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  <FieldHint>The OAuth Client Secret for the Google Ads integration.</FieldHint>
+                  <FieldError message={errors.googleClientSecret} />
+                </div>
+
+                <FieldError message={errors._} />
+
+                <div className="flex items-center justify-end border-t border-zinc-200 dark:border-zinc-800 pt-4">
+                  <Button
+                    type="submit"
+                    loading={googleSaving}
+                    className="bg-brand-500 hover:bg-brand-600 text-white text-xs font-black uppercase tracking-widest rounded h-10 px-6"
+                  >
+                    Save Google Config
+                  </Button>
+                </div>
+              </form>
+
               {/* Gemini AI Integration Card */}
-              <form onSubmit={onSaveGeminiKey} className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30 p-6 space-y-5">
+              <form onSubmit={onSaveGeminiKey} className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 p-6 space-y-5">
                 <div>
                   <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Gemini AI Integration</h3>
                 </div>
@@ -808,20 +891,19 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
 
                 <FieldError message={errors._} />
 
-                <div className="flex items-center justify-end border-t border-white/10 pt-4">
+                <div className="flex items-center justify-end border-t border-zinc-200 dark:border-zinc-800 pt-4">
                   <Button 
                     type="submit" 
                     loading={geminiSaving}
-                    className="bg-gradient-to-r from-brand-500 to-violet-600 hover:from-brand-600 hover:to-violet-700 text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-500/25 rounded-xl h-10 px-6"
+                    className="bg-brand-500 hover:bg-brand-600 text-white text-xs font-black uppercase tracking-widest rounded h-10 px-6"
                   >
                     Save Gemini Key
                   </Button>
                 </div>
               </form>
-            </div>
 
-            {/* Groq AI Integration Card */}
-              <form onSubmit={onSaveGroqKey} className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30 p-6 space-y-5">
+              {/* Groq AI Integration Card */}
+              <form onSubmit={onSaveGroqKey} className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 p-6 space-y-5">
                 <div>
                   <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Groq AI Integration</h3>
                 </div>
@@ -852,20 +934,23 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
 
                 <FieldError message={errors._} />
 
-                <div className="flex items-center justify-end border-t border-white/10 pt-4">
+                <div className="flex items-center justify-end border-t border-zinc-200 dark:border-zinc-800 pt-4">
                   <Button
                     type="submit"
                     loading={groqSaving}
-                    className="bg-gradient-to-r from-brand-500 to-violet-600 hover:from-brand-600 hover:to-violet-700 text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-500/25 rounded-xl h-10 px-6"
+                    className="bg-brand-500 hover:bg-brand-600 text-white text-xs font-black uppercase tracking-widest rounded h-10 px-6"
                   >
                     Save Groq Key
                   </Button>
                 </div>
               </form>
+            </div>
 
-            {/* Google Sheets Card */}
-            <div className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30">
-              <div className="border-b border-white/20 px-6 py-4 dark:border-white/5 flex items-center gap-2">
+            {/* Right Column */}
+            <div className="space-y-6">
+              {/* Google Sheets Card */}
+            <div className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+              <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800 flex items-center gap-2">
                 <Database className="h-4 w-4 text-brand-500" />
                 <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Google Sheets Sync</h3>
               </div>
@@ -891,13 +976,13 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                   />
                 </div>
 
-                <div className="flex items-center gap-3 p-3 rounded-2xl border border-white/10 bg-white/10 dark:bg-neutral-800/10">
+                <div className="flex items-center gap-3 p-3 rounded border border-zinc-100 bg-zinc-50 dark:bg-zinc-900/50 dark:border-zinc-800/50">
                   <input
                     type="checkbox"
                     id="sheetsActive"
                     checked={sheetsActive}
                     onChange={(e) => setSheetsActive(e.target.checked)}
-                    className="h-4 w-4 rounded border-white/20 text-brand-500 focus:ring-brand-500 bg-white/10 cursor-pointer"
+                    className="h-4 w-4 rounded border-zinc-300 text-brand-500 focus:ring-brand-500 cursor-pointer"
                   />
                   <div>
                     <Label htmlFor="sheetsActive" className="mb-0 cursor-pointer text-xs font-black uppercase tracking-wider">Enable Google Sheets Sync</Label>
@@ -909,11 +994,11 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                   <p className="text-xs font-black text-rose-500 uppercase tracking-wider">{sheetsError}</p>
                 ) : null}
 
-                <div className="flex items-center justify-end border-t border-white/10 pt-4">
+                <div className="flex items-center justify-end border-t border-zinc-200 dark:border-zinc-800 pt-4">
                   <Button 
                     type="submit" 
                     loading={sheetsSaving}
-                    className="bg-gradient-to-r from-brand-500 to-violet-600 hover:from-brand-600 hover:to-violet-700 text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-500/25 rounded-xl h-10 px-6"
+                    className="bg-brand-500 hover:bg-brand-600 text-white text-xs font-black uppercase tracking-widest rounded h-10 px-6"
                   >
                     Save Connection
                   </Button>
@@ -922,8 +1007,8 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
             </div>
 
             {/* External Leads Sheet Card — read-only import from a third-party company's sheet */}
-            <div className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30">
-              <div className="border-b border-white/20 px-6 py-4 dark:border-white/5 flex items-center gap-2">
+            <div className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+              <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800 flex items-center gap-2">
                 <Database className="h-4 w-4 text-brand-500" />
                 <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">External Leads Sheet (Import)</h3>
               </div>
@@ -1024,13 +1109,13 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                   Use the full name column if the sheet has one combined column instead of separate first/last name columns.
                 </FieldHint>
 
-                <div className="flex items-center gap-3 p-3 rounded-2xl border border-white/10 bg-white/10 dark:bg-neutral-800/10">
+                <div className="flex items-center gap-3 p-3 rounded border border-zinc-100 bg-zinc-50 dark:bg-zinc-900/50 dark:border-zinc-800/50">
                   <input
                     type="checkbox"
                     id="extActive"
                     checked={extActive}
                     onChange={(e) => setExtActive(e.target.checked)}
-                    className="h-4 w-4 rounded border-white/20 text-brand-500 focus:ring-brand-500 bg-white/10 cursor-pointer"
+                    className="h-4 w-4 rounded border-zinc-300 text-brand-500 focus:ring-brand-500 cursor-pointer"
                   />
                   <div>
                     <Label htmlFor="extActive" className="mb-0 cursor-pointer text-xs font-black uppercase tracking-wider">Enable External Sheet Import</Label>
@@ -1042,11 +1127,11 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                   <p className="text-xs font-black text-rose-500 uppercase tracking-wider">{extError}</p>
                 ) : null}
 
-                <div className="flex items-center justify-end border-t border-white/10 pt-4">
+                <div className="flex items-center justify-end border-t border-zinc-200 dark:border-zinc-800 pt-4">
                   <Button
                     type="submit"
                     loading={extSaving}
-                    className="bg-gradient-to-r from-brand-500 to-violet-600 hover:from-brand-600 hover:to-violet-700 text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-500/25 rounded-xl h-10 px-6"
+                    className="bg-brand-500 hover:bg-brand-600 text-white text-xs font-black uppercase tracking-widest rounded h-10 px-6"
                   >
                     Save Connection
                   </Button>
@@ -1054,12 +1139,13 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
               </form>
             </div>
           </div>
+        </div>
         )}
 
         {activeSection === 'security' && (
           <div className="max-w-xl">
-            <div className="overflow-hidden rounded-[24px] border border-white/30 bg-white/20 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30">
-              <div className="border-b border-white/20 px-6 py-4 dark:border-white/5">
+            <div className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+              <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
                 <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Change Password</h3>
               </div>
               <form onSubmit={onChangePassword} className="space-y-4 p-6">
@@ -1138,11 +1224,11 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
 
                 <FieldError message={passwordErrors._} />
 
-                <div className="flex items-center justify-end border-t border-white/10 pt-4">
+                <div className="flex items-center justify-end border-t border-zinc-200 dark:border-zinc-800 pt-4">
                   <Button
                     type="submit"
                     loading={changingPassword}
-                    className="bg-gradient-to-r from-brand-500 to-violet-600 hover:from-brand-600 hover:to-violet-700 text-white text-xs font-black uppercase tracking-widest shadow-lg shadow-brand-500/25 rounded-xl h-10 px-6"
+                    className="bg-brand-500 hover:bg-brand-600 text-white text-xs font-black uppercase tracking-widest rounded h-10 px-6"
                   >
                     Update password
                   </Button>
@@ -1358,8 +1444,9 @@ function PlatformBillingManager({ studio }: { studio: Studio }) {
   const [syncedTier, setSyncedTier] = useState<string | null>(null);
 
   useEffect(() => {
-    // Sync billing status from Stripe on page load (fallback when webhooks don't fire locally)
-    // Always sync if returning from Stripe with upgrade=success
+    // Only trigger a full reload when returning from Stripe checkout (upgrade=success).
+    // For normal page loads, just display the current tier without reloading,
+    // to avoid an infinite refresh loop caused by minor tier string mismatches.
     const urlParams = new URLSearchParams(window.location.search);
     const justUpgraded = urlParams.get('upgrade') === 'success';
 
@@ -1371,9 +1458,13 @@ function PlatformBillingManager({ studio }: { studio: Studio }) {
           headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
         });
         const data = await res.json();
-        if (data.synced && (data.tier !== studio.subscriptionTier || justUpgraded)) {
-          // Tier changed — clean up URL and reload so AppShell picks up the new state
-          const newUrl = window.location.pathname;
+        // ONLY reload if the user just came back from Stripe (upgrade=success).
+        // Never reload on a plain tier mismatch — that causes an infinite loop.
+        if (justUpgraded && data.synced) {
+          const searchParams = new URLSearchParams(window.location.search);
+          searchParams.delete('upgrade');
+          const newSearch = searchParams.toString();
+          const newUrl = window.location.pathname + (newSearch ? `?${newSearch}` : '');
           window.history.replaceState({}, '', newUrl);
           window.location.reload();
           return;
@@ -1460,7 +1551,7 @@ function PlatformBillingManager({ studio }: { studio: Studio }) {
         </p>
       </div>
 
-      <div className={`relative overflow-hidden rounded-[24px] border border-brand-500/30 bg-white/20 dark:bg-brand-950/20 backdrop-blur-2xl p-6 transition-all duration-300 shadow-lg shadow-brand-500/10`}>
+      <div className={`relative overflow-hidden rounded border border-brand-500 bg-brand-50/50 dark:bg-brand-950/20 p-6 transition-all duration-300 shadow-sm`}>
         <div className="flex justify-between items-start mb-2">
           <div>
             <h4 className="text-xl font-black text-zinc-900 dark:text-white">Current Plan</h4>
@@ -1495,60 +1586,66 @@ function PlatformBillingManager({ studio }: { studio: Studio }) {
         )}
       </div>
 
-      <div className="grid gap-6 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2">
         {plans.map((plan, idx) => {
           const isCurrent = currentTier === plan.name;
+          // Inline colors so Tailwind JIT doesn't purge them
+          const accentHex = ['#a1a1aa', '#7c3aed', '#8b5cf6', '#10b981'][idx % 4];
           return (
             <div
               key={plan.name || idx}
-              className={`relative overflow-hidden rounded-[24px] border ${
+              style={{ borderTopColor: accentHex }}
+              className={`group relative flex flex-col rounded border-t-4 overflow-hidden transition-all duration-200 cursor-default ${
                 isCurrent
-                  ? 'border-brand-500/30 shadow-lg shadow-brand-500/10 bg-white/20 dark:bg-brand-950/20'
-                  : 'border-white/10 bg-white/5 dark:bg-white/5 opacity-80'
-              } backdrop-blur-2xl p-6 transition-all duration-300 flex flex-col`}
+                  ? 'border border-brand-500 bg-brand-50 dark:bg-brand-950/30 shadow-md'
+                  : 'border border-zinc-200 bg-white dark:bg-zinc-900 dark:border-zinc-700 hover:border-brand-400 hover:shadow-md hover:shadow-brand-500/10'
+              }`}
             >
-              <div className="flex justify-between items-start mb-4">
-                <div>
-                  <h4 className="text-xl font-black text-zinc-900 dark:text-white flex items-center gap-2">
+              {/* Card Header */}
+              <div className={`px-5 py-4 ${isCurrent ? 'bg-brand-50 dark:bg-brand-950/20' : 'bg-zinc-50 dark:bg-zinc-900'}`}>
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-black uppercase tracking-widest text-zinc-800 dark:text-zinc-100">
                     {plan.name}
-                    {isCurrent && <CheckCircle2 className="h-4 w-4 text-brand-500" />}
                   </h4>
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mt-1">
-                    {plan.cycle?.toLowerCase() === 'one-time' ? 'One Time' : 'Monthly'}
-                  </p>
-                </div>
-              </div>
-
-              <div className="space-y-4 flex-1 flex flex-col">
-                <p className="text-[11px] font-medium text-zinc-500 min-h-[32px] leading-relaxed">
-                  {plan.description}
-                </p>
-                <div className="flex items-baseline gap-1 my-2">
-                  <span className="text-3xl font-black tracking-tight text-zinc-900 dark:text-white">
-                    S$ {plan.price}
-                  </span>
-                  {plan.cycle?.toLowerCase() !== 'one-time' && (
-                    <span className="text-sm font-semibold text-zinc-500">
-                      /mo
+                  {isCurrent && (
+                    <span className="inline-flex items-center gap-1 rounded bg-brand-500 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-white">
+                      <CheckCircle2 className="h-3 w-3" /> Active
                     </span>
                   )}
                 </div>
-                <div className="space-y-2 flex-1">
-                  {plan.features?.map((f: string, i: number) => (
-                    <div key={i} className="flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
-                      <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500 mt-0.5" />
-                      <span>{f}</span>
-                    </div>
-                  ))}
+                <div className="mt-2 flex items-baseline gap-1">
+                  <span className="text-3xl font-black tracking-tight text-zinc-900 dark:text-white">
+                    S${plan.price}
+                  </span>
+                  {plan.cycle?.toLowerCase() !== 'one-time' ? (
+                    <span className="text-xs font-semibold text-zinc-400">/mo</span>
+                  ) : (
+                    <span className="text-xs font-semibold text-zinc-400">one-time</span>
+                  )}
                 </div>
+                <p className="mt-1 text-[11px] text-zinc-500 leading-relaxed">{plan.description}</p>
+              </div>
+
+              {/* Feature List */}
+              <div className="flex-1 space-y-2 border-t border-zinc-200 dark:border-zinc-800 px-5 py-4">
+                {plan.features?.map((f: string, i: number) => (
+                  <div key={i} className="flex items-start gap-2">
+                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500 mt-0.5" />
+                    <span className="text-xs text-zinc-600 dark:text-zinc-300">{f}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Action Button */}
+              <div className="border-t border-zinc-200 dark:border-zinc-800 px-5 py-4">
                 <Button
-                  variant={isCurrent ? 'outline' : 'primary'}
+                  variant={isCurrent ? 'secondary' : 'primary'}
                   onClick={() => handleAction(plan.name, hasSubscription)}
                   loading={actionLoading === plan.name}
                   disabled={isCurrent}
-                  className="w-full mt-4 rounded-xl border-white/20 hover:bg-white/10 text-xs font-bold uppercase tracking-wider"
+                  className="w-full text-xs font-black uppercase tracking-wider rounded h-9"
                 >
-                  {isCurrent ? 'Current Plan' : (hasSubscription ? 'Change Plan' : 'Select Plan')}
+                  {isCurrent ? '✓ Current Plan' : (hasSubscription ? 'Switch to This Plan' : 'Select Plan')}
                 </Button>
               </div>
             </div>

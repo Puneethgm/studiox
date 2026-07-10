@@ -12,8 +12,8 @@ import (
 type ChannelKind string
 
 const (
-	KindWhatsAppMeta ChannelKind = "whatsapp_meta"
-	KindWhatsAppWeb  ChannelKind = "whatsapp_web" // QR-linked via Baileys (no Meta API needed)
+	KindWhatsAppMeta  ChannelKind = "whatsapp_meta"
+	KindWhatsAppWeb   ChannelKind = "whatsapp_web" // QR-linked via Baileys (no Meta API needed)
 	KindInstagramMeta ChannelKind = "instagram_meta"
 	KindMessengerMeta ChannelKind = "messenger_meta"
 	KindXDM           ChannelKind = "x_dm"
@@ -116,6 +116,7 @@ type Conversation struct {
 	LastMessageAt        time.Time   `json:"lastMessageAt"`
 	LastMessagePreview   string      `json:"lastMessagePreview"`
 	LastMessageDirection *Direction  `json:"lastMessageDirection,omitempty"`
+	LeadStatus           *string     `json:"leadStatus,omitempty"`
 	CreatedAt            time.Time   `json:"createdAt"`
 	UpdatedAt            time.Time   `json:"updatedAt"`
 }

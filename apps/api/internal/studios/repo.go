@@ -84,7 +84,7 @@ func (r *Repo) List(ctx context.Context) ([]Studio, error) {
 		if err := rows.Scan(&s.ID, &s.Slug, &s.Name, &s.BrandColor, &s.LogoURL, &s.ContactEmail, &s.ContactPhone,
 			&s.Active, &s.CreatedAt, &s.UpdatedAt, &s.AvailabilitySlots, &s.AvailabilityTimezone, &s.GeminiAPIKey, &s.MetaAppID, &s.MetaAppSecret,
 			&s.GoogleClientID, &s.GoogleClientSecret, &s.GoogleDeveloperToken,
-			&s.StripeAccountID, &s.StripeSecretKey, &s.StripePublishableKey, &s.StripeWebhookSecret, &s.SubscriptionTier, &s.SocialPlannerEnabled, &s.KnowledgeBase, &s.KnowledgeBaseFiles, 
+			&s.StripeAccountID, &s.StripeSecretKey, &s.StripePublishableKey, &s.StripeWebhookSecret, &s.SubscriptionTier, &s.SocialPlannerEnabled, &s.KnowledgeBase, &s.KnowledgeBaseFiles,
 			&s.TrialAmountSGD, &s.ManagedBy1Hero, &s.CampaignCount, &s.LeadCount); err != nil {
 			return nil, fmt.Errorf("scan studio: %w", err)
 		}
@@ -459,4 +459,3 @@ func (r *Repo) SearchKnowledgeChunksHybrid(ctx context.Context, studioID uuid.UU
 	}
 	return results, rows.Err()
 }
-

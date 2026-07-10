@@ -69,6 +69,8 @@ export function ChannelList({ studioId, channels, showToast }: { studioId: strin
       await api(`/api/v1/studios/${studioId}/messaging/channels/${id}`, { method: 'DELETE' });
       showToast(`${channelName} channel disconnected successfully.`);
       router.refresh();
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : `Could not disconnect ${channelName}.`);
     } finally {
       setPendingId(null);
     }

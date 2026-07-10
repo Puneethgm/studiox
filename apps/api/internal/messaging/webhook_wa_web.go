@@ -293,11 +293,11 @@ func (s *waWebSender) SendText(ctx context.Context, _, _, recipient, body string
 	sendURL := fmt.Sprintf("%s/sessions/%s/send", baseURL, s.studioID)
 
 	type sendPayload struct {
-		To          string `json:"to"`
-		Text        string `json:"text,omitempty"`
-		MediaURL    string `json:"mediaUrl,omitempty"`
-		MediaType   string `json:"mediaType,omitempty"`
-		Caption     string `json:"caption,omitempty"`
+		To        string `json:"to"`
+		Text      string `json:"text,omitempty"`
+		MediaURL  string `json:"mediaUrl,omitempty"`
+		MediaType string `json:"mediaType,omitempty"`
+		Caption   string `json:"caption,omitempty"`
 	}
 
 	doSend := func(p sendPayload) error {

@@ -15,19 +15,19 @@ import (
 )
 
 type SocialPost struct {
-	ID          uuid.UUID `json:"id"`
-	StudioID    uuid.UUID `json:"studioId"`
-	Campaign    string    `json:"campaign"`
-	CampaignShareUrl string `json:"campaignShareUrl,omitempty"`
-	Platform    string    `json:"platform"`
-	Copy        string    `json:"copy"`
-	MediaURL    string    `json:"mediaUrl"`
-	Status      string    `json:"status"` // draft, scheduled, published, failed
-	DeliveryMode string    `json:"deliveryMode,omitempty"`
-	ExternalResourceName string `json:"externalResourceName,omitempty"`
-	ScheduledAt time.Time `json:"scheduledAt"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	ID                   uuid.UUID `json:"id"`
+	StudioID             uuid.UUID `json:"studioId"`
+	Campaign             string    `json:"campaign"`
+	CampaignShareUrl     string    `json:"campaignShareUrl,omitempty"`
+	Platform             string    `json:"platform"`
+	Copy                 string    `json:"copy"`
+	MediaURL             string    `json:"mediaUrl"`
+	Status               string    `json:"status"` // draft, scheduled, published, failed
+	DeliveryMode         string    `json:"deliveryMode,omitempty"`
+	ExternalResourceName string    `json:"externalResourceName,omitempty"`
+	ScheduledAt          time.Time `json:"scheduledAt"`
+	CreatedAt            time.Time `json:"createdAt"`
+	UpdatedAt            time.Time `json:"updatedAt"`
 }
 
 func (r *Repo) ListSocialPosts(ctx context.Context, studioID string) ([]SocialPost, error) {
@@ -157,13 +157,13 @@ func (h *Handler) CreateSocialPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Campaign    string    `json:"campaign"`
-		CampaignShareUrl string `json:"campaignShareUrl"`
-		Platform    string    `json:"platform"`
-		Copy        string    `json:"copy"`
-		MediaURL    string    `json:"mediaUrl"`
-		Status      string    `json:"status"`
-		ScheduledAt time.Time `json:"scheduledAt"`
+		Campaign         string    `json:"campaign"`
+		CampaignShareUrl string    `json:"campaignShareUrl"`
+		Platform         string    `json:"platform"`
+		Copy             string    `json:"copy"`
+		MediaURL         string    `json:"mediaUrl"`
+		Status           string    `json:"status"`
+		ScheduledAt      time.Time `json:"scheduledAt"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "failed to decode request body")
@@ -171,14 +171,14 @@ func (h *Handler) CreateSocialPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p := SocialPost{
-		StudioID:    studioID,
-		Campaign:    req.Campaign,
+		StudioID:         studioID,
+		Campaign:         req.Campaign,
 		CampaignShareUrl: req.CampaignShareUrl,
-		Platform:    req.Platform,
-		Copy:        req.Copy,
-		MediaURL:    req.MediaURL,
-		Status:      req.Status,
-		ScheduledAt: req.ScheduledAt,
+		Platform:         req.Platform,
+		Copy:             req.Copy,
+		MediaURL:         req.MediaURL,
+		Status:           req.Status,
+		ScheduledAt:      req.ScheduledAt,
 	}
 
 	if err := h.svc.CreateSocialPost(r.Context(), &p); err != nil {
@@ -199,13 +199,13 @@ func (h *Handler) UpdateSocialPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Campaign    string    `json:"campaign"`
-		CampaignShareUrl string `json:"campaignShareUrl"`
-		Platform    string    `json:"platform"`
-		Copy        string    `json:"copy"`
-		MediaURL    string    `json:"mediaUrl"`
-		Status      string    `json:"status"`
-		ScheduledAt time.Time `json:"scheduledAt"`
+		Campaign         string    `json:"campaign"`
+		CampaignShareUrl string    `json:"campaignShareUrl"`
+		Platform         string    `json:"platform"`
+		Copy             string    `json:"copy"`
+		MediaURL         string    `json:"mediaUrl"`
+		Status           string    `json:"status"`
+		ScheduledAt      time.Time `json:"scheduledAt"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "failed to decode request body")
@@ -213,13 +213,13 @@ func (h *Handler) UpdateSocialPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p := SocialPost{
-		Campaign:    req.Campaign,
+		Campaign:         req.Campaign,
 		CampaignShareUrl: req.CampaignShareUrl,
-		Platform:    req.Platform,
-		Copy:        req.Copy,
-		MediaURL:    req.MediaURL,
-		Status:      req.Status,
-		ScheduledAt: req.ScheduledAt,
+		Platform:         req.Platform,
+		Copy:             req.Copy,
+		MediaURL:         req.MediaURL,
+		Status:           req.Status,
+		ScheduledAt:      req.ScheduledAt,
 	}
 
 	if err := h.svc.UpdateSocialPost(r.Context(), studioID, postID, &p); err != nil {

@@ -23,10 +23,10 @@ export function Card({
     <div
       id={id}
       className={cn(
-        'rounded-[32px] transition-all duration-500',
-        glass ? 'glass' : 'bg-white/70 backdrop-blur-xl dark:bg-neutral-900/70',
-        'border border-white/20 dark:border-white/5',
-        elevated ? 'shadow-liquid scale-[1.02]' : 'shadow-sm',
+        'rounded-xl transition-all duration-200',
+        glass ? 'bg-white/70 backdrop-blur-md dark:bg-neutral-900/70' : 'bg-white dark:bg-zinc-900',
+        'border border-zinc-200 dark:border-zinc-800',
+        elevated ? 'shadow-md scale-[1.01]' : 'shadow-sm',
         className,
       )}
     >

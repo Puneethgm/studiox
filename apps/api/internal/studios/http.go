@@ -36,33 +36,33 @@ func NewHandler(svc *Service, credentialsPath string, s3Uploader *s3.Uploader) *
 
 // studioResponse is the safe API shape for Studio — never returns raw secret values.
 type studioResponse struct {
-	ID                   uuid.UUID          `json:"id"`
-	Slug                 string             `json:"slug"`
-	Name                 string             `json:"name"`
-	BrandColor           string             `json:"brandColor"`
-	LogoURL              string             `json:"logoUrl"`
-	ContactEmail         string             `json:"contactEmail"`
-	ContactPhone         string             `json:"contactPhone"`
-	Active               bool               `json:"active"`
-	ManagedBy1Hero       bool               `json:"managedBy1Hero"`
-	CreatedAt            time.Time          `json:"createdAt"`
-	UpdatedAt            time.Time          `json:"updatedAt"`
+	ID                   uuid.UUID           `json:"id"`
+	Slug                 string              `json:"slug"`
+	Name                 string              `json:"name"`
+	BrandColor           string              `json:"brandColor"`
+	LogoURL              string              `json:"logoUrl"`
+	ContactEmail         string              `json:"contactEmail"`
+	ContactPhone         string              `json:"contactPhone"`
+	Active               bool                `json:"active"`
+	ManagedBy1Hero       bool                `json:"managedBy1Hero"`
+	CreatedAt            time.Time           `json:"createdAt"`
+	UpdatedAt            time.Time           `json:"updatedAt"`
 	AvailabilitySlots    []AvailabilitySlot  `json:"availabilitySlots"`
-	AvailabilityTimezone string             `json:"availabilityTimezone"`
-	MetaAppID            string             `json:"metaAppId"`
-	GoogleClientID       string             `json:"googleClientId"`
-	StripeAccountID      string             `json:"stripeAccountId"`
-	StripePublishableKey string             `json:"stripePublishableKey"`
-	SubscriptionTier     string             `json:"subscriptionTier"`
-	SocialPlannerEnabled bool               `json:"socialPlannerEnabled"`
-	KnowledgeBase        string             `json:"knowledgeBase"`
+	AvailabilityTimezone string              `json:"availabilityTimezone"`
+	MetaAppID            string              `json:"metaAppId"`
+	GoogleClientID       string              `json:"googleClientId"`
+	StripeAccountID      string              `json:"stripeAccountId"`
+	StripePublishableKey string              `json:"stripePublishableKey"`
+	SubscriptionTier     string              `json:"subscriptionTier"`
+	SocialPlannerEnabled bool                `json:"socialPlannerEnabled"`
+	KnowledgeBase        string              `json:"knowledgeBase"`
 	KnowledgeBaseFiles   []KnowledgeBaseFile `json:"knowledgeBaseFiles"`
-	GreetingMessage      string             `json:"greetingMessage"`
-	TrialAmountSGD       int                `json:"trialAmountSgd"`
-	BookingHeroImageURL  string             `json:"bookingHeroImageUrl"`
-	BookingHeroVideoURL  string             `json:"bookingHeroVideoUrl"`
-	CampaignCount        int                `json:"campaignCount,omitempty"`
-	LeadCount            int                `json:"leadCount,omitempty"`
+	GreetingMessage      string              `json:"greetingMessage"`
+	TrialAmountSGD       int                 `json:"trialAmountSgd"`
+	BookingHeroImageURL  string              `json:"bookingHeroImageUrl"`
+	BookingHeroVideoURL  string              `json:"bookingHeroVideoUrl"`
+	CampaignCount        int                 `json:"campaignCount,omitempty"`
+	LeadCount            int                 `json:"leadCount,omitempty"`
 	// Presence indicators — actual secret values are never returned.
 	HasGeminiApiKey         bool `json:"hasGeminiApiKey"`
 	HasGroqApiKey           bool `json:"hasGroqApiKey"`
@@ -205,8 +205,8 @@ func (h *Handler) RequireActiveStudio(next http.Handler) http.Handler {
 // ----- super-admin handlers -----
 
 type createReq struct {
-	Slug          string `json:"slug"`
-	Name          string `json:"name"`
+	Slug                 string `json:"slug"`
+	Name                 string `json:"name"`
 	BrandColor           string `json:"brandColor"`
 	LogoURL              string `json:"logoUrl"`
 	ContactEmail         string `json:"contactEmail"`
@@ -281,31 +281,31 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateReq struct {
-	Name                 *string             `json:"name"`
-	BrandColor           *string             `json:"brandColor"`
-	LogoURL              *string             `json:"logoUrl"`
-	ContactEmail         *string             `json:"contactEmail"`
-	ContactPhone         *string             `json:"contactPhone"`
-	Active               *bool               `json:"active"`
-	ManagedBy1Hero       *bool               `json:"managedBy1Hero"`
-	AvailabilitySlots    *[]AvailabilitySlot `json:"availabilitySlots"`
-	AvailabilityTimezone *string             `json:"availabilityTimezone"`
-	GeminiAPIKey         *string             `json:"geminiApiKey"`
-	GroqAPIKey           *string             `json:"groqApiKey"`
-	MetaAppID            *string             `json:"metaAppId"`
-	MetaAppSecret        *string             `json:"metaAppSecret"`
-	GoogleClientID       *string             `json:"googleClientId"`
-	GoogleClientSecret   *string             `json:"googleClientSecret"`
-	GoogleDeveloperToken *string             `json:"googleDeveloperToken"`
-	SocialPlannerEnabled *bool               `json:"socialPlannerEnabled"`
-	KnowledgeBase        *string             `json:"knowledgeBase"`
+	Name                 *string              `json:"name"`
+	BrandColor           *string              `json:"brandColor"`
+	LogoURL              *string              `json:"logoUrl"`
+	ContactEmail         *string              `json:"contactEmail"`
+	ContactPhone         *string              `json:"contactPhone"`
+	Active               *bool                `json:"active"`
+	ManagedBy1Hero       *bool                `json:"managedBy1Hero"`
+	AvailabilitySlots    *[]AvailabilitySlot  `json:"availabilitySlots"`
+	AvailabilityTimezone *string              `json:"availabilityTimezone"`
+	GeminiAPIKey         *string              `json:"geminiApiKey"`
+	GroqAPIKey           *string              `json:"groqApiKey"`
+	MetaAppID            *string              `json:"metaAppId"`
+	MetaAppSecret        *string              `json:"metaAppSecret"`
+	GoogleClientID       *string              `json:"googleClientId"`
+	GoogleClientSecret   *string              `json:"googleClientSecret"`
+	GoogleDeveloperToken *string              `json:"googleDeveloperToken"`
+	SocialPlannerEnabled *bool                `json:"socialPlannerEnabled"`
+	KnowledgeBase        *string              `json:"knowledgeBase"`
 	KnowledgeBaseFiles   *[]KnowledgeBaseFile `json:"knowledgeBaseFiles"`
-	GreetingMessage      *string             `json:"greetingMessage"`
-	TrialAmountSGD       *int                `json:"trialAmountSgd"`
-	TrialAmountINR       *int                `json:"trialAmountInr"`
-	TrialAmountUSD       *int                `json:"trialAmountUsd"`
-	BookingHeroImageURL  *string             `json:"bookingHeroImageUrl"`
-	BookingHeroVideoURL  *string             `json:"bookingHeroVideoUrl"`
+	GreetingMessage      *string              `json:"greetingMessage"`
+	TrialAmountSGD       *int                 `json:"trialAmountSgd"`
+	TrialAmountINR       *int                 `json:"trialAmountInr"`
+	TrialAmountUSD       *int                 `json:"trialAmountUsd"`
+	BookingHeroImageURL  *string              `json:"bookingHeroImageUrl"`
+	BookingHeroVideoURL  *string              `json:"bookingHeroVideoUrl"`
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
@@ -415,12 +415,12 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.TrialAmountSGD != nil {
 		input.TrialAmountSGD = *req.TrialAmountSGD
+	}
 	if req.BookingHeroImageURL != nil {
 		input.BookingHeroImageURL = *req.BookingHeroImageURL
 	}
 	if req.BookingHeroVideoURL != nil {
 		input.BookingHeroVideoURL = *req.BookingHeroVideoURL
-	}
 	}
 
 	errs, err := h.svc.Update(r.Context(), id, input)
@@ -1049,13 +1049,13 @@ func (h *Handler) publicCreatePaymentIntent(w http.ResponseWriter, r *http.Reque
 		Currency:    stripe.String("sgd"),
 		Description: stripe.String(selected.PlanName),
 		Metadata: map[string]string{
-			"studio_id":      s.ID.String(),
-			"lead_id":        req.LeadID,
-			"plan_id":        req.PlanID,
-			"plan_name":      selected.PlanName,
-			"studio_slug":    s.Slug,
-			"campaign_name":  campaignName,
-			"campaign_slug":  campaignSlug,
+			"studio_id":     s.ID.String(),
+			"lead_id":       req.LeadID,
+			"plan_id":       req.PlanID,
+			"plan_name":     selected.PlanName,
+			"studio_slug":   s.Slug,
+			"campaign_name": campaignName,
+			"campaign_slug": campaignSlug,
 		},
 	}
 	pi, err := sc.PaymentIntents.New(params)
@@ -1203,7 +1203,7 @@ func (h *Handler) getPayments(w http.ResponseWriter, r *http.Request) {
 		publishableKey, _ := h.svc.GetPlatformSetting(r.Context(), "stripe_publishable_key")
 		secretKey, _ := h.svc.GetPlatformSetting(r.Context(), "stripe_secret_key")
 		webhookSecret, _ := h.svc.GetPlatformSetting(r.Context(), "stripe_webhook_secret")
-		
+
 		httpx.JSON(w, http.StatusOK, map[string]any{
 			"stripeAccountId":        accountId,
 			"stripePublishableKey":   publishableKey,
@@ -1228,7 +1228,7 @@ func (h *Handler) getPayments(w http.ResponseWriter, r *http.Request) {
 
 	hasSecretKey := s.StripeSecretKey != ""
 	hasWebhookSecret := s.StripeWebhookSecret != ""
-	
+
 	httpx.JSON(w, http.StatusOK, map[string]any{
 		"stripeAccountId":        s.StripeAccountID,
 		"stripePublishableKey":   s.StripePublishableKey,
@@ -1599,11 +1599,11 @@ func (h *Handler) getBillingHistory(w http.ResponseWriter, r *http.Request) {
 	// Checkout Sessions create PaymentIntents (not Invoices).
 	// Query PaymentIntents to show all trial booking payments.
 	piParams := &stripe.PaymentIntentListParams{}
-	
+
 	// Read optional date filters
 	startDateStr := r.URL.Query().Get("startDate")
 	endDateStr := r.URL.Query().Get("endDate")
-	
+
 	if startDateStr != "" || endDateStr != "" {
 		createdParams := &stripe.RangeQueryParams{}
 		if startDateStr != "" {
@@ -1697,9 +1697,9 @@ func (h *Handler) getBillingHistory(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{
 		"invoices": invoices,
 		"stats": map[string]any{
-			"outstandingSGD":  int64(0),
-			"lifetimePaidSGD": lifetimePaidByCurrency["sgd"],
-			"lifetimePaidTotal":    lifetimePaid,
+			"outstandingSGD":    int64(0),
+			"lifetimePaidSGD":   lifetimePaidByCurrency["sgd"],
+			"lifetimePaidTotal": lifetimePaid,
 		},
 	})
 }
@@ -1714,30 +1714,30 @@ func (h *Handler) StripeConnectRedirect(w http.ResponseWriter, r *http.Request) 
 	// The client_id should come from environment variables.
 	clientID := os.Getenv("STRIPE_CLIENT_ID")
 	redirectURI := fmt.Sprintf("%s/api/v1/auth/stripe/callback", os.Getenv("PUBLIC_URL"))
-	
+
 	stripeOAuthURL := fmt.Sprintf(
 		"https://connect.stripe.com/oauth/authorize?response_type=code&client_id=%s&scope=read_write&redirect_uri=%s&state=%s",
 		clientID, redirectURI, studioID,
 	)
-	
+
 	http.Redirect(w, r, stripeOAuthURL, http.StatusTemporaryRedirect)
 }
 
 func (h *Handler) StripeConnectCallback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state") // Studio ID passed in state
-	
+
 	if code == "" || state == "" {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "Missing code or state")
 		return
 	}
-	
+
 	studioID, err := uuid.Parse(state)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_state", "Invalid state parameter")
 		return
 	}
-	
+
 	stripe.Key = os.Getenv("STRIPE_SECRET_KEY")
 	if stripe.Key == "" {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "Stripe secret key not configured on platform")
@@ -1807,7 +1807,7 @@ func (h *Handler) updatePlan(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	
+
 	err = h.svc.UpdatePlan(r.Context(), studioID, planID, UpdatePlanInput{
 		PlanName:     req.PlanName,
 		PriceSGD:     req.PriceSGD,
@@ -1823,7 +1823,7 @@ func (h *Handler) updatePlan(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to update plan")
 		return
 	}
-	
+
 	httpx.JSON(w, http.StatusOK, map[string]string{"status": "success"})
 }
 

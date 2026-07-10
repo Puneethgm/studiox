@@ -107,6 +107,9 @@ func (w *Worker) importFromSheet(ctx context.Context, cfg leads.ExternalLeadsShe
 	phoneCol := columnIndex(cfg.PhoneColumn)
 	sourceCol := columnIndex(cfg.SourceColumn)
 	notesCol := columnIndex(cfg.NotesColumn)
+	dateCol := columnIndex(cfg.DateColumn)
+	now := time.Now()
+	curYear, curMonth, _ := now.Date()
 
 	var defaultCampaign *leads.Campaign
 	imported := 0
@@ -126,6 +129,19 @@ func (w *Worker) importFromSheet(ctx context.Context, cfg leads.ExternalLeadsShe
 		phone := cell(row, phoneCol)
 		if firstName == "" && lastName == "" && email == "" && phone == "" {
 			continue // blank row
+		}
+
+		// Only import rows from the current calendar month, if a date column
+		// is configured. A cell that doesn't parse is imported rather than
+		// silently dropped — we'd rather over-import than lose a real lead
+		// because of an unexpected date format.
+		if dateCol >= 0 {
+			if rowDate, ok := parseSheetDate(cell(row, dateCol)); ok {
+				y, m, _ := rowDate.Date()
+				if y != curYear || m != curMonth {
+					continue
+				}
+			}
 		}
 
 		if defaultCampaign == nil {
@@ -189,6 +205,43 @@ func cell(row []any, idx int) string {
 		return ""
 	}
 	return strings.TrimSpace(fmt.Sprintf("%v", row[idx]))
+}
+
+// sheetDateLayouts covers the date formats Google Sheets commonly renders
+// a date-formatted cell as via the API's default FORMATTED_VALUE mode.
+//
+// Day-first (DD/MM/YYYY) layouts are listed before month-first (MM/DD/YYYY)
+// ones: our external leads sheets use day-first ("17/11/2025 14:09:26"), and
+// for day <= 12 the two are ambiguous, so the list order picks the winner.
+var sheetDateLayouts = []string{
+	"2/1/2006 15:04:05",
+	"02/01/2006 15:04:05",
+	"2/1/2006",
+	"02/01/2006",
+	"2006-01-02 15:04:05",
+	"2006-01-02T15:04:05Z07:00",
+	"2006-01-02",
+	"2006/01/02",
+	"2-Jan-2006",
+	"Jan 2, 2006",
+	"January 2, 2006",
+	"1/2/2006 15:04:05",
+	"1/2/2006",
+}
+
+// parseSheetDate tries each known layout in turn. Returns ok=false if the
+// cell is empty or doesn't match any known format.
+func parseSheetDate(raw string) (time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range sheetDateLayouts {
+		if t, err := time.Parse(layout, raw); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
 // columnIndex converts a spreadsheet column letter ("A", "B", ..., "AA") into

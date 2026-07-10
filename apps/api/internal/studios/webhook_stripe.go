@@ -164,7 +164,7 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 		if err == nil {
 			_ = h.svc.UpdatePayments(ctx, id, "", "", "", "", tier)
 			slog.Info("stripe studio upgraded", "studio_id", studioIDStr, "tier", tier)
-			
+
 			// Cancel old subscriptions
 			secretKey, _ := h.svc.GetPlatformSetting(ctx, "stripe_secret_key")
 			if secretKey != "" {
@@ -229,7 +229,7 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 			slog.Warn("stripe studio missing secret key for invoice", "invoice_id", session.Invoice.ID)
 		}
 	}
-	
+
 	amountStr := ""
 	if session.AmountTotal > 0 {
 		amountStr = fmt.Sprintf("%.2f %s", float64(session.AmountTotal)/100.0, strings.ToUpper(string(session.Currency)))

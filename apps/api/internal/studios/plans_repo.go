@@ -94,7 +94,7 @@ type UpdatePlanInput struct {
 func (r *Repo) UpdatePlan(ctx context.Context, studioID, planID uuid.UUID, in UpdatePlanInput) error {
 	q := "UPDATE plans SET updated_at = now()"
 	args := []any{studioID, planID}
-	
+
 	if in.PlanName != nil {
 		args = append(args, *in.PlanName)
 		q += fmt.Sprintf(", plan_name = $%d", len(args))
@@ -117,7 +117,7 @@ func (r *Repo) UpdatePlan(ctx context.Context, studioID, planID uuid.UUID, in Up
 	}
 
 	q += " WHERE studio_id = $1 AND id = $2"
-	
+
 	tag, err := r.pool.Exec(ctx, q, args...)
 	if err != nil {
 		return fmt.Errorf("update plan exec: %w", err)
