@@ -112,7 +112,7 @@ services:
 
   # One-shot: run migrations.
   migrate:
-    image: deploy-api:latest
+    image: projectx-prod-api:latest
     profiles: ["tools"]
     entrypoint: ["/usr/local/bin/goose"]
     command:
@@ -129,7 +129,7 @@ services:
 
   # One-shot: seed the super-admin.
   seed:
-    image: deploy-api:latest
+    image: projectx-prod-api:latest
     profiles: ["tools"]
     entrypoint: ["/usr/local/bin/seed"]
     environment: *api_env
