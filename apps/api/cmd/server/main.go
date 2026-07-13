@@ -166,7 +166,7 @@ func main() {
 	go msgWorker.Run(rootCtx)
 
 	// Auto-contact worker: picks up lead_autocontact outbox items
-	autoWorker := messaging.NewAutoContactWorker(leadsRepo, msgRepo, msgSvc, log.With("component", "autocontact_worker"))
+	autoWorker := messaging.NewAutoContactWorker(leadsRepo, msgRepo, msgSvc, studiosRepo, log.With("component", "autocontact_worker"))
 	go autoWorker.Run(rootCtx)
 
 	// Glofox first-session worker: polls Glofox for members who purchased a plan

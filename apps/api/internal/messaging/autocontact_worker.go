@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/projectx/api/internal/leads"
+	"github.com/projectx/api/internal/studios"
 )
 
 const (
@@ -18,20 +19,24 @@ const (
 	autoBatchSize          = 10
 )
 
+// defaultGreetingTemplate is used when a studio hasn't set a custom greeting_message.
+const defaultGreetingTemplate = "Hi {{lead_first_name}}, we saw your interest in {{studio_name}} — would you like to get started? Please select an option:\n1. Interested\n2. Not Interested"
+
 // AutoContactWorker processes lead.created outbox rows and seeds conversations + outbound jobs.
 type AutoContactWorker struct {
-	leadsRepo *leads.Repo
-	msgRepo   *Repo
-	msgSvc    *Service
-	log       *slog.Logger
+	leadsRepo   *leads.Repo
+	msgRepo     *Repo
+	msgSvc      *Service
+	studiosRepo *studios.Repo
+	log         *slog.Logger
 }
 
-func NewAutoContactWorker(leadsRepo *leads.Repo, msgRepo *Repo, msgSvc *Service, logger *slog.Logger) *AutoContactWorker {
-	return &AutoContactWorker{leadsRepo: leadsRepo, msgRepo: msgRepo, msgSvc: msgSvc, log: logger}
+func NewAutoContactWorker(leadsRepo *leads.Repo, msgRepo *Repo, msgSvc *Service, studiosRepo *studios.Repo, logger *slog.Logger) *AutoContactWorker {
+	return &AutoContactWorker{leadsRepo: leadsRepo, msgRepo: msgRepo, msgSvc: msgSvc, studiosRepo: studiosRepo, log: logger}
 }
 
 func (w *AutoContactWorker) Run(ctx context.Context) {
-	if w.leadsRepo == nil || w.msgRepo == nil || w.msgSvc == nil {
+	if w.leadsRepo == nil || w.msgRepo == nil || w.msgSvc == nil || w.studiosRepo == nil {
 		w.log.Warn("autocontact worker disabled — missing deps")
 		return
 	}
@@ -106,13 +111,18 @@ func (w *AutoContactWorker) processItem(ctx context.Context, it leads.OutboxItem
 		return fmt.Errorf("create conversation: %w", err)
 	}
 
-	// Build initial message with selection options (Interested / Not Interested)
-	var body string
-	if l.FitnessPlan != "" {
-		body = fmt.Sprintf("Hi {{contact.first_name}}, we saw your interest in {{campaign.name}} for %s. I’m from {{studio.name}} — would you like to get started? Please select an option:\n1. Interested\n2. Not Interested", l.FitnessPlan)
-	} else {
-		body = "Hi {{contact.first_name}}, we saw your interest in {{campaign.name}}. I’m from {{studio.name}} — would you like to get started? Please select an option:\n1. Interested\n2. Not Interested"
+	studio, err := w.studiosRepo.GetByID(ctx, l.StudioID)
+	if err != nil {
+		return fmt.Errorf("load studio: %w", err)
 	}
+
+	// Build initial message from the studio's greeting message (knowledge base),
+	// falling back to a generic template if the studio hasn't set one.
+	template := studio.GreetingMessage
+	if template == "" {
+		template = defaultGreetingTemplate
+	}
+	body := renderGreeting(template, studio, l)
 
 	// Update auto contact stage to awaiting_interest
 	if err := w.leadsRepo.UpdateAutoContactStage(ctx, l.StudioID, l.ID, "awaiting_interest"); err != nil {
@@ -138,7 +148,7 @@ func (w *AutoContactWorker) processItem(ctx context.Context, it leads.OutboxItem
 
 	if l.Status == leads.StatusTrialBooked {
 		// If they booked directly on registration, schedule a 1-day check-in follow-up presenting options again
-		trialFollowupBody := "Hi {{contact.first_name}}, we hope you're excited for your trial! Ready to take the next step and become a member? Please select an option:\n1. Book a Trial\n2. Become a Member"
+		trialFollowupBody := renderGreeting("Hi {{lead_first_name}}, we hope you're excited for your trial! Ready to take the next step and become a member? Please select an option:\n1. Book a Trial\n2. Become a Member", studio, l)
 		if _, err := w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
 			StudioID:       l.StudioID,
 			ConversationID: conv.ID,
@@ -152,11 +162,12 @@ func (w *AutoContactWorker) processItem(ctx context.Context, it leads.OutboxItem
 	} else {
 		// Schedule normal follow-ups: 40s, 2h, 12h
 		delays := []time.Duration{40 * time.Second, 2 * time.Hour, 12 * time.Hour}
+		followupBody := renderGreeting("Just following up on your inquiry — {{lead_first_name}}", studio, l)
 		for i, d := range delays {
 			if _, err := w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
 				StudioID:       l.StudioID,
 				ConversationID: conv.ID,
-				Body:           "Just following up on your inquiry — {{contact.first_name}}",
+				Body:           followupBody,
 				SourceKind:     SourceAutomation,
 				SourceRef:      fmt.Sprintf("lead:%s:followup:%d", l.ID.String(), i+1),
 				ScheduledFor:   time.Now().UTC().Add(d),
@@ -167,6 +178,17 @@ func (w *AutoContactWorker) processItem(ctx context.Context, it leads.OutboxItem
 	}
 
 	return nil
+}
+
+// renderGreeting substitutes the same {{studio_name}} / {{lead_name}} / {{lead_first_name}} /
+// {{lead_status}} placeholder convention used by the AI worker's greeting-message path.
+func renderGreeting(template string, studio *studios.Studio, l leads.Lead) string {
+	body := template
+	body = strings.ReplaceAll(body, "{{studio_name}}", studio.Name)
+	body = strings.ReplaceAll(body, "{{lead_name}}", l.Name)
+	body = strings.ReplaceAll(body, "{{lead_first_name}}", firstName(l.Name))
+	body = strings.ReplaceAll(body, "{{lead_status}}", string(l.Status))
+	return body
 }
 
 var nonDigit = regexp.MustCompile(`[^0-9]+`)

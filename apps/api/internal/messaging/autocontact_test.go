@@ -16,6 +16,7 @@ import (
 	"github.com/projectx/api/internal/leads"
 	"github.com/projectx/api/internal/messaging/channels"
 	"github.com/projectx/api/internal/platform/secrets"
+	"github.com/projectx/api/internal/studios"
 )
 
 func TestAutoContactWorker_Integration(t *testing.T) {
@@ -121,13 +122,14 @@ func TestAutoContactWorker_Integration(t *testing.T) {
 
 	// 6. Run the autocontact worker tick manually
 	logger := slog.Default()
-	autoWorker := NewAutoContactWorker(leadsRepo, msgRepo, msgSvc, logger)
+	studiosRepo := studios.NewRepo(pool, cipher)
+	autoWorker := NewAutoContactWorker(leadsRepo, msgRepo, msgSvc, studiosRepo, logger)
 	autoWorker.tick(ctx)
 
 	// 7. Verify that outbound job was created with correct message content
 	var body string
 	err = pool.QueryRow(ctx, `
-		SELECT body FROM outbound_jobs 
+		SELECT body FROM outbound_jobs
 		WHERE studio_id = $1 AND source_ref = $2
 		LIMIT 1
 	`, studioID, fmt.Sprintf("lead:%s:followup:0", lead.ID.String())).Scan(&body)
@@ -135,7 +137,15 @@ func TestAutoContactWorker_Integration(t *testing.T) {
 		t.Fatalf("Query outbound job body: %v", err)
 	}
 
-	expectedText := fmt.Sprintf("Hi {{contact.first_name}}, we saw your interest in {{campaign.name}} for %s. I’m from {{studio.name}} — would you like to get started? Please select an option:\n1. Interested\n2. Not Interested", fitnessPlans[0])
+	studio, err := studiosRepo.GetByID(ctx, studioID)
+	if err != nil {
+		t.Fatalf("Load studio: %v", err)
+	}
+	template := studio.GreetingMessage
+	if template == "" {
+		template = defaultGreetingTemplate
+	}
+	expectedText := renderGreeting(template, studio, parsedLead)
 	if body != expectedText {
 		t.Errorf("Outbound job body = %q; want %q", body, expectedText)
 	}
@@ -246,7 +256,8 @@ func TestAutoContactWorker_TrialBooked_Integration(t *testing.T) {
 
 	// 5. Run the autocontact worker tick manually
 	logger := slog.Default()
-	autoWorker := NewAutoContactWorker(leadsRepo, msgRepo, msgSvc, logger)
+	studiosRepo := studios.NewRepo(pool, cipher)
+	autoWorker := NewAutoContactWorker(leadsRepo, msgRepo, msgSvc, studiosRepo, logger)
 	autoWorker.tick(ctx)
 
 	// 6. Verify that 1-day check-in follow-up was enqueued
