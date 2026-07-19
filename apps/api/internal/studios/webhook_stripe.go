@@ -232,11 +232,11 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 	}
 
 	receiptURL := ""
-	if session.Invoice != nil && session.Invoice.ID != "" {
-		// We only have the ID, fetch the full invoice to get the PDF URL using the Studio's key
-		if studio.StripeSecretKey != "" {
-			sc := &client.API{}
-			sc.Init(studio.StripeSecretKey, nil)
+	if studio.StripeSecretKey != "" {
+		sc := &client.API{}
+		sc.Init(studio.StripeSecretKey, nil)
+		if session.Invoice != nil && session.Invoice.ID != "" {
+			// Subscription/membership — fetch hosted invoice URL
 			inv, errInv := sc.Invoices.Get(session.Invoice.ID, nil)
 			if errInv == nil && inv != nil {
 				if inv.HostedInvoiceURL != "" {
@@ -247,8 +247,14 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 			} else {
 				slog.Warn("stripe invoice fetch failed", "invoice_id", session.Invoice.ID, "err", errInv)
 			}
-		} else {
-			slog.Warn("stripe studio missing secret key for invoice", "invoice_id", session.Invoice.ID)
+		} else if session.PaymentIntent != nil && session.PaymentIntent.ID != "" {
+			// One-time payment (trial) — get receipt URL from latest charge
+			pi, errPI := sc.PaymentIntents.Get(session.PaymentIntent.ID, &stripe.PaymentIntentParams{
+				Params: stripe.Params{Expand: stripe.StringSlice([]string{"latest_charge"})},
+			})
+			if errPI == nil && pi != nil && pi.LatestCharge != nil {
+				receiptURL = pi.LatestCharge.ReceiptURL
+			}
 		}
 	}
 
@@ -265,23 +271,26 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 	planIDStr := session.Metadata["plan_id"]
 	isMembership := planIDStr != ""
 
+	receiptLine := ""
+	if receiptURL != "" {
+		receiptLine = fmt.Sprintf("\n\n📄 *Your Receipt:* %s", receiptURL)
+	}
+
 	var message string
 	if isMembership {
 		message = fmt.Sprintf(
 			"🎉 Hi %s! Welcome to *%s*!\n\n"+
-				"Your membership subscription of *%s* was received successfully. We are excited to have you on board! 💪\n\n"+
-				"📄 *Your Receipt:* %s\n\n"+
+				"Your membership subscription of *%s* was received successfully. We are excited to have you on board! 💪%s\n\n"+
 				"See you soon! — The %s Team",
-			name, studio.Name, amountStr, receiptURL, studio.Name,
+			name, studio.Name, amountStr, receiptLine, studio.Name,
 		)
 	} else {
 		message = fmt.Sprintf(
 			"🎉 Hi %s! Thank you for booking your Trial at *%s*!\n\n"+
 				"Your payment of *%s* was received successfully. We can't wait to see you! 💪\n\n"+
-				"Your session is confirmed. Please arrive 10 minutes early.\n\n"+
-				"📄 *Your Receipt:* %s\n\n"+
+				"Your session is confirmed. Please arrive 10 minutes early.%s\n\n"+
 				"See you soon! — The %s Team",
-			name, studio.Name, amountStr, receiptURL, studio.Name,
+			name, studio.Name, amountStr, receiptLine, studio.Name,
 		)
 	}
 

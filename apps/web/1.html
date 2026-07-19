@@ -1,0 +1,603 @@
+<title>Project-X — Business Proposal</title>
+<style>
+@font-face {
+  font-family: 'Fraunces';
+  src: local('Fraunces');
+  font-weight: 300 700;
+}
+:root {
+  --ink: #0F1115;
+  --paper: #F7F6F3;
+  --paper-raised: #FFFFFF;
+  --accent: #5B47E0;
+  --accent-soft: #EDE9FC;
+  --good: #2A9D6F;
+  --good-soft: #E3F3EC;
+  --muted: #8A8578;
+  --line: #DEDAD0;
+  --line-strong: #C9C4B7;
+}
+:root[data-theme="dark"] {
+  --ink: #F2F0EA;
+  --paper: #15161A;
+  --paper-raised: #1D1F25;
+  --accent: #9C8CF5;
+  --accent-soft: #262244;
+  --good: #5FC79A;
+  --good-soft: #17332A;
+  --muted: #9A9488;
+  --line: #33353C;
+  --line-strong: #44464E;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ink: #F2F0EA;
+    --paper: #15161A;
+    --paper-raised: #1D1F25;
+    --accent: #9C8CF5;
+    --accent-soft: #262244;
+    --good: #5FC79A;
+    --good-soft: #17332A;
+    --muted: #9A9488;
+    --line: #33353C;
+    --line-strong: #44464E;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--ink);
+  color: var(--ink);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.deck {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+  padding: 28px 16px 64px;
+  background: var(--ink);
+}
+
+.slide {
+  width: 100%;
+  max-width: 1120px;
+  aspect-ratio: 16 / 9.1;
+  background: var(--paper);
+  color: var(--ink);
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.25), 0 20px 48px -24px rgba(0,0,0,0.45);
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: clamp(20px, 3.2vw, 44px) clamp(24px, 4vw, 56px);
+}
+
+.bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 12px;
+  margin-bottom: clamp(14px, 2.4vw, 26px);
+  flex-shrink: 0;
+}
+.bar .mark {
+  font-family: 'Fraunces', Georgia, serif;
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: 0.01em;
+}
+.bar .mark span { color: var(--accent); }
+.bar .tag {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+h1.headline {
+  font-family: 'Fraunces', Georgia, serif;
+  font-weight: 500;
+  font-size: clamp(26px, 3.4vw, 40px);
+  line-height: 1.08;
+  letter-spacing: -0.01em;
+  margin: 0 0 8px 0;
+  text-wrap: balance;
+  max-width: 850px;
+}
+p.sub {
+  font-size: clamp(13px, 1.35vw, 15.5px);
+  color: var(--muted);
+  max-width: 640px;
+  line-height: 1.5;
+  margin: 0 0 clamp(16px, 2.6vw, 28px) 0;
+}
+
+.foot {
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  font-size: 10.5px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+/* ---------- Slide 1: Vision ---------- */
+.s1-body {
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  gap: clamp(20px, 3vw, 40px);
+  flex: 1;
+  min-height: 0;
+}
+.s1-left { display: flex; flex-direction: column; justify-content: center; }
+.thesis {
+  font-family: 'Fraunces', Georgia, serif;
+  font-weight: 400;
+  font-size: clamp(15px, 1.6vw, 18px);
+  line-height: 1.55;
+  color: var(--ink);
+  max-width: 480px;
+}
+.thesis em { color: var(--accent); font-style: normal; font-weight: 600; }
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  justify-content: center;
+}
+.stack-row {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 14px;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.stack-row .lbl {
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 600;
+}
+.stack-row .val { font-size: 12.5px; color: var(--ink); line-height: 1.4; }
+
+/* ---------- Slide 2: Capabilities ---------- */
+.s2-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+  flex: 1;
+  min-height: 0;
+}
+.cap {
+  background: var(--paper-raised);
+  padding: clamp(12px, 1.6vw, 18px) clamp(14px, 1.8vw, 20px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+.cap .num {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.cap h3 {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.cap ul { margin: 2px 0 0; padding: 0 0 0 14px; }
+.cap li {
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--muted);
+  margin-bottom: 1px;
+}
+.cap li::marker { color: var(--accent); }
+
+/* ---------- Slide 3: What's Built (L1) ---------- */
+.s3-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.pill {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 4px 10px;
+  border-radius: 100px;
+  background: var(--good-soft);
+  color: var(--good);
+  text-transform: uppercase;
+}
+.s3-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  flex: 1;
+  min-height: 0;
+}
+.mod {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 14px 15px;
+  background: var(--paper-raised);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mod h4 {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--good); flex-shrink: 0; }
+.mod p {
+  margin: 0;
+  font-size: 10.8px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+/* ---------- Slide 4: Roadmap ---------- */
+.s4-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.track { display: flex; flex-direction: column; gap: 0; flex: 1; }
+.phase-row {
+  display: grid;
+  grid-template-columns: 76px 130px 1fr;
+  align-items: center;
+  gap: 16px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+}
+.phase-row:last-child { border-bottom: none; }
+.phase-row .pnum {
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.phase-row.now .pnum { color: var(--accent); font-weight: 600; }
+.phase-row .pname { font-size: 12px; font-weight: 700; color: var(--ink); }
+.phase-row .pdesc { font-size: 11px; color: var(--muted); line-height: 1.4; }
+.status-now {
+  display: inline-block;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 2px 7px;
+  border-radius: 3px;
+  margin-left: 8px;
+}
+
+@media (max-width: 720px) {
+  .s1-body, .s2-grid, .s3-grid { grid-template-columns: 1fr; }
+  .phase-row { grid-template-columns: 60px 1fr; }
+  .phase-row .pdesc { grid-column: 2; }
+}
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<div class="deck">
+
+  <!-- SLIDE 1 — VISION -->
+  <section class="slide">
+    <div class="bar">
+      <div class="mark">Project<span>-X</span></div>
+      <div class="tag">01 / 04 — Vision</div>
+    </div>
+    <h1 class="headline">An AI-run marketing agency for fitness studios&nbsp;—&nbsp;that grows into their full operating system.</h1>
+    <p class="sub">A single platform that plans, publishes, and sells on a studio's behalf from day one, then expands into bookings, CRM, and predictive operations as the studio scales.</p>
+    <div class="s1-body">
+      <div class="s1-left">
+        <p class="thesis">
+          Today, a studio owner juggles five disconnected tools — a scheduling app, an ads manager, a DM inbox, a spreadsheet of leads, and gut instinct for who's about to walk. <em>Project-X collapses that into one system</em> that generates content, runs paid campaigns, catches every lead in one inbox, and scores each one by intent — so the studio spends its time closing, not chasing.
+        </p>
+      </div>
+      <div class="stack">
+        <div class="stack-row"><div class="lbl">Model</div><div class="val">Multi-tenant SaaS — franchise / aggregator across many studio vendors</div></div>
+        <div class="stack-row"><div class="lbl">Wedge</div><div class="val">AI-managed marketing agency, live and generating leads within 24 hrs of onboarding</div></div>
+        <div class="stack-row"><div class="lbl">Moat</div><div class="val">Unified lead data + sentiment scoring compounds per studio, per channel, over time</div></div>
+      </div>
+    </div>
+    <div class="foot"><span>Studio Operations &amp; Growth Platform</span><span>Confidential — Business Proposal</span></div>
+  </section>
+
+  <!-- SLIDE 2 — MARKETING ENGINE CAPABILITIES -->
+  <section class="slide">
+    <div class="bar">
+      <div class="mark">Project<span>-X</span></div>
+      <div class="tag">02 / 07 — Capabilities: Marketing Engine</div>
+    </div>
+    <h1 class="headline" style="font-size: clamp(22px, 2.6vw, 30px);">Every function a marketing team performs — automated, per studio.</h1>
+    <p class="sub">Content, media buying, and conversion — the five capability groups that make Project-X an agency, not a dashboard.</p>
+    <div class="s2-grid" style="grid-template-columns: repeat(3, 1fr); grid-template-rows: 1fr 1fr;">
+      <div class="cap">
+        <div class="num">01</div>
+        <h3>Content generation &amp; publishing</h3>
+        <ul>
+          <li>AI-authored organic posts + ad creatives (copy and visual prompts)</li>
+          <li>Scheduled and event-triggered publishing to Meta, TikTok, LinkedIn/X</li>
+          <li>Per-vendor human approval workflow + brand-safety checks</li>
+        </ul>
+      </div>
+      <div class="cap">
+        <div class="num">02</div>
+        <h3>Paid media &amp; SEO</h3>
+        <ul>
+          <li>Google, Meta &amp; TikTok Ads — campaign creation, budget pacing, bid optimization</li>
+          <li>Keyword tracking, on-page audit, automated meta-tag suggestions</li>
+        </ul>
+      </div>
+      <div class="cap">
+        <div class="num">03</div>
+        <h3>Response management</h3>
+        <ul>
+          <li>AI-drafted replies to comments, DMs, and ad responses</li>
+          <li>Auto-approve thresholds; escalation for complaints and high-intent buyers</li>
+        </ul>
+      </div>
+      <div class="cap">
+        <div class="num">04</div>
+        <h3>Unified lead inbox</h3>
+        <ul>
+          <li>Every channel — organic, paid, SEO, WhatsApp, email, SMS — one inbox</li>
+          <li>Identity resolution, deduplication, full per-lead touchpoint timeline</li>
+        </ul>
+      </div>
+      <div class="cap">
+        <div class="num">05</div>
+        <h3>Sentiment &amp; sales orchestration</h3>
+        <ul>
+          <li>Per-lead, per-touchpoint sentiment score + confidence + trend</li>
+          <li>Next-best-action engine: nurture, call, offer, discount, or drop</li>
+          <li>Human handoff with full context when AI confidence drops</li>
+        </ul>
+      </div>
+      <div class="cap" style="background: var(--accent-soft); justify-content: center;">
+        <div class="num" style="color: var(--accent);">→</div>
+        <h3 style="color: var(--accent);">This is Phase 1 (MVP)</h3>
+        <p style="font-size: 11px; color: var(--ink); opacity: 0.75; margin: 0;">A vendor is onboarded, publishing, running paid campaigns, and receiving leads within 24 hours of signup.</p>
+      </div>
+    </div>
+    <div class="foot"><span>Capability Map — Marketing</span><span>Confidential — Business Proposal</span></div>
+  </section>
+
+  <!-- SLIDE 3 — PLATFORM & INTELLIGENCE CAPABILITIES -->
+  <section class="slide">
+    <div class="bar">
+      <div class="mark">Project<span>-X</span></div>
+      <div class="tag">03 / 07 — Capabilities: Platform &amp; Intelligence</div>
+    </div>
+    <h1 class="headline" style="font-size: clamp(22px, 2.6vw, 30px);">The operating layer underneath the agency.</h1>
+    <p class="sub">Studio operations, customer data, AI insight, and enterprise controls — what turns a marketing tool into a platform.</p>
+    <div class="s2-grid">
+      <div class="cap">
+        <div class="num">06</div>
+        <h3>Studio &amp; booking operations</h3>
+        <ul>
+          <li>Multi-tenant vendor onboarding, locations, timetables, class types</li>
+          <li>Real-time booking, waitlists, dynamic slot allocation</li>
+        </ul>
+      </div>
+      <div class="cap">
+        <div class="num">07</div>
+        <h3>Customer data platform</h3>
+        <ul>
+          <li>Unified profiles: attendance, preferences, purchase history</li>
+          <li>Segmentation engine and loyalty / rewards</li>
+        </ul>
+      </div>
+      <div class="cap">
+        <div class="num">08</div>
+        <h3>AI insights engine</h3>
+        <ul>
+          <li>Churn prediction, lifetime value, demand forecasting</li>
+          <li>Class / trainer recommendations, pricing optimization</li>
+        </ul>
+      </div>
+      <div class="cap">
+        <div class="num">09</div>
+        <h3>Payments &amp; subscriptions</h3>
+        <ul>
+          <li>Membership plans — monthly, yearly, pay-per-class</li>
+          <li>Multi-currency, automated invoicing, payment gateway integration</li>
+        </ul>
+      </div>
+      <div class="cap">
+        <div class="num">10</div>
+        <h3>Data pipeline</h3>
+        <ul>
+          <li>Real-time ingestion of marketing, behavioral, and operations data</li>
+          <li>ETL/ELT normalization across vendors into a shared warehouse</li>
+        </ul>
+      </div>
+      <div class="cap">
+        <div class="num">11</div>
+        <h3>Enterprise controls</h3>
+        <ul>
+          <li>11-role RBAC from platform super-admin down to trainer &amp; customer</li>
+          <li>Global dashboards, vendor benchmarking, audit &amp; compliance logs</li>
+        </ul>
+      </div>
+    </div>
+    <div class="foot"><span>Capability Map — Platform</span><span>Confidential — Business Proposal</span></div>
+  </section>
+
+  <!-- SLIDE 4 — WHAT'S BUILT -->
+  <section class="slide">
+    <div class="bar">
+      <div class="mark">Project<span>-X</span></div>
+      <div class="tag">04 / 07 — Current State</div>
+    </div>
+    <div class="s3-top">
+      <span class="pill">Live today — L1</span>
+      <h1 class="headline" style="font-size: clamp(20px, 2.3vw, 26px); margin: 0;">Not a slide deck — a working multi-tenant platform.</h1>
+    </div>
+    <p class="sub">Super-admin provisions studios in seconds; each studio runs its own branded campaigns, public lead form, and live inbox today.</p>
+    <div class="s3-grid">
+      <div class="mod">
+        <h4><span class="dot"></span>Multi-tenant core</h4>
+        <p>Super-admin creates studios with name, brand color, logo, first admin login. Studio-scoped auth via JWT, fails closed on any tenant mismatch.</p>
+      </div>
+      <div class="mod">
+        <h4><span class="dot"></span>Branded lead capture</h4>
+        <p>Public form at <code>/l/&lt;studio&gt;/&lt;campaign&gt;</code>, themed per studio's brand color. Leads land in Postgres and sync to Google Sheets via a durable outbox.</p>
+      </div>
+      <div class="mod">
+        <h4><span class="dot"></span>Pipeline &amp; leads</h4>
+        <p>Kanban pipeline across 5 stages (new → contacted → trial → member → dropped), paginated lead lists, live funnel + status widgets per studio.</p>
+      </div>
+      <div class="mod">
+        <h4><span class="dot"></span>WhatsApp inbox</h4>
+        <p>Direct Meta WhatsApp Cloud API integration — per-studio channels, live conversation stream (SSE), idempotent inbound webhook, encrypted tokens at rest.</p>
+      </div>
+      <div class="mod">
+        <h4><span class="dot"></span>Identity stitching</h4>
+        <p>Contact identities unified per studio across channels, optionally linked to a lead — the same architecture that will carry IG, Messenger, and X.</p>
+      </div>
+      <div class="mod">
+        <h4><span class="dot"></span>Role-aware admin UI</h4>
+        <p>Single Next.js app, sidebar shell that re-themes per tenant via CSS variables — one login URL routes super-admins and studio-admins correctly.</p>
+      </div>
+      <div class="mod">
+        <h4><span class="dot"></span>Automation-ready schema</h4>
+        <p>Tables for message templates, automation rules, AI suggestions, and message analysis already exist — next phases add writers, not new migrations.</p>
+      </div>
+      <div class="mod">
+        <h4><span class="dot"></span>Production deploy</h4>
+        <p>Dockerized on a single EC2 box behind nginx, atomic migrate-then-deploy, nightly backups — a real environment, not a demo sandbox.</p>
+      </div>
+    </div>
+    <div class="foot"><span>Engineering Status</span><span>Confidential — Business Proposal</span></div>
+  </section>
+
+  <!-- SLIDE 5 — SECURITY & GOVERNANCE -->
+  <section class="slide">
+    <div class="bar">
+      <div class="mark">Project<span>-X</span></div>
+      <div class="tag">05 / 07 — Security &amp; Governance</div>
+    </div>
+    <h1 class="headline" style="font-size: clamp(22px, 2.6vw, 30px);">Enterprise-grade access control, built in from L1.</h1>
+    <p class="sub">Eleven roles, permission-scoped to (resource, action, scope) — not bolted on later as an afterthought.</p>
+    <div class="s3-grid" style="grid-template-columns: repeat(4, 1fr); grid-template-rows: 1fr 1fr;">
+      <div class="mod"><h4><span class="dot" style="background: var(--accent);"></span>Platform Super Admin</h4><p>Full platform control — vendor provisioning, billing, feature flags.</p></div>
+      <div class="mod"><h4><span class="dot" style="background: var(--accent);"></span>Vendor Owner / Admin</h4><p>Full control over a tenant and its studios; billing and user management.</p></div>
+      <div class="mod"><h4><span class="dot" style="background: var(--accent);"></span>Studio Manager</h4><p>Scoped to specific studios — staff, timetable, bookings, local marketing.</p></div>
+      <div class="mod"><h4><span class="dot" style="background: var(--accent);"></span>Marketing Manager</h4><p>Content, campaigns, budgets, and lead inbox for assigned studios.</p></div>
+      <div class="mod"><h4><span class="dot" style="background: var(--accent);"></span>Sales Agent</h4><p>Assigned leads only — message, log activity, close sales.</p></div>
+      <div class="mod"><h4><span class="dot" style="background: var(--accent);"></span>Trainer / Finance</h4><p>Own schedule &amp; clients — or billing/payouts with zero lead access.</p></div>
+      <div class="mod"><h4><span class="dot" style="background: var(--accent);"></span>Auditor / Compliance</h4><p>Read-only across audit logs, consent records, and data exports.</p></div>
+      <div class="mod" style="background: var(--accent-soft);"><h4 style="color: var(--accent);">Enforcement</h4><p style="color: var(--ink); opacity: 0.75;">Centralized policy service checks every action; row-level security per tenant; every privileged action is immutably logged.</p></div>
+    </div>
+    <div class="foot"><span>RBAC &amp; Compliance</span><span>Confidential — Business Proposal</span></div>
+  </section>
+
+  <!-- SLIDE 6 — ROADMAP -->
+  <section class="slide">
+    <div class="bar">
+      <div class="mark">Project<span>-X</span></div>
+      <div class="tag">06 / 07 — Roadmap</div>
+    </div>
+    <h1 class="headline" style="font-size: clamp(22px, 2.6vw, 30px);">Seven phases, one architecture — from agency to autonomous growth engine.</h1>
+    <p class="sub">Each phase ships on the same modular backbone; nothing built at L1 is thrown away as scope expands.</p>
+    <div class="s4-body">
+      <div class="track">
+        <div class="phase-row now">
+          <div class="pnum">P1</div>
+          <div class="pname">AI Marketing<span class="status-now">In progress</span></div>
+          <div class="pdesc">Content, paid media, SEO, response management, unified inbox, sentiment-driven sales — a vendor is live within 24 hrs of signup.</div>
+        </div>
+        <div class="phase-row">
+          <div class="pnum">P2</div>
+          <div class="pname">Core Studio Platform</div>
+          <div class="pdesc">Full booking &amp; scheduling, CRM, event tracking, data lake + warehouse, first analytics dashboards.</div>
+        </div>
+        <div class="phase-row">
+          <div class="pnum">P3</div>
+          <div class="pname">Advanced Analytics</div>
+          <div class="pdesc">Customer segmentation, revenue dashboards, trainer / studio performance, predictive reporting.</div>
+        </div>
+        <div class="phase-row">
+          <div class="pnum">P4</div>
+          <div class="pname">AI Insights Layer</div>
+          <div class="pdesc">Churn prediction, demand forecasting, recommendation systems, pricing optimization models.</div>
+        </div>
+        <div class="phase-row">
+          <div class="pnum">P5</div>
+          <div class="pname">AI Marketing Automation</div>
+          <div class="pdesc">Automated audience targeting, campaign optimization, personalized engagement, cross-channel orchestration.</div>
+        </div>
+        <div class="phase-row">
+          <div class="pnum">P6</div>
+          <div class="pname">Autonomous Growth Engine</div>
+          <div class="pdesc">Self-learning marketing strategy, reinforcement learning for budget allocation, dynamic pricing.</div>
+        </div>
+        <div class="phase-row">
+          <div class="pnum">P7</div>
+          <div class="pname">Ecosystem Expansion</div>
+          <div class="pdesc">Trainer &amp; studio marketplace, partner APIs, white-label offering, wearable / IoT integration.</div>
+        </div>
+      </div>
+    </div>
+    <div class="foot"><span>Phase-Wise Roadmap</span><span>Confidential — Business Proposal</span></div>
+  </section>
+
+  <!-- SLIDE 7 — WHY NOW / THE ASK -->
+  <section class="slide">
+    <div class="bar">
+      <div class="mark">Project<span>-X</span></div>
+      <div class="tag">07 / 07 — Why Now</div>
+    </div>
+    <h1 class="headline">The fitness studio market has the pain; Project-X has the answer already running.</h1>
+    <p class="sub">Fragmented tools, rising ad costs, and lead follow-up that dies in a spreadsheet — this is a structural gap, not a hypothesis.</p>
+    <div class="s1-body">
+      <div class="s1-left">
+        <div class="stack">
+          <div class="stack-row"><div class="lbl">Problem</div><div class="val">Studios run 5+ disconnected tools; most leads go cold before anyone follows up</div></div>
+          <div class="stack-row"><div class="lbl">Proof</div><div class="val">L1 multi-tenant platform is live: branded onboarding, campaigns, pipeline, and a working WhatsApp inbox — not a mockup</div></div>
+          <div class="stack-row"><div class="lbl">Path</div><div class="val">Seven-phase roadmap on one modular architecture — every phase ships without a rewrite</div></div>
+        </div>
+      </div>
+      <div class="stack" style="justify-content: center;">
+        <div class="stack-row" style="grid-template-columns: 1fr; background: var(--accent-soft); border-color: var(--accent);">
+          <div class="val" style="color: var(--ink); font-weight: 600; font-size: 13px;">The ask</div>
+          <div class="val" style="margin-top: 4px;">Partner with us to pilot Phase&nbsp;1 across a first cohort of studios — validate content-to-lead-to-membership conversion, then scale the vendor base.</div>
+        </div>
+      </div>
+    </div>
+    <div class="foot"><span>Closing — Next Steps</span><span>Confidential — Business Proposal</span></div>
+  </section>
+
+</div>

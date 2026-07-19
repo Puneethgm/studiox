@@ -57,5 +57,4 @@ heroic-artifact-434914-d4-1b7152cf7bec.json
 !apps/wa-web/package.json
 !apps/wa-web/package-lock.json
 apps/api/secrets/
-!deploy/secrets/google-credentials.json
 .aider*
