@@ -50,8 +50,30 @@ func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Requ
 			}
 		}
 	}
+	// Fall back to global env secret
 	if endpointSecret == "" {
 		endpointSecret = h.webhookSecret
+	}
+	// Last resort: extract studio_id from unverified payload and look up the studio's secret.
+	// Safe because we still verify the signature with whatever secret we find.
+	if endpointSecret == "" {
+		var raw struct {
+			Data struct {
+				Object struct {
+					Metadata map[string]string `json:"metadata"`
+				} `json:"object"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(payload, &raw) == nil {
+			if sid := raw.Data.Object.Metadata["studio_id"]; sid != "" {
+				if id, err := uuid.Parse(sid); err == nil {
+					studio, err := h.svc.GetByID(r.Context(), id)
+					if err == nil && studio != nil && studio.StripeWebhookSecret != "" {
+						endpointSecret = studio.StripeWebhookSecret
+					}
+				}
+			}
+		}
 	}
 
 	if endpointSecret == "" {
