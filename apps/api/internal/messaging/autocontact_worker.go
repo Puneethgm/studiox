@@ -160,17 +160,29 @@ func (w *AutoContactWorker) processItem(ctx context.Context, it leads.OutboxItem
 			w.log.Error("enqueue 1-day trial followup failed", "lead", l.ID, "err", err)
 		}
 	} else {
-		// Schedule normal follow-ups: 40s, 2h, 12h
-		delays := []time.Duration{40 * time.Second, 2 * time.Hour, 12 * time.Hour}
-		followupBody := renderGreeting("Just following up on your inquiry — {{lead_first_name}}", studio, l)
-		for i, d := range delays {
+		// Schedule no-reply follow-ups: 40s, 2h, 12h, 1 day, 3 days, 7 days.
+		// Each fires only if the lead hasn't replied yet (CancelPendingJobsForConversation
+		// wipes these the moment the AI worker processes an inbound message).
+		type followup struct {
+			delay time.Duration
+			body  string
+		}
+		followups := []followup{
+			{40 * time.Second, renderGreeting("Just following up on your inquiry — {{lead_first_name}}", studio, l)},
+			{2 * time.Hour, renderGreeting("Hi {{lead_first_name}}, still thinking about joining {{studio_name}}? We'd love to have you! 💪 Reply *1* to book a trial or *2* to become a member.", studio, l)},
+			{12 * time.Hour, renderGreeting("Hey {{lead_first_name}}! Don't miss out — spots are limited at {{studio_name}}. Ready to get started? Reply *1* for a trial or *2* for membership.", studio, l)},
+			{24 * time.Hour, renderGreeting("Hi {{lead_first_name}}, just checking in one more time. We have a great community at {{studio_name}} and we'd love for you to experience it. Reply *1* to book a trial!", studio, l)},
+			{3 * 24 * time.Hour, renderGreeting("{{lead_first_name}}, your spot is still available at {{studio_name}}! 🏋️ Take the first step — reply *1* to book your trial session.", studio, l)},
+			{7 * 24 * time.Hour, renderGreeting("Last follow-up from us, {{lead_first_name}}! If you ever want to start your fitness journey with {{studio_name}}, we're here for you. Reply *1* anytime to book a trial. 💪", studio, l)},
+		}
+		for i, f := range followups {
 			if _, err := w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
 				StudioID:       l.StudioID,
 				ConversationID: conv.ID,
-				Body:           followupBody,
+				Body:           f.body,
 				SourceKind:     SourceAutomation,
 				SourceRef:      fmt.Sprintf("lead:%s:followup:%d", l.ID.String(), i+1),
-				ScheduledFor:   time.Now().UTC().Add(d),
+				ScheduledFor:   time.Now().UTC().Add(f.delay),
 			}); err != nil {
 				w.log.Error("schedule followup failed", "lead", l.ID, "attempt", i+1, "err", err)
 			}

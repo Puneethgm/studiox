@@ -343,14 +343,28 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 			}
 		} else {
 			_, updateErr := h.svc.repo.Pool().Exec(ctx, `
-				UPDATE leads 
-				SET trial_purchased = true, status = 'trial_booked', updated_at = now() 
+				UPDATE leads
+				SET trial_purchased = true, status = 'trial_booked', updated_at = now()
 				WHERE id = $1
 			`, *leadID)
 			if updateErr != nil {
 				slog.Warn("stripe lead status update failed", "err", updateErr)
 			} else {
 				slog.Info("stripe lead status updated to trial_booked", "phone", customerPhone)
+
+				// Schedule a 2-day post-trial follow-up to push membership.
+				// This fires after the trial session and nudges the lead to join.
+				if convID != "" {
+					postTrialMsg := fmt.Sprintf(
+						"Hi %s! 👋 How was your trial at *%s*? We hope you loved it!\n\n"+
+							"Ready to make it official and become a member? Reply *2* to choose a membership plan and keep the momentum going! 💪",
+						name, studio.Name,
+					)
+					_, _ = h.svc.repo.Pool().Exec(ctx, `
+						INSERT INTO outbound_jobs (studio_id, conversation_id, source_kind, body, scheduled_for, next_attempt_at)
+						VALUES ($1, $2, 'automation', $3, now() + interval '2 days', now() + interval '2 days')
+					`, studio.ID, convID, postTrialMsg)
+				}
 			}
 		}
 	}
