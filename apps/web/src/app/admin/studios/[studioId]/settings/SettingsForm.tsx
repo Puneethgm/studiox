@@ -956,14 +956,14 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
               </div>
               <form onSubmit={onSaveSheetsSettings} className="space-y-4 p-6">
                 <div>
-                  <Label htmlFor="spreadsheetId">Spreadsheet ID</Label>
+                  <Label htmlFor="spreadsheetId">Spreadsheet ID or URL</Label>
                   <Input
                     id="spreadsheetId"
-                    placeholder="1aBc...Xyz"
+                    placeholder="Paste full Google Sheets link or just the ID"
                     value={spreadsheetId}
                     onChange={(e) => setSpreadsheetId(e.target.value)}
                   />
-                  <FieldHint>The ID of your Google Sheet tracker</FieldHint>
+                  <FieldHint>Paste the full Google Sheets URL or just the spreadsheet ID — both work</FieldHint>
                 </div>
 
                 <div>
@@ -1020,14 +1020,14 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                 </p>
 
                 <div>
-                  <Label htmlFor="extSpreadsheetId">Spreadsheet ID</Label>
+                  <Label htmlFor="extSpreadsheetId">Spreadsheet ID or URL</Label>
                   <Input
                     id="extSpreadsheetId"
-                    placeholder="1aBc...Xyz"
+                    placeholder="Paste full Google Sheets link or just the ID"
                     value={extSpreadsheetId}
                     onChange={(e) => setExtSpreadsheetId(e.target.value)}
                   />
-                  <FieldHint>The ID of the external company&apos;s Google Sheet (from its URL)</FieldHint>
+                  <FieldHint>Paste the full Google Sheets URL or just the ID — both work</FieldHint>
                 </div>
 
                 <div>

@@ -29,6 +29,7 @@ import {
   ListFilter,
   ArrowUpDown,
   Phone,
+  Bot,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { brandInitials } from '@/lib/color';
@@ -201,6 +202,8 @@ export function InboxLive({
   const [showDetailsPanel, setShowDetailsPanel] = useState(true);
   const [users, setUsers] = useState<{ id: string; email: string; role: string }[]>([]);
   const [selectedConvIds, setSelectedConvIds] = useState<string[]>([]);
+  const [globalAI, setGlobalAI] = useState(false);
+  const [globalAISaving, setGlobalAISaving] = useState(false);
 
   useEffect(() => {
     if (!studioId) return;
@@ -774,6 +777,25 @@ export function InboxLive({
     }
   }
 
+  async function toggleGlobalAI() {
+    if (globalAISaving) return;
+    const next = !globalAI;
+    setGlobalAISaving(true);
+    setGlobalAI(next);
+    try {
+      await api(`/api/v1/studios/${studioId}/conversations/ai/bulk`, {
+        method: 'POST',
+        json: { enabled: next },
+      });
+      // Reflect change on all loaded conversations
+      setConversations((prev) => prev.map((c) => ({ ...c, aiEnabled: next })));
+    } catch {
+      setGlobalAI(!next);
+    } finally {
+      setGlobalAISaving(false);
+    }
+  }
+
   async function handleDeleteSelectedConversations() {
     if (selectedConvIds.length === 0) return;
     if (!confirm(`Delete ${selectedConvIds.length} selected conversation(s)?`)) return;
@@ -1002,6 +1024,35 @@ export function InboxLive({
               className="hidden w-80 shrink-0 flex-col border-r border-zinc-200 sm:flex bg-[#f8f9fa] dark:border-zinc-800 dark:bg-zinc-900"
             >
 
+
+              {/* Global AI toggle */}
+              <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-200 dark:border-zinc-800">
+                <div className="flex items-center gap-2">
+                  <Bot className={cn('h-3.5 w-3.5', globalAI ? 'text-emerald-500' : 'text-zinc-400')} />
+                  <span className="text-[10px] font-black uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                    AI Auto-Reply
+                  </span>
+                </div>
+                <button
+                  onClick={toggleGlobalAI}
+                  disabled={globalAISaving}
+                  title={globalAI ? 'Disable AI for all chats' : 'Enable AI for all chats'}
+                  className={cn(
+                    'relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-300 focus:outline-none disabled:opacity-50',
+                    globalAI ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-700',
+                  )}
+                >
+                  <span className={cn(
+                    'pointer-events-none flex h-4 w-4 items-center justify-center rounded-full bg-white shadow transition-transform duration-300',
+                    globalAI ? 'translate-x-4' : 'translate-x-0.5',
+                  )}>
+                    {globalAISaving
+                      ? <Loader2 className="h-2.5 w-2.5 animate-spin text-zinc-400" />
+                      : <Bot className={cn('h-2 w-2', globalAI ? 'text-emerald-600' : 'text-zinc-400')} />
+                    }
+                  </span>
+                </button>
+              </div>
 
               {/* Inbox Tabs (Unread, All, Recents, Starred) */}
               <div className="px-3 pt-2 pb-0 border-b border-zinc-250 dark:border-zinc-800 bg-[#f8f9fa] dark:bg-zinc-900">

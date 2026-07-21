@@ -100,7 +100,7 @@ func (w *AutoContactWorker) processItem(ctx context.Context, it leads.OutboxItem
 		}
 	}
 
-	// Create or find conversation
+	// Create or find conversation and enable AI auto-reply (this lead opted in via form).
 	conv, err := w.msgSvc.CreateConversation(ctx, l.StudioID, CreateConversationInput{
 		ChannelKind:  channelKind,
 		ContactValue: phone,
@@ -109,6 +109,9 @@ func (w *AutoContactWorker) processItem(ctx context.Context, it leads.OutboxItem
 	})
 	if err != nil {
 		return fmt.Errorf("create conversation: %w", err)
+	}
+	if err := w.msgRepo.SetConversationAIEnabled(ctx, l.StudioID, conv.ID, true); err != nil {
+		w.log.Error("autocontact: failed to enable ai for conversation", "conv", conv.ID, "err", err)
 	}
 
 	studio, err := w.studiosRepo.GetByID(ctx, l.StudioID)

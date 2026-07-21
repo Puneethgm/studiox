@@ -51,10 +51,12 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 
 	r.Get("/conversations", h.listConversations)
 	r.Post("/conversations", h.createConversation)
+	r.Post("/conversations/ai/bulk", h.setAllConversationsAI)
 	r.Get("/conversations/{id}", h.getConversation)
 	r.Get("/conversations/{id}/messages", h.listMessages)
 	r.Post("/conversations/{id}/messages", h.sendMessage)
 	r.Post("/conversations/{id}/read", h.markRead)
+	r.Post("/conversations/{id}/ai", h.setConversationAI)
 	r.Delete("/conversations/{id}", h.deleteConversation)
 
 	// Templates
@@ -483,6 +485,47 @@ func (h *Handler) markRead(w http.ResponseWriter, r *http.Request) {
 
 // deleteConversation archives (closes) a conversation. The inbox UI presents
 // this as "delete" but message history is preserved rather than hard-deleted.
+func (h *Handler) setConversationAI(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if !httpx.DecodeJSON(w, r, &body) {
+		return
+	}
+	if err := h.svc.repo.SetConversationAIEnabled(r.Context(), studioID, id, body.Enabled); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]bool{"enabled": body.Enabled})
+}
+
+func (h *Handler) setAllConversationsAI(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if !httpx.DecodeJSON(w, r, &body) {
+		return
+	}
+	if err := h.svc.repo.SetAllConversationsAIEnabled(r.Context(), studioID, body.Enabled); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]bool{"enabled": body.Enabled})
+}
+
 func (h *Handler) deleteConversation(w http.ResponseWriter, r *http.Request) {
 	studioID, ok := studioIDFromPath(w, r)
 	if !ok {

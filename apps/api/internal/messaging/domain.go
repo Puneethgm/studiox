@@ -117,6 +117,7 @@ type Conversation struct {
 	LastMessagePreview   string      `json:"lastMessagePreview"`
 	LastMessageDirection *Direction  `json:"lastMessageDirection,omitempty"`
 	LeadStatus           *string     `json:"leadStatus,omitempty"`
+	AIEnabled            bool        `json:"aiEnabled"`
 	CreatedAt            time.Time   `json:"createdAt"`
 	UpdatedAt            time.Time   `json:"updatedAt"`
 }

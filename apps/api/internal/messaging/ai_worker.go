@@ -367,6 +367,12 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		}
 	}
 
+	// AI auto-reply is off for this conversation — studio user hasn't enabled it yet.
+	if !conv.AIEnabled {
+		w.log.Info("ai worker: ai_enabled=false — no reply sent", "conversation", conv.ID)
+		return nil
+	}
+
 	// Do Not Disturb: either the lead already opted in to DND (manually, or
 	// from a previous "stop"), or this message is itself an opt-out keyword.
 	// Either way: enable DND, cancel every pending scheduled message for this

@@ -22,6 +22,18 @@ import (
 
 var ErrNotFound = errors.New("not found")
 
+// sheetsIDRe extracts the spreadsheet ID from a full Google Sheets URL.
+// e.g. https://docs.google.com/spreadsheets/d/{ID}/edit → {ID}
+var sheetsIDRe = regexp.MustCompile(`/spreadsheets/d/([a-zA-Z0-9_-]+)`)
+
+func extractSpreadsheetID(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if m := sheetsIDRe.FindStringSubmatch(raw); len(m) == 2 {
+		return m[1]
+	}
+	return raw
+}
+
 const sheetsDestination = "google_sheets"
 
 // CancelPendingMessagesFunc cancels every still-pending scheduled/automated
@@ -341,7 +353,7 @@ func (s *Service) GetSheetsSettings(ctx context.Context, studioID uuid.UUID) (*S
 func (s *Service) SaveSheetsSettings(ctx context.Context, studioID uuid.UUID, spreadsheetID, tabName string, active bool) (*StudioSheetsSettings, error) {
 	settings := &StudioSheetsSettings{
 		StudioID:      studioID,
-		SpreadsheetID: strings.TrimSpace(spreadsheetID),
+		SpreadsheetID: extractSpreadsheetID(spreadsheetID),
 		TabName:       strings.TrimSpace(tabName),
 		Active:        active,
 	}
@@ -361,7 +373,7 @@ func (s *Service) GetExternalLeadsSheetSettings(ctx context.Context, studioID uu
 func (s *Service) SaveExternalLeadsSheetSettings(ctx context.Context, studioID uuid.UUID, in ExternalLeadsSheetSettings) (*ExternalLeadsSheetSettings, error) {
 	settings := &ExternalLeadsSheetSettings{
 		StudioID:        studioID,
-		SpreadsheetID:   strings.TrimSpace(in.SpreadsheetID),
+		SpreadsheetID:   extractSpreadsheetID(in.SpreadsheetID),
 		TabName:         strings.TrimSpace(in.TabName),
 		NameColumn:      strings.ToUpper(strings.TrimSpace(in.NameColumn)),
 		FirstNameColumn: strings.ToUpper(strings.TrimSpace(in.FirstNameColumn)),

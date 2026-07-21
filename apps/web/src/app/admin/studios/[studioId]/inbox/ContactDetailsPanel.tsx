@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { User, Loader2, BellOff, Plus, X, Globe, Mail, Phone, Shield, FileText, Check, Search } from 'lucide-react';
+import { User, Loader2, BellOff, Bot, Plus, X, Globe, Mail, Phone, Shield, FileText, Check, Search } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { brandInitials } from '@/lib/color';
 import { ApiError, api } from '@/lib/api';
@@ -53,6 +53,8 @@ export function ContactDetailsPanel({
   const [lead, setLead] = useState<Lead | null>(null);
   const [loading, setLoading] = useState(false);
   const [dndSaving, setDndSaving] = useState(false);
+  const [aiSaving, setAiSaving] = useState(false);
+  const [aiEnabled, setAiEnabled] = useState(conversation.aiEnabled);
   const [error, setError] = useState<string | null>(null);
   
   // Tabbed view in contact panel (All fields, DND, Actions)
@@ -181,6 +183,24 @@ export function ContactDetailsPanel({
       setError(err?.message || 'Failed to update Do Not Disturb.');
     } finally {
       setDndSaving(false);
+    }
+  }
+
+  async function toggleAI() {
+    if (aiSaving) return;
+    const next = !aiEnabled;
+    setAiSaving(true);
+    setAiEnabled(next);
+    try {
+      await api(`/api/v1/studios/${studioId}/conversations/${conversation.id}/ai`, {
+        method: 'POST',
+        json: { enabled: next },
+      });
+    } catch (err: any) {
+      setAiEnabled(!next);
+      setError(err?.message || 'Failed to update AI auto-reply.');
+    } finally {
+      setAiSaving(false);
     }
   }
 
@@ -554,7 +574,44 @@ export function ContactDetailsPanel({
               )}
 
               {activeSubTab === 'dnd' && (
-                <div className="flex items-center gap-3 rounded-2xl border border-white/20 bg-white/20 p-3 dark:border-white/5 dark:bg-white/5 animate-in fade-in duration-200">
+                <div className="space-y-2 animate-in fade-in duration-200">
+                <div className="flex items-center gap-3 rounded-2xl border border-white/20 bg-white/20 p-3 dark:border-white/5 dark:bg-white/5">
+                  <button
+                    onClick={toggleAI}
+                    disabled={aiSaving}
+                    className={cn(
+                      'relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
+                      aiEnabled ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-700',
+                    )}
+                    role="switch"
+                    aria-checked={aiEnabled}
+                    title={aiEnabled ? 'Turn off AI auto-reply' : 'Turn on AI auto-reply'}
+                  >
+                    <span
+                      className={cn(
+                        'pointer-events-none flex h-5 w-5 items-center justify-center rounded-full bg-white shadow-md ring-0 transition-transform duration-300 ease-out',
+                        aiEnabled ? 'translate-x-5' : 'translate-x-0.5',
+                      )}
+                    >
+                      {aiSaving ? (
+                        <Loader2 className="h-3 w-3 animate-spin text-zinc-500" />
+                      ) : (
+                        <Bot className={cn('h-2.5 w-2.5', aiEnabled ? 'text-emerald-600' : 'text-zinc-400')} />
+                      )}
+                    </span>
+                  </button>
+                  <div className="min-w-0">
+                    <div className="text-xs font-black uppercase tracking-wider text-zinc-700 dark:text-zinc-200">
+                      AI Auto-Reply
+                    </div>
+                    <p className="text-[10px] font-semibold leading-snug text-zinc-400">
+                      {aiEnabled
+                        ? 'AI is actively replying to this contact.'
+                        : 'AI is OFF — you reply manually.'}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 rounded-2xl border border-white/20 bg-white/20 p-3 dark:border-white/5 dark:bg-white/5">
                   <button
                     onClick={toggleDND}
                     disabled={dndSaving}
@@ -589,6 +646,7 @@ export function ContactDetailsPanel({
                         : 'Stops automated follow-ups and AI replies.'}
                     </p>
                   </div>
+                </div>
                 </div>
               )}
 

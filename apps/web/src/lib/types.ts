@@ -194,6 +194,7 @@ export interface Conversation {
   lastMessageAt: string;
   lastMessagePreview: string;
   lastMessageDirection?: Direction;
+  aiEnabled: boolean;
   createdAt: string;
   updatedAt: string;
 }
