@@ -94,9 +94,10 @@ func (w *AutoContactWorker) processItem(ctx context.Context, it leads.OutboxItem
 		} else if _, smsErr := w.msgRepo.GetActiveChannelByKind(ctx, l.StudioID, KindSMS); smsErr == nil {
 			channelKind = KindSMS
 		} else {
-			// No active channel!
-			w.log.Warn("no active whatsapp or sms channel for studio, skipping autocontact", "studio_id", l.StudioID, "lead_id", l.ID)
-			return nil
+			// No active channel yet — retry via the outbox backoff instead of
+			// silently giving up, since a WhatsApp Web session can take a
+			// couple minutes to reconnect after a drop.
+			return fmt.Errorf("no active whatsapp or sms channel for studio %s", l.StudioID)
 		}
 	}
 
@@ -213,8 +214,11 @@ func sanitizePhone(in string) string {
 	if s == "" {
 		return ""
 	}
-	// If 10 digits, assume India and prefix 91
-	if len(s) == 10 {
+	// A bare 10-digit number is ambiguous: it's either a local Indian number
+	// missing its country code, or a Singapore number that already has one
+	// (65 + 8-digit local number = 10 digits). Only prepend 91 when it isn't
+	// already a recognized country code prefix.
+	if len(s) == 10 && !strings.HasPrefix(s, "65") {
 		s = "91" + s
 	}
 	return s

@@ -22,7 +22,7 @@ import (
 	"github.com/projectx/api/internal/leads"
 )
 
-const pollInterval = 2 * time.Minute
+const pollInterval = 15 * time.Second
 
 // Worker polls every studio's active external-sheet config on an interval,
 // importing any row beyond the last-seen row number as a new lead.

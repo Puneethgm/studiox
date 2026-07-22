@@ -1,19 +1,31 @@
-import pkg from 'whatsapp-web.js';
-const { Client, LocalAuth, MessageMedia } = pkg;
+// Baileys is a CJS package; its default-export interop shape has changed
+// across versions (the default import bound to the whole module.exports
+// object rather than the makeWASocket function on at least one version we
+// hit in practice). Pull it defensively off the namespace import instead of
+// trusting `import makeWASocket from '...'` to resolve correctly.
+import baileysPkg from '@whiskeysockets/baileys';
+const makeWASocket = baileysPkg.makeWASocket || baileysPkg.default;
+const { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = baileysPkg;
 import QRCode from 'qrcode';
-import { mkdirSync, rmSync } from 'fs';
-import { execSync } from 'child_process';
+import { rmSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const AUTH_DIR = process.env.AUTH_DIR || path.join(__dirname, '..', 'auth');
 
+// Baileys history-sync buffer bounds — mirrors the old whatsapp-web.js
+// backfill defaults (maxChats / perChatLimit) so downstream behavior
+// (Go API payload sizes, admin UX expectations) doesn't change.
+const BACKFILL_MAX_CHATS = 50;
+const BACKFILL_PER_CHAT_LIMIT = 200;
+const BACKFILL_WAIT_MS = 10_000;
+
 export class SessionManager {
   constructor({ log, projectxApiUrl }) {
     this.log = log;
     this.projectxApiUrl = projectxApiUrl;
-    // Map<studioId, { client, qr, status, phone }>
+    // Map<studioId, { sock, qr, status, phone, historyBuffer: Map<jid, msg[]> }>
     this.sessions = new Map();
   }
 
@@ -26,7 +38,7 @@ export class SessionManager {
       return { status: 'pending' };
     }
     await this._startSession(studioId);
-    // Wait up to 30s for Chrome to start and QR to appear
+    // Wait up to 30s for the socket to connect and a QR to appear.
     for (let i = 0; i < 150; i++) {
       await sleep(200);
       const s = this.sessions.get(studioId);
@@ -44,102 +56,51 @@ export class SessionManager {
 
   async disconnect(studioId) {
     const s = this.sessions.get(studioId);
-    if (s?.client) {
-      await s.client.logout().catch(() => {});
-      await s.client.destroy().catch(() => {});
+    if (s?.sock) {
+      await s.sock.logout().catch(() => {});
+      s.sock.end(undefined);
     }
     this.sessions.delete(studioId);
-  }
-
-  _isDeadSession(err) {
-    const msg = err?.message || '';
-    return msg.includes('detached Frame') || msg.includes('Target closed') ||
-      msg.includes('Session closed') || msg.includes('Protocol error');
-  }
-
-  async _recoverSession(studioId) {
-    this.log.warn({ studioId }, 'wa-web: dead session detected, restarting...');
-    const s = this.sessions.get(studioId);
-    if (s?.client) await s.client.destroy().catch(() => {});
-    this.sessions.delete(studioId);
-    await this._notifyDisconnected(studioId);
-    this._startSession(studioId).catch(err =>
-      this.log.error({ err, studioId }, 'wa-web: session recovery failed'),
-    );
   }
 
   async sendMessage(studioId, to, text) {
     const s = this.sessions.get(studioId);
     if (!s || s.status !== 'connected') throw new Error(`session not connected for studio ${studioId}`);
-    try {
-      // If already a full WA chat ID (has @), try direct send first
-      if (to.includes('@')) {
-        try {
-          return await s.client.sendMessage(to, text);
-        } catch (err) {
-          if (this._isDeadSession(err)) { await this._recoverSession(studioId); throw err; }
-          if (!err.message?.includes('LID')) throw err;
-          if (to.endsWith('@c.us')) {
-            const number = to.replace('@c.us', '');
-            try { return await s.client.sendMessage(number + '@lid', text); } catch (_) {}
-          }
-        }
-      }
-      const number = to.replace(/[^\d]/g, '');
-      const numberId = await s.client.getNumberId(number);
-      if (numberId) return await s.client.sendMessage(numberId._serialized, text);
-      return await s.client.sendMessage(number + '@lid', text);
-    } catch (err) {
-      if (this._isDeadSession(err)) await this._recoverSession(studioId);
-      throw err;
-    }
+    const jid = toJid(to);
+    return s.sock.sendMessage(jid, { text });
   }
 
   async sendMedia(studioId, to, mediaUrl, mediaType, caption) {
     const s = this.sessions.get(studioId);
     if (!s || s.status !== 'connected') throw new Error(`session not connected for studio ${studioId}`);
-    const absoluteUrl = mediaUrl.startsWith('http') ? mediaUrl : `${this.projectxApiUrl}${mediaUrl}`;
-    const media = await MessageMedia.fromUrl(absoluteUrl, { unsafeMime: true });
-
-    try {
-      if (to.includes('@')) {
-        try {
-          return await s.client.sendMessage(to, media, { caption });
-        } catch (err) {
-          if (this._isDeadSession(err)) { await this._recoverSession(studioId); throw err; }
-          if (!err.message?.includes('LID')) throw err;
-          if (to.endsWith('@c.us')) {
-            const number = to.replace('@c.us', '');
-            try { return await s.client.sendMessage(number + '@lid', media, { caption }); } catch (_) {}
-          }
-        }
-      }
-      const number = to.replace(/[^\d]/g, '');
-      const numberId = await s.client.getNumberId(number);
-      if (numberId) return await s.client.sendMessage(numberId._serialized, media, { caption });
-      return await s.client.sendMessage(number + '@lid', media, { caption });
-    } catch (err) {
-      if (this._isDeadSession(err)) await this._recoverSession(studioId);
-      throw err;
-    }
+    const jid = toJid(to);
+    const url = mediaUrl.startsWith('http') ? mediaUrl : `${this.projectxApiUrl}${mediaUrl}`;
+    const kind = (mediaType || '').toLowerCase();
+    const content = kind.startsWith('image')
+      ? { image: { url }, caption }
+      : kind.startsWith('video')
+      ? { video: { url }, caption }
+      : kind.startsWith('audio')
+      ? { audio: { url } }
+      : { document: { url }, caption, mimetype: 'application/octet-stream' };
+    return s.sock.sendMessage(jid, content);
   }
 
-  // Pre-warm Chrome for a studio so the QR is ready before the user clicks.
+  // Pre-warm a session for a studio so a QR is ready before the user clicks
+  // "connect" — much cheaper now (a WebSocket, not a Chrome launch).
   async prewarm(studioId) {
     if (this.sessions.has(studioId)) return;
     this.log.info({ studioId }, 'wa-web: pre-warming session');
     await this._startSession(studioId);
   }
 
-  // Imports existing chat history after a QR link, best-effort. WhatsApp Web
-  // only syncs a limited recent window to linked (non-primary) devices by
-  // default — syncHistory() asks the server to push more down for chats that
-  // aren't fully synced yet, then fetchMessages() reads what's available.
-  // Text-only for now (media forwarding isn't implemented on the inbound
-  // side). Reports progress and completion back to the Go API as it goes,
-  // one chat at a time, so a huge contact list can't block the shared
-  // Puppeteer page indefinitely without any visibility.
-  async backfillHistory(studioId, { perChatLimit = 200, maxChats = 50 } = {}) {
+  // Baileys pushes chat history automatically via the 'messaging-history.set'
+  // socket event shortly after a fresh pairing (see the listener registered
+  // in _startSession, which buffers it into entry.historyBuffer). This just
+  // replays whatever's already buffered — or waits briefly for it to arrive
+  // if the request comes in right after connecting — instead of pulling on
+  // demand the way the old whatsapp-web.js version did.
+  async backfillHistory(studioId) {
     const s = this.sessions.get(studioId);
     if (!s || s.status !== 'connected') throw new Error(`session not connected for studio ${studioId}`);
     if (s.backfillRunning) {
@@ -147,107 +108,43 @@ export class SessionManager {
       return;
     }
     s.backfillRunning = true;
-    const { client } = s;
 
     let totalImported = 0;
     let failed = false;
     try {
-      // client.getChats() serializes every chat in one Promise.all() inside
-      // a single page.evaluate() — if serialization throws for even one
-      // chat (a known whatsapp-web.js issue, e.g. wwebjs/whatsapp-web.js#5733
-      // and #5759), the WHOLE batch rejects with an opaque, unhelpful error
-      // (err.name/message === a single minified letter like 'r'). Instead,
-      // pull just the raw chat IDs (cheap, doesn't invoke the fragile
-      // per-chat serializer) and resolve each chat individually below, so
-      // one broken chat can't take down the entire import.
-      let chatIds;
-      let lastErr;
-      for (let attempt = 1; attempt <= 5; attempt++) {
-        try {
-          chatIds = await client.pupPage.evaluate(() =>
-            window.require('WAWebCollections').Chat.getModelsArray()
-              .map(c => c.id._serialized),
-          );
-          lastErr = null;
-          break;
-        } catch (err) {
-          lastErr = err;
-          if (this._isDeadSession(err)) throw err;
-          this.log.warn(
-            { err: { message: err.message, name: err.name }, studioId, attempt },
-            'wa-web: chat id listing failed, retrying',
-          );
-          await sleep(3000);
-        }
-      }
-      if (lastErr) throw lastErr;
-
-      const toProcess = chatIds.slice(0, maxChats);
-      this.log.info({ studioId, chatCount: chatIds.length, processing: toProcess.length }, 'wa-web: backfill starting');
-
-      for (const chatId of toProcess) {
-        try {
-          const chat = await client.getChatById(chatId);
-          if (!chat) continue;
-          if (chat.endOfHistoryTransferType === 0) {
-            await chat.syncHistory().catch(() => {});
-            await sleep(2000);
-          }
-
-          // Resolve @lid chat IDs to real phone numbers, same as the live
-          // message path (_forwardInbound) — otherwise the inbox shows
-          // WhatsApp's opaque Linked-ID instead of a phone number. Group
-          // chats (@g.us) have no phone number and are left as-is.
-          let chatFrom = chat.id._serialized;
-          if (!chat.isGroup && chatFrom.endsWith('@lid')) {
-            try {
-              const contact = await chat.getContact();
-              // contact.number mirrors the LID itself for @lid-only contacts —
-              // the real phone number instead comes back as contact.id
-              // (a @c.us wid) once WhatsApp resolves it.
-              const resolvedId = contact?.id?._serialized;
-              if (resolvedId && resolvedId.endsWith('@c.us')) {
-                chatFrom = resolvedId;
-              }
-            } catch (_) {
-              // couldn't resolve — fall back to the raw @lid id
-            }
-          }
-
-          const history = await chat.fetchMessages({ limit: perChatLimit });
-          const messages = history
-            .filter(msg => !!msg.body)
-            .map(msg => ({
-              from: chatFrom,
-              text: msg.body,
-              messageId: msg.id._serialized,
-              timestamp: msg.timestamp,
-              fromMe: msg.fromMe,
-            }));
+      const waited = await this._waitForHistoryBuffer(studioId, BACKFILL_WAIT_MS);
+      if (!waited) {
+        this.log.warn({ studioId }, 'wa-web: backfill — no history-sync arrived in time');
+        failed = true;
+      } else {
+        const current = this.sessions.get(studioId);
+        const chatEntries = [...(current?.historyBuffer?.entries() ?? [])].slice(0, BACKFILL_MAX_CHATS);
+        this.log.info(
+          { studioId, chatCount: current?.historyBuffer?.size ?? 0, processing: chatEntries.length },
+          'wa-web: backfill starting',
+        );
+        for (const [, messages] of chatEntries) {
           if (messages.length === 0) continue;
-
-          const res = await fetch(`${this.projectxApiUrl}/internal/wa-web/backfill`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ studioId, messages }),
-          });
-          if (res.ok) {
-            const body = await res.json().catch(() => ({}));
-            totalImported += body.imported || 0;
-          } else {
-            this.log.warn({ studioId, chatId, status: res.status }, 'wa-web: backfill chat push non-ok');
+          try {
+            const res = await fetch(`${this.projectxApiUrl}/internal/wa-web/backfill`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ studioId, messages: messages.slice(0, BACKFILL_PER_CHAT_LIMIT) }),
+            });
+            if (res.ok) {
+              const body = await res.json().catch(() => ({}));
+              totalImported += body.imported || 0;
+            } else {
+              this.log.warn({ studioId, status: res.status }, 'wa-web: backfill chat push non-ok');
+            }
+          } catch (err) {
+            this.log.warn({ err: err.message, studioId }, 'wa-web: backfill chat failed, continuing');
           }
-        } catch (err) {
-          this.log.warn({ err: err.message, studioId, chatId }, 'wa-web: backfill chat failed, continuing');
         }
       }
     } catch (err) {
-      this.log.error(
-        { err: { message: err.message, name: err.name, stack: err.stack }, studioId },
-        'wa-web: backfill failed',
-      );
+      this.log.error({ err: { message: err.message, stack: err.stack }, studioId }, 'wa-web: backfill failed');
       failed = true;
-      if (this._isDeadSession(err)) await this._recoverSession(studioId);
     } finally {
       const running = this.sessions.get(studioId);
       if (running) running.backfillRunning = false;
@@ -265,122 +162,137 @@ export class SessionManager {
     this.log.info({ studioId, totalImported, failed }, 'wa-web: backfill finished');
   }
 
-  async _startSession(studioId) {
-    const dataPath = path.join(AUTH_DIR, studioId);
-    mkdirSync(dataPath, { recursive: true });
-
-    // Kill any orphaned Chrome process holding the session directory lock, then
-    // remove the lock files so a fresh Chrome can always start cleanly.
-    const sessionDir = path.join(AUTH_DIR, `session-${studioId}`);
-    try {
-      execSync(`pkill -f "${sessionDir}" 2>/dev/null || true`);
+  async _waitForHistoryBuffer(studioId, maxWaitMs) {
+    const start = Date.now();
+    while (Date.now() - start < maxWaitMs) {
+      const s = this.sessions.get(studioId);
+      if (s?.historyBuffer && s.historyBuffer.size > 0) return true;
       await sleep(500);
-    } catch (_) {}
-    for (const lock of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
-      rmSync(path.join(sessionDir, lock), { force: true });
     }
+    const s = this.sessions.get(studioId);
+    return !!(s?.historyBuffer && s.historyBuffer.size > 0);
+  }
 
-    const entry = { status: 'pending', qr: null, phone: null, client: null };
+  async _startSession(studioId, { reconnectAttempts = 0 } = {}) {
+    const dataPath = path.join(AUTH_DIR, studioId);
+    const { state, saveCreds } = await useMultiFileAuthState(dataPath);
+    // The WA Web version baked into a given @whiskeysockets/baileys release
+    // goes stale as WhatsApp ships updates — a stale version gets the
+    // handshake rejected with a 405 "Connection Failure" right after
+    // "not logged in, attempting registration...", before a QR is ever
+    // emitted. Ask WhatsApp's version endpoint for the current one instead
+    // of trusting the library default.
+    const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: undefined }));
+
+    const entry = { status: 'pending', qr: null, phone: null, sock: null, historyBuffer: new Map(), reconnectAttempts };
     this.sessions.set(studioId, entry);
 
-    const client = new Client({
-      authStrategy: new LocalAuth({
-        clientId: studioId,
-        dataPath: AUTH_DIR,
-      }),
-      puppeteer: {
-        headless: true,
-        executablePath: '/opt/google/chrome/chrome',
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-accelerated-2d-canvas',
-          '--no-first-run',
-          '--no-zygote',
-          '--disable-gpu',
-          '--window-size=1280,800',
-        ],
-      },
-      userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
+    const sock = makeWASocket({
+      auth: state,
+      version,
+      // Without this Baileys only syncs app-state (contacts, minimal recent
+      // context) after pairing — 'messaging-history.set' never fires with
+      // real chat messages, so backfillHistory() always imports 0.
+      syncFullHistory: true,
+      logger: this.log.child({ studioId, component: 'baileys' }),
+      printQRInTerminal: false,
     });
+    entry.sock = sock;
 
-    entry.client = client;
+    sock.ev.on('creds.update', saveCreds);
 
-    client.on('qr', async (qr) => {
-      try {
-        const qrPng = await QRCode.toDataURL(qr, { width: 300, margin: 2 });
-        entry.qr = qrPng;
-        entry.status = 'qr';
-        this.log.info({ studioId }, 'wa-web: qr generated');
-      } catch (err) {
-        this.log.error({ err }, 'wa-web: qrcode generation failed');
-      }
-    });
+    sock.ev.on('connection.update', async (update) => {
+      const { connection, qr, lastDisconnect } = update;
 
-    client.on('ready', async () => {
-      const info = client.info;
-      const phone = info?.wid?.user || '';
-      entry.status = 'connected';
-      entry.qr = null;
-      entry.phone = phone;
-      this.log.info({ studioId, phone }, 'wa-web: connected');
-      await this._notifyConnected(studioId, phone);
-    });
-
-    client.on('authenticated', () => {
-      entry.status = 'pending';
-      entry.qr = null;
-      this.log.info({ studioId }, 'wa-web: authenticated, loading...');
-    });
-
-    client.on('auth_failure', (msg) => {
-      this.log.error({ studioId, msg }, 'wa-web: auth failure');
-      entry.status = 'pending';
-      entry.qr = null;
-    });
-
-    client.on('disconnected', async (reason) => {
-      this.log.warn({ studioId, reason }, 'wa-web: disconnected');
-      entry.status = 'pending';
-      entry.qr = null;
-      this.sessions.delete(studioId);
-      await client.destroy().catch(() => {});
-      await this._notifyDisconnected(studioId);
-      // Re-prewarm immediately so Chrome is ready for the next QR scan.
-      this._startSession(studioId).catch(err =>
-        this.log.error({ err, studioId }, 'wa-web: re-prewarm after disconnect failed'),
-      );
-    });
-
-    client.on('message', async (msg) => {
-      this.log.info({ studioId, from: msg.from, body: msg.body?.slice(0, 50) }, 'wa-web: message received');
-      if (msg.fromMe) return;
-      // Resolve phone number from LID if needed. contact.number mirrors the
-      // LID itself for @lid-only contacts — the real phone number instead
-      // comes back as contact.id (a @c.us wid) once WhatsApp resolves it.
-      if (msg.from.endsWith('@lid')) {
+      if (qr) {
         try {
-          const contact = await msg.getContact();
-          const resolvedId = contact?.id?._serialized;
-          if (resolvedId && resolvedId.endsWith('@c.us')) {
-            msg._resolvedPhone = contact.id.user;
-          }
-        } catch (e) {
-          this.log.warn({ studioId, from: msg.from }, 'wa-web: could not resolve phone from LID');
+          entry.qr = await QRCode.toDataURL(qr, { width: 300, margin: 2 });
+          entry.status = 'qr';
+          this.log.info({ studioId }, 'wa-web: qr generated');
+        } catch (err) {
+          this.log.error({ err }, 'wa-web: qrcode generation failed');
         }
+        return;
       }
-      await this._forwardInbound(studioId, msg);
+
+      if (connection === 'open') {
+        const phone = (sock.user?.id || '').split(':')[0].split('@')[0];
+        entry.status = 'connected';
+        entry.qr = null;
+        entry.phone = phone;
+        entry.reconnectAttempts = 0;
+        this.log.info({ studioId, phone }, 'wa-web: connected');
+        await this._notifyConnected(studioId, phone);
+        return;
+      }
+
+      if (connection === 'close') {
+        const statusCode = lastDisconnect?.error?.output?.statusCode;
+        const loggedOut = statusCode === DisconnectReason.loggedOut;
+        this.log.warn({ studioId, statusCode, loggedOut }, 'wa-web: disconnected');
+
+        entry.status = 'pending';
+        entry.qr = null;
+        this.sessions.delete(studioId);
+        await this._notifyDisconnected(studioId);
+
+        if (loggedOut) {
+          // Session was explicitly logged out (e.g. unlinked from the phone) —
+          // the stored auth is no longer valid, so clear it and wait for a
+          // fresh QR scan rather than looping on a dead credential set.
+          rmSync(dataPath, { recursive: true, force: true });
+        }
+        // Reconnect with exponential backoff (capped at 30s) — a tight,
+        // unthrottled reconnect loop on a genuine protocol/handshake failure
+        // just hammers WhatsApp's servers repeatedly instead of recovering.
+        const attempts = (entry.reconnectAttempts || 0) + 1;
+        const delayMs = Math.min(30_000, 1000 * 2 ** (attempts - 1));
+        this.log.info({ studioId, attempts, delayMs }, 'wa-web: reconnecting after backoff');
+        setTimeout(() => {
+          this._startSession(studioId, { reconnectAttempts: attempts }).catch((err) =>
+            this.log.error({ err, studioId }, 'wa-web: reconnect after disconnect failed'),
+          );
+        }, delayMs);
+      }
     });
 
-    // Initialize (starts Puppeteer + Chromium), retry once then clear stuck session
-    client.initialize().catch(async (err) => {
-      this.log.error({ err, studioId }, 'wa-web: initialize failed, retrying in 5s');
-      await sleep(5000);
-      client.initialize().catch((err2) => {
-        this.log.error({ err: err2, studioId }, 'wa-web: initialize retry failed — clearing stuck session');
-        this.sessions.delete(studioId);
-      });
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+      if (type !== 'notify') return;
+      for (const msg of messages) {
+        if (msg.key?.fromMe) continue;
+        const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+        this.log.info({ studioId, from: msg.key?.remoteJid, body: text.slice(0, 50) }, 'wa-web: message received');
+        if (!text) continue;
+        await this._forwardInbound(studioId, {
+          from: normalizeJid(msg.key.remoteJid),
+          text,
+          messageId: msg.key.id,
+          timestamp: Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000),
+        });
+      }
+    });
+
+    // Buffer Baileys' automatic post-pairing history push. Fires once
+    // (possibly in a few chunks, `syncType`-dependent) shortly after a fresh
+    // QR link. See backfillHistory() for how this is replayed to the Go API.
+    sock.ev.on('messaging-history.set', ({ messages }) => {
+      if (!messages?.length) return;
+      for (const msg of messages) {
+        if (msg.key?.fromMe) continue;
+        const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+        if (!text) continue;
+        const jid = normalizeJid(msg.key.remoteJid);
+        if (!jid || jid.endsWith('@g.us')) continue; // skip group chats, matches old behavior
+        const bucket = entry.historyBuffer.get(jid) || [];
+        bucket.push({
+          from: jid,
+          text,
+          messageId: msg.key.id,
+          timestamp: Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000),
+          fromMe: !!msg.key.fromMe,
+        });
+        entry.historyBuffer.set(jid, bucket);
+      }
     });
   }
 
@@ -388,7 +300,7 @@ export class SessionManager {
   // right when a session connects/disconnects doesn't leave channel_accounts
   // permanently out of sync with the real session state. Each attempt is
   // logged; a final failure is logged as an error but never throws — the
-  // periodic reconciliation loop (see _reconcileStatuses) is the backstop
+  // periodic reconciliation loop (startStatusReconciliation) is the backstop
   // that eventually corrects the DB even if every retry here fails.
   async _notifyWithRetry(path, body, { attempts = 4 } = {}) {
     for (let i = 1; i <= attempts; i++) {
@@ -432,24 +344,12 @@ export class SessionManager {
     }, intervalMs);
   }
 
-  async _forwardInbound(studioId, msg) {
+  async _forwardInbound(studioId, { from, text, messageId, timestamp }) {
     try {
-      // Use resolved phone number if available, otherwise keep the original chat ID
-      const from = msg._resolvedPhone
-        ? msg._resolvedPhone + '@c.us'
-        : msg.from;
-      const text = msg.body || '';
-      if (!text) return;
       const res = await fetch(`${this.projectxApiUrl}/internal/wa-web/inbound`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          studioId,
-          from,
-          text,
-          messageId: msg.id._serialized,
-          timestamp: msg.timestamp,
-        }),
+        body: JSON.stringify({ studioId, from, text, messageId, timestamp }),
       });
       const body = await res.text();
       this.log.info({ studioId, from, status: res.status, body }, 'wa-web: forwarded inbound');
@@ -459,6 +359,24 @@ export class SessionManager {
   }
 }
 
+// Normalizes a Baileys JID to the @c.us / @lid convention the Go API's
+// identity-stitching logic already expects (it previously only ever saw
+// whatsapp-web.js's addressing scheme).
+function normalizeJid(jid) {
+  if (!jid) return jid;
+  if (jid.endsWith('@s.whatsapp.net')) return jid.replace('@s.whatsapp.net', '@c.us');
+  return jid; // @lid and @g.us pass through as-is
+}
+
+// Converts a stored contact value (bare digits, or already-suffixed
+// @c.us/@lid from the Go side) into a Baileys-addressable JID.
+function toJid(to) {
+  if (to.endsWith('@c.us')) return to.replace('@c.us', '@s.whatsapp.net');
+  if (to.endsWith('@lid') || to.endsWith('@s.whatsapp.net') || to.endsWith('@g.us')) return to;
+  const digits = to.replace(/[^\d]/g, '');
+  return `${digits}@s.whatsapp.net`;
+}
+
 function sleep(ms) {
-  return new Promise(r => setTimeout(r, ms));
+  return new Promise((r) => setTimeout(r, ms));
 }
