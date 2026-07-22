@@ -321,7 +321,7 @@ export class SessionManager {
       if (type !== 'notify') return;
       for (const msg of messages) {
         if (msg.key?.fromMe) continue;
-        const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+        const text = extractMessageText(msg.message);
         this.log.info({ studioId, from: msg.key?.remoteJid, body: text.slice(0, 50) }, 'wa-web: message received');
         if (!text) continue;
         await this._forwardInbound(studioId, {
@@ -338,7 +338,17 @@ export class SessionManager {
     // `isLatest` marks the final chunk, which is what actually concludes the
     // import (see _concludeHistoryImport) — buffer size alone can't tell a
     // completed sync from one still mid-flight.
-    sock.ev.on('messaging-history.set', ({ messages, isLatest }) => {
+    sock.ev.on('messaging-history.set', ({ chats, messages, isLatest, syncType, progress }) => {
+      // Always log the raw chunk, even when nothing ends up qualifying below —
+      // otherwise a chunk that arrives but yields zero importable messages
+      // (all group chats, all non-text content, etc.) looks identical in the
+      // logs to the sync never having fired at all, and that distinction
+      // matters for diagnosing "why did nothing import".
+      this.log.info(
+        { studioId, syncType, isLatest, progress, chatsInChunk: chats?.length ?? 0, messagesInChunk: messages?.length ?? 0 },
+        'wa-web: history-sync chunk received',
+      );
+
       if (entry.historyState !== 'pending') return; // resumed session — nothing to capture
 
       if (!messages?.length) {
@@ -349,12 +359,14 @@ export class SessionManager {
         }
         return;
       }
+      let skippedGroup = 0;
+      let skippedNoText = 0;
       for (const msg of messages) {
         if (msg.key?.fromMe) continue;
-        const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
-        if (!text) continue;
         const jid = normalizeJid(msg.key.remoteJid, entry.lidToPhone);
-        if (!jid || jid.endsWith('@g.us')) continue; // skip group chats, matches old behavior
+        if (!jid || jid.endsWith('@g.us')) { skippedGroup++; continue; } // skip group chats, matches old behavior
+        const text = extractMessageText(msg.message);
+        if (!text) { skippedNoText++; continue; }
         const bucket = entry.historyBuffer.get(jid) || [];
         bucket.push({
           from: jid,
@@ -364,6 +376,9 @@ export class SessionManager {
           fromMe: !!msg.key.fromMe,
         });
         entry.historyBuffer.set(jid, bucket);
+      }
+      if (skippedGroup || skippedNoText) {
+        this.log.info({ studioId, skippedGroup, skippedNoText }, 'wa-web: history-sync chunk — messages skipped');
       }
       if (isLatest) {
         this._concludeHistoryImport(studioId).catch((err) =>
@@ -444,6 +459,26 @@ export class SessionManager {
       this.log.error({ err, studioId }, 'wa-web: forward inbound failed');
     }
   }
+}
+
+// Pulls the plain-text body out of a Baileys message object. Plain-text
+// messages carry it directly (`conversation` / `extendedTextMessage`), but
+// disappearing messages and view-once messages wrap the real content one
+// level deeper — read literally, those wrappers have no text of their own,
+// so a message can be 100% real text and still come back empty without
+// unwrapping them first. Recurses since these wrappers can nest (e.g. a
+// view-once message sent with disappearing messages also on).
+function extractMessageText(message) {
+  if (!message) return '';
+  if (message.conversation) return message.conversation;
+  if (message.extendedTextMessage?.text) return message.extendedTextMessage.text;
+  const wrapped =
+    message.ephemeralMessage?.message ||
+    message.viewOnceMessage?.message ||
+    message.viewOnceMessageV2?.message ||
+    message.viewOnceMessageV2Extension?.message ||
+    message.documentWithCaptionMessage?.message;
+  return wrapped ? extractMessageText(wrapped) : '';
 }
 
 // Normalizes a Baileys JID to the @c.us / @lid convention the Go API's
