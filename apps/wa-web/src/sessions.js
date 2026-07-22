@@ -19,7 +19,16 @@ const AUTH_DIR = process.env.AUTH_DIR || path.join(__dirname, '..', 'auth');
 // (Go API payload sizes, admin UX expectations) doesn't change.
 const BACKFILL_MAX_CHATS = 50;
 const BACKFILL_PER_CHAT_LIMIT = 200;
-const BACKFILL_WAIT_MS = 10_000;
+
+// Safety net only — WhatsApp relays history through the user's primary phone,
+// so it only arrives once that phone is online and it can take anywhere from
+// seconds to a couple of minutes for a real account with real history. We
+// don't guess when it's "probably not coming"; we wait for Baileys' own
+// `isLatest` completion signal on 'messaging-history.set' (see
+// _startSession). This timer only fires to conclude the import if that
+// signal never arrives at all within a generous window (e.g. the primary
+// phone stays offline), so the UI isn't stuck spinning forever.
+const HISTORY_SYNC_TIMEOUT_MS = 3 * 60_000;
 
 export class SessionManager {
   constructor({ log, projectxApiUrl }) {
@@ -56,6 +65,7 @@ export class SessionManager {
 
   async disconnect(studioId) {
     const s = this.sessions.get(studioId);
+    if (s?.historyTimer) clearTimeout(s.historyTimer);
     if (s?.sock) {
       await s.sock.logout().catch(() => {});
       s.sock.end(undefined);
@@ -94,83 +104,92 @@ export class SessionManager {
     await this._startSession(studioId);
   }
 
-  // Baileys pushes chat history automatically via the 'messaging-history.set'
-  // socket event shortly after a fresh pairing (see the listener registered
-  // in _startSession, which buffers it into entry.historyBuffer). This just
-  // replays whatever's already buffered — or waits briefly for it to arrive
-  // if the request comes in right after connecting — instead of pulling on
-  // demand the way the old whatsapp-web.js version did.
+  // History import runs automatically in the background as soon as a session
+  // connects (see _startSession / _concludeHistoryImport) — Baileys pushes
+  // chat history on its own schedule, so there's no "right moment" for a
+  // human to click a button and catch it. This is the manual entry point the
+  // admin's "Import chat history" / "Retry" button hits; it never starts a
+  // second, competing import. It just makes sure the Go API's view of the
+  // current state is fresh:
+  //   - already concluded  -> re-report the result (covers a wa-web restart
+  //     losing its 'done' notification before the Go side received it)
+  //   - still in flight     -> re-assert 'running' (covers the same restart
+  //     scenario for the initial notification) and let it keep going
+  //   - resumed session ('inert') -> no-op. WhatsApp already had its one
+  //     chance to push history right after the original pairing and won't
+  //     repeat it on a plain reconnect, so there's nothing to (re-)run —
+  //     leave whatever Go already has on record untouched.
   async backfillHistory(studioId) {
     const s = this.sessions.get(studioId);
     if (!s || s.status !== 'connected') throw new Error(`session not connected for studio ${studioId}`);
-    if (s.backfillRunning) {
-      this.log.warn({ studioId }, 'wa-web: backfill already running, ignoring duplicate request');
+
+    if (s.historyState === 'done') {
+      await this._notifyWithRetry('/internal/wa-web/backfill-done', {
+        studioId,
+        messageCount: s.historyImportedCount ?? 0,
+        failed: !!s.historyImportFailed,
+      });
       return;
     }
-    s.backfillRunning = true;
+    if (s.historyState === 'inert') {
+      this.log.info({ studioId }, 'wa-web: history import requested on a resumed session — nothing to do');
+      return;
+    }
+    await this._notifyBackfillRunning(studioId);
+  }
+
+  // Called once per session, either when Baileys signals the post-pairing
+  // history sync is complete (`isLatest` on 'messaging-history.set') or when
+  // the safety-net timer in _startSession fires because that signal never
+  // came. Idempotent — whichever fires first wins, the other is a no-op.
+  async _concludeHistoryImport(studioId) {
+    const entry = this.sessions.get(studioId);
+    if (!entry || entry.historyState === 'done') return;
+    entry.historyState = 'done';
+    if (entry.historyTimer) {
+      clearTimeout(entry.historyTimer);
+      entry.historyTimer = null;
+    }
 
     let totalImported = 0;
     let failed = false;
     try {
-      const waited = await this._waitForHistoryBuffer(studioId, BACKFILL_WAIT_MS);
-      if (!waited) {
-        this.log.warn({ studioId }, 'wa-web: backfill — no history-sync arrived in time');
-        failed = true;
-      } else {
-        const current = this.sessions.get(studioId);
-        const chatEntries = [...(current?.historyBuffer?.entries() ?? [])].slice(0, BACKFILL_MAX_CHATS);
-        this.log.info(
-          { studioId, chatCount: current?.historyBuffer?.size ?? 0, processing: chatEntries.length },
-          'wa-web: backfill starting',
-        );
-        for (const [, messages] of chatEntries) {
-          if (messages.length === 0) continue;
-          try {
-            const res = await fetch(`${this.projectxApiUrl}/internal/wa-web/backfill`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ studioId, messages: messages.slice(0, BACKFILL_PER_CHAT_LIMIT) }),
-            });
-            if (res.ok) {
-              const body = await res.json().catch(() => ({}));
-              totalImported += body.imported || 0;
-            } else {
-              this.log.warn({ studioId, status: res.status }, 'wa-web: backfill chat push non-ok');
-            }
-          } catch (err) {
-            this.log.warn({ err: err.message, studioId }, 'wa-web: backfill chat failed, continuing');
+      const chatEntries = [...entry.historyBuffer.entries()].slice(0, BACKFILL_MAX_CHATS);
+      this.log.info(
+        { studioId, chatCount: entry.historyBuffer.size, processing: chatEntries.length },
+        'wa-web: history import starting',
+      );
+      for (const [, messages] of chatEntries) {
+        if (messages.length === 0) continue;
+        try {
+          const res = await fetch(`${this.projectxApiUrl}/internal/wa-web/backfill`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ studioId, messages: messages.slice(0, BACKFILL_PER_CHAT_LIMIT) }),
+          });
+          if (res.ok) {
+            const body = await res.json().catch(() => ({}));
+            totalImported += body.imported || 0;
+          } else {
+            this.log.warn({ studioId, status: res.status }, 'wa-web: history import chat push non-ok');
           }
+        } catch (err) {
+          this.log.warn({ err: err.message, studioId }, 'wa-web: history import chat failed, continuing');
         }
       }
     } catch (err) {
-      this.log.error({ err: { message: err.message, stack: err.stack }, studioId }, 'wa-web: backfill failed');
+      this.log.error({ err: { message: err.message, stack: err.stack }, studioId }, 'wa-web: history import failed');
       failed = true;
-    } finally {
-      const running = this.sessions.get(studioId);
-      if (running) running.backfillRunning = false;
     }
 
-    try {
-      await fetch(`${this.projectxApiUrl}/internal/wa-web/backfill-done`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ studioId, messageCount: totalImported, failed }),
-      });
-    } catch (err) {
-      this.log.error({ err, studioId }, 'wa-web: notify backfill done failed');
-    }
-    this.log.info({ studioId, totalImported, failed }, 'wa-web: backfill finished');
+    entry.historyImportedCount = totalImported;
+    entry.historyImportFailed = failed;
+    await this._notifyWithRetry('/internal/wa-web/backfill-done', { studioId, messageCount: totalImported, failed });
+    this.log.info({ studioId, totalImported, failed }, 'wa-web: history import finished');
   }
 
-  async _waitForHistoryBuffer(studioId, maxWaitMs) {
-    const start = Date.now();
-    while (Date.now() - start < maxWaitMs) {
-      const s = this.sessions.get(studioId);
-      if (s?.historyBuffer && s.historyBuffer.size > 0) return true;
-      await sleep(500);
-    }
-    const s = this.sessions.get(studioId);
-    return !!(s?.historyBuffer && s.historyBuffer.size > 0);
+  async _notifyBackfillRunning(studioId) {
+    await this._notifyWithRetry('/internal/wa-web/backfill-running', { studioId });
   }
 
   async _startSession(studioId, { reconnectAttempts = 0 } = {}) {
@@ -184,7 +203,36 @@ export class SessionManager {
     // of trusting the library default.
     const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: undefined }));
 
-    const entry = { status: 'pending', qr: null, phone: null, sock: null, historyBuffer: new Map(), reconnectAttempts };
+    // WhatsApp only ever pushes the post-pairing history dump once, right
+    // after a device is freshly linked — not on every plain reconnect of an
+    // already-linked session. Gate the whole history-import lifecycle on
+    // that so a reconnect can't spuriously reset an already-completed import
+    // back to "running", or report a fake "done, 0 messages" that would
+    // overwrite a real earlier count.
+    const isFreshPairing = !state.creds.registered;
+
+    const entry = {
+      status: 'pending',
+      qr: null,
+      phone: null,
+      sock: null,
+      historyBuffer: new Map(),
+      // 'pending' while listening for Baileys' one-time post-pairing history
+      // push; 'done' once concluded (see _concludeHistoryImport); 'inert' for
+      // a resumed (non-fresh) session, which never gets one, so there's
+      // nothing to wait for or report.
+      historyState: isFreshPairing ? 'pending' : 'inert',
+      historyTimer: null,
+      historyImportedCount: undefined,
+      historyImportFailed: undefined,
+      // @lid (WhatsApp's internal linked-device ID) -> real @c.us phone JID.
+      // Baileys' history sync doesn't expose this mapping (see
+      // 'chats.phoneNumberShare' listener below for how it's actually
+      // populated), so a @lid chat only gets a display phone number once
+      // WhatsApp shares it — not immediately for every contact.
+      lidToPhone: new Map(),
+      reconnectAttempts,
+    };
     this.sessions.set(studioId, entry);
 
     const sock = makeWASocket({
@@ -223,6 +271,15 @@ export class SessionManager {
         entry.reconnectAttempts = 0;
         this.log.info({ studioId, phone }, 'wa-web: connected');
         await this._notifyConnected(studioId, phone);
+
+        if (entry.historyState === 'pending') {
+          await this._notifyBackfillRunning(studioId);
+          entry.historyTimer = setTimeout(() => {
+            this._concludeHistoryImport(studioId).catch((err) =>
+              this.log.error({ err, studioId }, 'wa-web: history import (timeout path) failed'),
+            );
+          }, HISTORY_SYNC_TIMEOUT_MS);
+        }
         return;
       }
 
@@ -231,6 +288,10 @@ export class SessionManager {
         const loggedOut = statusCode === DisconnectReason.loggedOut;
         this.log.warn({ studioId, statusCode, loggedOut }, 'wa-web: disconnected');
 
+        if (entry.historyTimer) {
+          clearTimeout(entry.historyTimer);
+          entry.historyTimer = null;
+        }
         entry.status = 'pending';
         entry.qr = null;
         this.sessions.delete(studioId);
@@ -264,7 +325,7 @@ export class SessionManager {
         this.log.info({ studioId, from: msg.key?.remoteJid, body: text.slice(0, 50) }, 'wa-web: message received');
         if (!text) continue;
         await this._forwardInbound(studioId, {
-          from: normalizeJid(msg.key.remoteJid),
+          from: normalizeJid(msg.key.remoteJid, entry.lidToPhone),
           text,
           messageId: msg.key.id,
           timestamp: Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000),
@@ -272,16 +333,27 @@ export class SessionManager {
       }
     });
 
-    // Buffer Baileys' automatic post-pairing history push. Fires once
-    // (possibly in a few chunks, `syncType`-dependent) shortly after a fresh
-    // QR link. See backfillHistory() for how this is replayed to the Go API.
-    sock.ev.on('messaging-history.set', ({ messages }) => {
-      if (!messages?.length) return;
+    // Buffer Baileys' automatic post-pairing history push. Fires in one or
+    // more chunks (`syncType`-dependent) shortly after a fresh QR link;
+    // `isLatest` marks the final chunk, which is what actually concludes the
+    // import (see _concludeHistoryImport) — buffer size alone can't tell a
+    // completed sync from one still mid-flight.
+    sock.ev.on('messaging-history.set', ({ messages, isLatest }) => {
+      if (entry.historyState !== 'pending') return; // resumed session — nothing to capture
+
+      if (!messages?.length) {
+        if (isLatest) {
+          this._concludeHistoryImport(studioId).catch((err) =>
+            this.log.error({ err, studioId }, 'wa-web: history import failed'),
+          );
+        }
+        return;
+      }
       for (const msg of messages) {
         if (msg.key?.fromMe) continue;
         const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
         if (!text) continue;
-        const jid = normalizeJid(msg.key.remoteJid);
+        const jid = normalizeJid(msg.key.remoteJid, entry.lidToPhone);
         if (!jid || jid.endsWith('@g.us')) continue; // skip group chats, matches old behavior
         const bucket = entry.historyBuffer.get(jid) || [];
         bucket.push({
@@ -293,6 +365,21 @@ export class SessionManager {
         });
         entry.historyBuffer.set(jid, bucket);
       }
+      if (isLatest) {
+        this._concludeHistoryImport(studioId).catch((err) =>
+          this.log.error({ err, studioId }, 'wa-web: history import failed'),
+        );
+      }
+    });
+
+    // Fired when WhatsApp explicitly shares the real phone number behind a
+    // @lid chat (a SHARE_PHONE_NUMBER protocol message) — the only source
+    // Baileys exposes for @lid -> phone-number resolution. Not guaranteed
+    // for every contact, so @lid chats without one just display the LID.
+    sock.ev.on('chats.phoneNumberShare', ({ lid, jid }) => {
+      if (!lid || !jid) return;
+      entry.lidToPhone.set(lid, normalizeJid(jid, entry.lidToPhone));
+      this.log.info({ studioId, lid, jid }, 'wa-web: resolved @lid to phone number');
     });
   }
 
@@ -362,10 +449,11 @@ export class SessionManager {
 // Normalizes a Baileys JID to the @c.us / @lid convention the Go API's
 // identity-stitching logic already expects (it previously only ever saw
 // whatsapp-web.js's addressing scheme).
-function normalizeJid(jid) {
+function normalizeJid(jid, lidToPhone) {
   if (!jid) return jid;
   if (jid.endsWith('@s.whatsapp.net')) return jid.replace('@s.whatsapp.net', '@c.us');
-  return jid; // @lid and @g.us pass through as-is
+  if (jid.endsWith('@lid') && lidToPhone?.has(jid)) return lidToPhone.get(jid);
+  return jid; // unresolved @lid and @g.us pass through as-is
 }
 
 // Converts a stored contact value (bare digits, or already-suffixed

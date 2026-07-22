@@ -20,7 +20,7 @@ export function ConnectWhatsAppWeb({
   showToast,
 }: {
   studioId: string;
-  showToast: (msg: string) => void;
+  showToast: (msg: string, type?: 'success' | 'error') => void;
 }) {
   const [state, setState] = useState<QRState>({ status: 'idle' });
   const [backfill, setBackfill] = useState<BackfillState>('none');
@@ -106,8 +106,14 @@ export function ConnectWhatsAppWeb({
       if (data.status !== 'running' && backfillPollRef.current) {
         clearInterval(backfillPollRef.current);
         backfillPollRef.current = null;
-        if (data.status === 'done') showToast(`Imported ${data.messageCount} historical messages.`);
-        if (data.status === 'failed') showToast('History import failed.');
+        if (data.status === 'done') {
+          showToast(
+            data.messageCount > 0
+              ? `Imported ${data.messageCount} historical messages.`
+              : 'No chat history was available to import.'
+          );
+        }
+        if (data.status === 'failed') showToast('History import failed.', 'error');
       }
     } catch {
       // ignore — status just stays as-is until next poll
@@ -142,7 +148,7 @@ export function ConnectWhatsAppWeb({
       backfillPollRef.current = setInterval(fetchBackfillStatus, 4000);
     } catch {
       setBackfill('failed');
-      showToast('Could not start history import.');
+      showToast('Could not start history import.', 'error');
     }
   }, [studioId, fetchBackfillStatus, showToast]);
 

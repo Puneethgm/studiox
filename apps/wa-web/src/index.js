@@ -89,9 +89,11 @@ app.post('/sessions/:studioId/prewarm', async (req, res) => {
   res.json({ ok: true });
 });
 
-// POST /sessions/:studioId/backfill — one-time chat-history import, kicked
-// off from the admin UI. Runs in the background; progress/completion is
-// reported to the Go API as it goes (see SessionManager.backfillHistory).
+// POST /sessions/:studioId/backfill — manual nudge from the admin UI. The
+// actual import runs automatically in the background as soon as a session
+// connects (see SessionManager._startSession / _concludeHistoryImport); this
+// just re-syncs the Go API's view of the current state (see
+// SessionManager.backfillHistory for the exact cases it covers).
 app.post('/sessions/:studioId/backfill', async (req, res) => {
   const { studioId } = req.params;
   sessions.backfillHistory(studioId).catch(err => log.error({ err, studioId }, 'backfill failed'));

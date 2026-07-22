@@ -228,6 +228,32 @@ func (h *Handler) waWebBackfill(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true, "imported": imported})
 }
 
+// waWebBackfillRunning lets the Node service mark history import as started
+// the moment a session connects — Baileys pushes chat history automatically
+// post-pairing, so import can begin without an admin ever clicking the
+// "Import chat history" button. Without this, the admin UI would sit on
+// "none" (no button pressed yet) while an import is silently already
+// underway in the background.
+func (h *Handler) waWebBackfillRunning(w http.ResponseWriter, r *http.Request) {
+	var p struct {
+		StudioID string `json:"studioId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_json", err.Error())
+		return
+	}
+	studioID, err := uuid.Parse(p.StudioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid studioId")
+		return
+	}
+	if err := h.svc.repo.SetWAWebBackfillStatus(r.Context(), studioID, "running", 0); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // waWebBackfillDone lets the Node service report that it has finished walking
 // every chat, so the admin UI can stop showing "running".
 func (h *Handler) waWebBackfillDone(w http.ResponseWriter, r *http.Request) {
