@@ -142,12 +142,40 @@ export class SessionManager {
   async backfillHistory(studioId, { perChatLimit = 200, maxChats = 50 } = {}) {
     const s = this.sessions.get(studioId);
     if (!s || s.status !== 'connected') throw new Error(`session not connected for studio ${studioId}`);
+    if (s.backfillRunning) {
+      this.log.warn({ studioId }, 'wa-web: backfill already running, ignoring duplicate request');
+      return;
+    }
+    s.backfillRunning = true;
     const { client } = s;
 
     let totalImported = 0;
     let failed = false;
     try {
-      const chats = await client.getChats();
+      // WhatsApp's internal chat store isn't always hydrated the instant
+      // 'ready' fires, especially on a freshly linked device — getChats()
+      // can throw a minified internal error (e.g. err.message === 'r') if
+      // called too early. Retry a few times with a short backoff before
+      // giving up.
+      let chats;
+      let lastErr;
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        try {
+          chats = await client.getChats();
+          lastErr = null;
+          break;
+        } catch (err) {
+          lastErr = err;
+          if (this._isDeadSession(err)) throw err;
+          this.log.warn(
+            { err: { message: err.message, name: err.name }, studioId, attempt },
+            'wa-web: getChats failed, retrying',
+          );
+          await sleep(3000);
+        }
+      }
+      if (lastErr) throw lastErr;
+
       const toProcess = chats.slice(0, maxChats);
       this.log.info({ studioId, chatCount: chats.length, processing: toProcess.length }, 'wa-web: backfill starting');
 
@@ -206,8 +234,15 @@ export class SessionManager {
         }
       }
     } catch (err) {
-      this.log.error({ err: err.message, studioId }, 'wa-web: backfill failed');
+      this.log.error(
+        { err: { message: err.message, name: err.name, stack: err.stack }, studioId },
+        'wa-web: backfill failed',
+      );
       failed = true;
+      if (this._isDeadSession(err)) await this._recoverSession(studioId);
+    } finally {
+      const running = this.sessions.get(studioId);
+      if (running) running.backfillRunning = false;
     }
 
     try {
