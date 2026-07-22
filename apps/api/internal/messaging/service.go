@@ -885,9 +885,15 @@ func (s *Service) HandleInboundSMS(ctx context.Context, messageSid, from, to, bo
 	return nil
 }
 
-// HandleInboundWAWeb processes a message received from a QR-linked WhatsApp Web session.
-// It follows the same identity → conversation → message → lead pattern as HandleInboundSMS.
-func (s *Service) HandleInboundWAWeb(ctx context.Context, studioID uuid.UUID, from, body, externalID string, sentAt time.Time) error {
+// HandleInboundWAWeb processes a message seen on a QR-linked WhatsApp Web
+// session's live socket — either a customer's reply (fromMe false) or a
+// message the studio typed directly into WhatsApp on the linked phone,
+// bypassing this platform entirely (fromMe true; see the messages.upsert
+// listener in sessions.js, which used to discard these outright). It follows
+// the same identity → conversation → message → lead pattern as
+// HandleInboundSMS, and the same inbound/outbound branching
+// handleWAWebBackfillOne already used for historical import.
+func (s *Service) HandleInboundWAWeb(ctx context.Context, studioID uuid.UUID, from, body, externalID string, fromMe bool, sentAt time.Time) error {
 	// 1. Resolve the whatsapp_web channel for this studio.
 	channel, err := s.repo.GetActiveChannelByKind(ctx, studioID, KindWhatsAppWeb)
 	if err != nil || channel == nil {
@@ -1005,12 +1011,24 @@ func (s *Service) HandleInboundWAWeb(ctx context.Context, studioID uuid.UUID, fr
 		conv.LeadID = activeLeadID
 	}
 
-	// 5. Insert message.
+	// 5. Insert message. fromMe means this was typed directly into WhatsApp on
+	// the linked phone rather than sent through this platform — record it as
+	// outbound. `externalID` is the real WhatsApp message ID either way, so a
+	// fromMe message that's actually just the live echo of something our own
+	// outbound worker already sent (see waWebSender.SendText) naturally
+	// dedupes here instead of appearing a second time: InsertMessage returns
+	// a nil stored row on an external_id conflict.
+	direction := DirectionInbound
+	sourceKind := SourceCustomer
+	if fromMe {
+		direction = DirectionOutbound
+		sourceKind = SourceStudioUser
+	}
 	stored, err := s.repo.InsertMessage(ctx, tx, CreateMessageInput{
 		ConversationID: conv.ID,
 		StudioID:       studioID,
-		Direction:      DirectionInbound,
-		SourceKind:     SourceCustomer,
+		Direction:      direction,
+		SourceKind:     sourceKind,
 		Body:           body,
 		ExternalID:     externalID,
 		SentAt:         sentAt,
@@ -1019,8 +1037,13 @@ func (s *Service) HandleInboundWAWeb(ctx context.Context, studioID uuid.UUID, fr
 		return err
 	}
 
-	if err := s.processInboundLeadAutomation(ctx, tx, studioID, conv, stored, body); err != nil {
-		return fmt.Errorf("inbound lead automation: %w", err)
+	// The AI/automation pipeline reacts to genuine customer messages only —
+	// running it against our own outbound-from-phone message would be
+	// nonsensical (there's nothing to auto-reply to).
+	if !fromMe {
+		if err := s.processInboundLeadAutomation(ctx, tx, studioID, conv, stored, body); err != nil {
+			return fmt.Errorf("inbound lead automation: %w", err)
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -1028,8 +1051,12 @@ func (s *Service) HandleInboundWAWeb(ctx context.Context, studioID uuid.UUID, fr
 	}
 
 	if stored != nil {
+		evtKind := EvtMessageReceived
+		if fromMe {
+			evtKind = EvtMessageSent
+		}
 		s.bus.Publish(ctx, Event{
-			Kind:           EvtMessageReceived,
+			Kind:           evtKind,
 			StudioID:       studioID,
 			ConversationID: conv.ID,
 			MessageID:      &stored.ID,

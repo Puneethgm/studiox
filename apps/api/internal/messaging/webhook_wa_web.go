@@ -163,6 +163,7 @@ func (h *Handler) waWebInbound(w http.ResponseWriter, r *http.Request) {
 		Text      string `json:"text"`
 		MessageID string `json:"messageId"`
 		Timestamp int64  `json:"timestamp"`
+		FromMe    bool   `json:"fromMe"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "bad_json", err.Error())
@@ -177,7 +178,7 @@ func (h *Handler) waWebInbound(w http.ResponseWriter, r *http.Request) {
 	if p.Timestamp > 0 {
 		sentAt = time.Unix(p.Timestamp, 0).UTC()
 	}
-	if err := h.svc.HandleInboundWAWeb(r.Context(), studioID, p.From, p.Text, p.MessageID, sentAt); err != nil {
+	if err := h.svc.HandleInboundWAWeb(r.Context(), studioID, p.From, p.Text, p.MessageID, p.FromMe, sentAt); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
@@ -326,45 +327,64 @@ func (s *waWebSender) SendText(ctx context.Context, _, _, recipient, body string
 		Caption   string `json:"caption,omitempty"`
 	}
 
-	doSend := func(p sendPayload) error {
+	// doSend returns the WhatsApp message ID wa-web assigned to the send.
+	// Capturing this matters beyond bookkeeping: when this same message is
+	// later echoed back to us as a `fromMe` event on the live socket (see
+	// SessionManager's messages.upsert handler), the Go side needs a real ID
+	// to dedupe against — otherwise a message we sent through the platform
+	// would get inserted a second time as if it were typed directly on the
+	// phone.
+	doSend := func(p sendPayload) (string, error) {
 		data, _ := json.Marshal(p)
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, sendURL, bytes.NewReader(data))
 		if err != nil {
-			return err
+			return "", err
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("x-internal-key", waWebInternalKey())
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
-			return err
+			return "", err
 		}
 		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode >= 300 {
-			b, _ := io.ReadAll(resp.Body)
-			return fmt.Errorf("wa-web send failed %d: %s", resp.StatusCode, b)
+			return "", fmt.Errorf("wa-web send failed %d: %s", resp.StatusCode, body)
 		}
-		return nil
+		var parsed struct {
+			MessageID string `json:"messageId"`
+		}
+		_ = json.Unmarshal(body, &parsed)
+		return parsed.MessageID, nil
 	}
 
 	// Send text message (unless there are attachments — in that case text becomes caption on first media)
 	if len(attachments) == 0 {
-		return &channels.SendResult{}, doSend(sendPayload{To: recipient, Text: body})
+		id, err := doSend(sendPayload{To: recipient, Text: body})
+		return &channels.SendResult{ExternalID: id}, err
 	}
 
-	// Send each attachment; first one carries the caption (body text)
+	// Send each attachment; first one carries the caption (body text). The
+	// external ID we report back is the first attachment's message —
+	// InsertMessage only records one row per outbound job either way.
+	var firstID string
 	for i, att := range attachments {
 		caption := ""
 		if i == 0 {
 			caption = body
 		}
-		if err := doSend(sendPayload{
+		id, err := doSend(sendPayload{
 			To:        recipient,
 			MediaURL:  att.URL,
 			MediaType: string(att.Type),
 			Caption:   caption,
-		}); err != nil {
+		})
+		if err != nil {
 			return nil, err
 		}
+		if i == 0 {
+			firstID = id
+		}
 	}
-	return &channels.SendResult{}, nil
+	return &channels.SendResult{ExternalID: firstID}, nil
 }

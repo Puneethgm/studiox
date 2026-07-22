@@ -320,15 +320,24 @@ export class SessionManager {
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
       if (type !== 'notify') return;
       for (const msg of messages) {
-        if (msg.key?.fromMe) continue;
+        // fromMe messages are forwarded too, not discarded — the Go side
+        // dedupes these against messages our own outbound worker already
+        // sent (matched by WhatsApp message ID, see waWebSender.SendText).
+        // A fromMe message that ISN'T one of ours is one the studio typed
+        // directly into WhatsApp on the linked phone, and needs recording
+        // just as much as a customer's reply does.
         const text = extractMessageText(msg.message);
-        this.log.info({ studioId, from: msg.key?.remoteJid, body: text.slice(0, 50) }, 'wa-web: message received');
+        this.log.info(
+          { studioId, from: msg.key?.remoteJid, fromMe: !!msg.key?.fromMe, body: text.slice(0, 50) },
+          'wa-web: message received',
+        );
         if (!text) continue;
         await this._forwardInbound(studioId, {
           from: normalizeJid(msg.key.remoteJid, entry.lidToPhone),
           text,
           messageId: msg.key.id,
           timestamp: Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000),
+          fromMe: !!msg.key?.fromMe,
         });
       }
     });
@@ -446,12 +455,12 @@ export class SessionManager {
     }, intervalMs);
   }
 
-  async _forwardInbound(studioId, { from, text, messageId, timestamp }) {
+  async _forwardInbound(studioId, { from, text, messageId, timestamp, fromMe }) {
     try {
       const res = await fetch(`${this.projectxApiUrl}/internal/wa-web/inbound`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ studioId, from, text, messageId, timestamp }),
+        body: JSON.stringify({ studioId, from, text, messageId, timestamp, fromMe: !!fromMe }),
       });
       const body = await res.text();
       this.log.info({ studioId, from, status: res.status, body }, 'wa-web: forwarded inbound');
