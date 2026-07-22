@@ -36,6 +36,28 @@ export class SessionManager {
     this.projectxApiUrl = projectxApiUrl;
     // Map<studioId, { sock, qr, status, phone, historyBuffer: Map<jid, msg[]> }>
     this.sessions = new Map();
+    // Map<studioId, Promise<void>> — an in-flight _startSession call, if any.
+    // _startSession awaits reading auth state and fetching the protocol
+    // version BEFORE it registers the session in `this.sessions`, so two
+    // callers that both check "is there already a session?" close together
+    // (e.g. the startup prewarm loop and an admin clicking "Show QR Code" at
+    // the same moment) can both pass that check and each open a real socket
+    // against the same linked-device credentials. WhatsApp allows only one
+    // live connection per device, so the second one causes the server to
+    // boot the first with a conflict error (statusCode 440), and the two
+    // fight over the connection until one gives up. Routing every entry
+    // point through _ensureSession closes that window — concurrent callers
+    // share the same in-flight start instead of racing to create another.
+    this.starting = new Map();
+  }
+
+  async _ensureSession(studioId, opts) {
+    if (this.sessions.has(studioId)) return;
+    const inFlight = this.starting.get(studioId);
+    if (inFlight) return inFlight;
+    const p = this._startSession(studioId, opts).finally(() => this.starting.delete(studioId));
+    this.starting.set(studioId, p);
+    return p;
   }
 
   // Returns { status: 'connected'|'qr'|'pending'|'none', qr?, phone? }
@@ -46,7 +68,7 @@ export class SessionManager {
       if (existing.status === 'qr' && existing.qr) return { status: 'qr', qr: existing.qr };
       return { status: 'pending' };
     }
-    await this._startSession(studioId);
+    await this._ensureSession(studioId);
     // Wait up to 30s for the socket to connect and a QR to appear.
     for (let i = 0; i < 150; i++) {
       await sleep(200);
@@ -99,9 +121,9 @@ export class SessionManager {
   // Pre-warm a session for a studio so a QR is ready before the user clicks
   // "connect" — much cheaper now (a WebSocket, not a Chrome launch).
   async prewarm(studioId) {
-    if (this.sessions.has(studioId)) return;
+    if (this.sessions.has(studioId) || this.starting.has(studioId)) return;
     this.log.info({ studioId }, 'wa-web: pre-warming session');
-    await this._startSession(studioId);
+    await this._ensureSession(studioId);
   }
 
   // History import runs automatically in the background as soon as a session
@@ -310,7 +332,7 @@ export class SessionManager {
         const delayMs = Math.min(30_000, 1000 * 2 ** (attempts - 1));
         this.log.info({ studioId, attempts, delayMs }, 'wa-web: reconnecting after backoff');
         setTimeout(() => {
-          this._startSession(studioId, { reconnectAttempts: attempts }).catch((err) =>
+          this._ensureSession(studioId, { reconnectAttempts: attempts }).catch((err) =>
             this.log.error({ err, studioId }, 'wa-web: reconnect after disconnect failed'),
           );
         }, delayMs);

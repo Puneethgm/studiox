@@ -152,8 +152,8 @@ export function ConnectWhatsAppWeb({
     }
   }, [studioId, fetchBackfillStatus, showToast]);
 
-  // Silently pre-warm Chrome and cache the QR in the background so clicking
-  // "Show QR Code" is instant (<1s) instead of waiting for Chrome to start.
+  // Silently pre-warm the session and cache the QR in the background so
+  // clicking "Show QR Code" is instant instead of waiting on the socket.
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
@@ -214,7 +214,7 @@ export function ConnectWhatsAppWeb({
             <RefreshCw className="h-8 w-8 animate-spin text-green-500" />
             <p className="text-sm text-slate-500">Starting WhatsApp Web…</p>
             <p className="text-xs text-slate-400 text-center max-w-xs">
-              First launch takes 20–30 seconds while Chrome starts up. Please wait.
+              First launch can take a few seconds while the connection opens. Please wait.
             </p>
           </div>
         )}
