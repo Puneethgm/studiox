@@ -152,16 +152,22 @@ export class SessionManager {
     let totalImported = 0;
     let failed = false;
     try {
-      // WhatsApp's internal chat store isn't always hydrated the instant
-      // 'ready' fires, especially on a freshly linked device — getChats()
-      // can throw a minified internal error (e.g. err.message === 'r') if
-      // called too early. Retry a few times with a short backoff before
-      // giving up.
-      let chats;
+      // client.getChats() serializes every chat in one Promise.all() inside
+      // a single page.evaluate() — if serialization throws for even one
+      // chat (a known whatsapp-web.js issue, e.g. wwebjs/whatsapp-web.js#5733
+      // and #5759), the WHOLE batch rejects with an opaque, unhelpful error
+      // (err.name/message === a single minified letter like 'r'). Instead,
+      // pull just the raw chat IDs (cheap, doesn't invoke the fragile
+      // per-chat serializer) and resolve each chat individually below, so
+      // one broken chat can't take down the entire import.
+      let chatIds;
       let lastErr;
       for (let attempt = 1; attempt <= 5; attempt++) {
         try {
-          chats = await client.getChats();
+          chatIds = await client.pupPage.evaluate(() =>
+            window.require('WAWebCollections').Chat.getModelsArray()
+              .map(c => c.id._serialized),
+          );
           lastErr = null;
           break;
         } catch (err) {
@@ -169,18 +175,20 @@ export class SessionManager {
           if (this._isDeadSession(err)) throw err;
           this.log.warn(
             { err: { message: err.message, name: err.name }, studioId, attempt },
-            'wa-web: getChats failed, retrying',
+            'wa-web: chat id listing failed, retrying',
           );
           await sleep(3000);
         }
       }
       if (lastErr) throw lastErr;
 
-      const toProcess = chats.slice(0, maxChats);
-      this.log.info({ studioId, chatCount: chats.length, processing: toProcess.length }, 'wa-web: backfill starting');
+      const toProcess = chatIds.slice(0, maxChats);
+      this.log.info({ studioId, chatCount: chatIds.length, processing: toProcess.length }, 'wa-web: backfill starting');
 
-      for (const chat of toProcess) {
+      for (const chatId of toProcess) {
         try {
+          const chat = await client.getChatById(chatId);
+          if (!chat) continue;
           if (chat.endOfHistoryTransferType === 0) {
             await chat.syncHistory().catch(() => {});
             await sleep(2000);
@@ -227,10 +235,10 @@ export class SessionManager {
             const body = await res.json().catch(() => ({}));
             totalImported += body.imported || 0;
           } else {
-            this.log.warn({ studioId, chatId: chat.id._serialized, status: res.status }, 'wa-web: backfill chat push non-ok');
+            this.log.warn({ studioId, chatId, status: res.status }, 'wa-web: backfill chat push non-ok');
           }
         } catch (err) {
-          this.log.warn({ err: err.message, studioId, chatId: chat.id?._serialized }, 'wa-web: backfill chat failed, continuing');
+          this.log.warn({ err: err.message, studioId, chatId }, 'wa-web: backfill chat failed, continuing');
         }
       }
     } catch (err) {
