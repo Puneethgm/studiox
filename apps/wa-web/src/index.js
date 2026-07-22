@@ -60,6 +60,18 @@ app.get('/sessions/:studioId/status', (req, res) => {
   res.json(status);
 });
 
+// GET /sessions/:studioId/check/:number — diagnostic: is this number
+// actually registered on WhatsApp? (see SessionManager.checkOnWhatsApp)
+app.get('/sessions/:studioId/check/:number', async (req, res) => {
+  const { studioId, number } = req.params;
+  try {
+    const results = await sessions.checkOnWhatsApp(studioId, number);
+    res.json({ results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /sessions/:studioId/send
 app.post('/sessions/:studioId/send', async (req, res) => {
   const { studioId } = req.params;

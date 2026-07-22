@@ -9,7 +9,7 @@
     "dev": "node --watch src/index.js"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.17.16",
+    "@whiskeysockets/baileys": "7.0.0-rc13",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "pino": "^9.4.0",

@@ -1,11 +1,12 @@
-// Baileys is a CJS package; its default-export interop shape has changed
-// across versions (the default import bound to the whole module.exports
-// object rather than the makeWASocket function on at least one version we
-// hit in practice). Pull it defensively off the namespace import instead of
-// trusting `import makeWASocket from '...'` to resolve correctly.
-import baileysPkg from '@whiskeysockets/baileys';
-const makeWASocket = baileysPkg.makeWASocket || baileysPkg.default;
-const { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = baileysPkg;
+// Baileys' export shape isn't stable across major versions: 6.x was CJS
+// with the whole module bound to the default import, so pulling named
+// exports off of `baileysPkg.default`/`baileysPkg` worked there. 7.x ships
+// as real ESM with actual named exports and an empty default — importing
+// it the old way silently gives back an empty object (no error at import
+// time; makeWASocket etc. just come back `undefined`, which only surfaces
+// later as "useMultiFileAuthState is not a function"). Named imports work
+// correctly on both.
+import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
 import QRCode from 'qrcode';
 import { rmSync } from 'fs';
 import path from 'path';
@@ -83,6 +84,19 @@ export class SessionManager {
     const s = this.sessions.get(studioId);
     if (!s) return { status: 'none' };
     return { status: s.status, phone: s.phone || null };
+  }
+
+  // Diagnostic: checks whether a number is actually registered on WhatsApp
+  // at all. sock.sendMessage() will still happily assign a message ID and
+  // report success even when sending to a number with no WhatsApp account —
+  // that check isn't automatic — so a message can look "sent" in our system
+  // and never arrive anywhere, with nothing in our own logs to explain why.
+  async checkOnWhatsApp(studioId, number) {
+    const s = this.sessions.get(studioId);
+    if (!s || s.status !== 'connected') throw new Error(`session not connected for studio ${studioId}`);
+    const digits = number.replace(/[^\d]/g, '');
+    const results = await s.sock.onWhatsApp(digits);
+    return results;
   }
 
   async disconnect(studioId) {
@@ -264,6 +278,15 @@ export class SessionManager {
       // context) after pairing — 'messaging-history.set' never fires with
       // real chat messages, so backfillHistory() always imports 0.
       syncFullHistory: true,
+      // Baileys 7.x's OWN default for this rejects syncType FULL outright
+      // (`shouldSyncHistoryMessage: ({ syncType }) => syncType !== FULL`,
+      // see its Defaults/index.js) — and FULL is exactly the sync chunk
+      // that carries real prior chat history; RECENT/INITIAL_BOOTSTRAP
+      // chunks alone can come back with zero messages. Confirmed via
+      // production logs: a FULL notification logged "process: false" and
+      // never reached our messaging-history.set handler at all, which is
+      // why history import kept reporting 0 even on a fresh pairing.
+      shouldSyncHistoryMessage: () => true,
       logger: this.log.child({ studioId, component: 'baileys' }),
       printQRInTerminal: false,
     });
@@ -355,7 +378,7 @@ export class SessionManager {
         );
         if (!text) continue;
         await this._forwardInbound(studioId, {
-          from: normalizeJid(msg.key.remoteJid, entry.lidToPhone),
+          from: await resolveJid(sock, msg.key.remoteJid, entry.lidToPhone, this.log),
           text,
           messageId: msg.key.id,
           timestamp: Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000),
@@ -369,7 +392,7 @@ export class SessionManager {
     // `isLatest` marks the final chunk, which is what actually concludes the
     // import (see _concludeHistoryImport) — buffer size alone can't tell a
     // completed sync from one still mid-flight.
-    sock.ev.on('messaging-history.set', ({ chats, messages, isLatest, syncType, progress }) => {
+    sock.ev.on('messaging-history.set', async ({ chats, messages, isLatest, syncType, progress }) => {
       // Always log the raw chunk, even when nothing ends up qualifying below —
       // otherwise a chunk that arrives but yields zero importable messages
       // (all group chats, all non-text content, etc.) looks identical in the
@@ -394,7 +417,7 @@ export class SessionManager {
       let skippedNoText = 0;
       for (const msg of messages) {
         if (msg.key?.fromMe) continue;
-        const jid = normalizeJid(msg.key.remoteJid, entry.lidToPhone);
+        const jid = await resolveJid(sock, msg.key.remoteJid, entry.lidToPhone, this.log);
         if (!jid || jid.endsWith('@g.us')) { skippedGroup++; continue; } // skip group chats, matches old behavior
         const text = extractMessageText(msg.message);
         if (!text) { skippedNoText++; continue; }
@@ -512,14 +535,59 @@ function extractMessageText(message) {
   return wrapped ? extractMessageText(wrapped) : '';
 }
 
+// WhatsApp JIDs can carry a ":<deviceId>" suffix on the user portion for
+// multi-device addressing (e.g. "917483974512:0@s.whatsapp.net" — device 0
+// of that number). We identify contacts by phone number, not by which of
+// their devices sent a given message, so this must be stripped before the
+// JID is used as a conversation/contact key — otherwise the same person
+// messaging from two devices (or even just Baileys echoing back a fromMe
+// send with the device-qualified form) would fragment into multiple
+// contacts, or display as "917483974512:0" instead of a clean number.
+function stripDeviceSuffix(jid) {
+  return jid.replace(/^(\d+):\d+@/, '$1@');
+}
+
 // Normalizes a Baileys JID to the @c.us / @lid convention the Go API's
 // identity-stitching logic already expects (it previously only ever saw
-// whatsapp-web.js's addressing scheme).
+// whatsapp-web.js's addressing scheme). Cache-only — does not attempt a
+// fresh lookup. Used where the jid in hand is already a real phone JID
+// (e.g. the target of a chats.phoneNumberShare event) or where an async
+// lookup genuinely isn't possible.
 function normalizeJid(jid, lidToPhone) {
   if (!jid) return jid;
+  jid = stripDeviceSuffix(jid);
   if (jid.endsWith('@s.whatsapp.net')) return jid.replace('@s.whatsapp.net', '@c.us');
   if (jid.endsWith('@lid') && lidToPhone?.has(jid)) return lidToPhone.get(jid);
   return jid; // unresolved @lid and @g.us pass through as-is
+}
+
+// Actively resolves a @lid JID to the real phone number behind it, using
+// Baileys' LIDMappingStore (sock.signalRepository.lidMapping) — added in
+// Baileys 7.x specifically to make this possible. Older 6.x had no such
+// API; the only signal was a passive chats.phoneNumberShare event that
+// WhatsApp fires at its own discretion, which left most @lid contacts
+// permanently showing as a raw numeric ID instead of a phone number.
+// Falls back to the cache-only behavior (and ultimately the raw jid) if
+// the lookup throws or comes back empty — WhatsApp doesn't guarantee a
+// mapping is available for every contact.
+async function resolveJid(sock, jid, lidToPhone, log) {
+  if (!jid) return jid;
+  jid = stripDeviceSuffix(jid);
+  if (jid.endsWith('@s.whatsapp.net')) return jid.replace('@s.whatsapp.net', '@c.us');
+  if (!jid.endsWith('@lid')) return jid; // @g.us passes through as-is
+  if (lidToPhone.has(jid)) return lidToPhone.get(jid);
+  try {
+    const pn = await sock.signalRepository?.lidMapping?.getPNForLID(jid);
+    if (pn) {
+      const resolved = stripDeviceSuffix(pn.endsWith('@s.whatsapp.net') ? pn.replace('@s.whatsapp.net', '@c.us') : pn);
+      lidToPhone.set(jid, resolved);
+      log?.info({ lid: jid, resolved }, 'wa-web: resolved @lid to phone number via lidMapping store');
+      return resolved;
+    }
+  } catch (err) {
+    log?.warn({ err: err.message, lid: jid }, 'wa-web: lidMapping lookup failed, leaving unresolved');
+  }
+  return jid; // no mapping available yet — display the raw lid until one is
 }
 
 // Converts a stored contact value (bare digits, or already-suffixed

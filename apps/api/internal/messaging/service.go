@@ -981,34 +981,51 @@ func (s *Service) HandleInboundWAWeb(ctx context.Context, studioID uuid.UUID, fr
 					SELECT id, fitness_plans FROM campaigns WHERE studio_id = $1 LIMIT 1
 				`, studioID).Scan(&campaignID, &fitnessPlans)
 			}
-			defaultPlan := "Trial Class"
-			if len(fitnessPlans) > 0 {
-				defaultPlan = fitnessPlans[0]
-			}
-			leadID = uuid.New()
-			emailPlaceholder := fmt.Sprintf("wa-%s@example.com", cleanPhone)
-			_, err = tx.Exec(ctx, `
-				INSERT INTO leads (id, studio_id, campaign_id, name, first_name, last_name,
-				                   email, phone, fitness_plan, status, source,
-				                   auto_contact_stage, created_at, updated_at)
-				VALUES ($1,$2,$3,$4,$5,'', $6,$7,$8,'contacted','whatsapp_web','awaiting_options',now(),now())
-			`, leadID, studioID, campaignID, cleanPhone, cleanPhone, emailPlaceholder, cleanPhone, defaultPlan)
-			if err != nil {
-				return fmt.Errorf("auto-create wa-web lead: %w", err)
+			if campaignID == uuid.Nil {
+				// No campaign exists for this studio at all yet. leads.campaign_id
+				// is NOT NULL, so there's no valid row we could insert — but that
+				// must not sink the whole inbound message (this whole function
+				// runs in one transaction, so returning an error here would have
+				// rolled back the conversation/message too, silently dropping a
+				// real customer message just because lead auto-creation isn't
+				// possible yet). Skip the lead; the conversation and message
+				// still get recorded below, and a lead can be created/linked
+				// once the studio has a campaign.
+				slog.Warn("no campaign exists for studio, skipping wa-web lead auto-create", "studio_id", studioID)
+			} else {
+				defaultPlan := "Trial Class"
+				if len(fitnessPlans) > 0 {
+					defaultPlan = fitnessPlans[0]
+				}
+				leadID = uuid.New()
+				emailPlaceholder := fmt.Sprintf("wa-%s@example.com", cleanPhone)
+				_, err = tx.Exec(ctx, `
+					INSERT INTO leads (id, studio_id, campaign_id, name, first_name, last_name,
+					                   email, phone, fitness_plan, status, source,
+					                   auto_contact_stage, created_at, updated_at)
+					VALUES ($1,$2,$3,$4,$5,'', $6,$7,$8,'contacted','whatsapp_web','awaiting_options',now(),now())
+				`, leadID, studioID, campaignID, cleanPhone, cleanPhone, emailPlaceholder, cleanPhone, defaultPlan)
+				if err != nil {
+					return fmt.Errorf("auto-create wa-web lead: %w", err)
+				}
+				activeLeadID = &leadID
 			}
 		} else if lookupErr != nil {
 			return fmt.Errorf("lookup wa-web lead by phone: %w", lookupErr)
+		} else {
+			activeLeadID = &leadID
 		}
-		activeLeadID = &leadID
 	}
 
-	if identity.LeadID == nil {
-		_, _ = tx.Exec(ctx, `UPDATE contact_identities SET lead_id=$2 WHERE id=$1`, identity.ID, *activeLeadID)
-		identity.LeadID = activeLeadID
-	}
-	if conv.LeadID == nil {
-		_, _ = tx.Exec(ctx, `UPDATE conversations SET lead_id=$2 WHERE id=$1`, conv.ID, *activeLeadID)
-		conv.LeadID = activeLeadID
+	if activeLeadID != nil {
+		if identity.LeadID == nil {
+			_, _ = tx.Exec(ctx, `UPDATE contact_identities SET lead_id=$2 WHERE id=$1`, identity.ID, *activeLeadID)
+			identity.LeadID = activeLeadID
+		}
+		if conv.LeadID == nil {
+			_, _ = tx.Exec(ctx, `UPDATE conversations SET lead_id=$2 WHERE id=$1`, conv.ID, *activeLeadID)
+			conv.LeadID = activeLeadID
+		}
 	}
 
 	// 5. Insert message. fromMe means this was typed directly into WhatsApp on
