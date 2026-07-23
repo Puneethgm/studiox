@@ -87,6 +87,19 @@ func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Requ
 	var event stripe.Event
 	event, err = webhook.ConstructEvent(payload, signatureHeader, endpointSecret)
 	if err != nil {
+		secretPreview := endpointSecret
+		if len(secretPreview) > 12 {
+			secretPreview = secretPreview[:12]
+		}
+		slog.Warn("stripe bad_signature debug",
+			"err", err.Error(),
+			"secret_len", len(endpointSecret),
+			"secret_prefix", secretPreview,
+			"sig_header_present", signatureHeader != "",
+			"sig_header_len", len(signatureHeader),
+			"sig_header", signatureHeader,
+			"payload_len", len(payload),
+		)
 		httpx.WriteError(w, http.StatusBadRequest, "bad_signature", "Error verifying webhook signature")
 		return
 	}
