@@ -414,11 +414,15 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		}
 		// At awaiting_options / awaiting_interest / no-stage: skip only if the bot
 		// already queued an outbound reply for this specific inbound message.
+		// Checks any non-customer source, not just 'automation' — the auto-contact
+		// stage machine's SendTrialPaymentLink (triggered from here for exact "1"/
+		// trial replies during awaiting_options) enqueues with source_kind 'ai', so
+		// filtering on 'automation' alone let this same reply through twice.
 		var botReplied bool
 		_ = w.msgRepo.Pool().QueryRow(ctx, `
 			SELECT EXISTS(
 				SELECT 1 FROM outbound_jobs
-				WHERE conversation_id = $1 AND source_kind = 'automation'
+				WHERE conversation_id = $1 AND source_kind IN ('automation', 'ai')
 				AND created_at >= $2
 			)
 		`, conv.ID, msg.CreatedAt).Scan(&botReplied)
@@ -614,9 +618,25 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		}
 	}
 
+	// A bare numeric reply ("1"/"2") to one of the platform's own booking-flow
+	// menus (trial/member, then become-a-member yes/no) must be interpreted
+	// against whatever menu was most recently sent — not against an unrelated
+	// studio-authored decision tree node that happens to also key on "1"/"2"
+	// (e.g. a pricing FAQ tree). Without this, a customer answering "become a
+	// member?" with "2" could get matched to a stale tree node instead of
+	// "not right now", derailing the conversation. Skip the tree whenever our
+	// own option detector has a definitive read for the lead's current status.
+	skipTreeForOptionReply := false
+	if lead != nil {
+		if _, ok := w.detectOptionChoice(msg.Body, lead.Status); ok {
+			skipTreeForOptionReply = true
+			w.log.Info("ai worker: bare option reply detected, skipping decision tree", "lead_id", lead.ID, "status", lead.Status, "message", msg.Body)
+		}
+	}
+
 	// Decision tree: check if the studio has an active tree that matches this message.
 	// If it does, use the tree reply directly and skip the AI call entirely.
-	if w.dtSvc != nil {
+	if w.dtSvc != nil && !skipTreeForOptionReply {
 		leadStatus := ""
 		if lead != nil {
 			leadStatus = string(lead.Status)

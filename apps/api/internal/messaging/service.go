@@ -1104,6 +1104,7 @@ type BackfillMessage struct {
 //   - does not auto-create a lead for contacts that have none — old chats
 //     with no existing lead are still imported and visible in the inbox,
 //     but importing history alone should not spawn a phantom lead.
+//
 // contactDisplayName is the contact's real WhatsApp display name, pulled
 // from the same history-sync payload as the messages (see sessions.js's
 // messaging-history.set handler) — empty if WhatsApp didn't supply one for
@@ -1679,61 +1680,75 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 				}
 			}
 			if selectedIndex == -1 {
-				selectedIndex = 0 // default to first plan if unparseable
-			}
-			selectedPlan := plans[selectedIndex]
-
-			targetStage = "completed"
-
-			secretKey, _, studioName, studioSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
-			if errStripe == nil && secretKey != "" {
-				var leadPhone, leadNameStr string
-				_ = tx.QueryRow(ctx, "SELECT phone, name FROM leads WHERE id = $1", *conv.LeadID).Scan(&leadPhone, &leadNameStr)
-
-				frontendURL := os.Getenv("FRONTEND_URL")
-				if frontendURL == "" {
-					frontendURL = "http://localhost:3000"
-				}
-
-				sc := &client.API{}
-				sc.Init(secretKey, nil)
-				params := &stripe.CheckoutSessionParams{
-					PaymentMethodTypes: stripe.StringSlice([]string{"card"}),
-					Mode:               stripe.String("subscription"),
-					LineItems: []*stripe.CheckoutSessionLineItemParams{
-						{
-							PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{
-								Currency:   stripe.String("sgd"),
-								UnitAmount: stripe.Int64(int64(selectedPlan.PriceSGD)),
-								Recurring: &stripe.CheckoutSessionLineItemPriceDataRecurringParams{
-									Interval: stripe.String("month"),
-								},
-								ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
-									Name: stripe.String(fmt.Sprintf("%s - %s Plan", studioName, selectedPlan.PlanName)),
-								},
-							},
-							Quantity: stripe.Int64(1),
-						},
-					},
-					SuccessURL: stripe.String(fmt.Sprintf("%s/payment-success?studio=%s&session_id={CHECKOUT_SESSION_ID}", frontendURL, studioSlug)),
-					CancelURL:  stripe.String(fmt.Sprintf("%s/payment-cancelled?studio=%s", frontendURL, studioSlug)),
-				}
-				if leadPhone != "" {
-					params.Metadata = map[string]string{
-						"customer_phone": leadPhone,
-						"customer_name":  leadNameStr,
-						"studio_id":      studioID.String(),
-						"plan_id":        selectedPlan.ID.String(),
+				// Unparseable reply (e.g. a question, or something unrelated) — do
+				// NOT default to a plan and fire off a real checkout link for a
+				// purchase the customer never asked for. Re-prompt and stay in this
+				// stage instead; for a genuine question, leave outboundBody empty
+				// (matching the convention used elsewhere in this function) so the
+				// AI worker answers it instead of automation.
+				if !isQuestion {
+					var sb strings.Builder
+					sb.WriteString("Sorry, I didn't catch that. Please reply with the number of the plan you'd like:\n")
+					for idx, p := range plans {
+						sb.WriteString(fmt.Sprintf("%d. %s (S$ %.2f/%s)\n", idx+1, p.PlanName, float64(p.PriceSGD)/100.0, p.BillingCycle))
 					}
-				}
-				session, errSess := sc.CheckoutSessions.New(params)
-				if errSess == nil && session != nil && session.URL != "" {
-					outboundBody = fmt.Sprintf("Great choice! You selected the %s Plan. To complete your membership, please subscribe here:\n%s", selectedPlan.PlanName, session.URL)
-				} else {
-					outboundBody = "Thank you! Our team will reach out to you shortly to finalize your membership."
+					outboundBody = sb.String()
 				}
 			} else {
-				outboundBody = "Thank you! Our team will reach out to you shortly."
+				selectedPlan := plans[selectedIndex]
+
+				targetStage = "completed"
+
+				secretKey, _, studioName, studioSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
+				if errStripe == nil && secretKey != "" {
+					var leadPhone, leadNameStr string
+					_ = tx.QueryRow(ctx, "SELECT phone, name FROM leads WHERE id = $1", *conv.LeadID).Scan(&leadPhone, &leadNameStr)
+
+					frontendURL := os.Getenv("FRONTEND_URL")
+					if frontendURL == "" {
+						frontendURL = "http://localhost:3000"
+					}
+
+					sc := &client.API{}
+					sc.Init(secretKey, nil)
+					params := &stripe.CheckoutSessionParams{
+						PaymentMethodTypes: stripe.StringSlice([]string{"card"}),
+						Mode:               stripe.String("subscription"),
+						LineItems: []*stripe.CheckoutSessionLineItemParams{
+							{
+								PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{
+									Currency:   stripe.String("sgd"),
+									UnitAmount: stripe.Int64(int64(selectedPlan.PriceSGD)),
+									Recurring: &stripe.CheckoutSessionLineItemPriceDataRecurringParams{
+										Interval: stripe.String("month"),
+									},
+									ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
+										Name: stripe.String(fmt.Sprintf("%s - %s Plan", studioName, selectedPlan.PlanName)),
+									},
+								},
+								Quantity: stripe.Int64(1),
+							},
+						},
+						SuccessURL: stripe.String(fmt.Sprintf("%s/payment-success?studio=%s&session_id={CHECKOUT_SESSION_ID}", frontendURL, studioSlug)),
+						CancelURL:  stripe.String(fmt.Sprintf("%s/payment-cancelled?studio=%s", frontendURL, studioSlug)),
+					}
+					if leadPhone != "" {
+						params.Metadata = map[string]string{
+							"customer_phone": leadPhone,
+							"customer_name":  leadNameStr,
+							"studio_id":      studioID.String(),
+							"plan_id":        selectedPlan.ID.String(),
+						}
+					}
+					session, errSess := sc.CheckoutSessions.New(params)
+					if errSess == nil && session != nil && session.URL != "" {
+						outboundBody = fmt.Sprintf("Great choice! You selected the %s Plan. To complete your membership, please subscribe here:\n%s", selectedPlan.PlanName, session.URL)
+					} else {
+						outboundBody = "Thank you! Our team will reach out to you shortly to finalize your membership."
+					}
+				} else {
+					outboundBody = "Thank you! Our team will reach out to you shortly."
+				}
 			}
 		} else {
 			targetStage = "completed"
@@ -1929,19 +1944,22 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 	} else if autoContactStage == "completed" && leadStatus == "trial_booked" {
 		// Customer is responding to the 1-day trial followup.
 		// Any non-declining message → show membership plans and move to plan selection.
+		// A question ("what is my current plan?") is neither a decline nor an
+		// intent to buy — it must fall through to the AI, not get funneled into
+		// a purchase flow just because it happens to contain a broad word like
+		// "plan" or "pro" (matches "process", "problem", etc. too).
 		isDecline := text == "2" || text == "no" ||
 			strings.Contains(text, "not now") ||
 			strings.Contains(text, "maybe later") ||
 			strings.Contains(text, "not interested")
-		wantsMembership := !isDecline && (text == "1" ||
+		wantsMembership := !isDecline && !isQuestion && (text == "1" ||
 			strings.Contains(text, "yes") ||
 			strings.Contains(text, "ready") ||
 			strings.Contains(text, "sign") ||
-			strings.Contains(text, "member") ||
-			strings.Contains(text, "plan") ||
+			strings.Contains(text, "become a member") ||
+			strings.Contains(text, "become member") ||
+			strings.Contains(text, "membership") ||
 			strings.Contains(text, "join") ||
-			strings.Contains(text, "basic") ||
-			strings.Contains(text, "pro") ||
 			strings.Contains(text, "premium") ||
 			strings.Contains(text, "package"))
 		if wantsMembership {
