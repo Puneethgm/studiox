@@ -296,13 +296,20 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 
 	cleanPhone := strings.ReplaceAll(strings.ReplaceAll(customerPhone, "+", ""), " ", "")
 
-	// Instead of direct HTTP, enqueue it in the outbound_jobs table so the worker uses the studio's actual channel
+	// Instead of direct HTTP, enqueue it in the outbound_jobs table so the worker uses the studio's actual channel.
+	// ci.value isn't always bare digits — Meta WhatsApp stores it that way, but
+	// WhatsApp Web (QR) stores a full JID ("<digits>@c.us" / "...@lid"), so an
+	// exact match against cleanPhone silently missed every WhatsApp Web
+	// contact (this lookup would just return no rows — no error, no message,
+	// no lead update, nothing). Normalize to digits-only on both sides,
+	// matching the same pattern HandleInboundWAWeb already uses for its own
+	// lead-by-phone lookup.
 	var convID string
 	var leadID *string
 	err = h.svc.repo.Pool().QueryRow(ctx, `
 		SELECT c.id, c.lead_id FROM conversations c
 		JOIN contact_identities ci ON c.contact_identity_id = ci.id
-		WHERE c.studio_id = $1 AND ci.value = $2
+		WHERE c.studio_id = $1 AND regexp_replace(ci.value, '\D', '', 'g') = $2
 		ORDER BY c.created_at DESC LIMIT 1
 	`, studio.ID, cleanPhone).Scan(&convID, &leadID)
 
