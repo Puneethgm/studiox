@@ -386,7 +386,7 @@ func detectSentiment(msgLower string) string {
 
 // intentKeywords maps intent names to their trigger phrases.
 var intentKeywords = map[string][]string{
-	"pricing_question": {"price", "cost", "fee", "how much", "plans", "charges", "rate", "package", "membership cost", "subscription"},
+	"pricing_question": {"price", "cost", "fee", "how much", "plan", "plans", "charges", "rate", "package", "membership cost", "subscription", "membership", "my plan", "current plan"},
 	"booking_inquiry":  {"book", "trial", "visit", "schedule", "join", "sign up", "register", "enroll", "appointment", "session"},
 	"complaint":        {"complaint", "unhappy", "disappointed", "terrible", "awful", "bad experience", "issue", "problem", "not working", "angry", "refund"},
 	"greeting":         {"hello", "hi", "hey", "good morning", "good afternoon", "good evening", "howdy", "what's up"},

@@ -3,6 +3,7 @@ package studios
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/projectx/api/internal/platform/httpx"
 	"github.com/stripe/stripe-go/v78"
@@ -87,6 +89,22 @@ func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "bad_signature", "Error verifying webhook signature")
 		return
+	}
+
+	// Stripe redelivers events at-least-once (retries, and occasionally even
+	// after a 200). Dedup by event ID so a redelivery can't enqueue a second
+	// WhatsApp message / re-apply the same lead update.
+	tag, dedupErr := h.svc.repo.Pool().Exec(r.Context(), `
+		INSERT INTO processed_stripe_events (event_id) VALUES ($1)
+		ON CONFLICT (event_id) DO NOTHING
+	`, event.ID)
+	if dedupErr == nil && tag.RowsAffected() == 0 {
+		slog.Info("stripe event already processed, skipping", "event_id", event.ID, "type", event.Type)
+		httpx.JSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
+	if dedupErr != nil {
+		slog.Warn("stripe event dedup check failed, processing anyway", "event_id", event.ID, "err", dedupErr)
 	}
 
 	// Handle the verified event
@@ -313,6 +331,17 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 		ORDER BY c.created_at DESC LIMIT 1
 	`, studio.ID, cleanPhone).Scan(&convID, &leadID)
 
+	if errors.Is(err, pgx.ErrNoRows) {
+		// First-ever contact for this phone (e.g. paid via a checkout link
+		// before ever messaging the studio's WhatsApp) — no conversation
+		// exists yet to enqueue the confirmation into. Create one against
+		// the studio's active WhatsApp channel so the message isn't dropped.
+		convID, leadID, err = h.createConversationForCheckout(ctx, studio.ID, cleanPhone, customerName)
+		if err != nil {
+			slog.Warn("stripe: could not create conversation for checkout", "phone", customerPhone, "err", err)
+		}
+	}
+
 	if leadID != nil {
 		if isMembership {
 			monthlyFee := float64(session.AmountTotal) / 100.0
@@ -389,6 +418,81 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 	} else {
 		slog.Warn("stripe conversation not found", "phone", customerPhone, "err", err)
 	}
+}
+
+// createConversationForCheckout creates a contact_identity + conversation for
+// a phone number that has never messaged the studio before (e.g. paid via a
+// checkout link before ever WhatsApp-ing in), so the post-payment
+// confirmation isn't silently dropped for lack of somewhere to enqueue it.
+// Returns the new conversation ID and, if an existing lead matches the
+// phone, its ID.
+func (h *StripeWebhookHandler) createConversationForCheckout(ctx context.Context, studioID uuid.UUID, cleanPhone, displayName string) (string, *string, error) {
+	pool := h.svc.repo.Pool()
+
+	var channelID, channelKind string
+	if err := pool.QueryRow(ctx, `
+		SELECT id, kind FROM channel_accounts
+		WHERE studio_id = $1 AND status = 'active' AND kind IN ('whatsapp_web', 'whatsapp_meta')
+		ORDER BY CASE kind WHEN 'whatsapp_web' THEN 0 ELSE 1 END, connected_at DESC
+		LIMIT 1
+	`, studioID).Scan(&channelID, &channelKind); err != nil {
+		return "", nil, fmt.Errorf("no active whatsapp channel: %w", err)
+	}
+
+	if displayName == "" {
+		displayName = cleanPhone
+	}
+
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return "", nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var identityID string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO contact_identities (studio_id, kind, value, display_name)
+		VALUES ($1, 'phone', $2, $3)
+		ON CONFLICT (studio_id, kind, value) DO UPDATE SET updated_at = now()
+		RETURNING id
+	`, studioID, cleanPhone, displayName).Scan(&identityID); err != nil {
+		return "", nil, fmt.Errorf("upsert identity: %w", err)
+	}
+
+	var leadID *string
+	_ = tx.QueryRow(ctx, `
+		SELECT id FROM leads
+		WHERE studio_id = $1 AND regexp_replace(phone, '\D', '', 'g') = $2
+		ORDER BY created_at DESC LIMIT 1
+	`, studioID, cleanPhone).Scan(&leadID)
+
+	if leadID != nil {
+		if _, err := tx.Exec(ctx, `UPDATE contact_identities SET lead_id = $2 WHERE id = $1`, identityID, *leadID); err != nil {
+			return "", nil, fmt.Errorf("link identity to lead: %w", err)
+		}
+	}
+
+	var convID string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO conversations (studio_id, channel_account_id, contact_identity_id, external_thread_id)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (channel_account_id, external_thread_id) DO UPDATE SET updated_at = now()
+		RETURNING id
+	`, studioID, channelID, identityID, cleanPhone).Scan(&convID); err != nil {
+		return "", nil, fmt.Errorf("upsert conversation: %w", err)
+	}
+
+	if leadID != nil {
+		if _, err := tx.Exec(ctx, `UPDATE conversations SET lead_id = $2 WHERE id = $1`, convID, *leadID); err != nil {
+			return "", nil, fmt.Errorf("link conversation to lead: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return "", nil, fmt.Errorf("commit: %w", err)
+	}
+
+	return convID, leadID, nil
 }
 
 // Removed direct sendWhatsAppMessage in favor of outbound_jobs queue

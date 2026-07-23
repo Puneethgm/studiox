@@ -1027,7 +1027,12 @@ func (w *AIWorker) buildPrompt(history []Message, semanticHistory []SemanticMatc
 
 	// ── Lead context ─────────────────────────────────────────────────────────
 	if lead != nil {
-		sb.WriteString(fmt.Sprintf("LEAD: %s | plan interest: %s | status: %s\n", lead.Name, lead.FitnessPlan, lead.Status))
+		if lead.Status == leads.StatusMember && lead.FitnessPlan != "" {
+			sb.WriteString(fmt.Sprintf("LEAD: %s | status: %s | CURRENT PLAN: %s at S$%.2f/month (this is their actual active membership — state these exact details if they ask what their plan is)\n",
+				lead.Name, lead.Status, lead.FitnessPlan, lead.MonthlyFee))
+		} else {
+			sb.WriteString(fmt.Sprintf("LEAD: %s | plan interest: %s | status: %s\n", lead.Name, lead.FitnessPlan, lead.Status))
+		}
 		// Bot automation owns the numbered-choice flow while it is active.
 		// AI answers questions freely but must not inject its own options during
 		// bot-managed stages — the bot will present the right choices at the right time.
@@ -1087,7 +1092,11 @@ func (w *AIWorker) buildPrompt(history []Message, semanticHistory []SemanticMatc
 	sb.WriteString("RESPONSE STRATEGY:\n")
 	switch intent {
 	case "pricing_question":
-		sb.WriteString("Customer is asking about price. Give the exact price from the plans above. Then show the value: what they get for that price. End with a soft CTA to book a trial.\n")
+		if lead != nil && lead.Status == leads.StatusMember {
+			sb.WriteString("Customer is an existing member asking about their own plan/membership. Answer directly using the CURRENT PLAN line in LEAD context above — state their exact plan name and monthly fee. Do not pitch other plans or a trial.\n")
+		} else {
+			sb.WriteString("Customer is asking about price. Give the exact price from the plans above. Then show the value: what they get for that price. End with a soft CTA to book a trial.\n")
+		}
 	case "booking_inquiry":
 		sb.WriteString("Customer wants to book. Make it easy — confirm what they want and immediately offer next steps (ask for preferred date/time or provide a booking link). Be enthusiastic. Do NOT ask motivation or goal questions — they already decided to book.\n")
 	case "objection":
