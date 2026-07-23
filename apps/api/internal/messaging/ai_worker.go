@@ -847,6 +847,53 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		}
 	}
 
+	// "Yes to upgrade" shortcut: an existing member replies affirmatively to
+	// the AI's own offer (added above, in the pricing_question/member response
+	// strategy) to change or upgrade their plan. Skip AI and send the plan list
+	// directly, mirroring the yes-to-trial shortcut above.
+	if lead != nil && lead.Status == leads.StatusMember {
+		lowerMsg := strings.ToLower(strings.TrimSpace(msg.Body))
+		isAffirmative := lowerMsg == "yes" || lowerMsg == "yeah" || lowerMsg == "sure" ||
+			lowerMsg == "ok" || lowerMsg == "okay" || lowerMsg == "yep" || lowerMsg == "yup" ||
+			lowerMsg == "y" || strings.HasPrefix(lowerMsg, "yes ") || strings.HasPrefix(lowerMsg, "sure ")
+		if isAffirmative {
+			for i := len(history) - 1; i >= 0; i-- {
+				m := history[i]
+				if m.Direction == DirectionOutbound {
+					lastBot := strings.ToLower(m.Body)
+					offeredChange := (strings.Contains(lastBot, "change") || strings.Contains(lastBot, "upgrade") || strings.Contains(lastBot, "switch")) &&
+						(strings.Contains(lastBot, "plan") || strings.Contains(lastBot, "membership"))
+					if offeredChange {
+						plans, err := w.msgRepo.ListActivePlans(ctx, studioID)
+						if err != nil || len(plans) == 0 {
+							w.log.Warn("yes-to-upgrade: no active plans to offer", "conv", conv.ID, "err", err)
+							return nil
+						}
+						if err := w.leadsRepo.UpdateAutoContactStage(ctx, studioID, lead.ID, "awaiting_plan_change_selection"); err != nil {
+							w.log.Warn("yes-to-upgrade: failed to set stage", "lead", lead.ID, "err", err)
+						}
+						body := formatPlanReprompt("Sure! Which plan would you like to switch to?", plans)
+						if _, err := w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
+							StudioID:       studioID,
+							ConversationID: conv.ID,
+							Body:           body,
+							SourceKind:     SourceAutomation,
+							SourceRef:      fmt.Sprintf("lead:%s:plan_change_options", lead.ID),
+							ScheduledFor:   time.Now().UTC(),
+						}); err != nil {
+							w.log.Error("yes-to-upgrade: failed to enqueue plan list", "err", err, "conv", conv.ID)
+						} else {
+							w.bus.Publish(ctx, Event{Kind: EvtOutboundJobEnqueued, StudioID: studioID, ConversationID: conv.ID})
+							w.log.Info("yes-to-upgrade shortcut triggered", "conv", conv.ID)
+						}
+						return nil
+					}
+					break
+				}
+			}
+		}
+	}
+
 	// Generate AI response with context
 	aiContextSummary, err := w.msgRepo.GetConversationAISummary(ctx, studioID, conv.ID)
 	if err != nil {
@@ -1113,7 +1160,7 @@ func (w *AIWorker) buildPrompt(history []Message, semanticHistory []SemanticMatc
 	switch intent {
 	case "pricing_question":
 		if lead != nil && lead.Status == leads.StatusMember {
-			sb.WriteString("Customer is an existing member asking about their own plan/membership. Answer directly using the CURRENT PLAN line in LEAD context above — state their exact plan name and monthly fee. Do not pitch other plans or a trial.\n")
+			sb.WriteString("Customer is an existing member asking about their own plan/membership. State their exact current plan name and monthly fee from the CURRENT PLAN line in LEAD context above. Then ask if they'd like to change or upgrade their plan — if yes, they can pick from the MEMBERSHIP PLANS listed above. Do not pitch a trial, they're already a member.\n")
 		} else {
 			sb.WriteString("Customer is asking about price. Give the exact price from the plans above. Then show the value: what they get for that price. End with a soft CTA to book a trial.\n")
 		}
@@ -1126,7 +1173,11 @@ func (w *AIWorker) buildPrompt(history []Message, semanticHistory []SemanticMatc
 	case "off_topic":
 		sb.WriteString("Customer is asking something unrelated to the studio. Politely acknowledge, then steer the conversation back to how the studio can help them.\n")
 	default:
-		sb.WriteString("Answer the question helpfully and concisely. Then ask one qualifying question to understand their fitness goals.\n")
+		if lead != nil && lead.Status == leads.StatusMember {
+			sb.WriteString("Customer is an existing member. Answer their question helpfully and directly using the CURRENT PLAN and knowledge base context above. If their question is at all about their plan/membership, state their current plan and monthly fee, then ask if they'd like to change or upgrade it. Do not ask fitness-goal/qualifying questions, they've already signed up.\n")
+		} else {
+			sb.WriteString("Answer the question helpfully and concisely. Then ask one qualifying question to understand their fitness goals.\n")
+		}
 	}
 
 	// Sentiment overlay
@@ -1140,8 +1191,11 @@ func (w *AIWorker) buildPrompt(history []Message, semanticHistory []SemanticMatc
 	case -1:
 		sb.WriteString("Tone: empathetic — they seem hesitant. Listen first, address concerns, lower the commitment bar (trial is free/cheap).\n")
 	default:
-		if intent != "booking_inquiry" && intent != "ready_to_buy" {
+		isExistingMember := lead != nil && lead.Status == leads.StatusMember
+		if intent != "booking_inquiry" && intent != "ready_to_buy" && !isExistingMember {
 			sb.WriteString("Tone: curious and friendly — ask one open question to uncover their motivation.\n")
+		} else if isExistingMember {
+			sb.WriteString("Tone: warm and direct — they're already a member, just answer helpfully without prospecting questions.\n")
 		}
 	}
 	sb.WriteString("Keep the reply concise: 2–4 sentences maximum. Never make up facts.\n\n")

@@ -355,19 +355,29 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 			var planName string
 			_ = h.svc.repo.Pool().QueryRow(ctx, "SELECT plan_name FROM plans WHERE id = $1", planIDStr).Scan(&planName)
 
+			var subID, custID string
+			if session.Subscription != nil {
+				subID = session.Subscription.ID
+			}
+			if session.Customer != nil {
+				custID = session.Customer.ID
+			}
+
 			var err error
 			if planName != "" {
 				_, err = h.svc.repo.Pool().Exec(ctx, `
-					UPDATE leads 
-					SET member_sold = true, status = 'member', monthly_fee = $1, fitness_plan = $2, updated_at = now() 
-					WHERE id = $3
-				`, monthlyFee, planName, *leadID)
+					UPDATE leads
+					SET member_sold = true, status = 'member', monthly_fee = $1, fitness_plan = $2,
+					    stripe_subscription_id = $3, stripe_customer_id = $4, updated_at = now()
+					WHERE id = $5
+				`, monthlyFee, planName, subID, custID, *leadID)
 			} else {
 				_, err = h.svc.repo.Pool().Exec(ctx, `
-					UPDATE leads 
-					SET member_sold = true, status = 'member', monthly_fee = $1, updated_at = now() 
-					WHERE id = $2
-				`, monthlyFee, *leadID)
+					UPDATE leads
+					SET member_sold = true, status = 'member', monthly_fee = $1,
+					    stripe_subscription_id = $2, stripe_customer_id = $3, updated_at = now()
+					WHERE id = $4
+				`, monthlyFee, subID, custID, *leadID)
 			}
 
 			if err != nil {
@@ -382,6 +392,19 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 						SELECT id FROM conversations WHERE lead_id = $2
 					) AND source_kind = 'automation' AND status = 'pending'
 				`, studio.ID, *leadID)
+
+				// Plan change: this checkout replaced an existing membership, so
+				// cancel the old subscription now that the new one is confirmed —
+				// otherwise the customer stays billed on both.
+				if oldSubID := session.Metadata["old_subscription_id"]; oldSubID != "" && oldSubID != subID && studio.StripeSecretKey != "" {
+					sc := &client.API{}
+					sc.Init(studio.StripeSecretKey, nil)
+					if _, cancelErr := sc.Subscriptions.Cancel(oldSubID, nil); cancelErr != nil {
+						slog.Warn("stripe: failed to cancel old subscription after plan change", "old_sub_id", oldSubID, "err", cancelErr)
+					} else {
+						slog.Info("stripe: canceled old subscription after plan change", "old_sub_id", oldSubID, "new_sub_id", subID)
+					}
+				}
 			}
 		} else {
 			_, updateErr := h.svc.repo.Pool().Exec(ctx, `

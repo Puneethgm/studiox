@@ -1515,6 +1515,109 @@ func cleanPhoneNumber(in string) string {
 	return s
 }
 
+// matchPlanIndex finds which plan a free-text reply refers to: an exact
+// numbered choice ("2"), or the plan's name appearing in the message. Returns
+// -1 if nothing matches clearly enough to act on.
+func matchPlanIndex(text string, plans []Plan) int {
+	selectedIndex := -1
+	var matchedPlanLength int
+	lowerText := strings.ToLower(text)
+	for idx := range plans {
+		choiceStr := fmt.Sprintf("%d", idx+1)
+		cleanPlanName := strings.TrimSpace(strings.ReplaceAll(strings.ToLower(plans[idx].PlanName), "plan", ""))
+
+		if text == choiceStr || strings.Contains(text, "choice_"+choiceStr) {
+			return idx
+		}
+
+		if strings.Contains(lowerText, strings.ToLower(plans[idx].PlanName)) || (cleanPlanName != "" && strings.Contains(lowerText, cleanPlanName)) {
+			if len(plans[idx].PlanName) > matchedPlanLength {
+				selectedIndex = idx
+				matchedPlanLength = len(plans[idx].PlanName)
+			}
+		}
+	}
+	return selectedIndex
+}
+
+// formatPlanReprompt lists the available plans under a lead-in line, used
+// when a reply couldn't be matched to a specific plan.
+func formatPlanReprompt(intro string, plans []Plan) string {
+	var sb strings.Builder
+	sb.WriteString(intro + "\n")
+	for idx, p := range plans {
+		sb.WriteString(fmt.Sprintf("%d. %s (S$ %.2f/%s)\n", idx+1, p.PlanName, float64(p.PriceSGD)/100.0, p.BillingCycle))
+	}
+	return sb.String()
+}
+
+// buildPlanCheckoutBody creates a Stripe subscription checkout for the
+// selected plan and returns the confirmation message to send. When
+// oldSubscriptionID is non-empty (an existing member changing plans, not a
+// new signup), it's tagged in the session metadata so the webhook cancels
+// that subscription once the new one is confirmed — otherwise the customer
+// would end up billed on both the old and new plan.
+func (s *Service) buildPlanCheckoutBody(ctx context.Context, tx pgx.Tx, studioID, leadID uuid.UUID, selectedPlan Plan, oldSubscriptionID string) string {
+	secretKey, _, studioName, studioSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
+	if errStripe != nil || secretKey == "" {
+		return "Thank you! Our team will reach out to you shortly."
+	}
+
+	var leadPhone, leadNameStr string
+	_ = tx.QueryRow(ctx, "SELECT phone, name FROM leads WHERE id = $1", leadID).Scan(&leadPhone, &leadNameStr)
+
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "http://localhost:3000"
+	}
+
+	sc := &client.API{}
+	sc.Init(secretKey, nil)
+	params := &stripe.CheckoutSessionParams{
+		PaymentMethodTypes: stripe.StringSlice([]string{"card"}),
+		Mode:               stripe.String("subscription"),
+		LineItems: []*stripe.CheckoutSessionLineItemParams{
+			{
+				PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{
+					Currency:   stripe.String("sgd"),
+					UnitAmount: stripe.Int64(int64(selectedPlan.PriceSGD)),
+					Recurring: &stripe.CheckoutSessionLineItemPriceDataRecurringParams{
+						Interval: stripe.String("month"),
+					},
+					ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
+						Name: stripe.String(fmt.Sprintf("%s - %s Plan", studioName, selectedPlan.PlanName)),
+					},
+				},
+				Quantity: stripe.Int64(1),
+			},
+		},
+		SuccessURL: stripe.String(fmt.Sprintf("%s/payment-success?studio=%s&session_id={CHECKOUT_SESSION_ID}", frontendURL, studioSlug)),
+		CancelURL:  stripe.String(fmt.Sprintf("%s/payment-cancelled?studio=%s", frontendURL, studioSlug)),
+	}
+	if leadPhone != "" {
+		metadata := map[string]string{
+			"customer_phone": leadPhone,
+			"customer_name":  leadNameStr,
+			"studio_id":      studioID.String(),
+			"plan_id":        selectedPlan.ID.String(),
+		}
+		if oldSubscriptionID != "" {
+			metadata["old_subscription_id"] = oldSubscriptionID
+		}
+		params.Metadata = metadata
+	}
+
+	session, errSess := sc.CheckoutSessions.New(params)
+	if errSess == nil && session != nil && session.URL != "" {
+		verb := "complete your membership"
+		if oldSubscriptionID != "" {
+			verb = "confirm your plan change"
+		}
+		return fmt.Sprintf("Great choice! You selected the %s Plan. To %s, please subscribe here:\n%s", selectedPlan.PlanName, verb, session.URL)
+	}
+	return "Thank you! Our team will reach out to you shortly to finalize your membership."
+}
+
 func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, studioID uuid.UUID, conv *Conversation, stored *Message, body string) error {
 	if conv.LeadID == nil || stored == nil {
 		return nil
@@ -1660,25 +1763,7 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 	} else if autoContactStage == "awaiting_plan_selection" {
 		plans, errPlans := s.repo.ListActivePlans(ctx, studioID)
 		if errPlans == nil && len(plans) > 0 {
-			selectedIndex := -1
-			var matchedPlanLength int
-			for idx := range plans {
-				choiceStr := fmt.Sprintf("%d", idx+1)
-				lowerText := strings.ToLower(text)
-				cleanPlanName := strings.TrimSpace(strings.ReplaceAll(strings.ToLower(plans[idx].PlanName), "plan", ""))
-
-				if text == choiceStr || strings.Contains(text, "choice_"+choiceStr) {
-					selectedIndex = idx
-					break
-				}
-
-				if strings.Contains(lowerText, strings.ToLower(plans[idx].PlanName)) || (cleanPlanName != "" && strings.Contains(lowerText, cleanPlanName)) {
-					if len(plans[idx].PlanName) > matchedPlanLength {
-						selectedIndex = idx
-						matchedPlanLength = len(plans[idx].PlanName)
-					}
-				}
-			}
+			selectedIndex := matchPlanIndex(text, plans)
 			if selectedIndex == -1 {
 				// Unparseable reply (e.g. a question, or something unrelated) — do
 				// NOT default to a plan and fire off a real checkout link for a
@@ -1687,72 +1772,38 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 				// (matching the convention used elsewhere in this function) so the
 				// AI worker answers it instead of automation.
 				if !isQuestion {
-					var sb strings.Builder
-					sb.WriteString("Sorry, I didn't catch that. Please reply with the number of the plan you'd like:\n")
-					for idx, p := range plans {
-						sb.WriteString(fmt.Sprintf("%d. %s (S$ %.2f/%s)\n", idx+1, p.PlanName, float64(p.PriceSGD)/100.0, p.BillingCycle))
-					}
-					outboundBody = sb.String()
+					outboundBody = formatPlanReprompt("Sorry, I didn't catch that. Please reply with the number of the plan you'd like:", plans)
 				}
 			} else {
-				selectedPlan := plans[selectedIndex]
-
 				targetStage = "completed"
-
-				secretKey, _, studioName, studioSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
-				if errStripe == nil && secretKey != "" {
-					var leadPhone, leadNameStr string
-					_ = tx.QueryRow(ctx, "SELECT phone, name FROM leads WHERE id = $1", *conv.LeadID).Scan(&leadPhone, &leadNameStr)
-
-					frontendURL := os.Getenv("FRONTEND_URL")
-					if frontendURL == "" {
-						frontendURL = "http://localhost:3000"
-					}
-
-					sc := &client.API{}
-					sc.Init(secretKey, nil)
-					params := &stripe.CheckoutSessionParams{
-						PaymentMethodTypes: stripe.StringSlice([]string{"card"}),
-						Mode:               stripe.String("subscription"),
-						LineItems: []*stripe.CheckoutSessionLineItemParams{
-							{
-								PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{
-									Currency:   stripe.String("sgd"),
-									UnitAmount: stripe.Int64(int64(selectedPlan.PriceSGD)),
-									Recurring: &stripe.CheckoutSessionLineItemPriceDataRecurringParams{
-										Interval: stripe.String("month"),
-									},
-									ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
-										Name: stripe.String(fmt.Sprintf("%s - %s Plan", studioName, selectedPlan.PlanName)),
-									},
-								},
-								Quantity: stripe.Int64(1),
-							},
-						},
-						SuccessURL: stripe.String(fmt.Sprintf("%s/payment-success?studio=%s&session_id={CHECKOUT_SESSION_ID}", frontendURL, studioSlug)),
-						CancelURL:  stripe.String(fmt.Sprintf("%s/payment-cancelled?studio=%s", frontendURL, studioSlug)),
-					}
-					if leadPhone != "" {
-						params.Metadata = map[string]string{
-							"customer_phone": leadPhone,
-							"customer_name":  leadNameStr,
-							"studio_id":      studioID.String(),
-							"plan_id":        selectedPlan.ID.String(),
-						}
-					}
-					session, errSess := sc.CheckoutSessions.New(params)
-					if errSess == nil && session != nil && session.URL != "" {
-						outboundBody = fmt.Sprintf("Great choice! You selected the %s Plan. To complete your membership, please subscribe here:\n%s", selectedPlan.PlanName, session.URL)
-					} else {
-						outboundBody = "Thank you! Our team will reach out to you shortly to finalize your membership."
-					}
-				} else {
-					outboundBody = "Thank you! Our team will reach out to you shortly."
-				}
+				outboundBody = s.buildPlanCheckoutBody(ctx, tx, studioID, *conv.LeadID, plans[selectedIndex], "")
 			}
 		} else {
 			targetStage = "completed"
 			outboundBody = "Thank you! Our team will reach out to you shortly to finalize your membership."
+		}
+	} else if autoContactStage == "awaiting_plan_change_selection" {
+		// Existing member confirmed they want to change/upgrade their plan
+		// (triggered from the AI worker's yes-to-upgrade shortcut). Reuses the
+		// same safe plan-matching as a new signup, but tags the checkout with
+		// the member's current subscription so the webhook cancels it once the
+		// new one is confirmed — otherwise they'd end up billed on both.
+		plans, errPlans := s.repo.ListActivePlans(ctx, studioID)
+		if errPlans == nil && len(plans) > 0 {
+			selectedIndex := matchPlanIndex(text, plans)
+			if selectedIndex == -1 {
+				if !isQuestion {
+					outboundBody = formatPlanReprompt("Sorry, I didn't catch that. Please reply with the number of the plan you'd like to switch to:", plans)
+				}
+			} else {
+				var oldSubID string
+				_ = tx.QueryRow(ctx, "SELECT stripe_subscription_id FROM leads WHERE id = $1", *conv.LeadID).Scan(&oldSubID)
+				targetStage = "completed"
+				outboundBody = s.buildPlanCheckoutBody(ctx, tx, studioID, *conv.LeadID, plans[selectedIndex], oldSubID)
+			}
+		} else {
+			targetStage = "completed"
+			outboundBody = "Thank you! Our team will reach out to you shortly to update your plan."
 		}
 	} else if autoContactStage == "awaiting_trial_date" {
 		days, daysWeekdayStr := getAvailableDays()
