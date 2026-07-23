@@ -376,6 +376,14 @@ export class SessionManager {
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
       if (type !== 'notify') return;
       for (const msg of messages) {
+        // Group messages carry the group's @g.us JID as remoteJid, the same
+        // one for every message in that group regardless of which member
+        // sent it — so group chats need filtering out here exactly like the
+        // messaging-history.set (backfill) handler already does, or every
+        // message from every group this number is a member of gets recorded
+        // as if it were an individual 1:1 conversation.
+        if (msg.key?.remoteJid?.endsWith('@g.us')) continue;
+
         // fromMe messages are forwarded too, not discarded — the Go side
         // dedupes these against messages our own outbound worker already
         // sent (matched by WhatsApp message ID, see waWebSender.SendText).
