@@ -474,7 +474,7 @@ func (r *Repo) ListConversations(ctx context.Context, studioID uuid.UUID, f List
 		       c.contact_identity_id, COALESCE(NULLIF(l.name, ''), ci.display_name), ci.value, c.external_thread_id,
 		       c.lead_id, c.status, c.assigned_to, c.unread_count,
 		       c.last_message_at, c.last_message_preview, c.last_message_direction,
-		       c.created_at, c.updated_at, l.status, c.ai_enabled
+		       c.created_at, c.updated_at, l.status, c.ai_enabled, c.dnd_enabled
 		FROM conversations c
 		JOIN channel_accounts ch ON ch.id = c.channel_account_id
 		JOIN contact_identities ci ON ci.id = c.contact_identity_id
@@ -506,7 +506,7 @@ func (r *Repo) GetConversation(ctx context.Context, studioID, id uuid.UUID) (*Co
 		       c.contact_identity_id, COALESCE(NULLIF(l.name, ''), ci.display_name), ci.value, c.external_thread_id,
 		       c.lead_id, c.status, c.assigned_to, c.unread_count,
 		       c.last_message_at, c.last_message_preview, c.last_message_direction,
-		       c.created_at, c.updated_at, l.status, c.ai_enabled
+		       c.created_at, c.updated_at, l.status, c.ai_enabled, c.dnd_enabled
 		FROM conversations c
 		JOIN channel_accounts ch ON ch.id = c.channel_account_id
 		JOIN contact_identities ci ON ci.id = c.contact_identity_id
@@ -523,7 +523,7 @@ func scanConversationRow(row pgx.Row) (*Conversation, error) {
 		&c.ContactIdentityID, &c.ContactDisplayName, &c.ContactValue, &c.ExternalThreadID,
 		&c.LeadID, &c.Status, &c.AssignedTo, &c.UnreadCount,
 		&c.LastMessageAt, &c.LastMessagePreview, &dir,
-		&c.CreatedAt, &c.UpdatedAt, &c.LeadStatus, &c.AIEnabled); err != nil {
+		&c.CreatedAt, &c.UpdatedAt, &c.LeadStatus, &c.AIEnabled, &c.DNDEnabled); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -581,12 +581,32 @@ func (r *Repo) SetConversationAIEnabled(ctx context.Context, studioID, convID uu
 	return err
 }
 
-// SetAllConversationsAIEnabled sets ai_enabled for every conversation in the studio.
+// SetAllConversationsAIEnabled is the "AI Auto-Reply" bulk toggle at the top
+// of the inbox. Turning it OFF is always safe and applies to every
+// conversation. Turning it ON deliberately excludes conversations with no
+// linked lead (imported WhatsApp Web contacts, in particular) — AI reply
+// should only ever be on for lead/campaign-sourced conversations (the ones
+// autocontact_worker explicitly enables after creating them), never
+// defaulted on in bulk for contacts that just happened to message this
+// number directly. Without this exclusion, one click here would silently
+// override that rule for every imported chat in the studio.
 func (r *Repo) SetAllConversationsAIEnabled(ctx context.Context, studioID uuid.UUID, enabled bool) error {
+	q := `UPDATE conversations SET ai_enabled = $2, updated_at = now() WHERE studio_id = $1`
+	if enabled {
+		q += ` AND lead_id IS NOT NULL`
+	}
+	_, err := r.pool.Exec(ctx, q, studioID, enabled)
+	return err
+}
+
+// SetConversationDNDEnabled toggles Do Not Disturb for a conversation directly
+// — the counterpart to leads.SetDNDEnabled for conversations with no linked
+// lead (e.g. imported WhatsApp Web contacts). ai_worker.go checks both.
+func (r *Repo) SetConversationDNDEnabled(ctx context.Context, studioID, convID uuid.UUID, enabled bool) error {
 	_, err := r.pool.Exec(ctx, `
-		UPDATE conversations SET ai_enabled = $2, updated_at = now()
-		WHERE studio_id = $1
-	`, studioID, enabled)
+		UPDATE conversations SET dnd_enabled = $3, updated_at = now()
+		WHERE studio_id = $1 AND id = $2
+	`, studioID, convID, enabled)
 	return err
 }
 

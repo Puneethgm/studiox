@@ -55,6 +55,11 @@ export function ContactDetailsPanel({
   const [dndSaving, setDndSaving] = useState(false);
   const [aiSaving, setAiSaving] = useState(false);
   const [aiEnabled, setAiEnabled] = useState(conversation.aiEnabled);
+  // Conversation-level DND — for conversations with no linked lead (e.g.
+  // imported WhatsApp Web contacts), which have no `lead.dndEnabled` to key
+  // off of. See toggleConversationDND / the /conversations/:id/dnd endpoint.
+  const [convDndEnabled, setConvDndEnabled] = useState(conversation.dndEnabled);
+  const [convDndSaving, setConvDndSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
   // Tabbed view in contact panel (All fields, DND, Actions)
@@ -74,6 +79,16 @@ export function ContactDetailsPanel({
   const [follower, setFollower] = useState('');
 
   const leadId = conversation.leadId;
+
+  // aiEnabled/convDndEnabled are seeded via useState(conversation.aiEnabled)
+  // above, which only runs once on mount — switching to a different
+  // conversation just changes props on the same component instance (no
+  // remount), so without this the toggles kept showing whatever contact was
+  // selected first, regardless of the actual conversation underneath.
+  useEffect(() => {
+    setAiEnabled(conversation.aiEnabled);
+    setConvDndEnabled(conversation.dndEnabled);
+  }, [conversation.id, conversation.aiEnabled, conversation.dndEnabled]);
 
   // Load Lead details
   useEffect(() => {
@@ -186,13 +201,31 @@ export function ContactDetailsPanel({
     }
   }
 
+  async function toggleConversationDND() {
+    if (convDndSaving) return;
+    const next = !convDndEnabled;
+    setConvDndSaving(true);
+    setConvDndEnabled(next);
+    try {
+      await api(`/api/v1/studios/${studioId}/messaging/conversations/${conversation.id}/dnd`, {
+        method: 'POST',
+        json: { enabled: next },
+      });
+    } catch (err: any) {
+      setConvDndEnabled(!next);
+      setError(err?.message || 'Failed to update Do Not Disturb.');
+    } finally {
+      setConvDndSaving(false);
+    }
+  }
+
   async function toggleAI() {
     if (aiSaving) return;
     const next = !aiEnabled;
     setAiSaving(true);
     setAiEnabled(next);
     try {
-      await api(`/api/v1/studios/${studioId}/conversations/${conversation.id}/ai`, {
+      await api(`/api/v1/studios/${studioId}/messaging/conversations/${conversation.id}/ai`, {
         method: 'POST',
         json: { enabled: next },
       });
@@ -255,13 +288,107 @@ export function ContactDetailsPanel({
 
       <div className="flex-1 overflow-y-auto no-scrollbar px-5 py-5">
         {!leadId ? (
-          <div className="flex flex-col items-center gap-2 py-10 text-center">
-            <div className="grid h-10 w-10 place-items-center rounded-xl bg-white/30 dark:bg-white/5">
-              <User className="h-4 w-4 text-zinc-400" />
+          <div className="space-y-6">
+            {/* No lead — e.g. an imported WhatsApp Web contact. Still show
+                what we actually have (name/number) plus the AI-reply and
+                DND controls, both of which work at the conversation level
+                and don't require a lead. */}
+            <div className="flex items-center gap-4">
+              <span
+                className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-gradient-to-br from-brand-500 to-violet-500 text-sm font-black text-white shadow-md"
+                aria-hidden
+              >
+                {brandInitials(conversation.contactDisplayName || conversation.contactValue)}
+              </span>
+              <div className="min-w-0">
+                <div className="truncate text-sm font-black text-zinc-800 dark:text-zinc-100">
+                  {conversation.contactDisplayName || conversation.contactValue}
+                </div>
+                {conversation.contactDisplayName && (
+                  <div className="truncate text-xs font-semibold text-zinc-400">
+                    {conversation.contactValue}
+                  </div>
+                )}
+              </div>
             </div>
             <p className="text-[11px] font-semibold text-zinc-400">
               No lead linked to this conversation.
             </p>
+
+            <div className="space-y-2">
+              <div className="flex items-center gap-3 rounded-2xl border border-white/20 bg-white/20 p-3 dark:border-white/5 dark:bg-white/5">
+                <button
+                  onClick={toggleAI}
+                  disabled={aiSaving}
+                  className={cn(
+                    'relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
+                    aiEnabled ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-700',
+                  )}
+                  role="switch"
+                  aria-checked={aiEnabled}
+                  title={aiEnabled ? 'Turn off AI auto-reply' : 'Turn on AI auto-reply'}
+                >
+                  <span
+                    className={cn(
+                      'pointer-events-none flex h-5 w-5 items-center justify-center rounded-full bg-white shadow-md ring-0 transition-transform duration-300 ease-out',
+                      aiEnabled ? 'translate-x-5' : 'translate-x-0.5',
+                    )}
+                  >
+                    {aiSaving ? (
+                      <Loader2 className="h-3 w-3 animate-spin text-zinc-500" />
+                    ) : (
+                      <Bot className={cn('h-2.5 w-2.5', aiEnabled ? 'text-emerald-600' : 'text-zinc-400')} />
+                    )}
+                  </span>
+                </button>
+                <div className="min-w-0">
+                  <div className="text-xs font-black uppercase tracking-wider text-zinc-700 dark:text-zinc-200">
+                    AI Auto-Reply
+                  </div>
+                  <p className="text-[10px] font-semibold leading-snug text-zinc-400">
+                    {aiEnabled
+                      ? 'AI is actively replying to this contact.'
+                      : 'AI is OFF — you reply manually.'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 rounded-2xl border border-white/20 bg-white/20 p-3 dark:border-white/5 dark:bg-white/5">
+                <button
+                  onClick={toggleConversationDND}
+                  disabled={convDndSaving}
+                  className={cn(
+                    'relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
+                    convDndEnabled ? 'bg-rose-500' : 'bg-zinc-300 dark:bg-zinc-700',
+                  )}
+                  role="switch"
+                  aria-checked={convDndEnabled}
+                  title={convDndEnabled ? 'Turn off Do Not Disturb' : 'Turn on Do Not Disturb'}
+                >
+                  <span
+                    className={cn(
+                      'pointer-events-none flex h-5 w-5 items-center justify-center rounded-full bg-white shadow-md ring-0 transition-transform duration-300 ease-out',
+                      convDndEnabled ? 'translate-x-5' : 'translate-x-0.5',
+                    )}
+                  >
+                    {convDndSaving ? (
+                      <Loader2 className="h-3 w-3 animate-spin text-zinc-500" />
+                    ) : (
+                      <BellOff className={cn('h-2.5 w-2.5', convDndEnabled ? 'text-rose-600' : 'text-zinc-400')} />
+                    )}
+                  </span>
+                </button>
+                <div className="min-w-0">
+                  <div className="text-xs font-black uppercase tracking-wider text-zinc-700 dark:text-zinc-200">
+                    Do Not Disturb
+                  </div>
+                  <p className="text-[10px] font-semibold leading-snug text-zinc-400">
+                    {convDndEnabled
+                      ? 'Automated messages are silenced.'
+                      : 'Stops automated follow-ups and AI replies.'}
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
         ) : loading ? (
           <div className="grid h-32 place-items-center">

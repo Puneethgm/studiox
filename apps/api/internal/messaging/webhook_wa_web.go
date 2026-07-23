@@ -190,8 +190,9 @@ func (h *Handler) waWebInbound(w http.ResponseWriter, r *http.Request) {
 // repeatedly, once per chat (or in chat-sized pages), not all-at-once.
 func (h *Handler) waWebBackfill(w http.ResponseWriter, r *http.Request) {
 	var p struct {
-		StudioID string `json:"studioId"`
-		Messages []struct {
+		StudioID    string `json:"studioId"`
+		DisplayName string `json:"displayName"`
+		Messages    []struct {
 			From      string `json:"from"`
 			Text      string `json:"text"`
 			MessageID string `json:"messageId"`
@@ -221,7 +222,7 @@ func (h *Handler) waWebBackfill(w http.ResponseWriter, r *http.Request) {
 			FromMe:    m.FromMe,
 		})
 	}
-	imported, err := h.svc.HandleInboundWAWebBackfill(r.Context(), studioID, msgs)
+	imported, err := h.svc.HandleInboundWAWebBackfill(r.Context(), studioID, msgs, p.DisplayName)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
 		return

@@ -373,14 +373,21 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		return nil
 	}
 
-	// Do Not Disturb: either the lead already opted in to DND (manually, or
-	// from a previous "stop"), or this message is itself an opt-out keyword.
-	// Either way: enable DND, cancel every pending scheduled message for this
-	// lead, and never send a reply. Pipeline status is left untouched.
-	if (lead != nil && lead.DNDEnabled) || isStopMessage(msg.Body) {
+	// Do Not Disturb: either the lead/conversation already opted in to DND
+	// (manually, or from a previous "stop"), or this message is itself an
+	// opt-out keyword. Either way: enable DND, cancel every pending scheduled
+	// message for this conversation, and never send a reply. Pipeline status
+	// is left untouched. Conversations with no linked lead (e.g. imported
+	// WhatsApp Web contacts) carry DND on conversations.dnd_enabled instead —
+	// see SetConversationDNDEnabled.
+	if (lead != nil && lead.DNDEnabled) || conv.DNDEnabled || isStopMessage(msg.Body) {
 		if lead != nil && !lead.DNDEnabled {
 			if err := w.leadsRepo.SetDNDEnabled(ctx, studioID, lead.ID, true); err != nil {
 				w.log.Error("stop keyword: failed to enable dnd", "lead", lead.ID, "err", err)
+			}
+		} else if lead == nil && !conv.DNDEnabled {
+			if err := w.msgRepo.SetConversationDNDEnabled(ctx, studioID, conv.ID, true); err != nil {
+				w.log.Error("stop keyword: failed to enable conversation dnd", "conversation", conv.ID, "err", err)
 			}
 		}
 		if _, err := w.msgRepo.CancelPendingJobsForConversation(ctx, studioID, conv.ID); err != nil {

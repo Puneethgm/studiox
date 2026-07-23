@@ -1104,7 +1104,13 @@ type BackfillMessage struct {
 //   - does not auto-create a lead for contacts that have none — old chats
 //     with no existing lead are still imported and visible in the inbox,
 //     but importing history alone should not spawn a phantom lead.
-func (s *Service) HandleInboundWAWebBackfill(ctx context.Context, studioID uuid.UUID, msgs []BackfillMessage) (int, error) {
+// contactDisplayName is the contact's real WhatsApp display name, pulled
+// from the same history-sync payload as the messages (see sessions.js's
+// messaging-history.set handler) — empty if WhatsApp didn't supply one for
+// this chat. Populates contact_identities.display_name only; deliberately
+// does NOT touch leads, matching this function's existing no-phantom-leads
+// contract below.
+func (s *Service) HandleInboundWAWebBackfill(ctx context.Context, studioID uuid.UUID, msgs []BackfillMessage, contactDisplayName string) (int, error) {
 	if len(msgs) == 0 {
 		return 0, nil
 	}
@@ -1118,7 +1124,7 @@ func (s *Service) HandleInboundWAWebBackfill(ctx context.Context, studioID uuid.
 
 	imported := 0
 	for _, m := range msgs {
-		inserted, err := s.handleWAWebBackfillOne(ctx, studioID, channel.ID, m)
+		inserted, err := s.handleWAWebBackfillOne(ctx, studioID, channel.ID, m, contactDisplayName)
 		if err != nil {
 			return imported, err
 		}
@@ -1132,7 +1138,7 @@ func (s *Service) HandleInboundWAWebBackfill(ctx context.Context, studioID uuid.
 // handleWAWebBackfillOne imports a single historical message and reports
 // whether a new row was actually inserted (false if it was already imported —
 // dedupe is keyed on the WhatsApp message ID).
-func (s *Service) handleWAWebBackfillOne(ctx context.Context, studioID, channelID uuid.UUID, m BackfillMessage) (bool, error) {
+func (s *Service) handleWAWebBackfillOne(ctx context.Context, studioID, channelID uuid.UUID, m BackfillMessage, contactDisplayName string) (bool, error) {
 	tx, err := s.repo.Pool().BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, fmt.Errorf("begin tx: %w", err)
@@ -1144,6 +1150,9 @@ func (s *Service) handleWAWebBackfillOne(ctx context.Context, studioID, channelI
 	if idx := strings.Index(m.From, "@"); idx > 0 {
 		numericPart = m.From[:idx]
 		displayName = numericPart
+	}
+	if contactDisplayName != "" {
+		displayName = contactDisplayName
 	}
 	identityKey := m.From
 	if strings.HasSuffix(m.From, "@c.us") {

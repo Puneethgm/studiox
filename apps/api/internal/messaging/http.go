@@ -57,6 +57,7 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Post("/conversations/{id}/messages", h.sendMessage)
 	r.Post("/conversations/{id}/read", h.markRead)
 	r.Post("/conversations/{id}/ai", h.setConversationAI)
+	r.Post("/conversations/{id}/dnd", h.setConversationDND)
 	r.Delete("/conversations/{id}", h.deleteConversation)
 
 	// Templates
@@ -503,6 +504,32 @@ func (h *Handler) setConversationAI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.repo.SetConversationAIEnabled(r.Context(), studioID, id, body.Enabled); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]bool{"enabled": body.Enabled})
+}
+
+// setConversationDND toggles Do Not Disturb directly on a conversation — the
+// counterpart to the lead-scoped /leads/:id/dnd endpoint, for conversations
+// with no linked lead (e.g. imported WhatsApp Web contacts).
+func (h *Handler) setConversationDND(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if !httpx.DecodeJSON(w, r, &body) {
+		return
+	}
+	if err := h.svc.repo.SetConversationDNDEnabled(r.Context(), studioID, id, body.Enabled); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return
 	}

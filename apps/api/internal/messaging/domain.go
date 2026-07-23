@@ -118,8 +118,12 @@ type Conversation struct {
 	LastMessageDirection *Direction  `json:"lastMessageDirection,omitempty"`
 	LeadStatus           *string     `json:"leadStatus,omitempty"`
 	AIEnabled            bool        `json:"aiEnabled"`
-	CreatedAt            time.Time   `json:"createdAt"`
-	UpdatedAt            time.Time   `json:"updatedAt"`
+	// DNDEnabled silences automation for this conversation even when there's
+	// no linked lead to carry the (older, lead-scoped) leads.dnd_enabled
+	// flag — see ai_worker.go, which checks both.
+	DNDEnabled bool      `json:"dndEnabled"`
+	CreatedAt  time.Time `json:"createdAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
 }
 
 // ----- message -----

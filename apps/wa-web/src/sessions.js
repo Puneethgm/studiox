@@ -195,13 +195,17 @@ export class SessionManager {
         { studioId, chatCount: entry.historyBuffer.size, processing: chatEntries.length },
         'wa-web: history import starting',
       );
-      for (const [, messages] of chatEntries) {
+      for (const [jid, messages] of chatEntries) {
         if (messages.length === 0) continue;
         try {
           const res = await fetch(`${this.projectxApiUrl}/internal/wa-web/backfill`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ studioId, messages: messages.slice(0, BACKFILL_PER_CHAT_LIMIT) }),
+            body: JSON.stringify({
+              studioId,
+              messages: messages.slice(0, BACKFILL_PER_CHAT_LIMIT),
+              displayName: entry.historyDisplayNames.get(jid) || undefined,
+            }),
           });
           if (res.ok) {
             const body = await res.json().catch(() => ({}));
@@ -253,6 +257,13 @@ export class SessionManager {
       phone: null,
       sock: null,
       historyBuffer: new Map(),
+      // jid -> WhatsApp display name, pulled from the same history-sync
+      // payload as the messages themselves (see messaging-history.set below).
+      // Used to populate contact_identities.display_name during backfill —
+      // deliberately NOT used to create a lead (see handleWAWebBackfillOne /
+      // HandleInboundWAWebBackfill on the Go side, which already keep
+      // history import from spawning phantom leads on purpose).
+      historyDisplayNames: new Map(),
       // 'pending' while listening for Baileys' one-time post-pairing history
       // push; 'done' once concluded (see _concludeHistoryImport); 'inert' for
       // a resumed (non-fresh) session, which never gets one, so there's
@@ -392,7 +403,7 @@ export class SessionManager {
     // `isLatest` marks the final chunk, which is what actually concludes the
     // import (see _concludeHistoryImport) — buffer size alone can't tell a
     // completed sync from one still mid-flight.
-    sock.ev.on('messaging-history.set', async ({ chats, messages, isLatest, syncType, progress }) => {
+    sock.ev.on('messaging-history.set', async ({ chats, contacts, messages, isLatest, syncType, progress }) => {
       // Always log the raw chunk, even when nothing ends up qualifying below —
       // otherwise a chunk that arrives but yields zero importable messages
       // (all group chats, all non-text content, etc.) looks identical in the
@@ -404,6 +415,20 @@ export class SessionManager {
       );
 
       if (entry.historyState !== 'pending') return; // resumed session — nothing to capture
+
+      // Same chunk carries each chat's WhatsApp display name (chats[].name /
+      // .displayName, contacts[].name) alongside the messages — capture it so
+      // the imported conversation shows a real name instead of a bare phone
+      // number. Keyed by the raw (pre-resolution) id for now; re-keyed under
+      // the resolved jid below once we know it, since chats/contacts here can
+      // reference a contact by either its @lid or phone form.
+      for (const c of chats || []) {
+        const name = c.displayName || c.name;
+        if (name && c.id) entry.historyDisplayNames.set(c.id, name);
+      }
+      for (const c of contacts || []) {
+        if (c.name && c.id) entry.historyDisplayNames.set(c.id, c.name);
+      }
 
       if (!messages?.length) {
         if (isLatest) {
@@ -417,10 +442,13 @@ export class SessionManager {
       let skippedNoText = 0;
       for (const msg of messages) {
         if (msg.key?.fromMe) continue;
-        const jid = await resolveJid(sock, msg.key.remoteJid, entry.lidToPhone, this.log);
+        const rawJid = msg.key.remoteJid;
+        const jid = await resolveJid(sock, rawJid, entry.lidToPhone, this.log);
         if (!jid || jid.endsWith('@g.us')) { skippedGroup++; continue; } // skip group chats, matches old behavior
         const text = extractMessageText(msg.message);
         if (!text) { skippedNoText++; continue; }
+        const name = entry.historyDisplayNames.get(rawJid) || entry.historyDisplayNames.get(jid);
+        if (name) entry.historyDisplayNames.set(jid, name); // ensure it's reachable under the resolved key too
         const bucket = entry.historyBuffer.get(jid) || [];
         bucket.push({
           from: jid,
