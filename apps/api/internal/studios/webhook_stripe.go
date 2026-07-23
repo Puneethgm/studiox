@@ -85,21 +85,14 @@ func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Requ
 
 	signatureHeader := r.Header.Get("Stripe-Signature")
 	var event stripe.Event
-	event, err = webhook.ConstructEvent(payload, signatureHeader, endpointSecret)
+	// The connected Stripe account's API version can be newer than the one
+	// this vendored stripe-go release was built against — that alone made
+	// ConstructEvent reject every event as a signature failure, even with
+	// the correct secret. We only re-deserialize event.Data.Raw into our own
+	// structs below, so a version mismatch here doesn't affect correctness.
+	event, err = webhook.ConstructEventWithOptions(payload, signatureHeader, endpointSecret,
+		webhook.ConstructEventOptions{IgnoreAPIVersionMismatch: true})
 	if err != nil {
-		secretPreview := endpointSecret
-		if len(secretPreview) > 12 {
-			secretPreview = secretPreview[:12]
-		}
-		slog.Warn("stripe bad_signature debug",
-			"err", err.Error(),
-			"secret_len", len(endpointSecret),
-			"secret_prefix", secretPreview,
-			"sig_header_present", signatureHeader != "",
-			"sig_header_len", len(signatureHeader),
-			"sig_header", signatureHeader,
-			"payload_len", len(payload),
-		)
 		httpx.WriteError(w, http.StatusBadRequest, "bad_signature", "Error verifying webhook signature")
 		return
 	}
