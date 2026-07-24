@@ -931,6 +931,24 @@ func (s *Service) HandleInboundWAWeb(ctx context.Context, studioID uuid.UUID, fr
 		`, studioID, numericPart+"%@lid").Scan(&lidValue)
 		if lidValue != "" {
 			identityKey = lidValue // reuse existing LID-keyed identity
+		} else {
+			// No @lid identity either — check for a bare-digit identity (no
+			// @ suffix at all), the format used when a lead/conversation is
+			// created via other paths (external sheet import, Stripe
+			// checkout, manual lead creation) with the plain phone number.
+			// Without this, the same real contact splits across two
+			// identities/conversations — one keyed "<digits>@c.us", one
+			// keyed "<digits>" — each with independent ai_enabled/status
+			// state depending on which path created it first.
+			var bareValue string
+			_ = tx.QueryRow(ctx, `
+				SELECT value FROM contact_identities
+				WHERE studio_id = $1 AND kind = 'phone' AND value = $2
+				LIMIT 1
+			`, studioID, numericPart).Scan(&bareValue)
+			if bareValue != "" {
+				identityKey = bareValue // reuse existing bare-digit identity
+			}
 		}
 	}
 	identity, err := s.repo.FindOrCreateIdentity(ctx, tx, studioID, IdentityPhone, identityKey, displayName)
@@ -1645,6 +1663,11 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 	targetStatus := leadStatus
 	targetNotes := leadNotes
 	var outboundBody string
+	// Set true only by branches that enqueue their own outbound message
+	// directly (e.g. SendTrialPaymentLink) — keeps has_reply logging honest
+	// without letting the generic "if outboundBody != ''" send below fire a
+	// second, duplicate message for the same reply.
+	alreadySent := false
 
 	// Derive first name for personalised messages
 	firstName := leadName
@@ -1738,8 +1761,10 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 		if isTrial && !isMember {
 			targetStage = "completed"
 			targetStatus = "trial_booked"
-			// SendTrialPaymentLink enqueues the outbound itself; capture body for notes.
-			outboundBody, _ = s.SendTrialPaymentLink(ctx, studioID, conv.ID, conv.LeadID, firstName)
+			// SendTrialPaymentLink enqueues the outbound itself — capture the
+			// body only for the has_reply log below, not for re-sending.
+			sentBody, _ := s.SendTrialPaymentLink(ctx, studioID, conv.ID, conv.LeadID, firstName)
+			alreadySent = sentBody != ""
 		} else if isMember && !isTrial {
 			plans, errPlans := s.repo.ListActivePlans(ctx, studioID)
 			if errPlans != nil || len(plans) == 0 {
@@ -2033,7 +2058,7 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 		}
 	}
 
-	slog.Info("auto-contact: result", "lead_id", conv.LeadID, "old_stage", autoContactStage, "new_stage", targetStage, "has_reply", outboundBody != "")
+	slog.Info("auto-contact: result", "lead_id", conv.LeadID, "old_stage", autoContactStage, "new_stage", targetStage, "has_reply", outboundBody != "" || alreadySent)
 
 	// Update the lead if anything changed
 	if targetStage != autoContactStage || targetStatus != leadStatus || targetNotes != leadNotes {
@@ -2048,7 +2073,10 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 	}
 
 	// Send outbound reply whenever automation produced one (stage may or may not have changed).
-	if outboundBody != "" {
+	// Skip if a branch above (e.g. SendTrialPaymentLink) already enqueued its
+	// own message directly — outboundBody is empty in that case, so this is
+	// belt-and-suspenders against a future branch making the same mistake.
+	if outboundBody != "" && !alreadySent {
 		_, err = tx.Exec(ctx, `
 			INSERT INTO outbound_jobs (studio_id, conversation_id, body, attachments,
 			                           source_kind, source_ref, scheduled_for, next_attempt_at)
