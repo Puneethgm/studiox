@@ -109,9 +109,31 @@ export class SessionManager {
     this.sessions.delete(studioId);
   }
 
+  // Throws if `to` has no WhatsApp account. sock.sendMessage() alone would
+  // silently "succeed" against such a number (see checkOnWhatsApp above), so
+  // every real send goes through this first. Skipped for values that are
+  // already a resolved JID (@c.us / @lid / @s.whatsapp.net / @g.us) rather
+  // than a raw phone number — those came from an established conversation
+  // (message history, a live contact), so they're already known-good; @lid
+  // in particular isn't a phone number at all, so running it through
+  // onWhatsApp() would give a meaningless, likely false-negative result.
+  // This matters most for brand-new numbers we've never messaged before —
+  // e.g. a lead just imported from an external sheet or a Stripe checkout —
+  // which is exactly the case that was silently failing.
+  async assertOnWhatsApp(s, to) {
+    if (/@(c\.us|lid|s\.whatsapp\.net|g\.us)$/.test(to)) return;
+    const digits = to.replace(/[^\d]/g, '');
+    const results = await s.sock.onWhatsApp(digits);
+    const exists = Array.isArray(results) && results.some((r) => r?.exists);
+    if (!exists) {
+      throw new Error(`number ${digits} is not registered on WhatsApp`);
+    }
+  }
+
   async sendMessage(studioId, to, text) {
     const s = this.sessions.get(studioId);
     if (!s || s.status !== 'connected') throw new Error(`session not connected for studio ${studioId}`);
+    await this.assertOnWhatsApp(s, to);
     const jid = toJid(to);
     return s.sock.sendMessage(jid, { text });
   }
@@ -119,6 +141,7 @@ export class SessionManager {
   async sendMedia(studioId, to, mediaUrl, mediaType, caption) {
     const s = this.sessions.get(studioId);
     if (!s || s.status !== 'connected') throw new Error(`session not connected for studio ${studioId}`);
+    await this.assertOnWhatsApp(s, to);
     const jid = toJid(to);
     const url = mediaUrl.startsWith('http') ? mediaUrl : `${this.projectxApiUrl}${mediaUrl}`;
     const kind = (mediaType || '').toLowerCase();
