@@ -58,5 +58,7 @@ heroic-artifact-434914-d4-1b7152cf7bec.json
 *.json
 !apps/wa-web/package.json
 !apps/wa-web/package-lock.json
+!apps/tg-web/package.json
+!apps/tg-web/package-lock.json
 apps/api/secrets/
 .aider*
