@@ -150,7 +150,7 @@ export interface StudioSheetsSettings {
 
 // ===== Messaging =====
 
-export type ChannelKind = 'whatsapp_meta' | 'whatsapp_web' | 'instagram_meta' | 'messenger_meta' | 'x_dm' | 'sms' | 'google_ads';
+export type ChannelKind = 'whatsapp_meta' | 'whatsapp_web' | 'instagram_meta' | 'messenger_meta' | 'x_dm' | 'sms' | 'google_ads' | 'telegram' | 'telegram_mtproto';
 
 export type ChannelStatus = 'active' | 'paused' | 'disconnected' | 'error';
 

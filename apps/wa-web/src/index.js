@@ -1,9 +1,24 @@
 import 'dotenv/config';
 import express from 'express';
 import pino from 'pino';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { SessionManager } from './sessions.js';
 
-const log = pino({ level: process.env.LOG_LEVEL || 'info' });
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Also write to a plain file, not just stdout — stdout here is piped through
+// `make dev`/concurrently into whatever terminal launched it, which isn't
+// reliably readable after the fact (no scrollback access, no grep). The file
+// gives a durable place to actually inspect Baileys' history-sync diagnostics
+// (see sessions.js) without depending on someone copy-pasting terminal output.
+const log = pino(
+  { level: process.env.LOG_LEVEL || 'info' },
+  pino.multistream([
+    { stream: process.stdout },
+    { stream: pino.destination({ dest: path.join(__dirname, '..', 'wa-web.log'), sync: false }) },
+  ]),
+);
 const app = express();
 app.use(express.json());
 

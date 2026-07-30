@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { useRouter } from 'next/navigation';
 import { Upload, X, FileText, CheckCircle2, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { ApiError } from '@/lib/api';
@@ -18,8 +17,15 @@ interface ImportResult {
   errors: ImportRowError[];
 }
 
-export function ImportNodesButton({ studioId, treeId }: { studioId: string; treeId: string }) {
-  const router = useRouter();
+export function ImportNodesButton({
+  studioId,
+  treeId,
+  onImported,
+}: {
+  studioId: string;
+  treeId: string;
+  onImported: () => void | Promise<void>;
+}) {
   const [mounted, setMounted] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
@@ -82,7 +88,7 @@ export function ImportNodesButton({ studioId, treeId }: { studioId: string; tree
       const data = body as ImportResult;
       setResult({ ...data, errors: data.errors ?? [] });
       if (data.created > 0) {
-        router.refresh();
+        await onImported();
       }
     } catch (err: any) {
       setError(err.message || 'Failed to import nodes.');

@@ -12,18 +12,20 @@ import (
 type ChannelKind string
 
 const (
-	KindWhatsAppMeta  ChannelKind = "whatsapp_meta"
-	KindWhatsAppWeb   ChannelKind = "whatsapp_web" // QR-linked via Baileys (no Meta API needed)
-	KindInstagramMeta ChannelKind = "instagram_meta"
-	KindMessengerMeta ChannelKind = "messenger_meta"
-	KindXDM           ChannelKind = "x_dm"
-	KindSMS           ChannelKind = "sms"
-	KindGoogleAds     ChannelKind = "google_ads"
+	KindWhatsAppMeta    ChannelKind = "whatsapp_meta"
+	KindWhatsAppWeb     ChannelKind = "whatsapp_web" // QR-linked via Baileys (no Meta API needed)
+	KindInstagramMeta   ChannelKind = "instagram_meta"
+	KindMessengerMeta   ChannelKind = "messenger_meta"
+	KindXDM             ChannelKind = "x_dm"
+	KindSMS             ChannelKind = "sms"
+	KindGoogleAds       ChannelKind = "google_ads"
+	KindTelegram        ChannelKind = "telegram"
+	KindTelegramMTProto ChannelKind = "telegram_mtproto" // QR-linked via tg-web/teleproto (no bot needed)
 )
 
 func (k ChannelKind) Valid() bool {
 	switch k {
-	case KindWhatsAppMeta, KindWhatsAppWeb, KindInstagramMeta, KindMessengerMeta, KindXDM, KindSMS, KindGoogleAds:
+	case KindWhatsAppMeta, KindWhatsAppWeb, KindInstagramMeta, KindMessengerMeta, KindXDM, KindSMS, KindGoogleAds, KindTelegram, KindTelegramMTProto:
 		return true
 	}
 	return false
@@ -34,11 +36,12 @@ func (k ChannelKind) Valid() bool {
 type IdentityKind string
 
 const (
-	IdentityPhone  IdentityKind = "phone"
-	IdentityEmail  IdentityKind = "email"
-	IdentityIGPSID IdentityKind = "ig_psid"
-	IdentityFBPSID IdentityKind = "fb_psid"
-	IdentityXID    IdentityKind = "x_id"
+	IdentityPhone          IdentityKind = "phone"
+	IdentityEmail          IdentityKind = "email"
+	IdentityIGPSID         IdentityKind = "ig_psid"
+	IdentityFBPSID         IdentityKind = "fb_psid"
+	IdentityXID            IdentityKind = "x_id"
+	IdentityTelegramChatID IdentityKind = "telegram_chat_id"
 )
 
 type ContactIdentity struct {
@@ -80,6 +83,13 @@ type ChannelAccount struct {
 	// AccessToken is the *decrypted* access token. Populated only by the repo
 	// methods that need it (e.g. OutboxClaim) — list endpoints leave it empty.
 	AccessToken string `json:"-"`
+}
+
+// TGWebSession is one studio's decrypted tg-web (QR-linked Telegram) session
+// string, used to rehydrate the tg-web Node service after a restart.
+type TGWebSession struct {
+	StudioID      uuid.UUID
+	SessionString string
 }
 
 // ----- conversation -----

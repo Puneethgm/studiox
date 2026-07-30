@@ -14,6 +14,8 @@ import { ConnectMetaChannel } from './ConnectMetaChannel';
 import { ConnectGoogleAds } from './ConnectGoogleAds';
 import { ConnectTwilio } from './ConnectTwilio';
 import { ConnectX } from './ConnectX';
+import { ConnectTelegram } from './ConnectTelegram';
+import { ConnectTelegramWeb } from './ConnectTelegramWeb';
 
 interface TabDef {
   kind: ChannelKind;
@@ -64,6 +66,18 @@ const TABS: TabDef[] = [
     kind: 'whatsapp_meta',
     label: 'WhatsApp (Meta)',
     brand: '#25D366',
+    status: 'available',
+  },
+  {
+    kind: 'telegram_mtproto',
+    label: 'Telegram (QR)',
+    brand: '#26A5E4',
+    status: 'available',
+  },
+  {
+    kind: 'telegram',
+    label: 'Telegram (Bot)',
+    brand: '#26A5E4',
     status: 'available',
   },
 ];
@@ -235,6 +249,10 @@ function AvailablePanel({
           <ConnectTwilio studioId={studioId} showToast={showToast} />
         ) : kind === 'x_dm' ? (
           <ConnectX studioId={studioId} onSuccess={() => {}} showToast={showToast} />
+        ) : kind === 'telegram' ? (
+          <ConnectTelegram studioId={studioId} showToast={showToast} />
+        ) : kind === 'telegram_mtproto' ? (
+          <ConnectTelegramWeb studioId={studioId} connected={channels.length > 0} showToast={showToast} />
         ) : (
           <ConnectMetaChannel studioId={studioId} kind={kind} showToast={showToast} />
         )}

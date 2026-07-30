@@ -475,7 +475,7 @@ ready for IG / Messenger / X. **Direct Meta WhatsApp Cloud API**, no BSP.
 
 | Surface | Endpoints |
 |---|---|
-| Public webhook | `GET/POST /api/v1/webhooks/meta/whatsapp` (verify + receive) |
+| Public webhook | `GET/POST /api/v1/webhooks/meta/whatsapp` (verify + receive)<br>`POST /api/v1/webhooks/telegram/:botID` (one URL per connected bot — see below) |
 | Studio-scoped REST | `/api/v1/studios/:id/messaging/channels` (GET/POST/DELETE)<br>`/conversations` (GET, list+filter)<br>`/conversations/:id` (GET)<br>`/conversations/:id/messages` (GET, POST, paginated)<br>`/conversations/:id/read` (POST)<br>`/stream` (SSE — live updates) |
 
 **Architecture invariants for messaging (don't break):**
@@ -503,6 +503,24 @@ ready for IG / Messenger / X. **Direct Meta WhatsApp Cloud API**, no BSP.
   collapses Meta's webhook retries.
 - See [`docs/SETUP_META_WHATSAPP.md`](SETUP_META_WHATSAPP.md) for the
   one-time Meta App setup + per-studio onboarding.
+- **Telegram has two channel kinds** — they're independent, a studio can run
+  either or both:
+  - `telegram` (bot, `internal/messaging/channels/telegram.go` +
+    `webhook_telegram.go`): no shared platform app or App Review, each
+    studio's bot gets its own webhook URL keyed by the bot's public numeric
+    ID (never the bot token itself — see the comment on
+    `TelegramWebhookHandler`). Authenticity via Telegram's
+    `X-Telegram-Bot-Api-Secret-Token` header against a per-channel secret
+    generated at connect time. See [`docs/SETUP_TELEGRAM.md`](SETUP_TELEGRAM.md).
+  - `telegram_mtproto` (QR-linked personal account, `apps/tg-web` +
+    `webhook_tg_web.go`): architecturally the Telegram equivalent of
+    `whatsapp_web` — a Node microservice (`teleproto`, GramJS's maintained
+    fork) holds the MTProto session, Go proxies to it the same way it
+    proxies to wa-web. Unlike wa-web's Baileys auth (multi-file state on a
+    Docker volume), a GramJS session is a single string, so Postgres
+    (encrypted, `access_token_enc`) is the source of truth tg-web rehydrates
+    from on restart — no volume. See
+    [`docs/SETUP_TELEGRAM_QR.md`](SETUP_TELEGRAM_QR.md).
 - **Adding more channels (Instagram / Messenger / X)** — the plan is in
   [`docs/MESSAGING_NEXT_CHANNELS.md`](MESSAGING_NEXT_CHANNELS.md). Don't
   start until WhatsApp has been validated with a real studio for a couple

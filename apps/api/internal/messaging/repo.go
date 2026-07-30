@@ -381,6 +381,116 @@ func (r *Repo) GetWAWebBackfillStatus(ctx context.Context, studioID uuid.UUID) (
 }
 
 // ============================================================
+// telegram_mtproto (tg-web QR-linked personal account)
+// ============================================================
+
+// UpsertTGWebChannel persists (or reactivates) a studio's QR-linked Telegram
+// session. Unlike wa-web — whose real auth state lives on a Docker volume,
+// with the DB only holding a placeholder token — a GramJS session IS a
+// single string, so it's stored for real (encrypted) here and is the source
+// of truth tg-web rehydrates from on restart (see ListTGWebSessions).
+func (r *Repo) UpsertTGWebChannel(ctx context.Context, studioID uuid.UUID, phone, username, sessionString string) error {
+	enc, err := r.cipher.Encrypt(sessionString)
+	if err != nil {
+		return fmt.Errorf("encrypt tg-web session: %w", err)
+	}
+	displayHandle := phone
+	if username != "" {
+		displayHandle = "@" + username
+	}
+
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE channel_accounts
+		SET status = 'active', display_handle = $2, external_id = $3,
+		    access_token_enc = $4, connected_at = now(), disconnected_at = NULL, updated_at = now()
+		WHERE studio_id = $1 AND kind = 'telegram_mtproto'
+	`, studioID, displayHandle, phone, enc)
+	if err != nil {
+		return fmt.Errorf("upsert tg-web channel (update): %w", err)
+	}
+	if tag.RowsAffected() > 0 {
+		return nil
+	}
+
+	_, err = r.pool.Exec(ctx, `
+		INSERT INTO channel_accounts
+		  (studio_id, kind, bsp, external_id, parent_id, display_handle,
+		   access_token_enc, status, connected_at, updated_at)
+		VALUES ($1, 'telegram_mtproto', 'telegram_mtproto', $2, '', $3, $4, 'active', now(), now())
+	`, studioID, phone, displayHandle, enc)
+	if err != nil {
+		return fmt.Errorf("upsert tg-web channel (insert): %w", err)
+	}
+	return nil
+}
+
+// ListTGWebSessions returns every active telegram_mtproto channel's studio
+// ID + decrypted session string, so tg-web can resume all of them after a
+// restart without a fresh QR scan per studio.
+func (r *Repo) ListTGWebSessions(ctx context.Context) ([]TGWebSession, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT studio_id, access_token_enc FROM channel_accounts
+		WHERE kind = 'telegram_mtproto' AND status = 'active'
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TGWebSession
+	for rows.Next() {
+		var studioID uuid.UUID
+		var enc string
+		if err := rows.Scan(&studioID, &enc); err != nil {
+			return nil, err
+		}
+		sessionString, err := r.cipher.Decrypt(enc)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt tg-web session for studio %s: %w", studioID, err)
+		}
+		out = append(out, TGWebSession{StudioID: studioID, SessionString: sessionString})
+	}
+	return out, rows.Err()
+}
+
+// DisconnectTGWebChannel marks any active telegram_mtproto channel for a studio as disconnected.
+func (r *Repo) DisconnectTGWebChannel(ctx context.Context, studioID uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE channel_accounts
+		SET status = 'disconnected', disconnected_at = now(), updated_at = now()
+		WHERE studio_id = $1 AND kind = 'telegram_mtproto' AND status <> 'disconnected'
+	`, studioID)
+	return err
+}
+
+// SetTGWebBackfillStatus records history-import progress for a studio's
+// telegram_mtproto channel so the admin UI can poll it (running/done/failed).
+// Reuses the same backfill_status/backfill_message_count columns wa-web uses
+// — they're channel-agnostic, not WhatsApp-specific.
+func (r *Repo) SetTGWebBackfillStatus(ctx context.Context, studioID uuid.UUID, status string, messageCount int) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE channel_accounts
+		SET backfill_status = $2, backfill_message_count = $3, backfill_updated_at = now()
+		WHERE studio_id = $1 AND kind = 'telegram_mtproto'
+	`, studioID, status, messageCount)
+	return err
+}
+
+// GetTGWebBackfillStatus reports the current history-import status for a studio.
+func (r *Repo) GetTGWebBackfillStatus(ctx context.Context, studioID uuid.UUID) (status string, messageCount int, err error) {
+	err = r.pool.QueryRow(ctx, `
+		SELECT backfill_status, backfill_message_count
+		FROM channel_accounts
+		WHERE studio_id = $1 AND kind = 'telegram_mtproto'
+		ORDER BY connected_at DESC
+		LIMIT 1
+	`, studioID).Scan(&status, &messageCount)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "none", 0, nil
+	}
+	return status, messageCount, err
+}
+
+// ============================================================
 // contact_identities
 // ============================================================
 
@@ -403,6 +513,29 @@ func (r *Repo) FindOrCreateIdentity(ctx context.Context, tx pgx.Tx, studioID uui
 		return nil, fmt.Errorf("upsert identity: %w", err)
 	}
 	return out, nil
+}
+
+// UpdateLeadNameIfPlaceholder replaces a lead's name/first_name with a real
+// display name learned later (e.g. from a wa-web/tg-web contact sync), but
+// only if the name currently on file is still the auto-create placeholder
+// (empty, or the bare phone digits used when no real name was known yet —
+// see the wa-web lead auto-create path in HandleInboundWAWeb). A name a
+// studio user has since edited by hand no longer matches the phone digits,
+// so this is a no-op for those — it only ever fills in a gap, never
+// clobbers a real edit.
+func (r *Repo) UpdateLeadNameIfPlaceholder(ctx context.Context, tx pgx.Tx, leadID uuid.UUID, displayName string) error {
+	if displayName == "" {
+		return nil
+	}
+	_, err := tx.Exec(ctx, `
+		UPDATE leads
+		SET name = $2, first_name = $2, updated_at = now()
+		WHERE id = $1 AND (name = '' OR name = regexp_replace(phone, '\D', '', 'g'))
+	`, leadID, displayName)
+	if err != nil {
+		return fmt.Errorf("update lead name if placeholder: %w", err)
+	}
+	return nil
 }
 
 // ============================================================

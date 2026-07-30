@@ -15,21 +15,32 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const AUTH_DIR = process.env.AUTH_DIR || path.join(__dirname, '..', 'auth');
 
-// Baileys history-sync buffer bounds — mirrors the old whatsapp-web.js
-// backfill defaults (maxChats / perChatLimit) so downstream behavior
-// (Go API payload sizes, admin UX expectations) doesn't change.
-const BACKFILL_MAX_CHATS = 50;
+// Per-chat message cap for backfill — keeps a single very long-running chat
+// from ballooning one HTTP payload, not a limit on how many chats import.
+// Every chat WhatsApp hands us in history sync gets imported (see
+// _concludeHistoryImport below) — there is deliberately no chat-count cap
+// anymore; a studio's real chat list shouldn't be truncated to an arbitrary
+// top-N.
 const BACKFILL_PER_CHAT_LIMIT = 200;
 
-// Safety net only — WhatsApp relays history through the user's primary phone,
-// so it only arrives once that phone is online and it can take anywhere from
-// seconds to a couple of minutes for a real account with real history. We
-// don't guess when it's "probably not coming"; we wait for Baileys' own
-// `isLatest` completion signal on 'messaging-history.set' (see
-// _startSession). This timer only fires to conclude the import if that
-// signal never arrives at all within a generous window (e.g. the primary
-// phone stays offline), so the UI isn't stuck spinning forever.
+// Overall safety net — WhatsApp relays history through the user's primary
+// phone, so it only arrives once that phone is online, and it can take
+// anywhere from seconds to a couple of minutes for a real account with real
+// history. This timer only fires to conclude the import if NOT EVEN ONE
+// history-sync chunk ever arrives within a generous window (e.g. the
+// primary phone stays offline), so the UI isn't stuck spinning forever.
 const HISTORY_SYNC_TIMEOUT_MS = 3 * 60_000;
+
+// Baileys' `isLatest` flag on a 'messaging-history.set' chunk is NOT a
+// reliable "the whole sync is done" signal — confirmed against real traffic:
+// WhatsApp can send a trivial early chunk (e.g. syncType INITIAL_STATUS_V3,
+// zero chats/messages) already marked isLatest:true, with the real chat
+// history (INITIAL_BOOTSTRAP / RECENT chunks, hundreds of messages) still to
+// follow marked isLatest:false. Trusting isLatest here silently concluded
+// the import — and dropped every subsequent real chunk — before any
+// history had actually arrived. Instead, treat the sync as "settled" once
+// this many ms pass with no new chunk arriving at all; reset on every chunk.
+const HISTORY_SETTLE_MS = 5_000;
 
 export class SessionManager {
   constructor({ log, projectxApiUrl }) {
@@ -99,14 +110,26 @@ export class SessionManager {
     return results;
   }
 
+  // An explicit admin-initiated disconnect wipes the persisted auth session
+  // too — not just the in-memory socket. Without this, the local auth/
+  // folder survived a disconnect, so a later reconnect (even for a
+  // different WhatsApp number entirely, since it's keyed by studioId, not
+  // by phone number) would try to resume the OLD session's credentials
+  // first. WhatsApp only pushes the one-time full history sync on a
+  // genuinely fresh pairing (see isFreshPairing in _startSession) — leaving
+  // stale creds around meant every reconnect after a manual disconnect
+  // silently downgraded to a resume attempt instead of a real fresh link,
+  // which is exactly the "0 imported" symptom this fixes.
   async disconnect(studioId) {
     const s = this.sessions.get(studioId);
     if (s?.historyTimer) clearTimeout(s.historyTimer);
+    if (s?.historySettleTimer) clearTimeout(s.historySettleTimer);
     if (s?.sock) {
       await s.sock.logout().catch(() => {});
       s.sock.end(undefined);
     }
     this.sessions.delete(studioId);
+    rmSync(path.join(AUTH_DIR, studioId), { recursive: true, force: true });
   }
 
   // Throws if `to` has no WhatsApp account. sock.sendMessage() alone would
@@ -197,10 +220,12 @@ export class SessionManager {
     await this._notifyBackfillRunning(studioId);
   }
 
-  // Called once per session, either when Baileys signals the post-pairing
-  // history sync is complete (`isLatest` on 'messaging-history.set') or when
-  // the safety-net timer in _startSession fires because that signal never
-  // came. Idempotent — whichever fires first wins, the other is a no-op.
+  // Called once per session, either when the history-sync chunk stream goes
+  // quiet for HISTORY_SETTLE_MS (see the messaging-history.set handler below —
+  // NOT Baileys' own `isLatest` flag, which turned out unreliable, see
+  // HISTORY_SETTLE_MS's comment) or when the overall safety-net timer in
+  // _startSession fires because not even one chunk ever arrived. Idempotent —
+  // whichever fires first wins, the other is a no-op.
   async _concludeHistoryImport(studioId) {
     const entry = this.sessions.get(studioId);
     if (!entry || entry.historyState === 'done') return;
@@ -209,13 +234,22 @@ export class SessionManager {
       clearTimeout(entry.historyTimer);
       entry.historyTimer = null;
     }
+    if (entry.historySettleTimer) {
+      clearTimeout(entry.historySettleTimer);
+      entry.historySettleTimer = null;
+    }
 
     let totalImported = 0;
     let failed = false;
     try {
-      const chatEntries = [...entry.historyBuffer.entries()].slice(0, BACKFILL_MAX_CHATS);
+      const chatEntries = [...entry.historyBuffer.entries()];
       this.log.info(
-        { studioId, chatCount: entry.historyBuffer.size, processing: chatEntries.length },
+        {
+          studioId,
+          chatCount: chatEntries.length,
+          bufferedMessages: chatEntries.reduce((n, [, msgs]) => n + msgs.length, 0),
+          perChat: chatEntries.map(([jid, msgs]) => ({ jid, count: msgs.length, hasName: !!entry.historyDisplayNames.get(jid) })),
+        },
         'wa-web: history import starting',
       );
       for (const [jid, messages] of chatEntries) {
@@ -240,6 +274,18 @@ export class SessionManager {
           this.log.warn({ err: err.message, studioId }, 'wa-web: history import chat failed, continuing');
         }
       }
+
+      // Names for contacts WhatsApp told us about but that never got a
+      // message bucket above (a saved contact with no chat at all, or a
+      // chat whose only messages were non-text and got skipped) would
+      // otherwise be silently dropped — push those separately so they still
+      // show a real name instead of a bare phone number.
+      for (const [rawJid, name] of entry.historyDisplayNames.entries()) {
+        if (entry.historyBuffer.has(rawJid)) continue; // already carried a name above
+        const jid = await resolveJid(entry.sock, rawJid, entry.lidToPhone, this.log);
+        if (!jid || entry.historyBuffer.has(jid)) continue;
+        await this._pushContactName(studioId, jid, name);
+      }
     } catch (err) {
       this.log.error({ err: { message: err.message, stack: err.stack }, studioId }, 'wa-web: history import failed');
       failed = true;
@@ -253,6 +299,40 @@ export class SessionManager {
 
   async _notifyBackfillRunning(studioId) {
     await this._notifyWithRetry('/internal/wa-web/backfill-running', { studioId });
+  }
+
+  // Pushes a single contact's display name to the Go API — used both by the
+  // end-of-backfill sweep above and by the live contacts.upsert/update
+  // listeners below, so a name learned at any point (during or long after
+  // the initial history sync) reaches an existing conversation instead of
+  // only ever being applied once at connect time.
+  async _pushContactName(studioId, jid, name) {
+    try {
+      const res = await fetch(`${this.projectxApiUrl}/internal/wa-web/contact-name`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studioId, jid, displayName: name }),
+      });
+      if (!res.ok) {
+        this.log.warn({ studioId, jid, status: res.status }, 'wa-web: contact-name push non-ok');
+      }
+    } catch (err) {
+      this.log.warn({ err: err.message, studioId, jid }, 'wa-web: contact-name push failed, continuing');
+    }
+  }
+
+  // Restarts the "conclude the import" countdown — called on every
+  // history-sync chunk (see messaging-history.set), including empty ones,
+  // so the import only concludes once the chunk stream actually goes quiet.
+  _resetHistorySettleTimer(studioId) {
+    const entry = this.sessions.get(studioId);
+    if (!entry || entry.historyState !== 'pending') return;
+    if (entry.historySettleTimer) clearTimeout(entry.historySettleTimer);
+    entry.historySettleTimer = setTimeout(() => {
+      this._concludeHistoryImport(studioId).catch((err) =>
+        this.log.error({ err, studioId }, 'wa-web: history import failed'),
+      );
+    }, HISTORY_SETTLE_MS);
   }
 
   async _startSession(studioId, { reconnectAttempts = 0 } = {}) {
@@ -293,6 +373,11 @@ export class SessionManager {
       // nothing to wait for or report.
       historyState: isFreshPairing ? 'pending' : 'inert',
       historyTimer: null,
+      // Debounce timer reset on every history-sync chunk (see
+      // messaging-history.set below) — concludes the import once the chunk
+      // stream goes quiet for HISTORY_SETTLE_MS, rather than trusting
+      // Baileys' own (unreliable) isLatest flag.
+      historySettleTimer: null,
       historyImportedCount: undefined,
       historyImportFailed: undefined,
       // @lid (WhatsApp's internal linked-device ID) -> real @c.us phone JID.
@@ -399,13 +484,11 @@ export class SessionManager {
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
       if (type !== 'notify') return;
       for (const msg of messages) {
-        // Group messages carry the group's @g.us JID as remoteJid, the same
+        // Group messages carry the group's @g.us JID as remoteJid — the same
         // one for every message in that group regardless of which member
-        // sent it — so group chats need filtering out here exactly like the
-        // messaging-history.set (backfill) handler already does, or every
-        // message from every group this number is a member of gets recorded
-        // as if it were an individual 1:1 conversation.
-        if (msg.key?.remoteJid?.endsWith('@g.us')) continue;
+        // sent it — so a group comes through as one conversation thread
+        // (not split per-member), same as the messaging-history.set
+        // (backfill) handler below.
 
         // fromMe messages are forwarded too, not discarded — the Go side
         // dedupes these against messages our own outbound worker already
@@ -425,15 +508,26 @@ export class SessionManager {
           messageId: msg.key.id,
           timestamp: Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000),
           fromMe: !!msg.key?.fromMe,
+          // WhatsApp attaches the sender's own display name to every message
+          // they send — pushName — so a brand-new contact gets a real name
+          // immediately, without waiting on history sync to (maybe) supply
+          // one later. IS present on our own fromMe messages too (confirmed
+          // via logs) — but there it's the studio's OWN account name, not
+          // the customer's, and must never be used as their display name
+          // (this got a real contact's identity permanently locked to the
+          // studio's own name on their first-ever, studio-sent message).
+          pushName: !msg.key?.fromMe ? (msg.pushName || undefined) : undefined,
         });
       }
     });
 
     // Buffer Baileys' automatic post-pairing history push. Fires in one or
-    // more chunks (`syncType`-dependent) shortly after a fresh QR link;
-    // `isLatest` marks the final chunk, which is what actually concludes the
-    // import (see _concludeHistoryImport) — buffer size alone can't tell a
-    // completed sync from one still mid-flight.
+    // more chunks (`syncType`-dependent) shortly after a fresh QR link. Does
+    // NOT trust `isLatest` to mean "sync is fully done" — see
+    // HISTORY_SETTLE_MS's comment for why that flag is unreliable here.
+    // Instead, every chunk (whether or not it carries anything importable)
+    // resets a settle timer at the bottom of this handler; the import is
+    // concluded once that timer fires with no new chunk having arrived.
     sock.ev.on('messaging-history.set', async ({ chats, contacts, messages, isLatest, syncType, progress }) => {
       // Always log the raw chunk, even when nothing ends up qualifying below —
       // otherwise a chunk that arrives but yields zero importable messages
@@ -453,33 +547,72 @@ export class SessionManager {
       // number. Keyed by the raw (pre-resolution) id for now; re-keyed under
       // the resolved jid below once we know it, since chats/contacts here can
       // reference a contact by either its @lid or phone form.
+      let namesInChunk = 0;
       for (const c of chats || []) {
         const name = c.displayName || c.name;
-        if (name && c.id) entry.historyDisplayNames.set(c.id, name);
+        if (name && c.id) { entry.historyDisplayNames.set(c.id, name); namesInChunk++; }
       }
       for (const c of contacts || []) {
-        if (c.name && c.id) entry.historyDisplayNames.set(c.id, c.name);
+        if (c.name && c.id) { entry.historyDisplayNames.set(c.id, c.name); namesInChunk++; }
+      }
+      // Diagnostic: dump exactly what WhatsApp handed us for chats/contacts —
+      // id + name/displayName as-is, before any jid resolution — so a
+      // "why didn't the name show up" report can be checked against the raw
+      // wire data instead of guessing about jid-format mismatches blind.
+      if ((chats?.length ?? 0) > 0 || (contacts?.length ?? 0) > 0) {
+        this.log.info(
+          {
+            studioId,
+            namesInChunk,
+            totalNamesKnown: entry.historyDisplayNames.size,
+            chatsSample: (chats || []).slice(0, 10).map((c) => ({ id: c.id, name: c.name, displayName: c.displayName })),
+            contactsSample: (contacts || []).slice(0, 10).map((c) => ({ id: c.id, name: c.name })),
+          },
+          'wa-web: history-sync chunk — chat/contact names seen',
+        );
       }
 
       if (!messages?.length) {
-        if (isLatest) {
-          this._concludeHistoryImport(studioId).catch((err) =>
-            this.log.error({ err, studioId }, 'wa-web: history import failed'),
-          );
-        }
+        this._resetHistorySettleTimer(studioId);
         return;
       }
-      let skippedGroup = 0;
+      let skippedNoJid = 0;
       let skippedNoText = 0;
+      let namedMessages = 0;
+      let unnamedMessages = 0;
+      const unmatchedSample = [];
       for (const msg of messages) {
-        if (msg.key?.fromMe) continue;
+        // fromMe (a message the studio itself sent) is imported too, same as
+        // live messages (see handleWAWebBackfillOne on the Go side, which
+        // already records it as outbound/SourceStudioUser) — a chat whose
+        // history is mostly or entirely outbound must not come out as "no
+        // history to import" just because the customer's replies happen to
+        // be sparse or absent.
         const rawJid = msg.key.remoteJid;
         const jid = await resolveJid(sock, rawJid, entry.lidToPhone, this.log);
-        if (!jid || jid.endsWith('@g.us')) { skippedGroup++; continue; } // skip group chats, matches old behavior
+        if (!jid) { skippedNoJid++; continue; } // no resolvable jid at all
         const text = extractMessageText(msg.message);
         if (!text) { skippedNoText++; continue; }
-        const name = entry.historyDisplayNames.get(rawJid) || entry.historyDisplayNames.get(jid);
-        if (name) entry.historyDisplayNames.set(jid, name); // ensure it's reachable under the resolved key too
+        // chats[]/contacts[] essentially never carry a name for a 1:1 chat
+        // (confirmed by direct log inspection — WhatsApp's linked-device
+        // protocol doesn't sync the phone's private address book to a web
+        // session at all, only group subjects and a couple of system
+        // entries). msg.pushName — the sender's own self-declared WhatsApp
+        // display name, broadcast on every message they send — is the only
+        // other name source available, and IS present on historical messages
+        // same as live ones. Not the phone's saved contact name, but the
+        // closest thing actually obtainable here; only trust it for
+        // messages actually from the contact (fromMe's pushName is the
+        // studio's own name, not theirs).
+        const name = entry.historyDisplayNames.get(rawJid) || entry.historyDisplayNames.get(jid)
+          || (!msg.key.fromMe ? msg.pushName : undefined);
+        if (name) {
+          entry.historyDisplayNames.set(jid, name); // ensure it's reachable under the resolved key too
+          namedMessages++;
+        } else {
+          unnamedMessages++;
+          if (unmatchedSample.length < 10) unmatchedSample.push({ rawJid, jid, fromMe: !!msg.key.fromMe, pushName: msg.pushName });
+        }
         const bucket = entry.historyBuffer.get(jid) || [];
         bucket.push({
           from: jid,
@@ -490,14 +623,21 @@ export class SessionManager {
         });
         entry.historyBuffer.set(jid, bucket);
       }
-      if (skippedGroup || skippedNoText) {
-        this.log.info({ studioId, skippedGroup, skippedNoText }, 'wa-web: history-sync chunk — messages skipped');
-      }
-      if (isLatest) {
-        this._concludeHistoryImport(studioId).catch((err) =>
-          this.log.error({ err, studioId }, 'wa-web: history import failed'),
+      // Diagnostic: for every message that DIDN'T resolve to a known name,
+      // show exactly what jid we looked it up under vs what's actually in
+      // historyDisplayNames — pinpoints a jid-format mismatch (e.g. chats[]
+      // keyed by @lid while messages arrive keyed by phone JID) instead of
+      // guessing about it.
+      if (namedMessages || unnamedMessages) {
+        this.log.info(
+          { studioId, namedMessages, unnamedMessages, unmatchedSample, knownNameKeys: [...entry.historyDisplayNames.keys()].slice(0, 20) },
+          'wa-web: history-sync chunk — name match results',
         );
       }
+      if (skippedNoJid || skippedNoText) {
+        this.log.info({ studioId, skippedNoJid, skippedNoText }, 'wa-web: history-sync chunk — messages skipped');
+      }
+      this._resetHistorySettleTimer(studioId);
     });
 
     // Fired when WhatsApp explicitly shares the real phone number behind a
@@ -509,6 +649,45 @@ export class SessionManager {
       entry.lidToPhone.set(lid, normalizeJid(jid, entry.lidToPhone));
       this.log.info({ studioId, lid, jid }, 'wa-web: resolved @lid to phone number');
     });
+
+    // The actual source of a contact's saved name — confirmed by direct log
+    // inspection that messaging-history.set's own chats[]/contacts[] arrays
+    // carry a `name` for group chats and little else; a 1:1 chat's saved
+    // address-book name (what shows in the phone's own WhatsApp app) comes
+    // through WhatsApp's separate contact app-state sync instead, which
+    // Baileys surfaces as these three events — 'contacts.set' fires once
+    // with the full list on a fresh pairing's initial sync (parallel to
+    // 'messaging-history.set' for messages), 'contacts.upsert'/'.update'
+    // fire incrementally afterward. `c.name` is the phone's saved contact
+    // name (set on this device); `c.notify` is the fallback — the pushName
+    // the other party set on their own account. Fires independently of
+    // message history sync and can arrive before, during, or well after it,
+    // so every name here is both cached (for backfill/live message-name
+    // lookups still in flight) and pushed immediately (in case backfill has
+    // already concluded and a conversation is already sitting there with no
+    // name).
+    const onContacts = async (contacts) => {
+      for (const c of contacts || []) {
+        const name = c.name || c.notify;
+        if (!name || !c.id) continue;
+        // Never record the studio's own account as if it were a contact —
+        // WhatsApp's contact sync includes a self-entry, and its "name" is
+        // the studio's own WhatsApp profile name (e.g. the studio's brand),
+        // not a customer's. Matched by stripped numeric prefix so it still
+        // catches device-suffixed / @lid forms of the same own-number.
+        const numericId = c.id.replace(/^(\d+).*$/, '$1');
+        if (entry.phone && numericId === entry.phone.replace(/^\+/, '')) continue;
+        entry.historyDisplayNames.set(c.id, name);
+        const jid = await resolveJid(sock, c.id, entry.lidToPhone, this.log);
+        if (jid) {
+          entry.historyDisplayNames.set(jid, name);
+          await this._pushContactName(studioId, jid, name);
+        }
+      }
+    };
+    sock.ev.on('contacts.set', ({ contacts }) => onContacts(contacts));
+    sock.ev.on('contacts.upsert', onContacts);
+    sock.ev.on('contacts.update', onContacts);
   }
 
   // POSTs with a few retries (backing off) so a transient Go-API restart
@@ -559,12 +738,12 @@ export class SessionManager {
     }, intervalMs);
   }
 
-  async _forwardInbound(studioId, { from, text, messageId, timestamp, fromMe }) {
+  async _forwardInbound(studioId, { from, text, messageId, timestamp, fromMe, pushName }) {
     try {
       const res = await fetch(`${this.projectxApiUrl}/internal/wa-web/inbound`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ studioId, from, text, messageId, timestamp, fromMe: !!fromMe }),
+        body: JSON.stringify({ studioId, from, text, messageId, timestamp, fromMe: !!fromMe, pushName }),
       });
       const body = await res.text();
       this.log.info({ studioId, from, status: res.status, body }, 'wa-web: forwarded inbound');

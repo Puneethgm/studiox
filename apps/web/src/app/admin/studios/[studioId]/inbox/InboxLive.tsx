@@ -96,6 +96,8 @@ const CHANNEL_BADGE: Record<ChannelKind, { label: string; color: string }> = {
   x_dm:           { label: 'X / Twitter',       color: '#000000' },
   sms:            { label: 'SMS',               color: '#3b82f6' },
   google_ads:     { label: 'Google Ads',        color: '#4285F4' },
+  telegram:       { label: 'Telegram (Bot)',    color: '#26A5E4' },
+  telegram_mtproto: { label: 'Telegram',        color: '#26A5E4' },
 };
 
 interface SSEEvent {
@@ -155,7 +157,7 @@ export function InboxLive({
   const [mounted, setMounted] = useState(false);
 
   const VALID_TABS: InboxTab[] = ['conversations', 'automated_messages', 'snippets', 'trigger_links'];
-  const VALID_CHANNELS: ChannelKind[] = ['whatsapp_web', 'whatsapp_meta', 'instagram_meta', 'messenger_meta', 'sms'];
+  const VALID_CHANNELS: ChannelKind[] = ['whatsapp_web', 'whatsapp_meta', 'instagram_meta', 'messenger_meta', 'sms', 'telegram', 'telegram_mtproto'];
 
   const initialTab = (VALID_TABS.includes(searchParams.get('tab') as InboxTab) ? searchParams.get('tab') : 'conversations') as InboxTab;
   const initialChannel = (VALID_CHANNELS.includes(searchParams.get('channel') as ChannelKind) ? searchParams.get('channel') : 'whatsapp_web') as ChannelKind;
@@ -777,13 +779,17 @@ export function InboxLive({
     }
   }
 
+  const handleConversationAIToggle = useCallback((conversationId: string, enabled: boolean) => {
+    setConversations((prev) => prev.map((c) => (c.id === conversationId ? { ...c, aiEnabled: enabled } : c)));
+  }, []);
+
   async function toggleGlobalAI() {
     if (globalAISaving) return;
     const next = !globalAI;
     setGlobalAISaving(true);
     setGlobalAI(next);
     try {
-      await api(`/api/v1/studios/${studioId}/conversations/ai/bulk`, {
+      await api(`/api/v1/studios/${studioId}/messaging/conversations/ai/bulk`, {
         method: 'POST',
         json: { enabled: next },
       });
@@ -984,6 +990,8 @@ export function InboxLive({
             <option value="instagram_meta">Instagram</option>
             <option value="messenger_meta">Messenger</option>
             <option value="sms">SMS</option>
+            <option value="telegram_mtproto">Telegram (QR)</option>
+            <option value="telegram">Telegram (Bot)</option>
           </select>
         </HeaderActions>
       )}
@@ -1219,7 +1227,13 @@ export function InboxLive({
                     type="text"
                     value={newReceiverValue}
                     onChange={(e) => setNewReceiverValue(e.target.value)}
-                    placeholder={activeChannel === 'whatsapp_meta' || activeChannel === 'whatsapp_web' || activeChannel === 'sms' ? "Phone number..." : "Messenger ID..."}
+                    placeholder={
+                      activeChannel === 'whatsapp_meta' || activeChannel === 'whatsapp_web' || activeChannel === 'sms'
+                        ? 'Search name/number, or start new...'
+                        : activeChannel === 'telegram' || activeChannel === 'telegram_mtproto'
+                        ? 'Search, or Telegram chat ID...'
+                        : 'Search, or Messenger ID...'
+                    }
                     className="w-full rounded border border-zinc-200 bg-white py-1.5 pl-3 pr-10 text-xs font-semibold text-zinc-900 placeholder:text-zinc-400 focus:border-brand-500 focus:outline-none dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder:text-zinc-500"
                     suppressHydrationWarning
                   />
@@ -1234,11 +1248,26 @@ export function InboxLive({
                 </form>
               </div>
 
-              {/* Conversation List */}
+              {/* Conversation List — filtered live by the box above, matching
+                  against contact name and number (both the raw JID/value and
+                  its display-cleaned form), so typing a saved contact's name
+                  or a phone number narrows the list the same way it would in
+                  a normal chat app's search bar. Falls through to the New
+                  Conversation Input's existing "start a chat with this
+                  number" behavior on submit when nothing matches. */}
               <div className="flex-1 overflow-y-auto no-scrollbar">
                 {mounted ? (
                   <ul className="space-y-0">
-                    {conversations.map((c) => (
+                    {conversations
+                      .filter((c) => {
+                        const query = newReceiverValue.trim().toLowerCase();
+                        if (!query) return true;
+                        const name = (c.contactDisplayName || '').toLowerCase();
+                        const val = (c.contactValue || '').toLowerCase();
+                        const cleanVal = displayContact(c.contactValue || '').toLowerCase();
+                        return name.includes(query) || val.includes(query) || cleanVal.includes(query);
+                      })
+                      .map((c) => (
                       <li key={c.id}>
                         <div
                           role="button"
@@ -1354,11 +1383,11 @@ export function InboxLive({
                     >
                       <ChannelAvatar
                         kind={selected.channelKind}
-                        name={selected.contactDisplayName || selected.contactValue}
+                        name={selected.contactDisplayName || displayContact(selected.contactValue)}
                       />
                       <div className="min-w-0">
                         <div className="truncate text-xs font-black text-zinc-900 dark:text-zinc-100">
-                          {selected.contactDisplayName || selected.contactValue}
+                          {selected.contactDisplayName || displayContact(selected.contactValue)}
                         </div>
                         <div className="flex items-center gap-1.5 truncate text-[9px] font-bold uppercase tracking-[0.15em] text-zinc-400">
                           <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
@@ -1770,6 +1799,7 @@ export function InboxLive({
                 conversation={selected}
                 onClose={() => setShowDetailsPanel(false)}
                 onLeadUpdated={handleLeadUpdated}
+                onAIToggle={handleConversationAIToggle}
               />
             )}
           </>
@@ -2753,6 +2783,8 @@ function channelLabel(k: ChannelKind): string {
     case 'x_dm':           return 'X DM';
     case 'sms':            return 'SMS';
     case 'google_ads':     return 'Google Ads';
+    case 'telegram':       return 'Telegram';
+    case 'telegram_mtproto': return 'Telegram';
   }
 }
 

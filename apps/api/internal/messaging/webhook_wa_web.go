@@ -164,6 +164,7 @@ func (h *Handler) waWebInbound(w http.ResponseWriter, r *http.Request) {
 		MessageID string `json:"messageId"`
 		Timestamp int64  `json:"timestamp"`
 		FromMe    bool   `json:"fromMe"`
+		PushName  string `json:"pushName"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "bad_json", err.Error())
@@ -178,7 +179,33 @@ func (h *Handler) waWebInbound(w http.ResponseWriter, r *http.Request) {
 	if p.Timestamp > 0 {
 		sentAt = time.Unix(p.Timestamp, 0).UTC()
 	}
-	if err := h.svc.HandleInboundWAWeb(r.Context(), studioID, p.From, p.Text, p.MessageID, p.FromMe, sentAt); err != nil {
+	if err := h.svc.HandleInboundWAWeb(r.Context(), studioID, p.From, p.Text, p.MessageID, p.FromMe, sentAt, p.PushName); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// waWebContactName records a display name for a WhatsApp contact that has no
+// message history to carry it in via waWebBackfill (a saved contact with no
+// chat yet, or a chat whose only messages were skipped as non-text) — see
+// sessions.js's messaging-history.set handler and Service.HandleWAWebContactName.
+func (h *Handler) waWebContactName(w http.ResponseWriter, r *http.Request) {
+	var p struct {
+		StudioID    string `json:"studioId"`
+		JID         string `json:"jid"`
+		DisplayName string `json:"displayName"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_json", err.Error())
+		return
+	}
+	studioID, err := uuid.Parse(p.StudioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid studioId")
+		return
+	}
+	if err := h.svc.HandleWAWebContactName(r.Context(), studioID, p.JID, p.DisplayName); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}

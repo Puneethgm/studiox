@@ -26,6 +26,13 @@ type Config struct {
 
 	PublicFormBaseURL string
 
+	// PublicAPIBaseURL is this API's own externally-reachable base URL (e.g.
+	// https://studio.example.com/api in prod, behind nginx). Used to build
+	// per-channel webhook URLs we register with third parties at connect
+	// time (currently just Telegram's setWebhook — Meta/Twilio/X webhook
+	// URLs are configured once, manually, in their respective dashboards).
+	PublicAPIBaseURL string
+
 	Sheets SheetsConfig
 
 	// Encryption key for at-rest secrets (channel access tokens). 32-byte
@@ -156,6 +163,7 @@ func Load() (Config, error) {
 			Password: getEnv("SUPER_ADMIN_PASSWORD", ""),
 		},
 		PublicFormBaseURL: getEnv("PUBLIC_FORM_BASE_URL", "http://localhost:3000"),
+		PublicAPIBaseURL:  getEnv("PUBLIC_API_BASE_URL", "http://localhost:8080"),
 		Sheets: SheetsConfig{
 			CredentialsPath: getEnv("GOOGLE_CREDENTIALS_PATH", ""),
 			SpreadsheetID:   getEnv("GOOGLE_SHEETS_ID", ""),

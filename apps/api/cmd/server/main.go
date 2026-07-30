@@ -150,7 +150,7 @@ func main() {
 	// --- messaging (channels + inbox) ---
 	msgRepo := messaging.NewRepo(pool, cipher)
 	msgBus := messaging.NewInProcBus()
-	msgSvc := messaging.NewService(msgRepo, msgBus, cfg.PublicFormBaseURL)
+	msgSvc := messaging.NewService(msgRepo, msgBus, cfg.PublicFormBaseURL, cfg.PublicAPIBaseURL)
 	msgHandler := messaging.NewHandler(msgSvc, msgBus)
 
 	// Wire DND job-cancellation callback into leads, keeping the import
@@ -161,7 +161,8 @@ func main() {
 	messengerClient := channels.NewMetaMessenger(cfg.Meta.GraphAPIVersion)
 	twilioClient := channels.NewTwilioSMS()
 	xClient := channels.NewXSender()
-	msgWorker := messaging.NewOutboundWorker(msgRepo, msgBus, whatsappClient, messengerClient, twilioClient, xClient,
+	telegramClient := channels.NewTelegramSender()
+	msgWorker := messaging.NewOutboundWorker(msgRepo, msgBus, whatsappClient, messengerClient, twilioClient, xClient, telegramClient,
 		log.With("component", "messaging_worker"))
 	go msgWorker.Run(rootCtx)
 
@@ -211,6 +212,7 @@ func main() {
 
 	twilioWebhook := messaging.NewTwilioWebhookHandler(msgSvc, log.With("component", "twilio_webhook"))
 	xWebhook := messaging.NewTwitterWebhookHandler(msgSvc, log.With("component", "x_webhook"))
+	telegramWebhook := messaging.NewTelegramWebhookHandler(msgSvc, log.With("component", "telegram_webhook"))
 
 	googleOAuth := google.NewOAuthHandler(studiosSvc, msgRepo, cfg.PublicFormBaseURL)
 
@@ -277,6 +279,7 @@ func main() {
 		r.Post("/webhooks/twilio", twilioWebhook.HandleInbound)
 		r.Get("/webhooks/x", xWebhook.HandleInbound)
 		r.Post("/webhooks/x", xWebhook.HandleInbound)
+		r.Post("/webhooks/telegram/{botID}", telegramWebhook.HandleInbound)
 
 		stripeWebhook := studios.NewStripeWebhookHandler(studiosSvc, os.Getenv("STRIPE_WEBHOOK_SECRET"))
 		r.Post("/webhooks/stripe", stripeWebhook.HandleInbound)

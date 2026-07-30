@@ -333,7 +333,7 @@ export function TreeEditor({ studioId, initialTree }: Props) {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <ImportNodesButton studioId={studioId} treeId={tree.id} />
+          <ImportNodesButton studioId={studioId} treeId={tree.id} onImported={refreshTree} />
           <Button
             variant="ghost"
             size="sm"

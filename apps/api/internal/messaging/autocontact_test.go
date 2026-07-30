@@ -77,7 +77,7 @@ func TestAutoContactWorker_Integration(t *testing.T) {
 
 	msgRepo := NewRepo(pool, cipher)
 	msgBus := NewInProcBus()
-	msgSvc := NewService(msgRepo, msgBus, "")
+	msgSvc := NewService(msgRepo, msgBus, "", "")
 
 	// 4. Submit a public lead
 	leadName := "Test User"
@@ -230,7 +230,7 @@ func TestAutoContactWorker_TrialBooked_Integration(t *testing.T) {
 
 	msgRepo := NewRepo(pool, cipher)
 	msgBus := NewInProcBus()
-	msgSvc := NewService(msgRepo, msgBus, "")
+	msgSvc := NewService(msgRepo, msgBus, "", "")
 
 	// 4. Submit a public lead with a "trial" fitness plan
 	leadName := "Test User"
@@ -360,7 +360,7 @@ func TestService_HandleInboundWhatsAppMessage_StatusTransitions(t *testing.T) {
 
 	msgRepo := NewRepo(pool, cipher)
 	msgBus := NewInProcBus()
-	msgSvc := NewService(msgRepo, msgBus, "")
+	msgSvc := NewService(msgRepo, msgBus, "", "")
 
 	phone := fmt.Sprintf("15555%06d", time.Now().UnixNano()%1000000)
 

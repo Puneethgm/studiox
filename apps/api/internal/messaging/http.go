@@ -46,6 +46,7 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Post("/channels/messenger", h.connectMessenger)
 	r.Post("/channels/twilio", h.connectTwilio)
 	r.Post("/channels/x", h.connectX)
+	r.Post("/channels/telegram", h.connectTelegram)
 	r.Delete("/channels/{id}", h.disconnectChannel)
 	r.Put("/channels/{id}", h.updateChannel)
 
@@ -93,6 +94,14 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Get("/channels/whatsapp-web/status", h.waWebStatus)
 	r.Post("/channels/whatsapp-web/backfill", h.waWebBackfillTrigger)
 	r.Get("/channels/whatsapp-web/backfill", h.waWebBackfillStatus)
+
+	// Telegram (QR-based personal account) — proxies to the tg-web Node service
+	r.Get("/channels/telegram-web/qr", h.tgWebQR)
+	r.Post("/channels/telegram-web/password", h.tgWebPassword)
+	r.Post("/channels/telegram-web/disconnect", h.tgWebDisconnect)
+	r.Get("/channels/telegram-web/status", h.tgWebStatus)
+	r.Post("/channels/telegram-web/backfill", h.tgWebBackfillTrigger)
+	r.Get("/channels/telegram-web/backfill", h.tgWebBackfillStatus)
 }
 
 // InternalRoutes are mounted at /internal (not exposed through nginx to public).
@@ -105,6 +114,15 @@ func (h *Handler) InternalRoutes(r chi.Router) {
 	r.Post("/wa-web/backfill-running", h.waWebBackfillRunning)
 	r.Post("/wa-web/backfill", h.waWebBackfill)
 	r.Post("/wa-web/backfill-done", h.waWebBackfillDone)
+	r.Post("/wa-web/contact-name", h.waWebContactName)
+
+	r.Post("/tg-web/connected", h.tgWebConnected)
+	r.Post("/tg-web/inbound", h.tgWebInbound)
+	r.Post("/tg-web/media", h.tgWebMedia)
+	r.Get("/tg-web/sessions", h.tgWebSessions)
+	r.Post("/tg-web/backfill-running", h.tgWebBackfillRunning)
+	r.Post("/tg-web/backfill", h.tgWebBackfill)
+	r.Post("/tg-web/backfill-done", h.tgWebBackfillDone)
 }
 
 // ============================================================
@@ -222,6 +240,27 @@ func (h *Handler) connectTwilio(w http.ResponseWriter, r *http.Request) {
 		AccountSID:  req.AccountSID,
 		AuthToken:   req.AuthToken,
 		PhoneNumber: req.PhoneNumber,
+	})
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, ch)
+}
+
+func (h *Handler) connectTelegram(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		BotToken string `json:"botToken"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	ch, err := h.svc.ConnectTelegramChannel(r.Context(), studioID, ConnectTelegramInput{
+		BotToken: req.BotToken,
 	})
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid", err.Error())

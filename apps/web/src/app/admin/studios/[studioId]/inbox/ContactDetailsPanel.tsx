@@ -8,6 +8,13 @@ import { ApiError, api } from '@/lib/api';
 import type { Conversation, Lead } from '@/lib/types';
 import { LEAD_STATUS_LABELS } from '@/lib/types';
 
+// Strip @c.us / @lid / @s.whatsapp.net suffixes from WA chat IDs for display
+// — mirrors InboxLive.tsx's displayContact, kept local since this panel has
+// no shared import surface with it.
+function displayContact(value: string): string {
+  return value ? value.replace(/@[^@]+$/, '') : value;
+}
+
 function getLeadStatusStyles(status: string): string {
   switch (status) {
     case 'new':
@@ -44,11 +51,13 @@ export function ContactDetailsPanel({
   conversation,
   onClose,
   onLeadUpdated,
+  onAIToggle,
 }: {
   studioId: string;
   conversation: Conversation;
   onClose?: () => void;
   onLeadUpdated?: (lead: Lead) => void;
+  onAIToggle?: (conversationId: string, enabled: boolean) => void;
 }) {
   const [lead, setLead] = useState<Lead | null>(null);
   const [loading, setLoading] = useState(false);
@@ -229,6 +238,13 @@ export function ContactDetailsPanel({
         method: 'POST',
         json: { enabled: next },
       });
+      // Without this, the parent's conversations list keeps the stale
+      // aiEnabled it fetched before this toggle — the next refetch it
+      // triggers (SSE message event, tab switch, etc.) hands this
+      // component a `conversation` prop back with the OLD value, and the
+      // effect above resets the toggle to look like it never saved, even
+      // though the POST above succeeded.
+      onAIToggle?.(conversation.id, next);
     } catch (err: any) {
       setAiEnabled(!next);
       setError(err?.message || 'Failed to update AI auto-reply.');
@@ -298,15 +314,15 @@ export function ContactDetailsPanel({
                 className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-gradient-to-br from-brand-500 to-violet-500 text-sm font-black text-white shadow-md"
                 aria-hidden
               >
-                {brandInitials(conversation.contactDisplayName || conversation.contactValue)}
+                {brandInitials(conversation.contactDisplayName || displayContact(conversation.contactValue))}
               </span>
               <div className="min-w-0">
                 <div className="truncate text-sm font-black text-zinc-800 dark:text-zinc-100">
-                  {conversation.contactDisplayName || conversation.contactValue}
+                  {conversation.contactDisplayName || displayContact(conversation.contactValue)}
                 </div>
                 {conversation.contactDisplayName && (
                   <div className="truncate text-xs font-semibold text-zinc-400">
-                    {conversation.contactValue}
+                    {displayContact(conversation.contactValue)}
                   </div>
                 )}
               </div>

@@ -2,6 +2,8 @@ package messaging
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,10 +31,11 @@ type Service struct {
 	repo              *Repo
 	bus               Bus
 	publicFormBaseURL string
+	publicAPIBaseURL  string
 }
 
-func NewService(repo *Repo, bus Bus, publicFormBaseURL string) *Service {
-	return &Service{repo: repo, bus: bus, publicFormBaseURL: publicFormBaseURL}
+func NewService(repo *Repo, bus Bus, publicFormBaseURL, publicAPIBaseURL string) *Service {
+	return &Service{repo: repo, bus: bus, publicFormBaseURL: publicFormBaseURL, publicAPIBaseURL: publicAPIBaseURL}
 }
 
 // ============================================================
@@ -93,6 +96,63 @@ func (s *Service) ConnectTwilioChannel(ctx context.Context, studioID uuid.UUID, 
 	})
 }
 
+type ConnectTelegramInput struct {
+	BotToken string
+}
+
+// ConnectTelegramChannel validates the bot token against Telegram's getMe,
+// registers our webhook via setWebhook with a freshly generated per-channel
+// secret, and stores both the token and that secret (as JSON, see
+// channels.TelegramCredentials) encrypted in one column.
+func (s *Service) ConnectTelegramChannel(ctx context.Context, studioID uuid.UUID, in ConnectTelegramInput) (*ChannelAccount, error) {
+	in.BotToken = strings.TrimSpace(in.BotToken)
+	if in.BotToken == "" {
+		return nil, errors.New("bot token is required")
+	}
+
+	info, err := channels.TelegramGetMe(ctx, nil, in.BotToken)
+	if err != nil {
+		if errors.Is(err, channels.ErrInvalidCredentials) {
+			return nil, errors.New("invalid bot token")
+		}
+		return nil, fmt.Errorf("verify bot token: %w", err)
+	}
+
+	webhookSecret, err := randomHex(32)
+	if err != nil {
+		return nil, fmt.Errorf("generate webhook secret: %w", err)
+	}
+	webhookURL := strings.TrimRight(s.publicAPIBaseURL, "/") + "/api/v1/webhooks/telegram/" + fmt.Sprintf("%d", info.ID)
+
+	if err := channels.TelegramSetWebhook(ctx, nil, in.BotToken, webhookURL, webhookSecret); err != nil {
+		return nil, fmt.Errorf("register telegram webhook: %w", err)
+	}
+
+	creds, err := json.Marshal(channels.TelegramCredentials{
+		BotToken:      in.BotToken,
+		WebhookSecret: webhookSecret,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal credentials: %w", err)
+	}
+
+	displayHandle := info.Username
+	if displayHandle != "" {
+		displayHandle = "@" + displayHandle
+	} else {
+		displayHandle = fmt.Sprintf("bot-%d", info.ID)
+	}
+
+	return s.repo.CreateChannel(ctx, CreateChannelInput{
+		StudioID:      studioID,
+		Kind:          KindTelegram,
+		BSP:           "telegram",
+		ExternalID:    fmt.Sprintf("%d", info.ID),
+		DisplayHandle: displayHandle,
+		AccessToken:   string(creds),
+	})
+}
+
 func (s *Service) ListChannels(ctx context.Context, studioID uuid.UUID) ([]ChannelAccount, error) {
 	return s.repo.ListChannels(ctx, studioID)
 }
@@ -113,6 +173,11 @@ func (s *Service) DisconnectChannel(ctx context.Context, studioID, id uuid.UUID)
 	// Postgres now considers disconnected. Tell wa-web to drop the session too.
 	if lookupErr == nil && kind == KindWhatsAppWeb {
 		notifyWAWebDisconnect(ctx, studioID)
+	}
+	// Same reasoning for a QR-linked Telegram session — tell tg-web to log
+	// it out rather than leaving it live against a disconnected channel.
+	if lookupErr == nil && kind == KindTelegramMTProto {
+		notifyTGWebDisconnect(ctx, studioID)
 	}
 	return nil
 }
@@ -885,6 +950,171 @@ func (s *Service) HandleInboundSMS(ctx context.Context, messageSid, from, to, bo
 	return nil
 }
 
+// HandleInboundTelegramMessage processes a message from a studio's Telegram
+// bot. botExternalID is the bot's numeric Telegram user ID (public, used to
+// route webhooks — see webhook_telegram.go for why this isn't the bot
+// token). Follows the same identity → conversation → message → lead pattern
+// as HandleInboundSMS.
+func (s *Service) HandleInboundTelegramMessage(ctx context.Context, botExternalID string, upd channels.TelegramUpdate) error {
+	if upd.Message == nil {
+		return nil // non-message updates (edits, reactions, etc.) — ignore at L1
+	}
+	msg := upd.Message
+	chatID := fmt.Sprintf("%d", msg.Chat.ID)
+
+	// 1. Resolve the channel account by the bot's public ID.
+	channel, err := s.repo.GetChannelByExternalID(ctx, KindTelegram, botExternalID)
+	if err != nil {
+		slog.Warn("telegram inbound for unknown channel", "botExternalID", botExternalID)
+		return nil
+	}
+
+	tx, err := s.repo.Pool().BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// 2. Identity: the chat_id (stable, doesn't change even if the user
+	// renames their Telegram account).
+	displayName := strings.TrimSpace(fmt.Sprintf("%s %s", msgFromFirstName(msg), msgFromLastName(msg)))
+	identity, err := s.repo.FindOrCreateIdentity(ctx, tx, channel.StudioID, IdentityTelegramChatID, chatID, displayName)
+	if err != nil {
+		return err
+	}
+
+	// 3. Conversation.
+	conv, err := s.repo.FindOrCreateConversation(ctx, tx, channel.StudioID, channel.ID, identity.ID, chatID)
+	if err != nil {
+		return err
+	}
+
+	// Unlike other channels (default off), the Telegram bot's conversations
+	// start with AI auto-reply already on — this only fires the moment a
+	// conversation is first created (CreatedAt == UpdatedAt is
+	// FindOrCreateConversation's insert-vs-conflict tell, since the UPDATE
+	// branch always advances updated_at to a later now()), so a staff
+	// member manually turning AI off later is never silently re-enabled by
+	// the next inbound message.
+	if conv.CreatedAt.Equal(conv.UpdatedAt) && !conv.AIEnabled {
+		if _, err := tx.Exec(ctx, `UPDATE conversations SET ai_enabled = true WHERE id = $1`, conv.ID); err != nil {
+			return fmt.Errorf("enable default ai for new telegram conversation: %w", err)
+		}
+		conv.AIEnabled = true
+	}
+
+	// Link the conversation to a lead ONLY if one is already linked (e.g. a
+	// staff member manually assigned this Telegram contact to an existing
+	// lead via the UI). Deliberately never auto-creates a new lead here —
+	// unlike the QR channel (HandleInboundTGWeb), bot conversations are
+	// meant to stay in the Inbox only and never populate Pipeline/Leads.
+	// processInboundLeadAutomation below already no-ops when conv.LeadID
+	// is nil, so simply not creating one is enough to keep this channel
+	// out of both views.
+	var activeLeadID *uuid.UUID
+	if identity.LeadID != nil {
+		activeLeadID = identity.LeadID
+	} else if conv.LeadID != nil {
+		activeLeadID = conv.LeadID
+	}
+
+	if activeLeadID != nil {
+		if identity.LeadID == nil {
+			_, err = tx.Exec(ctx, `UPDATE contact_identities SET lead_id = $2 WHERE id = $1`, identity.ID, *activeLeadID)
+			if err != nil {
+				return fmt.Errorf("link identity to lead: %w", err)
+			}
+			identity.LeadID = activeLeadID
+		}
+
+		if conv.LeadID == nil {
+			_, err = tx.Exec(ctx, `UPDATE conversations SET lead_id = $2 WHERE id = $1`, conv.ID, *activeLeadID)
+			if err != nil {
+				return fmt.Errorf("link conversation to lead: %w", err)
+			}
+			leadIDStr := *activeLeadID
+			conv.LeadID = &leadIDStr
+		}
+	}
+
+	// 4. Media, if any — one attachment per message (Telegram sends photo
+	// albums as separate Update payloads, one message each, never combined).
+	body := msg.Text
+	var atts []Attachment
+	if fileID, attType, mimeHint, fileName := msg.Media(); fileID != "" {
+		var creds channels.TelegramCredentials
+		if err := json.Unmarshal([]byte(channel.AccessToken), &creds); err == nil && creds.BotToken != "" {
+			url, name, dlErr := channels.TelegramDownloadFile(ctx, nil, creds.BotToken, fileID, fileName, fmt.Sprintf("%d", msg.MessageID))
+			if dlErr != nil {
+				slog.Warn("telegram media download failed", "err", dlErr, "message_id", msg.MessageID)
+			} else {
+				if s.publicFormBaseURL != "" {
+					url = strings.TrimRight(s.publicFormBaseURL, "/") + url
+				}
+				atts = append(atts, Attachment{Type: attType, URL: url, Mime: mimeHint, Name: name})
+			}
+		}
+		if body == "" {
+			body = msg.Caption
+		}
+	}
+
+	// 5. Insert message. ExternalID dedupes retried webhook deliveries.
+	stored, err := s.repo.InsertMessage(ctx, tx, CreateMessageInput{
+		ConversationID: conv.ID,
+		StudioID:       channel.StudioID,
+		Direction:      DirectionInbound,
+		SourceKind:     SourceCustomer,
+		Body:           body,
+		Attachments:    atts,
+		ExternalID:     fmt.Sprintf("%d", msg.MessageID),
+		SentAt:         time.Unix(msg.Date, 0).UTC(),
+	})
+	if err != nil {
+		return err
+	}
+
+	if err := s.processInboundLeadAutomation(ctx, tx, channel.StudioID, conv, stored, body); err != nil {
+		return fmt.Errorf("inbound lead automation: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+
+	if stored != nil {
+		s.bus.Publish(ctx, Event{
+			Kind:           EvtMessageReceived,
+			StudioID:       channel.StudioID,
+			ConversationID: conv.ID,
+			MessageID:      &stored.ID,
+		})
+	}
+	return nil
+}
+
+func msgFromFirstName(msg *channels.TelegramMessage) string {
+	if msg.From == nil {
+		return ""
+	}
+	return msg.From.FirstName
+}
+
+func msgFromLastName(msg *channels.TelegramMessage) string {
+	if msg.From == nil {
+		return ""
+	}
+	return msg.From.LastName
+}
+
+func randomHex(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
 // HandleInboundWAWeb processes a message seen on a QR-linked WhatsApp Web
 // session's live socket — either a customer's reply (fromMe false) or a
 // message the studio typed directly into WhatsApp on the linked phone,
@@ -893,7 +1123,7 @@ func (s *Service) HandleInboundSMS(ctx context.Context, messageSid, from, to, bo
 // the same identity → conversation → message → lead pattern as
 // HandleInboundSMS, and the same inbound/outbound branching
 // handleWAWebBackfillOne already used for historical import.
-func (s *Service) HandleInboundWAWeb(ctx context.Context, studioID uuid.UUID, from, body, externalID string, fromMe bool, sentAt time.Time) error {
+func (s *Service) HandleInboundWAWeb(ctx context.Context, studioID uuid.UUID, from, body, externalID string, fromMe bool, sentAt time.Time, pushName string) error {
 	// 1. Resolve the whatsapp_web channel for this studio.
 	channel, err := s.repo.GetActiveChannelByKind(ctx, studioID, KindWhatsAppWeb)
 	if err != nil || channel == nil {
@@ -909,12 +1139,20 @@ func (s *Service) HandleInboundWAWeb(ctx context.Context, studioID uuid.UUID, fr
 	// 2. Identity stitching — strip @suffix for display, but also try to merge
 	// LID-based identities with phone-based ones for the same numeric ID.
 	//
-	// displayName is intentionally left blank rather than set to the raw
-	// phone/JID: FindOrCreateIdentity only writes display_name when the
-	// existing value is empty, so passing the phone number here would
-	// permanently lock it in as the display name even after a real name
-	// (e.g. from an imported lead) becomes known.
+	// displayName comes from WhatsApp's own pushName on this message, never
+	// the raw phone/JID: FindOrCreateIdentity only writes display_name when
+	// the existing value is empty, so falling back to the phone number here
+	// would permanently lock it in as the display name even after a real
+	// name becomes known. pushName is the SENDER's own account name — for a
+	// fromMe message that's the studio's own WhatsApp profile name, not the
+	// contact's, so it must never be used here (confirmed in production:
+	// this locked a customer identity to the studio's own name on their
+	// first-ever, studio-sent campaign message). The wa-web side already
+	// guards this too; this is defense in depth, not the only guard.
 	displayName := ""
+	if !fromMe {
+		displayName = strings.TrimSpace(pushName)
+	}
 	numericPart := from
 	if idx := strings.Index(from, "@"); idx > 0 {
 		numericPart = from[:idx]
@@ -1017,12 +1255,19 @@ func (s *Service) HandleInboundWAWeb(ctx context.Context, studioID uuid.UUID, fr
 				}
 				leadID = uuid.New()
 				emailPlaceholder := fmt.Sprintf("wa-%s@example.com", cleanPhone)
+				// Prefer WhatsApp's own pushName over the bare phone digits when
+				// we already have one on this very first message, so the lead
+				// never needs a later placeholder-name fixup at all.
+				leadName := cleanPhone
+				if displayName != "" {
+					leadName = displayName
+				}
 				_, err = tx.Exec(ctx, `
 					INSERT INTO leads (id, studio_id, campaign_id, name, first_name, last_name,
 					                   email, phone, fitness_plan, status, source,
 					                   auto_contact_stage, created_at, updated_at)
 					VALUES ($1,$2,$3,$4,$5,'', $6,$7,$8,'contacted','whatsapp_web','awaiting_options',now(),now())
-				`, leadID, studioID, campaignID, cleanPhone, cleanPhone, emailPlaceholder, cleanPhone, defaultPlan)
+				`, leadID, studioID, campaignID, leadName, leadName, emailPlaceholder, cleanPhone, defaultPlan)
 				if err != nil {
 					return fmt.Errorf("auto-create wa-web lead: %w", err)
 				}
@@ -1043,6 +1288,13 @@ func (s *Service) HandleInboundWAWeb(ctx context.Context, studioID uuid.UUID, fr
 		if conv.LeadID == nil {
 			_, _ = tx.Exec(ctx, `UPDATE conversations SET lead_id=$2 WHERE id=$1`, conv.ID, *activeLeadID)
 			conv.LeadID = activeLeadID
+		}
+		// A lead that already existed (found by phone lookup above, or linked
+		// on a prior message) may still be carrying its auto-create placeholder
+		// name (the bare phone digits) if this is the first time we've heard a
+		// real pushName for it — fix that up now instead of leaving it stuck.
+		if err := s.repo.UpdateLeadNameIfPlaceholder(ctx, tx, *activeLeadID, displayName); err != nil {
+			return fmt.Errorf("sync wa-web lead name: %w", err)
 		}
 	}
 
@@ -1100,9 +1352,229 @@ func (s *Service) HandleInboundWAWeb(ctx context.Context, studioID uuid.UUID, fr
 	return nil
 }
 
-// BackfillMessage is one historical message pulled from a WhatsApp Web chat
-// after a QR-linked session connects. fromMe distinguishes messages the
-// studio previously sent (outbound) from ones the customer sent (inbound).
+// HandleInboundTGWeb processes a message seen on a QR-linked personal
+// Telegram account (tg-web). Follows the same identity → conversation →
+// message → lead pattern as HandleInboundWAWeb, but without WhatsApp's
+// @lid/@c.us JID-merging complexity — a Telegram chat ID is already a
+// single stable numeric identifier, so identityKey is just chatID directly.
+func (s *Service) HandleInboundTGWeb(ctx context.Context, studioID uuid.UUID, chatID, body, externalID string, fromMe bool, displayName string, attachments []Attachment, sentAt time.Time) error {
+	channel, err := s.repo.GetActiveChannelByKind(ctx, studioID, KindTelegramMTProto)
+	if err != nil || channel == nil {
+		return nil // session not yet connected — ignore
+	}
+
+	tx, err := s.repo.Pool().BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	identity, err := s.repo.FindOrCreateIdentity(ctx, tx, studioID, IdentityTelegramChatID, chatID, displayName)
+	if err != nil {
+		return err
+	}
+
+	conv, err := s.repo.FindOrCreateConversation(ctx, tx, studioID, channel.ID, identity.ID, chatID)
+	if err != nil {
+		return err
+	}
+
+	var activeLeadID *uuid.UUID
+	if identity.LeadID != nil {
+		activeLeadID = identity.LeadID
+	} else if conv.LeadID != nil {
+		activeLeadID = conv.LeadID
+	}
+
+	if activeLeadID == nil {
+		var campaignID uuid.UUID
+		var fitnessPlans []string
+		errCampaign := tx.QueryRow(ctx, `
+			SELECT id, fitness_plans FROM campaigns
+			WHERE studio_id = $1 AND active = true
+			ORDER BY created_at DESC LIMIT 1
+		`, studioID).Scan(&campaignID, &fitnessPlans)
+		if errCampaign != nil {
+			_ = tx.QueryRow(ctx, `
+				SELECT id, fitness_plans FROM campaigns WHERE studio_id = $1 LIMIT 1
+			`, studioID).Scan(&campaignID, &fitnessPlans)
+		}
+		if campaignID == uuid.Nil {
+			// No campaign for this studio yet — skip lead auto-create rather
+			// than fail the whole transaction (leads.campaign_id is NOT
+			// NULL). Matches HandleInboundWAWeb's same guard.
+			slog.Warn("no campaign exists for studio, skipping tg-web lead auto-create", "studio_id", studioID)
+		} else {
+			defaultPlan := "Trial Class"
+			if len(fitnessPlans) > 0 {
+				defaultPlan = fitnessPlans[0]
+			}
+			leadName := displayName
+			if leadName == "" {
+				leadName = chatID
+			}
+			leadID := uuid.New()
+			emailPlaceholder := fmt.Sprintf("tg-%s@example.com", chatID)
+			_, err = tx.Exec(ctx, `
+				INSERT INTO leads (id, studio_id, campaign_id, name, first_name, last_name,
+				                   email, phone, fitness_plan, status, source,
+				                   auto_contact_stage, created_at, updated_at)
+				VALUES ($1,$2,$3,$4,$5,'', $6,$7,$8,'contacted','telegram_mtproto','awaiting_options',now(),now())
+			`, leadID, studioID, campaignID, leadName, leadName, emailPlaceholder, chatID, defaultPlan)
+			if err != nil {
+				return fmt.Errorf("auto-create tg-web lead: %w", err)
+			}
+			activeLeadID = &leadID
+		}
+	}
+
+	if activeLeadID != nil {
+		if identity.LeadID == nil {
+			_, _ = tx.Exec(ctx, `UPDATE contact_identities SET lead_id=$2 WHERE id=$1`, identity.ID, *activeLeadID)
+			identity.LeadID = activeLeadID
+		}
+		if conv.LeadID == nil {
+			_, _ = tx.Exec(ctx, `UPDATE conversations SET lead_id=$2 WHERE id=$1`, conv.ID, *activeLeadID)
+			conv.LeadID = activeLeadID
+		}
+	}
+
+	// fromMe means this was typed directly into Telegram on the linked
+	// account rather than sent through this platform — record as outbound.
+	// A fromMe message that's actually the live echo of something our own
+	// outbound worker already sent (see tgWebSender.SendText) dedupes
+	// naturally on externalID via InsertMessage's ON CONFLICT DO NOTHING.
+	direction := DirectionInbound
+	sourceKind := SourceCustomer
+	if fromMe {
+		direction = DirectionOutbound
+		sourceKind = SourceStudioUser
+	}
+	stored, err := s.repo.InsertMessage(ctx, tx, CreateMessageInput{
+		ConversationID: conv.ID,
+		StudioID:       studioID,
+		Direction:      direction,
+		SourceKind:     sourceKind,
+		Body:           body,
+		Attachments:    attachments,
+		ExternalID:     externalID,
+		SentAt:         sentAt,
+	})
+	if err != nil {
+		return err
+	}
+
+	if !fromMe {
+		if err := s.processInboundLeadAutomation(ctx, tx, studioID, conv, stored, body); err != nil {
+			return fmt.Errorf("inbound lead automation: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+
+	if stored != nil {
+		evtKind := EvtMessageReceived
+		if fromMe {
+			evtKind = EvtMessageSent
+		}
+		s.bus.Publish(ctx, Event{
+			Kind:           evtKind,
+			StudioID:       studioID,
+			ConversationID: conv.ID,
+			MessageID:      &stored.ID,
+		})
+	}
+	return nil
+}
+
+// HandleInboundTGWebBackfill imports historical messages from a QR-linked
+// Telegram chat. Mirrors HandleInboundWAWebBackfill's contract: no AI/lead
+// automation, uses InsertMessageBackfill so unread counts/last-message
+// snapshots can't be corrupted, and never auto-creates a lead for a contact
+// that doesn't already have one.
+func (s *Service) HandleInboundTGWebBackfill(ctx context.Context, studioID uuid.UUID, msgs []BackfillMessage, contactDisplayName string) (int, error) {
+	if len(msgs) == 0 {
+		return 0, nil
+	}
+	channel, err := s.repo.GetActiveChannelByKind(ctx, studioID, KindTelegramMTProto)
+	if errors.Is(err, ErrNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("look up telegram_mtproto channel: %w", err)
+	}
+
+	imported := 0
+	for _, m := range msgs {
+		inserted, err := s.handleTGWebBackfillOne(ctx, studioID, channel.ID, m, contactDisplayName)
+		if err != nil {
+			return imported, err
+		}
+		if inserted {
+			imported++
+		}
+	}
+	return imported, nil
+}
+
+func (s *Service) handleTGWebBackfillOne(ctx context.Context, studioID, channelID uuid.UUID, m BackfillMessage, contactDisplayName string) (bool, error) {
+	tx, err := s.repo.Pool().BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return false, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	displayName := m.From
+	if contactDisplayName != "" {
+		displayName = contactDisplayName
+	}
+	identity, err := s.repo.FindOrCreateIdentity(ctx, tx, studioID, IdentityTelegramChatID, m.From, displayName)
+	if err != nil {
+		return false, err
+	}
+
+	conv, err := s.repo.FindOrCreateConversation(ctx, tx, studioID, channelID, identity.ID, m.From)
+	if err != nil {
+		return false, err
+	}
+
+	sentAt := time.Now().UTC()
+	if m.Timestamp > 0 {
+		sentAt = time.Unix(m.Timestamp, 0).UTC()
+	}
+	direction := DirectionInbound
+	sourceKind := SourceCustomer
+	if m.FromMe {
+		direction = DirectionOutbound
+		sourceKind = SourceStudioUser
+	}
+
+	stored, err := s.repo.InsertMessageBackfill(ctx, tx, CreateMessageInput{
+		ConversationID: conv.ID,
+		StudioID:       studioID,
+		Direction:      direction,
+		SourceKind:     sourceKind,
+		Body:           m.Text,
+		ExternalID:     m.MessageID,
+		SentAt:         sentAt,
+	})
+	if err != nil {
+		return false, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit: %w", err)
+	}
+	return stored != nil, nil
+}
+
+// BackfillMessage is one historical message pulled from a QR-linked chat
+// (WhatsApp Web or Telegram) after the session connects. fromMe
+// distinguishes messages the studio previously sent (outbound) from ones
+// the customer sent (inbound). For WA-Web, From is a WhatsApp JID; for
+// tg-web, it's a Telegram chat ID.
 type BackfillMessage struct {
 	From      string
 	Text      string
@@ -1126,9 +1598,11 @@ type BackfillMessage struct {
 // contactDisplayName is the contact's real WhatsApp display name, pulled
 // from the same history-sync payload as the messages (see sessions.js's
 // messaging-history.set handler) — empty if WhatsApp didn't supply one for
-// this chat. Populates contact_identities.display_name only; deliberately
-// does NOT touch leads, matching this function's existing no-phantom-leads
-// contract below.
+// this chat. Populates contact_identities.display_name, and — only if a lead
+// already exists for this contact and is still carrying its auto-create
+// placeholder name — fixes that name up too (see UpdateLeadNameIfPlaceholder).
+// Still never creates a lead itself, matching this function's existing
+// no-phantom-leads contract below.
 func (s *Service) HandleInboundWAWebBackfill(ctx context.Context, studioID uuid.UUID, msgs []BackfillMessage, contactDisplayName string) (int, error) {
 	if len(msgs) == 0 {
 		return 0, nil
@@ -1164,14 +1638,17 @@ func (s *Service) handleWAWebBackfillOne(ctx context.Context, studioID, channelI
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	displayName := m.From
+	// displayName is left blank when history sync didn't supply a real name
+	// for this chat (contactDisplayName == "") — NOT filled with the raw
+	// phone digits. FindOrCreateIdentity only ever writes display_name once
+	// (when it's currently empty), so defaulting to the phone number here
+	// would permanently lock the identity to showing a number, even once a
+	// real name arrives later via a live message's pushName or the
+	// contact-name-only sync.
+	displayName := contactDisplayName
 	numericPart := m.From
 	if idx := strings.Index(m.From, "@"); idx > 0 {
 		numericPart = m.From[:idx]
-		displayName = numericPart
-	}
-	if contactDisplayName != "" {
-		displayName = contactDisplayName
 	}
 	identityKey := m.From
 	if strings.HasSuffix(m.From, "@c.us") {
@@ -1188,6 +1665,17 @@ func (s *Service) handleWAWebBackfillOne(ctx context.Context, studioID, channelI
 	identity, err := s.repo.FindOrCreateIdentity(ctx, tx, studioID, IdentityPhone, identityKey, displayName)
 	if err != nil {
 		return false, err
+	}
+
+	// Backfill never creates a lead (see the no-phantom-leads contract in the
+	// doc comment above), but if one already exists for this contact — e.g.
+	// imported from a Google Sheet, or created on an earlier live message —
+	// and it's still carrying the phone-digits placeholder name, this is a
+	// real learned name and should replace it.
+	if identity.LeadID != nil && contactDisplayName != "" {
+		if err := s.repo.UpdateLeadNameIfPlaceholder(ctx, tx, *identity.LeadID, contactDisplayName); err != nil {
+			return false, fmt.Errorf("sync wa-web backfill lead name: %w", err)
+		}
 	}
 
 	conv, err := s.repo.FindOrCreateConversation(ctx, tx, studioID, channelID, identity.ID, identityKey)
@@ -1223,6 +1711,63 @@ func (s *Service) handleWAWebBackfillOne(ctx context.Context, studioID, channelI
 		return false, fmt.Errorf("commit: %w", err)
 	}
 	return stored != nil, nil
+}
+
+// HandleWAWebContactName records a display name for a WhatsApp contact that
+// wa-web's history sync knows about but has no message history to attach it
+// to (e.g. a saved phone contact with no chat yet, or a chat whose only
+// messages were media/stickers that handleWAWebBackfillOne's text-only
+// import skips). Without this, such contacts would show up in the inbox
+// contact list — or never show up at all — with nothing but a raw phone
+// number, even though WhatsApp already told us their real name during sync.
+//
+// Deliberately does not create a conversation or a lead — same
+// no-phantom-leads contract as HandleInboundWAWebBackfill — it only ever
+// upserts the contact_identities row (and fixes up an already-existing
+// lead's placeholder name, exactly like the backfill path does).
+func (s *Service) HandleWAWebContactName(ctx context.Context, studioID uuid.UUID, jid, displayName string) error {
+	displayName = strings.TrimSpace(displayName)
+	if jid == "" || displayName == "" {
+		return nil
+	}
+
+	tx, err := s.repo.Pool().BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	numericPart := jid
+	if idx := strings.Index(jid, "@"); idx > 0 {
+		numericPart = jid[:idx]
+	}
+	identityKey := jid
+	if strings.HasSuffix(jid, "@c.us") {
+		var lidValue string
+		_ = tx.QueryRow(ctx, `
+			SELECT value FROM contact_identities
+			WHERE studio_id = $1 AND kind = 'phone' AND value LIKE $2
+			LIMIT 1
+		`, studioID, numericPart+"%@lid").Scan(&lidValue)
+		if lidValue != "" {
+			identityKey = lidValue
+		}
+	}
+
+	identity, err := s.repo.FindOrCreateIdentity(ctx, tx, studioID, IdentityPhone, identityKey, displayName)
+	if err != nil {
+		return err
+	}
+	if identity.LeadID != nil {
+		if err := s.repo.UpdateLeadNameIfPlaceholder(ctx, tx, *identity.LeadID, displayName); err != nil {
+			return fmt.Errorf("sync wa-web contact-name lead name: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
 }
 
 // HandleStatus updates an outbound message's delivery state when Meta tells

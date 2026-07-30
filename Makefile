@@ -74,9 +74,12 @@ web: ## Run the Next.js web app (admin + public + auth, single app)
 wa-web: ## Run the WhatsApp Web QR service
 	cd apps/wa-web && node src/index.js
 
-dev: ## Run API + web + wa-web concurrently
-	$(PNPM) dlx concurrently -n api,web,wa-web -c blue,magenta,green \
-		"\"$(MAKE)\" api" "\"$(MAKE)\" web" "\"$(MAKE)\" wa-web"
+tg-web: ## Run the Telegram QR-login service (reports "not configured" without TELEGRAM_API_ID/HASH in .env)
+	cd apps/tg-web && node src/index.js
+
+dev: ## Run API + web + wa-web + tg-web concurrently (tg-web degrades to "not configured" without TELEGRAM_API_ID/HASH — see docs/SETUP_TELEGRAM_QR.md)
+	$(PNPM) dlx concurrently -n api,web,wa-web,tg-web -c blue,magenta,green,cyan \
+		"\"$(MAKE)\" api" "\"$(MAKE)\" web" "\"$(MAKE)\" wa-web" "\"$(MAKE)\" tg-web"
 
 # ---------- quality ----------
 .PHONY: test lint fmt
