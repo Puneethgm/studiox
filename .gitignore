@@ -51,6 +51,8 @@ coverage.txt
 # WhatsApp Web session auth (mounted as Docker volume in prod)
 apps/wa-web/auth/
 apps/wa-web/.wwebjs_cache/
+# Runtime debug log — real phone numbers/message previews, never commit
+apps/wa-web/*.log
 heroic-artifact-434914-d4-1b7152cf7bec.json
 # Exclude all json except package manifests
 *.json
