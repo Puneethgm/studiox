@@ -1427,6 +1427,7 @@ export function InboxLive({
                       <ChannelAvatar
                         kind={selected.channelKind}
                         name={selected.contactDisplayName || displayContact(selected.contactValue)}
+                        hideBadgeOnMobile
                       />
                       <div className="min-w-0">
                         <div className="truncate text-xs font-black text-zinc-900 dark:text-zinc-100">
@@ -2703,7 +2704,7 @@ export function InboxLive({
 
 // ────────────────────────────────────────────────────────────────
 
-function ChannelAvatar({ kind, name, active }: { kind: ChannelKind; name: string; active?: boolean }) {
+function ChannelAvatar({ kind, name, active, hideBadgeOnMobile }: { kind: ChannelKind; name: string; active?: boolean; hideBadgeOnMobile?: boolean }) {
   const ch = CHANNEL_BADGE[kind];
   return (
     <span className="relative shrink-0">
@@ -2720,7 +2721,8 @@ function ChannelAvatar({ kind, name, active }: { kind: ChannelKind; name: string
       <span
         className={cn(
           "absolute -bottom-0.5 -right-0.5 grid h-5 w-5 place-items-center rounded-full text-[9px] font-black text-white shadow-md",
-          active ? "ring-2 ring-brand-500/50" : "ring-2 ring-white/50 dark:ring-neutral-900/80"
+          active ? "ring-2 ring-brand-500/50" : "ring-2 ring-white/50 dark:ring-neutral-900/80",
+          hideBadgeOnMobile && "hidden sm:grid"
         )}
         style={{ background: ch?.color || '#999' }}
         aria-label={ch?.label || kind}
