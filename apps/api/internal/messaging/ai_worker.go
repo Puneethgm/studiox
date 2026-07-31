@@ -457,8 +457,10 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		}
 	}
 
-	// Fetch last 5 messages as the immediate recent window
-	history, err := w.msgRepo.ListMessages(ctx, studioID, conv.ID, 5)
+	// Fetch last 15 messages as the immediate recent window. 5 was too
+	// short — the model would forget questions/offers it made only a few
+	// turns back and repeat itself.
+	history, err := w.msgRepo.ListMessages(ctx, studioID, conv.ID, 15)
 	if err != nil {
 		w.log.Error("fetch message history for ai context failed", "err", err)
 		history = []Message{*msg}
@@ -809,39 +811,47 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		}
 	}
 
-	// "Yes to trial" shortcut: when the bot's last outbound message offered a trial
-	// and the customer replies affirmatively, skip AI and send the payment link directly.
+	// "Yes to trial" shortcut: when a recent bot message offered a trial and
+	// the customer replies affirmatively, skip AI and send the payment link
+	// directly.
 	if lead != nil {
 		lowerMsg := strings.ToLower(strings.TrimSpace(msg.Body))
 		isAffirmative := lowerMsg == "yes" || lowerMsg == "yeah" || lowerMsg == "sure" ||
 			lowerMsg == "ok" || lowerMsg == "okay" || lowerMsg == "yep" || lowerMsg == "yup" ||
-			lowerMsg == "y" || strings.HasPrefix(lowerMsg, "yes ") || strings.HasPrefix(lowerMsg, "sure ")
+			lowerMsg == "y" || lowerMsg == "keen" || lowerMsg == "im keen" || lowerMsg == "i'm keen" ||
+			strings.HasPrefix(lowerMsg, "yes ") || strings.HasPrefix(lowerMsg, "sure ") ||
+			strings.Contains(lowerMsg, "i'm keen") || strings.Contains(lowerMsg, "im keen") ||
+			strings.Contains(lowerMsg, "interested")
 		if isAffirmative {
-			// Find the last outbound message in history
-			for i := len(history) - 1; i >= 0; i-- {
+			// Check the last few outbound messages (not just the single most
+			// recent one) — back-to-back bot replies can otherwise push a
+			// genuine trial offer just out of view.
+			checked := 0
+			for i := len(history) - 1; i >= 0 && checked < 3; i-- {
 				m := history[i]
-				if m.Direction == DirectionOutbound {
-					lastBot := strings.ToLower(m.Body)
-					offeredTrial := strings.Contains(lastBot, "trial") &&
-						(strings.Contains(lastBot, "would you like") ||
-							strings.Contains(lastBot, "book a trial") ||
-							strings.Contains(lastBot, "sign up for a trial") ||
-							strings.Contains(lastBot, "try") ||
-							strings.Contains(lastBot, "experience"))
-					if offeredTrial {
-						firstName := lead.FirstName
-						if firstName == "" {
-							firstName = lead.Name
-						}
-						if _, err := w.msgSvc.SendTrialPaymentLink(ctx, studioID, conv.ID, conv.LeadID, firstName); err != nil {
-							w.log.Error("yes-to-trial: failed to send payment link", "err", err, "conv", conv.ID)
-						} else {
-							w.bus.Publish(ctx, Event{Kind: EvtOutboundJobEnqueued, StudioID: studioID, ConversationID: conv.ID})
-							w.log.Info("yes-to-trial shortcut triggered", "conv", conv.ID)
-						}
-						return nil
+				if m.Direction != DirectionOutbound {
+					continue
+				}
+				checked++
+				lastBot := strings.ToLower(m.Body)
+				offeredTrial := strings.Contains(lastBot, "trial") &&
+					(strings.Contains(lastBot, "would you like") ||
+						strings.Contains(lastBot, "book a trial") ||
+						strings.Contains(lastBot, "sign up for a trial") ||
+						strings.Contains(lastBot, "try") ||
+						strings.Contains(lastBot, "experience"))
+				if offeredTrial {
+					firstName := lead.FirstName
+					if firstName == "" {
+						firstName = lead.Name
 					}
-					break
+					if _, err := w.msgSvc.SendTrialPaymentLink(ctx, studioID, conv.ID, conv.LeadID, firstName); err != nil {
+						w.log.Error("yes-to-trial: failed to send payment link", "err", err, "conv", conv.ID)
+					} else {
+						w.bus.Publish(ctx, Event{Kind: EvtOutboundJobEnqueued, StudioID: studioID, ConversationID: conv.ID})
+						w.log.Info("yes-to-trial shortcut triggered", "conv", conv.ID)
+					}
+					return nil
 				}
 			}
 		}
@@ -1080,7 +1090,8 @@ func (w *AIWorker) buildPrompt(history []Message, semanticHistory []SemanticMatc
 		sb.WriteString("KNOWLEDGE BASE:\n\"\"\"\n")
 		sb.WriteString(kbText)
 		sb.WriteString("\n\"\"\"\n")
-		sb.WriteString("Use the knowledge base above to answer factual questions. If it doesn't cover the exact question, use what context you have and answer helpfully anyway — do NOT say you don't know or that someone will follow up.\n\n")
+		sb.WriteString("Use the knowledge base above to answer factual questions. If it doesn't cover the exact question, use what context you have and answer helpfully anyway — do NOT say you don't know or that someone will follow up. ")
+		sb.WriteString("You can see your own earlier replies in RECENT CONVERSATION below — do NOT restate pricing, promotions, or programme details you've already told the customer in this conversation; assume they remember it and only repeat something if they explicitly ask again. Keep replies short and move the conversation forward instead of re-explaining what's already covered.\n\n")
 	}
 
 	// ── Plans ────────────────────────────────────────────────────────────────
