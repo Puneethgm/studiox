@@ -1104,6 +1104,15 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                       onChange={(e) => setExtNotesColumn(e.target.value)}
                     />
                   </div>
+                  <div>
+                    <Label htmlFor="extDateColumn">Date Col</Label>
+                    <Input
+                      id="extDateColumn"
+                      placeholder="(optional)"
+                      value={extDateColumn}
+                      onChange={(e) => setExtDateColumn(e.target.value)}
+                    />
+                  </div>
                 </div>
                 <FieldHint>
                   Use the full name column if the sheet has one combined column instead of separate first/last name columns.
