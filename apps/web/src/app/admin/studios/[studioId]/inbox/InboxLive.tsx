@@ -1442,7 +1442,7 @@ export function InboxLive({
                     </div>
                     <div className="flex items-center gap-1">
                       {selected.leadId && (
-                        <div className="relative mr-2">
+                        <div className="relative mr-2 hidden sm:block">
                           <select
                             value={selected.assignedTo || ''}
                             onChange={(e) => handleAssigneeChange(e.target.value)}
