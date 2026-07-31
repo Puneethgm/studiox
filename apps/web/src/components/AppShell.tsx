@@ -584,7 +584,7 @@ function Topbar({
     pageIcon = <Home className="h-[18px] w-[18px] text-slate-600 dark:text-slate-400" />;
   }
   return (
-    <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-2 border-b border-zinc-200 bg-white px-3 sm:px-6 dark:border-zinc-800 dark:bg-zinc-950 shrink-0 overflow-x-auto no-scrollbar">
+    <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-2 border-b border-zinc-200 bg-white px-3 sm:px-6 dark:border-zinc-800 dark:bg-zinc-950 shrink-0">
       {/* Mobile menu button */}
       <button
         type="button"
