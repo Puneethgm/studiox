@@ -158,14 +158,15 @@ func (w *Worker) importFromSheet(ctx context.Context, cfg leads.ExternalLeadsShe
 			source = "external_sheet"
 		}
 
-		// HOT LEAD? is HOT/WARM/COLD in the sheet. Only WARM leads get
-		// auto-contacted; HOT, COLD, and leads that already purchased a
-		// trial are imported but left for manual follow-up instead.
+		// HOT LEAD? is HOT/WARM/COLD in the sheet, or blank if not yet
+		// categorized. Only an explicit HOT or COLD holds off auto-contact —
+		// a blank cell (uncategorized) is treated the same as WARM and
+		// still gets contacted normally. Trial-purchased leads never get
+		// auto-contacted either way.
 		hotLeadRaw := strings.ToUpper(cell(row, hotLeadCol))
-		isWarm := hotLeadRaw == "WARM"
 		hotLead := hotLeadRaw == "HOT" || hotLeadRaw == "WARM"
 		trialPurchased := strings.EqualFold(cell(row, trialPurchasedCol), "YES")
-		skipAutoContact := trialPurchased || !isWarm
+		skipAutoContact := trialPurchased || hotLeadRaw == "HOT" || hotLeadRaw == "COLD"
 
 		lead := &leads.Lead{
 			StudioID:       cfg.StudioID,
