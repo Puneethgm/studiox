@@ -230,7 +230,7 @@ func (s *Service) SubmitPublicLead(ctx context.Context, in SubmitLeadInput) (*Le
 	} else {
 		l.Status = StatusNew
 	}
-	if err := s.repo.CreateLeadWithOutbox(ctx, l, sheetsDestination); err != nil {
+	if err := s.repo.CreateLeadWithOutbox(ctx, l, sheetsDestination, false); err != nil {
 		return nil, nil, err
 	}
 	return l, nil, nil
@@ -571,7 +571,7 @@ func (s *Service) ImportLeads(ctx context.Context, studioID uuid.UUID, defaultCa
 			Source:       "import",
 		}
 
-		if err := s.repo.CreateLeadWithOutbox(ctx, l, sheetsDestination); err != nil {
+		if err := s.repo.CreateLeadWithOutbox(ctx, l, sheetsDestination, false); err != nil {
 			return importedCount, fmt.Errorf("row %d import: %w", rIdx, err)
 		}
 		importedCount++

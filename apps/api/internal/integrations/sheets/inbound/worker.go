@@ -108,6 +108,8 @@ func (w *Worker) importFromSheet(ctx context.Context, cfg leads.ExternalLeadsShe
 	sourceCol := columnIndex(cfg.SourceColumn)
 	notesCol := columnIndex(cfg.NotesColumn)
 	dateCol := columnIndex(cfg.DateColumn)
+	hotLeadCol := columnIndex(cfg.HotLeadColumn)
+	trialPurchasedCol := columnIndex(cfg.TrialPurchasedColumn)
 	now := time.Now()
 	curYear, curMonth, _ := now.Date()
 
@@ -156,18 +158,34 @@ func (w *Worker) importFromSheet(ctx context.Context, cfg leads.ExternalLeadsShe
 			source = "external_sheet"
 		}
 
+		// HOT LEAD? is HOT/WARM/COLD in the sheet. Only WARM leads get
+		// auto-contacted; HOT, COLD, and leads that already purchased a
+		// trial are imported but left for manual follow-up instead.
+		hotLeadRaw := strings.ToUpper(cell(row, hotLeadCol))
+		isWarm := hotLeadRaw == "WARM"
+		hotLead := hotLeadRaw == "HOT" || hotLeadRaw == "WARM"
+		trialPurchased := strings.EqualFold(cell(row, trialPurchasedCol), "YES")
+		skipAutoContact := trialPurchased || !isWarm
+
 		lead := &leads.Lead{
-			StudioID:   cfg.StudioID,
-			CampaignID: defaultCampaign.ID,
-			FirstName:  firstName,
-			LastName:   lastName,
-			Email:      email,
-			Phone:      phone,
-			Source:     source,
-			Notes:      cell(row, notesCol),
+			StudioID:       cfg.StudioID,
+			CampaignID:     defaultCampaign.ID,
+			FirstName:      firstName,
+			LastName:       lastName,
+			Email:          email,
+			Phone:          phone,
+			Source:         source,
+			Notes:          cell(row, notesCol),
+			HotLead:        hotLead,
+			TrialPurchased: trialPurchased,
+		}
+		if trialPurchased {
+			// Route straight into the trial pipeline instead of the default
+			// "new" stage — they've already purchased a trial.
+			lead.Status = leads.StatusTrialBooked
 		}
 
-		if err := w.repo.CreateLeadWithOutbox(ctx, lead, "lead_autocontact"); err != nil {
+		if err := w.repo.CreateLeadWithOutbox(ctx, lead, "lead_autocontact", skipAutoContact); err != nil {
 			w.log.Warn("Sheets | External leads import worker — failed to create lead from sheet row",
 				"component", "external_leads_sheet", "studio_id", cfg.StudioID, "row", sheetRowNum, "error", err.Error())
 			continue

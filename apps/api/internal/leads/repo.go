@@ -180,7 +180,7 @@ func (r *Repo) UpdateCampaignFitnessPlans(ctx context.Context, studioID, id uuid
 // CreateLeadWithOutbox writes the lead and a matching outbox row in a single
 // transaction so we can never have a lead in DB without a queued export, or
 // vice versa.
-func (r *Repo) CreateLeadWithOutbox(ctx context.Context, l *Lead, destination string) error {
+func (r *Repo) CreateLeadWithOutbox(ctx context.Context, l *Lead, destination string, skipAutoContact bool) error {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -252,19 +252,21 @@ func (r *Repo) CreateLeadWithOutbox(ctx context.Context, l *Lead, destination st
 	if err != nil {
 		return fmt.Errorf("marshal lead payload: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO outbox (aggregate_type, aggregate_id, event_type, destination, payload)
-		VALUES ('lead', $1, 'lead.created', $2, $3)
-	`, l.ID, destination, string(payload)); err != nil {
-		return fmt.Errorf("insert outbox: %w", err)
-	}
+	if !skipAutoContact {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO outbox (aggregate_type, aggregate_id, event_type, destination, payload)
+			VALUES ('lead', $1, 'lead.created', $2, $3)
+		`, l.ID, destination, string(payload)); err != nil {
+			return fmt.Errorf("insert outbox: %w", err)
+		}
 
-	// Also enqueue an autocontact job so the auto-contact worker can pick it up.
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO outbox (aggregate_type, aggregate_id, event_type, destination, payload)
-		VALUES ('lead', $1, 'lead.created', 'lead_autocontact', $2)
-	`, l.ID, string(payload)); err != nil {
-		return fmt.Errorf("insert autocontact outbox: %w", err)
+		// Also enqueue an autocontact job so the auto-contact worker can pick it up.
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO outbox (aggregate_type, aggregate_id, event_type, destination, payload)
+			VALUES ('lead', $1, 'lead.created', 'lead_autocontact', $2)
+		`, l.ID, string(payload)); err != nil {
+			return fmt.Errorf("insert autocontact outbox: %w", err)
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -835,13 +837,15 @@ func (r *Repo) SaveSheetsSettings(ctx context.Context, s *StudioSheetsSettings) 
 func (r *Repo) GetExternalLeadsSheetSettings(ctx context.Context, studioID uuid.UUID) (*ExternalLeadsSheetSettings, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, studio_id, spreadsheet_id, tab_name, name_column, first_name_column, last_name_column,
-		       email_column, phone_column, source_column, notes_column, date_column, active, created_at, updated_at
+		       email_column, phone_column, source_column, notes_column, date_column, hot_lead_column,
+		       trial_purchased_column, active, created_at, updated_at
 		FROM studio_external_leads_sheet_settings
 		WHERE studio_id = $1
 	`, studioID)
 	var s ExternalLeadsSheetSettings
 	if err := row.Scan(&s.ID, &s.StudioID, &s.SpreadsheetID, &s.TabName, &s.NameColumn, &s.FirstNameColumn,
-		&s.LastNameColumn, &s.EmailColumn, &s.PhoneColumn, &s.SourceColumn, &s.NotesColumn, &s.DateColumn, &s.Active,
+		&s.LastNameColumn, &s.EmailColumn, &s.PhoneColumn, &s.SourceColumn, &s.NotesColumn, &s.DateColumn,
+		&s.HotLeadColumn, &s.TrialPurchasedColumn, &s.Active,
 		&s.CreatedAt, &s.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -855,8 +859,9 @@ func (r *Repo) SaveExternalLeadsSheetSettings(ctx context.Context, s *ExternalLe
 	row := r.pool.QueryRow(ctx, `
 		INSERT INTO studio_external_leads_sheet_settings
 			(studio_id, spreadsheet_id, tab_name, name_column, first_name_column, last_name_column,
-			 email_column, phone_column, source_column, notes_column, date_column, active)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+			 email_column, phone_column, source_column, notes_column, date_column, hot_lead_column,
+			 trial_purchased_column, active)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		ON CONFLICT (studio_id) DO UPDATE
 		SET spreadsheet_id = EXCLUDED.spreadsheet_id,
 		    tab_name = EXCLUDED.tab_name,
@@ -868,11 +873,14 @@ func (r *Repo) SaveExternalLeadsSheetSettings(ctx context.Context, s *ExternalLe
 		    source_column = EXCLUDED.source_column,
 		    notes_column = EXCLUDED.notes_column,
 		    date_column = EXCLUDED.date_column,
+		    hot_lead_column = EXCLUDED.hot_lead_column,
+		    trial_purchased_column = EXCLUDED.trial_purchased_column,
 		    active = EXCLUDED.active,
 		    updated_at = now()
 		RETURNING id, created_at, updated_at
 	`, s.StudioID, s.SpreadsheetID, s.TabName, s.NameColumn, s.FirstNameColumn, s.LastNameColumn,
-		s.EmailColumn, s.PhoneColumn, s.SourceColumn, s.NotesColumn, s.DateColumn, s.Active)
+		s.EmailColumn, s.PhoneColumn, s.SourceColumn, s.NotesColumn, s.DateColumn,
+		s.HotLeadColumn, s.TrialPurchasedColumn, s.Active)
 	if err := row.Scan(&s.ID, &s.CreatedAt, &s.UpdatedAt); err != nil {
 		return fmt.Errorf("save external leads sheet settings: %w", err)
 	}
@@ -885,7 +893,8 @@ func (r *Repo) SaveExternalLeadsSheetSettings(ctx context.Context, s *ExternalLe
 func (r *Repo) ListActiveExternalLeadsSheetSettings(ctx context.Context) ([]ExternalLeadsSheetSettings, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, studio_id, spreadsheet_id, tab_name, name_column, first_name_column, last_name_column,
-		       email_column, phone_column, source_column, notes_column, date_column, active, created_at, updated_at
+		       email_column, phone_column, source_column, notes_column, date_column, hot_lead_column,
+		       trial_purchased_column, active, created_at, updated_at
 		FROM studio_external_leads_sheet_settings
 		WHERE active = true AND spreadsheet_id != ''
 	`)
@@ -898,7 +907,8 @@ func (r *Repo) ListActiveExternalLeadsSheetSettings(ctx context.Context) ([]Exte
 	for rows.Next() {
 		var s ExternalLeadsSheetSettings
 		if err := rows.Scan(&s.ID, &s.StudioID, &s.SpreadsheetID, &s.TabName, &s.NameColumn, &s.FirstNameColumn,
-			&s.LastNameColumn, &s.EmailColumn, &s.PhoneColumn, &s.SourceColumn, &s.NotesColumn, &s.DateColumn, &s.Active,
+			&s.LastNameColumn, &s.EmailColumn, &s.PhoneColumn, &s.SourceColumn, &s.NotesColumn, &s.DateColumn,
+			&s.HotLeadColumn, &s.TrialPurchasedColumn, &s.Active,
 			&s.CreatedAt, &s.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan external leads sheet settings: %w", err)
 		}

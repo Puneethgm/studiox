@@ -120,6 +120,8 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
   const [extSourceColumn, setExtSourceColumn] = useState('');
   const [extNotesColumn, setExtNotesColumn] = useState('');
   const [extDateColumn, setExtDateColumn] = useState('');
+  const [extHotLeadColumn, setExtHotLeadColumn] = useState('');
+  const [extTrialPurchasedColumn, setExtTrialPurchasedColumn] = useState('');
   const [extActive, setExtActive] = useState(false);
   const [extSaving, setExtSaving] = useState(false);
   const [extError, setExtError] = useState<string | null>(null);
@@ -162,6 +164,8 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
         setExtSourceColumn(res.data.sourceColumn || '');
         setExtNotesColumn(res.data.notesColumn || '');
         setExtDateColumn(res.data.dateColumn || '');
+        setExtHotLeadColumn(res.data.hotLeadColumn || '');
+        setExtTrialPurchasedColumn(res.data.trialPurchasedColumn || '');
         setExtActive(res.data.active || false);
       }
     })();
@@ -183,6 +187,8 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
         sourceColumn: extSourceColumn,
         notesColumn: extNotesColumn,
         dateColumn: extDateColumn,
+        hotLeadColumn: extHotLeadColumn,
+        trialPurchasedColumn: extTrialPurchasedColumn,
         active: extActive,
       });
       if (res.ok) {
@@ -1113,7 +1119,28 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                       onChange={(e) => setExtDateColumn(e.target.value)}
                     />
                   </div>
+                  <div>
+                    <Label htmlFor="extHotLeadColumn">Hot Lead Col</Label>
+                    <Input
+                      id="extHotLeadColumn"
+                      placeholder="(optional)"
+                      value={extHotLeadColumn}
+                      onChange={(e) => setExtHotLeadColumn(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="extTrialPurchasedColumn">Trial Purchased Col</Label>
+                    <Input
+                      id="extTrialPurchasedColumn"
+                      placeholder="(optional)"
+                      value={extTrialPurchasedColumn}
+                      onChange={(e) => setExtTrialPurchasedColumn(e.target.value)}
+                    />
+                  </div>
                 </div>
+                <FieldHint>
+                  Hot Lead Col values HOT/WARM/COLD: only WARM leads get auto-contacted. Trial Purchased Col = YES also skips auto-contact.
+                </FieldHint>
                 <FieldHint>
                   Use the full name column if the sheet has one combined column instead of separate first/last name columns.
                 </FieldHint>

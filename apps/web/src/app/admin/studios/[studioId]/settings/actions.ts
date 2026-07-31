@@ -200,6 +200,8 @@ export interface ExternalLeadsSheetSettingsData {
   sourceColumn: string;
   notesColumn: string;
   dateColumn: string;
+  hotLeadColumn: string;
+  trialPurchasedColumn: string;
   active: boolean;
 }
 
