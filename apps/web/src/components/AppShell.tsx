@@ -526,7 +526,7 @@ function Topbar({
     pageTitle = 'Inbox';
     pageIcon = <MessagesSquare className="h-[18px] w-[18px] text-blue-600 dark:text-blue-400" />;
     pageSubtitle = (
-      <div className="flex items-center gap-2">
+      <div className="hidden items-center gap-2 sm:flex">
         <div className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
           <span className="relative flex h-1.5 w-1.5">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
@@ -584,7 +584,7 @@ function Topbar({
     pageIcon = <Home className="h-[18px] w-[18px] text-slate-600 dark:text-slate-400" />;
   }
   return (
-    <header className="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-zinc-200 bg-white px-6 dark:border-zinc-800 dark:bg-zinc-950 shrink-0">
+    <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-2 border-b border-zinc-200 bg-white px-3 sm:px-6 dark:border-zinc-800 dark:bg-zinc-950 shrink-0 overflow-x-auto no-scrollbar">
       {/* Mobile menu button */}
       <button
         type="button"
@@ -597,14 +597,14 @@ function Topbar({
       </button>
 
       {/* Dynamic Page Header Title & Status Badges */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2 sm:gap-3 shrink-0">
         {pageIcon && (
-          <div className="flex h-8 w-8 items-center justify-center rounded border border-zinc-200 bg-zinc-50 dark:bg-zinc-900 dark:border-zinc-800">
+          <div className="hidden h-8 w-8 items-center justify-center rounded border border-zinc-200 bg-zinc-50 dark:bg-zinc-900 dark:border-zinc-800 sm:flex">
             {pageIcon}
           </div>
         )}
         {pageTitle && (
-          <h1 className="text-base font-black tracking-tight text-zinc-900 dark:text-white">
+          <h1 className="text-sm sm:text-base font-black tracking-tight text-zinc-900 dark:text-white whitespace-nowrap">
             {pageTitle}
           </h1>
         )}
@@ -614,9 +614,9 @@ function Topbar({
       {/* Spacer to push controls to the right */}
       <div className="mr-auto" />
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2 sm:gap-3 shrink-0">
         {/* Dynamic Page Header Actions Portal */}
-        <div id="topbar-actions" className="flex items-center gap-2.5 empty:hidden" />
+        <div id="topbar-actions" className="flex items-center gap-2.5 empty:hidden [&_select]:max-w-[38vw] [&_select]:sm:max-w-none [&_select]:truncate" />
 
         {/* Theme Toggle Button */}
         <ThemeToggle />

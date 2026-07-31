@@ -119,8 +119,27 @@ export function ChannelTabs({
 
   return (
     <div className="space-y-6">
-      {/* Tab bar */}
-      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/20 bg-white/20 p-1.5 backdrop-blur-xl dark:border-white/5 dark:bg-neutral-900/20">
+      {/* Mobile: a plain select picks the channel instead of wrapping pills */}
+      <div className="sm:hidden">
+        <select
+          value={active}
+          onChange={(e) => handleSetActive(e.target.value as ChannelKind)}
+          className="w-full rounded-xl border border-white/20 bg-white/20 px-3 py-2.5 text-sm font-semibold text-slate-700 backdrop-blur-xl focus:outline-none dark:border-white/5 dark:bg-neutral-900/20 dark:text-slate-200"
+          suppressHydrationWarning
+        >
+          {TABS.map((t) => {
+            const connectedCount = channels.filter((c) => c.kind === t.kind).length;
+            return (
+              <option key={t.kind} value={t.kind}>
+                {t.label}{connectedCount > 0 ? ` (${connectedCount})` : ''}{t.status === 'coming_soon' ? ' — Soon' : ''}
+              </option>
+            );
+          })}
+        </select>
+      </div>
+
+      {/* Tab bar (sm and up) */}
+      <div className="hidden flex-wrap items-center gap-2 rounded-2xl border border-white/20 bg-white/20 p-1.5 backdrop-blur-xl dark:border-white/5 dark:bg-neutral-900/20 sm:flex">
         {TABS.map((t) => {
           const isActive = t.kind === active;
           const connectedCount = channels.filter((c) => c.kind === t.kind).length;

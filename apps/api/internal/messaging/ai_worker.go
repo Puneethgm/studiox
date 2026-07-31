@@ -992,14 +992,15 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 
 	w.log.Info("ai response generated", "message_id", msg.ID, "response_len", len(resp), "channel", channel.Kind, "model", sourceRef)
 
-	// Enqueue outbound reply
+	// Enqueue outbound reply. Delayed slightly so the reply doesn't feel
+	// instant/robotic to the recipient.
 	_, err = w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
 		StudioID:       studioID,
 		ConversationID: msg.ConversationID,
 		Body:           resp,
 		SourceKind:     SourceAI,
 		SourceRef:      sourceRef,
-		ScheduledFor:   time.Now().UTC(),
+		ScheduledFor:   time.Now().UTC().Add(20 * time.Second),
 	})
 	if err != nil {
 		return fmt.Errorf("enqueue ai outbound: %w", err)

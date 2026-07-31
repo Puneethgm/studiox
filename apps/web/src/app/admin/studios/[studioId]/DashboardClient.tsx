@@ -140,7 +140,7 @@ export default function DashboardClient({
   const roi = adSpend > 0 ? (netProfit / adSpend) * 100 : 0;
 
   return (
-    <div className="space-y-8 pb-12">
+    <div className="space-y-5 pb-12 sm:space-y-8">
       {/* Studio Header */}
       <div
         className="relative overflow-hidden rounded-[28px] p-0 backdrop-blur-2xl"
@@ -166,7 +166,7 @@ export default function DashboardClient({
           style={{ background: `${studio.brandColor}15` }}
         />
 
-        <div className="relative flex flex-col gap-5 p-6 md:flex-row md:items-center md:justify-between">
+        <div className="relative flex flex-col gap-4 p-4 sm:gap-5 sm:p-6 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-5">
             <div className="relative">
               <div
@@ -304,7 +304,7 @@ export default function DashboardClient({
 
           {/* Funnel widgets */}
           <div className="grid gap-4 lg:grid-cols-5">
-            <div className="lg:col-span-3 rounded-[32px] premium-glass-card p-6" style={{ boxShadow: '0 20px 40px rgba(139,92,246,0.04)' }}>
+            <div className="lg:col-span-3 rounded-[32px] premium-glass-card p-4 sm:p-6" style={{ boxShadow: '0 20px 40px rgba(139,92,246,0.04)' }}>
               <h3 className="mb-4 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Pipeline Overview</h3>
               <FunnelStrip
                 byStatus={initialStats.byStatus}
@@ -312,7 +312,7 @@ export default function DashboardClient({
                 studioId={studio.id}
               />
             </div>
-            <div className="lg:col-span-2 rounded-[32px] premium-glass-card p-6" style={{ boxShadow: '0 20px 40px rgba(14,165,233,0.04)' }}>
+            <div className="lg:col-span-2 rounded-[32px] premium-glass-card p-4 sm:p-6" style={{ boxShadow: '0 20px 40px rgba(14,165,233,0.04)' }}>
               <h3 className="mb-4 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Lead Distribution</h3>
               <StatusDonut
                 byStatus={initialStats.byStatus}

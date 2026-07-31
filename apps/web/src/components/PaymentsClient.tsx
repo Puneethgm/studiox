@@ -333,38 +333,10 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
   }
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-300">
-      {/* Stats row */}
-      <div className="grid gap-6 sm:grid-cols-2">
-        <Card className="border-white/30 bg-white/20 dark:border-white/5 dark:bg-neutral-900/30 backdrop-blur-2xl p-6">
-          <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400 block">Outstanding Balance</span>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-3xl font-black text-zinc-950 dark:text-white">
-              {formatAmount(stats.outstandingSGD)}
-            </span>
-          </div>
-          <span className="text-[10px] text-emerald-500 font-bold uppercase tracking-wider mt-2 block flex items-center gap-1">
-            <CheckCircle className="h-3 w-3" /> Settled
-          </span>
-        </Card>
-
-        <Card className="border-white/30 bg-white/20 dark:border-white/5 dark:bg-neutral-900/30 backdrop-blur-2xl p-6">
-          <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400 block">Lifetime Payments</span>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-3xl font-black text-zinc-950 dark:text-white">
-              {formatAmount(stats.lifetimePaidTotal || stats.lifetimePaidSGD)}
-            </span>
-          </div>
-          <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider mt-2 block">
-            Last Paid: {invoices[0] ? new Date(invoices[0].created * 1000).toLocaleDateString() : 'N/A'}
-          </span>
-        </Card>
-      </div>
-
-      {/* Main Sections */}
-      <div className="grid gap-6 lg:grid-cols-3">
-        {/* Plan Upgrade / Stripe Connect */}
-        <div className="lg:col-span-1 space-y-6">
+    <div className="flex flex-col gap-4 animate-in fade-in duration-300 sm:gap-6 lg:grid lg:grid-cols-3 lg:gap-6">
+        {/* Plan Upgrade / Stripe Connect — shown first on mobile so
+            connecting Stripe doesn't require scrolling past everything else */}
+        <div className="order-1 space-y-6 lg:order-2 lg:col-span-1">
 
           {/* Booking Links Card */}
           {studioId !== 'global' && campaigns.length > 0 && (() => {
@@ -622,8 +594,36 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
           </div>
         </div>
 
-        {/* Invoice List */}
-        <div className="lg:col-span-2 space-y-4">
+        {/* Stats row — side by side even on mobile, sits between the
+            Stripe card and billing history */}
+        <div className="order-2 grid grid-cols-2 gap-3 lg:order-1 lg:col-span-3 lg:gap-6">
+          <Card className="border-white/30 bg-white/20 dark:border-white/5 dark:bg-neutral-900/30 backdrop-blur-2xl p-4 sm:p-6">
+            <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400 block">Outstanding Balance</span>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-2xl font-black text-zinc-950 dark:text-white sm:text-3xl">
+                {formatAmount(stats.outstandingSGD)}
+              </span>
+            </div>
+            <span className="text-[10px] text-emerald-500 font-bold uppercase tracking-wider mt-2 block flex items-center gap-1">
+              <CheckCircle className="h-3 w-3" /> Settled
+            </span>
+          </Card>
+
+          <Card className="border-white/30 bg-white/20 dark:border-white/5 dark:bg-neutral-900/30 backdrop-blur-2xl p-4 sm:p-6">
+            <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400 block">Lifetime Payments</span>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-2xl font-black text-zinc-950 dark:text-white sm:text-3xl">
+                {formatAmount(stats.lifetimePaidTotal || stats.lifetimePaidSGD)}
+              </span>
+            </div>
+            <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider mt-2 block">
+              Last Paid: {invoices[0] ? new Date(invoices[0].created * 1000).toLocaleDateString() : 'N/A'}
+            </span>
+          </Card>
+        </div>
+
+        {/* Invoice List — shown last on mobile */}
+        <div className="order-3 space-y-4 lg:order-3 lg:col-span-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="text-xs font-black uppercase tracking-wider text-zinc-400 flex items-center gap-1">
@@ -748,7 +748,6 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
             )}
           </Card>
         </div>
-      </div>
     </div>
   );
 }

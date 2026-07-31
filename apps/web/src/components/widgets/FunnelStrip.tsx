@@ -66,7 +66,7 @@ export function FunnelStrip({ byStatus, total, studioId, className }: FunnelStri
           const pct = (count / max) * 100;
           const sharePct = total === 0 ? 0 : Math.round((count / total) * 100);
           return (
-            <li key={status} className="grid grid-cols-[7rem,1fr,4rem] items-center gap-4 sm:grid-cols-[8rem,1fr,5rem]">
+            <li key={status} className="grid grid-cols-[4.5rem,1fr,2.75rem] items-center gap-2 sm:grid-cols-[7rem,1fr,4rem] sm:gap-4 lg:grid-cols-[8rem,1fr,5rem]">
               <span className="truncate text-xs font-bold text-zinc-600 dark:text-zinc-300">
                 {LEAD_STATUS_LABELS[status]}
               </span>

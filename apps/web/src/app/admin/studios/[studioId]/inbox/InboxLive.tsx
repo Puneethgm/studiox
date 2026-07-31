@@ -30,6 +30,7 @@ import {
   ArrowUpDown,
   Phone,
   Bot,
+  ChevronLeft,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { brandInitials } from '@/lib/color';
@@ -201,7 +202,13 @@ export function InboxLive({
     });
   }, []);
   const [selectedId, _setSelectedId] = useState<string | null>(null);
-  const [showDetailsPanel, setShowDetailsPanel] = useState(true);
+  // Defaults closed so it doesn't pop open full-screen on mobile; desktop
+  // opens it automatically once mounted, since there it's a static sidebar.
+  const [showDetailsPanel, setShowDetailsPanel] = useState(false);
+  // Mobile-only: false = show the conversation list, true = show the open
+  // chat full-screen with a back button. Irrelevant at sm and above, where
+  // list and chat show side by side regardless.
+  const [mobileChatOpen, setMobileChatOpen] = useState(false);
   const [users, setUsers] = useState<{ id: string; email: string; role: string }[]>([]);
   const [selectedConvIds, setSelectedConvIds] = useState<string[]>([]);
   const [globalAI, setGlobalAI] = useState(false);
@@ -258,10 +265,17 @@ export function InboxLive({
     }
   }, [selectedId, conversations, studioId]);
 
-  const setSelectedId = useCallback((id: string | null) => { 
-    selectedIdRef.current = id; 
-    _setSelectedId(id); 
-    setShowDetailsPanel(true);
+  const setSelectedId = useCallback((id: string | null) => {
+    selectedIdRef.current = id;
+    _setSelectedId(id);
+    // Desktop re-opens the details sidebar on every selection change; on
+    // mobile it stays closed until the contact header is explicitly tapped.
+    if (typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches) {
+      setShowDetailsPanel(true);
+    }
+    if (id) {
+      setMobileChatOpen(true);
+    }
   }, []);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
@@ -339,6 +353,11 @@ export function InboxLive({
 
   useEffect(() => {
     setMounted(true);
+    // Desktop shows the details panel by default (static sidebar there);
+    // mobile stays closed until the contact header is tapped.
+    if (window.matchMedia('(min-width: 1024px)').matches) {
+      setShowDetailsPanel(true);
+    }
   }, []);
 
   useEffect(() => {
@@ -372,8 +391,16 @@ export function InboxLive({
   }, [mounted, initialConversations, activeChannel, unrespondedOnly, inboxTab, starredIds]);
 
   useEffect(() => {
+    // Auto-select the first conversation so desktop's three-pane layout
+    // isn't blank on load — but don't route mobile into the chat view for
+    // it; mobile should land on the conversation list until the user taps one.
     if (mounted && !selectedId && conversations.length > 0 && conversations[0]) {
-      setSelectedId(conversations[0].id);
+      const id = conversations[0].id;
+      selectedIdRef.current = id;
+      _setSelectedId(id);
+      if (typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches) {
+        setShowDetailsPanel(true);
+      }
     }
   }, [mounted, conversations, selectedId]);
 
@@ -996,8 +1023,8 @@ export function InboxLive({
         </HeaderActions>
       )}
       {/* ── Top Navigation Tabs ─────────────────── */}
-      <div className="flex items-center justify-between border-b border-zinc-200 bg-white px-6 dark:border-zinc-800 dark:bg-zinc-950 shrink-0 z-20">
-        <div className="flex gap-6">
+      <div className="flex items-center justify-between border-b border-zinc-200 bg-white px-3 sm:px-6 dark:border-zinc-800 dark:bg-zinc-950 shrink-0 z-20 overflow-x-auto no-scrollbar">
+        <div className="flex gap-4 sm:gap-6 shrink-0">
           {(
             [
               { id: 'conversations', label: 'Conversations' },
@@ -1011,7 +1038,7 @@ export function InboxLive({
               type="button"
               onClick={() => setCurrentTab(t.id)}
               className={cn(
-                "py-3 text-xs font-black uppercase tracking-wider transition-all border-b-2",
+                "py-3 text-xs font-black uppercase tracking-wider transition-all border-b-2 whitespace-nowrap shrink-0",
                 currentTab === t.id
                   ? "border-brand-500 text-brand-500 dark:text-brand-400"
                   : "border-transparent text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
@@ -1027,9 +1054,14 @@ export function InboxLive({
       <div className="flex flex-1 min-h-0">
         {currentTab === 'conversations' && (
           <>
-            {/* Sidebar */}
+            {/* Sidebar — full-width list on mobile, hidden once a chat is
+                open there; always a fixed-width column alongside the chat
+                pane from sm upward. */}
             <aside
-              className="hidden w-80 shrink-0 flex-col border-r border-zinc-200 sm:flex bg-[#f8f9fa] dark:border-zinc-800 dark:bg-zinc-900"
+              className={cn(
+                "w-full shrink-0 flex-col border-r border-zinc-200 sm:flex sm:w-80 bg-[#f8f9fa] dark:border-zinc-800 dark:bg-zinc-900",
+                mobileChatOpen ? "hidden sm:flex" : "flex"
+              )}
             >
 
 
@@ -1067,6 +1099,19 @@ export function InboxLive({
                 <div className="flex items-center justify-between gap-1">
                   <button
                     type="button"
+                    onClick={() => setInboxTab('all')}
+                    className={cn(
+                      "flex flex-col items-center gap-1.5 pb-2 flex-1 text-[10px] font-black uppercase tracking-wider transition-all border-b-2",
+                      inboxTab === 'all'
+                        ? "border-brand-500 text-brand-500 dark:text-brand-400"
+                        : "border-transparent text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+                    )}
+                  >
+                    <Inbox className="h-4 w-4" />
+                    All
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setInboxTab('unread')}
                     className={cn(
                       "flex flex-col items-center gap-1.5 pb-2 flex-1 text-[10px] font-black uppercase tracking-wider transition-all border-b-2",
@@ -1084,19 +1129,6 @@ export function InboxLive({
                       )}
                     </div>
                     Unread
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setInboxTab('all')}
-                    className={cn(
-                      "flex flex-col items-center gap-1.5 pb-2 flex-1 text-[10px] font-black uppercase tracking-wider transition-all border-b-2",
-                      inboxTab === 'all'
-                        ? "border-brand-500 text-brand-500 dark:text-brand-400"
-                        : "border-transparent text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
-                    )}
-                  >
-                    <Inbox className="h-4 w-4" />
-                    All
                   </button>
                   <button
                     type="button"
@@ -1371,13 +1403,24 @@ export function InboxLive({
               </div>
             </aside>
 
-            {/* Main Chat Pane */}
-            <section className="flex min-w-0 flex-1 flex-col relative">
+            {/* Main Chat Pane — hidden on mobile until a conversation is
+                opened (back button below returns to the list); always
+                visible alongside the sidebar from sm upward. */}
+            <section className={cn("min-w-0 flex-1 flex-col relative sm:flex", mobileChatOpen ? "flex" : "hidden")}>
               {selected ? (
                 <>
                   <header className="z-10 flex h-14 items-center justify-between border-b border-zinc-200 bg-white px-5 dark:border-zinc-800 dark:bg-zinc-950 shrink-0">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <button
+                        type="button"
+                        onClick={() => setMobileChatOpen(false)}
+                        className="shrink-0 -ml-1 p-1.5 rounded-lg text-zinc-500 hover:bg-zinc-100 dark:hover:bg-white/10 sm:hidden"
+                        title="Back to conversations"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </button>
                     <div
-                      className="flex items-center gap-3 cursor-pointer select-none"
+                      className="flex items-center gap-3 cursor-pointer select-none min-w-0"
                       onClick={() => setShowDetailsPanel(!showDetailsPanel)}
                       title="Toggle details panel"
                     >
@@ -1394,6 +1437,7 @@ export function InboxLive({
                           {channelLabel(selected.channelKind)}{selected.contactDisplayName && selected.contactDisplayName !== displayContact(selected.contactValue) ? ` · ${displayContact(selected.contactValue)}` : ''}
                         </div>
                       </div>
+                    </div>
                     </div>
                     <div className="flex items-center gap-1">
                       {selected.leadId && (

@@ -266,7 +266,7 @@ export function ContactDetailsPanel({
   const totalTagsCount = systemTags.length + customTags.length;
 
   return (
-    <aside className="hidden w-80 shrink-0 flex-col border-l border-zinc-200 lg:flex bg-white/5 dark:border-white/5 dark:bg-neutral-950/10">
+    <aside className="fixed inset-0 z-40 flex w-full flex-col bg-white dark:bg-neutral-950 lg:static lg:z-auto lg:w-80 lg:shrink-0 lg:border-l lg:border-zinc-200 lg:bg-white/5 lg:dark:border-white/5 lg:dark:bg-neutral-950/10">
       <div className="flex h-14 shrink-0 items-center justify-between border-b border-zinc-100 px-5 dark:border-white/5">
         <h2 className="text-sm font-black uppercase tracking-wider text-zinc-800 dark:text-zinc-200">
           Contact Details
