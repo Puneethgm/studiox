@@ -27,6 +27,50 @@ func NewService(repo *Repo, id *identity.Repo, gf *glofox.Client) *Service {
 	return &Service{repo: repo, identity: id, glofox: gf}
 }
 
+// SyncLeadToGlofoxByID pushes a lead to Glofox CRM as trial/member. Used by
+// the Stripe webhook handler, which confirms actual payment (checkout.session.
+// completed) and updates the lead via raw SQL rather than through leads.Repo,
+// so it needs its own path to Glofox rather than relying on leads.Repo's sync.
+func (s *Service) SyncLeadToGlofoxByID(ctx context.Context, leadID string, status glofox.GlofoxLeadStatus) {
+	if s.glofox == nil || leadID == "" {
+		return
+	}
+	var firstName, lastName, name, email, phone string
+	err := s.repo.Pool().QueryRow(ctx, `
+		SELECT COALESCE(first_name,''), COALESCE(last_name,''), COALESCE(name,''), COALESCE(email,''), COALESCE(phone,'')
+		FROM leads WHERE id = $1
+	`, leadID).Scan(&firstName, &lastName, &name, &email, &phone)
+	if err != nil {
+		slog.Warn("Glofox | Lead sync: failed to load lead for sync", "component", "glofox", "lead_id", leadID, "err", err.Error())
+		return
+	}
+	if firstName == "" && lastName == "" && name != "" {
+		parts := strings.SplitN(name, " ", 2)
+		firstName = parts[0]
+		if len(parts) > 1 {
+			lastName = parts[1]
+		}
+	}
+	go func() {
+		gCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		out, err := s.glofox.CreateLead(gCtx, glofox.CreateLeadInput{
+			Email:      email,
+			FirstName:  firstName,
+			LastName:   lastName,
+			Phone:      phone,
+			LeadStatus: status,
+		})
+		if err != nil {
+			slog.Warn("Glofox | Lead sync failed — lead conversion not reflected in Glofox CRM",
+				"component", "glofox", "lead_id", leadID, "new_status", string(status), "error", err.Error())
+		} else {
+			slog.Info("Glofox | Lead synced to Glofox CRM",
+				"component", "glofox", "lead_id", leadID, "new_status", string(status), "glofox_id", out.Entity.ID)
+		}
+	}()
+}
+
 // ----- create studio + first admin (atomic) -----
 
 type CreateStudioInput struct {
