@@ -297,6 +297,11 @@ func (s *Service) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status
 		if ln == "" {
 			ln = existing.LastName
 		}
+		if ln == "" {
+			// Glofox rejects the request outright without a last name —
+			// many WhatsApp leads only ever give a first name.
+			ln = "-"
+		}
 		gfStatus := glofox.GlofoxStatusTrial
 		if status == StatusMember {
 			gfStatus = glofox.GlofoxStatusMember

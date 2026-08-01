@@ -51,6 +51,11 @@ func (s *Service) SyncLeadToGlofoxByID(ctx context.Context, leadID string, statu
 			lastName = parts[1]
 		}
 	}
+	if lastName == "" {
+		// Glofox rejects the request outright without a last name — many
+		// WhatsApp leads only ever give a first name.
+		lastName = "-"
+	}
 	go func() {
 		gCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
