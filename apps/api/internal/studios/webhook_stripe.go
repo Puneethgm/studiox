@@ -205,6 +205,15 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 	customerName := session.Metadata["customer_name"]
 	studioIDStr := session.Metadata["studio_id"]
 
+	// Stripe Checkout collects the customer's real email at payment time —
+	// capture it so it overwrites the synthetic "wa-<phone>@example.com"
+	// placeholder set when the lead was first created via WhatsApp, and so
+	// Glofox sync (further down) gets a real email instead of the fake one.
+	customerEmail := ""
+	if session.CustomerDetails != nil {
+		customerEmail = strings.TrimSpace(session.CustomerDetails.Email)
+	}
+
 	if session.Metadata["is_upgrade"] == "true" {
 		tier := session.Metadata["plan_tier"]
 		id, err := uuid.Parse(studioIDStr)
@@ -350,6 +359,17 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 	}
 
 	if leadID != nil {
+		// Save the real email Stripe collected at checkout, overwriting the
+		// synthetic WhatsApp placeholder — do this before the Glofox sync
+		// calls below so they pick up the real address.
+		if customerEmail != "" {
+			if _, err := h.svc.repo.Pool().Exec(ctx, `
+				UPDATE leads SET email = $1, updated_at = now() WHERE id = $2
+			`, customerEmail, *leadID); err != nil {
+				slog.Warn("stripe: failed to save customer email from checkout", "err", err, "lead_id", *leadID)
+			}
+		}
+
 		if isMembership {
 			monthlyFee := float64(session.AmountTotal) / 100.0
 
