@@ -406,12 +406,10 @@ func (s *Service) HandleInboundWhatsAppMessage(ctx context.Context,
 					lName = parts[1]
 				}
 			}
-			emailPlaceholder := fmt.Sprintf("whatsapp-%s@example.com", msg.From)
-
 			_, err = tx.Exec(ctx, `
 				INSERT INTO leads (id, studio_id, campaign_id, name, first_name, last_name, email, phone, fitness_plan, status, source, auto_contact_stage, created_at, updated_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'contacted', 'whatsapp', 'awaiting_options', now(), now())
-			`, leadID, channel.StudioID, campaignID, displayName, fName, lName, emailPlaceholder, msg.From, defaultPlan)
+				VALUES ($1, $2, $3, $4, $5, $6, '', $7, $8, 'contacted', 'whatsapp', 'awaiting_options', now(), now())
+			`, leadID, channel.StudioID, campaignID, displayName, fName, lName, msg.From, defaultPlan)
 			if err != nil {
 				return fmt.Errorf("auto-create lead: %w", err)
 			}
@@ -725,13 +723,12 @@ func (s *Service) HandleInboundMessaging(ctx context.Context, kind ChannelKind, 
 		if kind == KindInstagramMeta {
 			displayName = "Instagram Guest"
 		}
-		emailPlaceholder := fmt.Sprintf("%s-%s@example.com", string(kind), m.Sender.ID)
 		phonePlaceholder := fmt.Sprintf("meta-%s", m.Sender.ID)
 
 		_, err = tx.Exec(ctx, `
 			INSERT INTO leads (id, studio_id, campaign_id, name, first_name, last_name, email, phone, fitness_plan, status, source, auto_contact_stage, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'contacted', $10, 'awaiting_options', now(), now())
-		`, leadID, channel.StudioID, campaignID, displayName, displayName, "", emailPlaceholder, phonePlaceholder, defaultPlan, string(kind))
+			VALUES ($1, $2, $3, $4, $5, $6, '', $7, $8, 'contacted', $9, 'awaiting_options', now(), now())
+		`, leadID, channel.StudioID, campaignID, displayName, displayName, "", phonePlaceholder, defaultPlan, string(kind))
 		if err != nil {
 			return fmt.Errorf("auto-create messenger lead: %w", err)
 		}
@@ -881,12 +878,11 @@ func (s *Service) HandleInboundSMS(ctx context.Context, messageSid, from, to, bo
 		// No existing lead, create one automatically
 		leadID := uuid.New()
 		displayName := from
-		emailPlaceholder := fmt.Sprintf("sms-%s@example.com", from)
 
 		_, err = tx.Exec(ctx, `
 			INSERT INTO leads (id, studio_id, campaign_id, name, first_name, last_name, email, phone, fitness_plan, status, source, auto_contact_stage, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'contacted', 'sms', 'awaiting_options', now(), now())
-		`, leadID, channel.StudioID, campaignID, displayName, displayName, "", emailPlaceholder, from, defaultPlan)
+			VALUES ($1, $2, $3, $4, $5, $6, '', $7, $8, 'contacted', 'sms', 'awaiting_options', now(), now())
+		`, leadID, channel.StudioID, campaignID, displayName, displayName, "", from, defaultPlan)
 		if err != nil {
 			return fmt.Errorf("auto-create sms lead: %w", err)
 		}
@@ -1254,7 +1250,6 @@ func (s *Service) HandleInboundWAWeb(ctx context.Context, studioID uuid.UUID, fr
 					defaultPlan = fitnessPlans[0]
 				}
 				leadID = uuid.New()
-				emailPlaceholder := fmt.Sprintf("wa-%s@example.com", cleanPhone)
 				// Prefer WhatsApp's own pushName over the bare phone digits when
 				// we already have one on this very first message, so the lead
 				// never needs a later placeholder-name fixup at all.
@@ -1266,8 +1261,8 @@ func (s *Service) HandleInboundWAWeb(ctx context.Context, studioID uuid.UUID, fr
 					INSERT INTO leads (id, studio_id, campaign_id, name, first_name, last_name,
 					                   email, phone, fitness_plan, status, source,
 					                   auto_contact_stage, created_at, updated_at)
-					VALUES ($1,$2,$3,$4,$5,'', $6,$7,$8,'contacted','whatsapp_web','awaiting_options',now(),now())
-				`, leadID, studioID, campaignID, leadName, leadName, emailPlaceholder, cleanPhone, defaultPlan)
+					VALUES ($1,$2,$3,$4,$5,'', '',$6,$7,'contacted','whatsapp_web','awaiting_options',now(),now())
+				`, leadID, studioID, campaignID, leadName, leadName, cleanPhone, defaultPlan)
 				if err != nil {
 					return fmt.Errorf("auto-create wa-web lead: %w", err)
 				}
@@ -1414,13 +1409,12 @@ func (s *Service) HandleInboundTGWeb(ctx context.Context, studioID uuid.UUID, ch
 				leadName = chatID
 			}
 			leadID := uuid.New()
-			emailPlaceholder := fmt.Sprintf("tg-%s@example.com", chatID)
 			_, err = tx.Exec(ctx, `
 				INSERT INTO leads (id, studio_id, campaign_id, name, first_name, last_name,
 				                   email, phone, fitness_plan, status, source,
 				                   auto_contact_stage, created_at, updated_at)
-				VALUES ($1,$2,$3,$4,$5,'', $6,$7,$8,'contacted','telegram_mtproto','awaiting_options',now(),now())
-			`, leadID, studioID, campaignID, leadName, leadName, emailPlaceholder, chatID, defaultPlan)
+				VALUES ($1,$2,$3,$4,$5,'', '',$6,$7,'contacted','telegram_mtproto','awaiting_options',now(),now())
+			`, leadID, studioID, campaignID, leadName, leadName, chatID, defaultPlan)
 			if err != nil {
 				return fmt.Errorf("auto-create tg-web lead: %w", err)
 			}
