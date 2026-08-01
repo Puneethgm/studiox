@@ -811,17 +811,41 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		}
 	}
 
-	// "Yes to trial" shortcut: when a recent bot message offered a trial and
-	// the customer replies affirmatively, skip AI and send the payment link
-	// directly.
+	// "Yes to trial" shortcut: skip AI and send the payment link directly
+	// when either (a) the customer explicitly asks to buy/pay — that alone
+	// is unambiguous, no prior offer needed — or (b) they give a bare
+	// affirmation ("yes"/"keen") replying to a bot message that had just
+	// offered a trial.
 	if lead != nil {
 		lowerMsg := strings.ToLower(strings.TrimSpace(msg.Body))
+		explicitPurchaseIntent := strings.Contains(lowerMsg, "buy") ||
+			strings.Contains(lowerMsg, "purchase") ||
+			strings.Contains(lowerMsg, "how to pay") ||
+			strings.Contains(lowerMsg, "how do i pay") ||
+			strings.Contains(lowerMsg, "payment link") ||
+			strings.Contains(lowerMsg, "pay for") ||
+			strings.Contains(lowerMsg, "checkout")
 		isAffirmative := lowerMsg == "yes" || lowerMsg == "yeah" || lowerMsg == "sure" ||
 			lowerMsg == "ok" || lowerMsg == "okay" || lowerMsg == "yep" || lowerMsg == "yup" ||
 			lowerMsg == "y" || lowerMsg == "keen" || lowerMsg == "im keen" || lowerMsg == "i'm keen" ||
 			strings.HasPrefix(lowerMsg, "yes ") || strings.HasPrefix(lowerMsg, "sure ") ||
 			strings.Contains(lowerMsg, "i'm keen") || strings.Contains(lowerMsg, "im keen") ||
 			strings.Contains(lowerMsg, "interested")
+
+		if explicitPurchaseIntent {
+			firstName := lead.FirstName
+			if firstName == "" {
+				firstName = lead.Name
+			}
+			if _, err := w.msgSvc.SendTrialPaymentLink(ctx, studioID, conv.ID, conv.LeadID, firstName); err != nil {
+				w.log.Error("buy-trial: failed to send payment link", "err", err, "conv", conv.ID)
+			} else {
+				w.bus.Publish(ctx, Event{Kind: EvtOutboundJobEnqueued, StudioID: studioID, ConversationID: conv.ID})
+				w.log.Info("buy-trial shortcut triggered (explicit purchase intent)", "conv", conv.ID)
+			}
+			return nil
+		}
+
 		if isAffirmative {
 			// Check the last few outbound messages (not just the single most
 			// recent one) — back-to-back bot replies can otherwise push a
