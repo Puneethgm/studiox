@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"regexp"
 	"strings"
@@ -14,13 +15,82 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/projectx/api/internal/integrations/glofox"
 )
 
 type Repo struct {
-	pool *pgxpool.Pool
+	pool   *pgxpool.Pool
+	glofox *glofox.Client
 }
 
 func NewRepo(pool *pgxpool.Pool) *Repo { return &Repo{pool: pool} }
+
+// SetGlofoxClient wires up Glofox CRM sync for leads created/updated through
+// this repo directly (the automated sheet-import and AI/automation status
+// paths) — separate from the Service-level sync used by the manual "edit
+// lead" HTTP flow. Nil-safe: sync is skipped entirely if never set (e.g. in
+// tests, or when Glofox isn't configured).
+func (r *Repo) SetGlofoxClient(gf *glofox.Client) { r.glofox = gf }
+
+// syncLeadToGlofoxAsync fires the Glofox CRM sync in the background and never
+// blocks or fails the caller — mirrors the fire-and-forget sync used by the
+// manual lead-edit flow (Service.UpdateLead), but shared here so the
+// automated paths (sheet import, AI/automation status changes) get the same
+// behavior instead of silently skipping Glofox entirely.
+func (r *Repo) syncLeadToGlofoxAsync(l *Lead, status LeadStatus) {
+	if r.glofox == nil || l == nil {
+		return
+	}
+	if status != StatusTrialBooked && status != StatusMember {
+		return
+	}
+	gfStatus := glofox.GlofoxStatusTrial
+	if status == StatusMember {
+		gfStatus = glofox.GlofoxStatusMember
+	}
+	leadID := l.ID
+	leadName := strings.TrimSpace(l.FirstName + " " + l.LastName)
+	if leadName == "" {
+		leadName = l.Name
+	}
+	leadEmail := l.Email
+	leadPhone := l.Phone
+	firstName := l.FirstName
+	lastName := l.LastName
+	go func() {
+		gCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		out, err := r.glofox.CreateLead(gCtx, glofox.CreateLeadInput{
+			Email:      leadEmail,
+			FirstName:  firstName,
+			LastName:   lastName,
+			Phone:      leadPhone,
+			LeadStatus: gfStatus,
+		})
+		if err != nil {
+			slog.Warn("Glofox | Lead sync failed — lead conversion not reflected in Glofox CRM",
+				"component", "glofox",
+				"lead_id", leadID,
+				"lead_name", leadName,
+				"lead_email", leadEmail,
+				"new_status", string(status),
+				"glofox_status", string(gfStatus),
+				"error", err.Error(),
+			)
+		} else {
+			slog.Info("Glofox | Lead synced to Glofox CRM",
+				"component", "glofox",
+				"lead_id", leadID,
+				"lead_name", leadName,
+				"lead_email", leadEmail,
+				"new_status", string(status),
+				"glofox_status", string(gfStatus),
+				"glofox_id", out.Entity.ID,
+			)
+		}
+	}()
+}
 
 // ----- campaigns -----
 
@@ -277,6 +347,13 @@ func (r *Repo) CreateLeadWithOutbox(ctx context.Context, l *Lead, destination st
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
+
+	// Sync to Glofox CRM when the lead is created already at trial/member
+	// status (e.g. a sheet-imported lead with Trial Purchased = YES) — this
+	// path skips the AI worker's status-change flow entirely, so without
+	// this it would never reach Glofox.
+	r.syncLeadToGlofoxAsync(l, l.Status)
+
 	return nil
 }
 
@@ -648,9 +725,11 @@ func (r *Repo) UpdateStatus(ctx context.Context, studioID, id uuid.UUID, status 
 		return ErrLeadNotFound
 	}
 
+	var updatedLead *Lead
 	if string(status) != oldStatus {
 		l, err := r.GetLeadTx(ctx, tx, studioID, id)
 		if err == nil {
+			updatedLead = l
 			payload, err := json.Marshal(l)
 			if err == nil {
 				_, _ = tx.Exec(ctx, `
@@ -661,7 +740,18 @@ func (r *Repo) UpdateStatus(ctx context.Context, studioID, id uuid.UUID, status 
 		}
 	}
 
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	// Sync to Glofox CRM when the status transition lands on trial/member —
+	// covers status changes made by the AI worker or automation, which
+	// (unlike the manual "edit lead" HTTP flow) don't otherwise sync.
+	if string(status) != oldStatus {
+		r.syncLeadToGlofoxAsync(updatedLead, status)
+	}
+
+	return nil
 }
 
 // SetDNDEnabled toggles Do Not Disturb for a lead — silencing all automated

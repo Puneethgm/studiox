@@ -85,6 +85,9 @@ func main() {
 			"component", "glofox",
 		)
 	}
+	// Wire Glofox into the repo directly so automated status changes (AI
+	// worker, sheet import) sync too, not just the manual "edit lead" flow.
+	leadsRepo.SetGlofoxClient(glofoxClient)
 
 	studiosSvc := studios.NewService(studiosRepo, identityRepo, glofoxClient)
 	reviewsHandler := reviews.NewHandler(reviewsRepo)
