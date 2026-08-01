@@ -183,7 +183,7 @@ func (w *AutoContactWorker) processItem(ctx context.Context, it leads.OutboxItem
 			w.log.Error("enqueue 1-day trial followup failed", "lead", l.ID, "err", err)
 		}
 	} else {
-		// Schedule no-reply follow-ups: 40s, 2h, 12h, 1 day, 3 days, 7 days.
+		// Schedule no-reply follow-ups: 2h, 12h, 1 day, 3 days, 7 days.
 		// Each fires only if the lead hasn't replied yet (CancelPendingJobsForConversation
 		// wipes these the moment the AI worker processes an inbound message).
 		type followup struct {
@@ -191,7 +191,6 @@ func (w *AutoContactWorker) processItem(ctx context.Context, it leads.OutboxItem
 			body  string
 		}
 		followups := []followup{
-			{40 * time.Second, renderGreeting("Just following up on your inquiry — {{lead_first_name}}", studio, l)},
 			{2 * time.Hour, renderGreeting("Hi {{lead_first_name}}, still thinking about joining {{studio_name}}? We'd love to have you! 💪 Reply *1* to book a trial or *2* to become a member.", studio, l)},
 			{12 * time.Hour, renderGreeting("Hey {{lead_first_name}}! Don't miss out — spots are limited at {{studio_name}}. Ready to get started? Reply *1* for a trial or *2* for membership.", studio, l)},
 			{24 * time.Hour, renderGreeting("Hi {{lead_first_name}}, just checking in one more time. We have a great community at {{studio_name}} and we'd love for you to experience it. Reply *1* to book a trial!", studio, l)},

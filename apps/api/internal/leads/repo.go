@@ -260,12 +260,17 @@ func (r *Repo) CreateLeadWithOutbox(ctx context.Context, l *Lead, destination st
 			return fmt.Errorf("insert outbox: %w", err)
 		}
 
-		// Also enqueue an autocontact job so the auto-contact worker can pick it up.
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO outbox (aggregate_type, aggregate_id, event_type, destination, payload)
-			VALUES ('lead', $1, 'lead.created', 'lead_autocontact', $2)
-		`, l.ID, string(payload)); err != nil {
-			return fmt.Errorf("insert autocontact outbox: %w", err)
+		// Also enqueue an autocontact job so the auto-contact worker can pick
+		// it up — unless destination is already "lead_autocontact", in which
+		// case the insert above already is that job; inserting it again would
+		// duplicate the greeting and every scheduled follow-up.
+		if destination != "lead_autocontact" {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO outbox (aggregate_type, aggregate_id, event_type, destination, payload)
+				VALUES ('lead', $1, 'lead.created', 'lead_autocontact', $2)
+			`, l.ID, string(payload)); err != nil {
+				return fmt.Errorf("insert autocontact outbox: %w", err)
+			}
 		}
 	}
 
