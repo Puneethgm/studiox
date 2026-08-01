@@ -122,6 +122,9 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
   const [extDateColumn, setExtDateColumn] = useState('');
   const [extHotLeadColumn, setExtHotLeadColumn] = useState('');
   const [extTrialPurchasedColumn, setExtTrialPurchasedColumn] = useState('');
+  // No dedicated input here (the toggle lives in the Inbox top bar) — just
+  // round-tripped so saving from this form doesn't silently reset it.
+  const [extContinueAIAfterGreeting, setExtContinueAIAfterGreeting] = useState(true);
   const [extActive, setExtActive] = useState(false);
   const [extSaving, setExtSaving] = useState(false);
   const [extError, setExtError] = useState<string | null>(null);
@@ -165,6 +168,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
         setExtNotesColumn(res.data.notesColumn || '');
         setExtDateColumn(res.data.dateColumn || '');
         setExtHotLeadColumn(res.data.hotLeadColumn || '');
+        setExtContinueAIAfterGreeting(res.data.continueAiAfterGreeting ?? true);
         setExtTrialPurchasedColumn(res.data.trialPurchasedColumn || '');
         setExtActive(res.data.active || false);
       }
@@ -189,6 +193,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
         dateColumn: extDateColumn,
         hotLeadColumn: extHotLeadColumn,
         trialPurchasedColumn: extTrialPurchasedColumn,
+        continueAiAfterGreeting: extContinueAIAfterGreeting,
         active: extActive,
       });
       if (res.ok) {

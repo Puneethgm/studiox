@@ -214,6 +214,24 @@ export function InboxLive({
   const [globalAI, setGlobalAI] = useState(false);
   const [globalAISaving, setGlobalAISaving] = useState(false);
 
+  // The existing "AI AUTO-REPLY" toggle does double duty: it still bulk
+  // enables/disables AI on every currently-loaded conversation (original
+  // behavior), and now also drives "continue AI after greeting" for future
+  // leads imported from the studio's external Google Sheet — ON keeps the
+  // AI replying normally after the initial greeting (default); OFF sends
+  // only that first greeting and leaves the rest for manual follow-up.
+  const [sheetSettingsRaw, setSheetSettingsRaw] = useState<Record<string, unknown> | null>(null);
+
+  useEffect(() => {
+    if (!studioId) return;
+    api<Record<string, unknown>>(`/api/v1/studios/${studioId}/leads/external-sheet-settings`)
+      .then((res) => {
+        setSheetSettingsRaw(res);
+        setGlobalAI((res.continueAiAfterGreeting as boolean | undefined) ?? true);
+      })
+      .catch((err) => console.error('Failed to load external sheet settings:', err));
+  }, [studioId]);
+
   useEffect(() => {
     if (!studioId) return;
     api<{ users: { id: string; email: string; role: string }[] }>(`/api/v1/studios/${studioId}/users`)
@@ -810,19 +828,44 @@ export function InboxLive({
     setConversations((prev) => prev.map((c) => (c.id === conversationId ? { ...c, aiEnabled: enabled } : c)));
   }, []);
 
+  // Controls ONLY "continue AI after greeting" for future leads imported
+  // from the studio's external Google Sheet — does not touch any
+  // currently-open conversations. Nothing to save until a sheet is
+  // actually configured (the API requires a spreadsheetId).
+  const sheetConfigured = Boolean(sheetSettingsRaw && (sheetSettingsRaw.spreadsheetId as string | undefined));
+
   async function toggleGlobalAI() {
-    if (globalAISaving) return;
+    if (globalAISaving || !sheetConfigured || !sheetSettingsRaw) return;
     const next = !globalAI;
     setGlobalAISaving(true);
     setGlobalAI(next);
     try {
-      await api(`/api/v1/studios/${studioId}/messaging/conversations/ai/bulk`, {
+      // The save endpoint rejects unknown fields — only send exactly what
+      // it accepts, not the raw GET response (which also has id/studioId/
+      // createdAt/updatedAt).
+      const payload = {
+        spreadsheetId: sheetSettingsRaw.spreadsheetId,
+        tabName: sheetSettingsRaw.tabName,
+        nameColumn: sheetSettingsRaw.nameColumn,
+        firstNameColumn: sheetSettingsRaw.firstNameColumn,
+        lastNameColumn: sheetSettingsRaw.lastNameColumn,
+        emailColumn: sheetSettingsRaw.emailColumn,
+        phoneColumn: sheetSettingsRaw.phoneColumn,
+        sourceColumn: sheetSettingsRaw.sourceColumn,
+        notesColumn: sheetSettingsRaw.notesColumn,
+        dateColumn: sheetSettingsRaw.dateColumn,
+        hotLeadColumn: sheetSettingsRaw.hotLeadColumn,
+        trialPurchasedColumn: sheetSettingsRaw.trialPurchasedColumn,
+        continueAiAfterGreeting: next,
+        active: sheetSettingsRaw.active,
+      };
+      await api(`/api/v1/studios/${studioId}/leads/external-sheet-settings`, {
         method: 'POST',
-        json: { enabled: next },
+        json: payload,
       });
-      // Reflect change on all loaded conversations
-      setConversations((prev) => prev.map((c) => ({ ...c, aiEnabled: next })));
-    } catch {
+      setSheetSettingsRaw((prev) => (prev ? { ...prev, continueAiAfterGreeting: next } : prev));
+    } catch (err) {
+      console.error('Failed to save continue-AI-after-greeting setting:', err);
       setGlobalAI(!next);
     } finally {
       setGlobalAISaving(false);
@@ -1065,18 +1108,31 @@ export function InboxLive({
             >
 
 
-              {/* Global AI toggle */}
-              <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-200 dark:border-zinc-800">
-                <div className="flex items-center gap-2">
-                  <Bot className={cn('h-3.5 w-3.5', globalAI ? 'text-emerald-500' : 'text-zinc-400')} />
-                  <span className="text-[10px] font-black uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                    AI Auto-Reply
-                  </span>
+              {/* Google Sheet leads AI toggle */}
+              <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <Bot className={cn('h-3.5 w-3.5 shrink-0', globalAI ? 'text-emerald-500' : 'text-zinc-400')} />
+                    <span className="text-[10px] font-black uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                      AI Auto-Reply (Sheet Leads)
+                    </span>
+                  </div>
+                  <p className="mt-0.5 text-[9px] font-semibold leading-snug text-zinc-400">
+                    {!sheetConfigured
+                      ? 'Configure a Google Sheet import in Settings to use this.'
+                      : globalAI
+                      ? 'New Google Sheet leads keep chatting with AI after their first greeting.'
+                      : 'New Google Sheet leads get only their first greeting — no AI follow-up.'}
+                  </p>
                 </div>
                 <button
                   onClick={toggleGlobalAI}
-                  disabled={globalAISaving}
-                  title={globalAI ? 'Disable AI for all chats' : 'Enable AI for all chats'}
+                  disabled={globalAISaving || !sheetConfigured}
+                  title={!sheetConfigured
+                    ? 'Configure a Google Sheet import in Settings first'
+                    : globalAI
+                    ? 'Turn off: new sheet leads will only get the initial greeting, no AI follow-up'
+                    : 'Turn on: new sheet leads will keep chatting with AI after the greeting'}
                   className={cn(
                     'relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-300 focus:outline-none disabled:opacity-50',
                     globalAI ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-700',

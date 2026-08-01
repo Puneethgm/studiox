@@ -111,8 +111,21 @@ func (w *AutoContactWorker) processItem(ctx context.Context, it leads.OutboxItem
 	if err != nil {
 		return fmt.Errorf("create conversation: %w", err)
 	}
-	if err := w.msgRepo.SetConversationAIEnabled(ctx, l.StudioID, conv.ID, true); err != nil {
-		w.log.Error("autocontact: failed to enable ai for conversation", "conv", conv.ID, "err", err)
+
+	// For leads imported from a studio's external Google Sheet, the studio
+	// can opt to send only the initial greeting and leave the rest of the
+	// conversation for manual/human follow-up instead of continuing
+	// automatically. Every other lead source keeps today's behavior
+	// (AI stays on and follow-up nudges are scheduled).
+	continueAI := true
+	if l.Source == "external_sheet" {
+		if sheetSettings, sErr := w.leadsRepo.GetExternalLeadsSheetSettings(ctx, l.StudioID); sErr == nil && sheetSettings != nil {
+			continueAI = sheetSettings.ContinueAIAfterGreeting
+		}
+	}
+
+	if err := w.msgRepo.SetConversationAIEnabled(ctx, l.StudioID, conv.ID, continueAI); err != nil {
+		w.log.Error("autocontact: failed to set ai_enabled for conversation", "conv", conv.ID, "err", err)
 	}
 
 	studio, err := w.studiosRepo.GetByID(ctx, l.StudioID)
@@ -148,6 +161,12 @@ func (w *AutoContactWorker) processItem(ctx context.Context, it leads.OutboxItem
 	// Mark lead contacted
 	if err := w.leadsRepo.MarkLeadContacted(ctx, l.ID); err != nil {
 		w.log.Error("mark lead contacted failed", "lead", l.ID, "err", err)
+	}
+
+	if !continueAI {
+		// Sheet lead with "continue AI after greeting" turned off — only the
+		// initial greeting goes out; no trial/no-reply follow-up nudges.
+		return nil
 	}
 
 	if l.Status == leads.StatusTrialBooked {

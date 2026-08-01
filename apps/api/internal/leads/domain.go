@@ -111,6 +111,7 @@ type ExternalLeadsSheetSettings struct {
 	DateColumn      string    `json:"dateColumn"`
 	HotLeadColumn   string    `json:"hotLeadColumn"`
 	TrialPurchasedColumn string `json:"trialPurchasedColumn"`
+	ContinueAIAfterGreeting bool `json:"continueAiAfterGreeting"`
 	Active          bool      `json:"active"`
 	CreatedAt       time.Time `json:"createdAt"`
 	UpdatedAt       time.Time `json:"updatedAt"`

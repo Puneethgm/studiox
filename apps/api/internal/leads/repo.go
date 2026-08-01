@@ -838,14 +838,14 @@ func (r *Repo) GetExternalLeadsSheetSettings(ctx context.Context, studioID uuid.
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, studio_id, spreadsheet_id, tab_name, name_column, first_name_column, last_name_column,
 		       email_column, phone_column, source_column, notes_column, date_column, hot_lead_column,
-		       trial_purchased_column, active, created_at, updated_at
+		       trial_purchased_column, continue_ai_after_greeting, active, created_at, updated_at
 		FROM studio_external_leads_sheet_settings
 		WHERE studio_id = $1
 	`, studioID)
 	var s ExternalLeadsSheetSettings
 	if err := row.Scan(&s.ID, &s.StudioID, &s.SpreadsheetID, &s.TabName, &s.NameColumn, &s.FirstNameColumn,
 		&s.LastNameColumn, &s.EmailColumn, &s.PhoneColumn, &s.SourceColumn, &s.NotesColumn, &s.DateColumn,
-		&s.HotLeadColumn, &s.TrialPurchasedColumn, &s.Active,
+		&s.HotLeadColumn, &s.TrialPurchasedColumn, &s.ContinueAIAfterGreeting, &s.Active,
 		&s.CreatedAt, &s.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -860,8 +860,8 @@ func (r *Repo) SaveExternalLeadsSheetSettings(ctx context.Context, s *ExternalLe
 		INSERT INTO studio_external_leads_sheet_settings
 			(studio_id, spreadsheet_id, tab_name, name_column, first_name_column, last_name_column,
 			 email_column, phone_column, source_column, notes_column, date_column, hot_lead_column,
-			 trial_purchased_column, active)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+			 trial_purchased_column, continue_ai_after_greeting, active)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 		ON CONFLICT (studio_id) DO UPDATE
 		SET spreadsheet_id = EXCLUDED.spreadsheet_id,
 		    tab_name = EXCLUDED.tab_name,
@@ -875,12 +875,13 @@ func (r *Repo) SaveExternalLeadsSheetSettings(ctx context.Context, s *ExternalLe
 		    date_column = EXCLUDED.date_column,
 		    hot_lead_column = EXCLUDED.hot_lead_column,
 		    trial_purchased_column = EXCLUDED.trial_purchased_column,
+		    continue_ai_after_greeting = EXCLUDED.continue_ai_after_greeting,
 		    active = EXCLUDED.active,
 		    updated_at = now()
 		RETURNING id, created_at, updated_at
 	`, s.StudioID, s.SpreadsheetID, s.TabName, s.NameColumn, s.FirstNameColumn, s.LastNameColumn,
 		s.EmailColumn, s.PhoneColumn, s.SourceColumn, s.NotesColumn, s.DateColumn,
-		s.HotLeadColumn, s.TrialPurchasedColumn, s.Active)
+		s.HotLeadColumn, s.TrialPurchasedColumn, s.ContinueAIAfterGreeting, s.Active)
 	if err := row.Scan(&s.ID, &s.CreatedAt, &s.UpdatedAt); err != nil {
 		return fmt.Errorf("save external leads sheet settings: %w", err)
 	}
@@ -894,7 +895,7 @@ func (r *Repo) ListActiveExternalLeadsSheetSettings(ctx context.Context) ([]Exte
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, studio_id, spreadsheet_id, tab_name, name_column, first_name_column, last_name_column,
 		       email_column, phone_column, source_column, notes_column, date_column, hot_lead_column,
-		       trial_purchased_column, active, created_at, updated_at
+		       trial_purchased_column, continue_ai_after_greeting, active, created_at, updated_at
 		FROM studio_external_leads_sheet_settings
 		WHERE active = true AND spreadsheet_id != ''
 	`)
@@ -908,7 +909,7 @@ func (r *Repo) ListActiveExternalLeadsSheetSettings(ctx context.Context) ([]Exte
 		var s ExternalLeadsSheetSettings
 		if err := rows.Scan(&s.ID, &s.StudioID, &s.SpreadsheetID, &s.TabName, &s.NameColumn, &s.FirstNameColumn,
 			&s.LastNameColumn, &s.EmailColumn, &s.PhoneColumn, &s.SourceColumn, &s.NotesColumn, &s.DateColumn,
-			&s.HotLeadColumn, &s.TrialPurchasedColumn, &s.Active,
+			&s.HotLeadColumn, &s.TrialPurchasedColumn, &s.ContinueAIAfterGreeting, &s.Active,
 			&s.CreatedAt, &s.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan external leads sheet settings: %w", err)
 		}

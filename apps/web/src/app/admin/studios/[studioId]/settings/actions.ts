@@ -202,6 +202,7 @@ export interface ExternalLeadsSheetSettingsData {
   dateColumn: string;
   hotLeadColumn: string;
   trialPurchasedColumn: string;
+  continueAiAfterGreeting: boolean;
   active: boolean;
 }
 

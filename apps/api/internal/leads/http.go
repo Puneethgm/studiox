@@ -766,6 +766,7 @@ type saveExternalLeadsSheetSettingsReq struct {
 	DateColumn      string `json:"dateColumn"`
 	HotLeadColumn   string `json:"hotLeadColumn"`
 	TrialPurchasedColumn string `json:"trialPurchasedColumn"`
+	ContinueAIAfterGreeting bool `json:"continueAiAfterGreeting"`
 	Active          bool   `json:"active"`
 }
 
@@ -785,6 +786,7 @@ func (h *Handler) getExternalLeadsSheetSettings(w http.ResponseWriter, r *http.R
 			"nameColumn": "", "firstNameColumn": "A", "lastNameColumn": "B",
 			"emailColumn": "C", "phoneColumn": "D", "sourceColumn": "", "notesColumn": "", "dateColumn": "",
 			"hotLeadColumn": "", "trialPurchasedColumn": "",
+			"continueAiAfterGreeting": true,
 			"active": false,
 		})
 		return
@@ -818,6 +820,7 @@ func (h *Handler) saveExternalLeadsSheetSettings(w http.ResponseWriter, r *http.
 		DateColumn:      req.DateColumn,
 		HotLeadColumn:   req.HotLeadColumn,
 		TrialPurchasedColumn: req.TrialPurchasedColumn,
+		ContinueAIAfterGreeting: req.ContinueAIAfterGreeting,
 		Active:          req.Active,
 	})
 	if err != nil {
