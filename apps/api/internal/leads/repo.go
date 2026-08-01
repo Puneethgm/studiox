@@ -63,6 +63,13 @@ func (r *Repo) syncLeadToGlofoxAsync(l *Lead, status LeadStatus) {
 		// WhatsApp leads only ever give a first name.
 		lastName = "-"
 	}
+	if leadEmail == "" && leadPhone != "" {
+		// Glofox likely requires an email too (same class of rejection as
+		// last name) — fall back to a synthetic one for the Glofox call
+		// only; this is never written back to our own database, which
+		// stays blank until a real email is captured.
+		leadEmail = "wa-" + leadPhone + "@example.com"
+	}
 	go func() {
 		gCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

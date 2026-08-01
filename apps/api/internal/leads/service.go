@@ -310,6 +310,12 @@ func (s *Service) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status
 		leadName := fn + " " + ln
 		leadEmail := existing.Email
 		leadPhone := existing.Phone
+		if leadEmail == "" && leadPhone != "" {
+			// Same class of rejection as last name — fall back to a
+			// synthetic email for the Glofox call only; never written
+			// back to our DB.
+			leadEmail = "wa-" + leadPhone + "@example.com"
+		}
 		go func() {
 			gCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
