@@ -40,6 +40,8 @@ export async function updateStudioSettings(
     googleDeveloperToken?: string;
     knowledgeBase?: string;
     trialAmountSgd?: number;
+    trialConfirmationMessage?: string;
+    membershipConfirmationMessage?: string;
   },
 ): Promise<UpdateStudioResult> {
   const cookieStore = await cookies();

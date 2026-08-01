@@ -21,6 +21,18 @@ import (
 	"github.com/stripe/stripe-go/v78/webhook"
 )
 
+// renderConfirmationTemplate substitutes the placeholders a studio can use in
+// its custom trial/membership payment confirmation message.
+func renderConfirmationTemplate(tmpl, leadFirstName, studioName, amount, receiptURL string) string {
+	replacer := strings.NewReplacer(
+		"{{lead_first_name}}", leadFirstName,
+		"{{studio_name}}", studioName,
+		"{{amount}}", amount,
+		"{{receipt_url}}", receiptURL,
+	)
+	return replacer.Replace(tmpl)
+}
+
 type StripeWebhookHandler struct {
 	svc           *Service
 	webhookSecret string
@@ -312,20 +324,28 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 
 	var message string
 	if isMembership {
-		message = fmt.Sprintf(
-			"🎉 Hi %s! Welcome to *%s*!\n\n"+
-				"Your membership subscription of *%s* was received successfully. We are excited to have you on board! 💪%s\n\n"+
-				"See you soon! — The %s Team",
-			name, studio.Name, amountStr, receiptLine, studio.Name,
-		)
+		if studio.MembershipConfirmationMessage != "" {
+			message = renderConfirmationTemplate(studio.MembershipConfirmationMessage, name, studio.Name, amountStr, receiptURL)
+		} else {
+			message = fmt.Sprintf(
+				"🎉 Hi %s! Welcome to *%s*!\n\n"+
+					"Your membership subscription of *%s* was received successfully. We are excited to have you on board! 💪%s\n\n"+
+					"See you soon! — The %s Team",
+				name, studio.Name, amountStr, receiptLine, studio.Name,
+			)
+		}
 	} else {
-		message = fmt.Sprintf(
-			"🎉 Hi %s! Thank you for booking your Trial at *%s*!\n\n"+
-				"Your payment of *%s* was received successfully. We can't wait to see you! 💪\n\n"+
-				"Your session is confirmed. Please arrive 10 minutes early.%s\n\n"+
-				"See you soon! — The %s Team",
-			name, studio.Name, amountStr, receiptLine, studio.Name,
-		)
+		if studio.TrialConfirmationMessage != "" {
+			message = renderConfirmationTemplate(studio.TrialConfirmationMessage, name, studio.Name, amountStr, receiptURL)
+		} else {
+			message = fmt.Sprintf(
+				"🎉 Hi %s! Thank you for booking your Trial at *%s*!\n\n"+
+					"Your payment of *%s* was received successfully. We can't wait to see you! 💪\n\n"+
+					"Your session is confirmed. Please arrive 10 minutes early.%s\n\n"+
+					"See you soon! — The %s Team",
+				name, studio.Name, amountStr, receiptLine, studio.Name,
+			)
+		}
 	}
 
 	cleanPhone := strings.ReplaceAll(strings.ReplaceAll(customerPhone, "+", ""), " ", "")

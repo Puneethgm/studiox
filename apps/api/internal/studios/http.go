@@ -61,6 +61,8 @@ type studioResponse struct {
 	TrialAmountSGD       int                 `json:"trialAmountSgd"`
 	BookingHeroImageURL  string              `json:"bookingHeroImageUrl"`
 	BookingHeroVideoURL  string              `json:"bookingHeroVideoUrl"`
+	TrialConfirmationMessage      string     `json:"trialConfirmationMessage"`
+	MembershipConfirmationMessage string     `json:"membershipConfirmationMessage"`
 	CampaignCount        int                 `json:"campaignCount,omitempty"`
 	LeadCount            int                 `json:"leadCount,omitempty"`
 	// Presence indicators — actual secret values are never returned.
@@ -100,6 +102,8 @@ func toStudioResponse(s *Studio) studioResponse {
 		TrialAmountSGD:          s.TrialAmountSGD,
 		BookingHeroImageURL:     s.BookingHeroImageURL,
 		BookingHeroVideoURL:     s.BookingHeroVideoURL,
+		TrialConfirmationMessage:      s.TrialConfirmationMessage,
+		MembershipConfirmationMessage: s.MembershipConfirmationMessage,
 		CampaignCount:           s.CampaignCount,
 		LeadCount:               s.LeadCount,
 		HasGeminiApiKey:         s.GeminiAPIKey != "",
@@ -124,8 +128,6 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Post("/google-credentials", h.uploadGoogleCredentials)
 }
 
-// SelfRoutes are for any authenticated user. Studio admins use this to fetch
-// their own studio for the settings page.
 func (h *Handler) SelfRoutes(r chi.Router) {
 	r.Get("/studios/{id}", h.getScoped)
 	r.Patch("/studios/{id}", h.updateScoped)
@@ -161,11 +163,6 @@ func (h *Handler) PublicRoutes(r chi.Router) {
 	r.Get("/public/platform/plans", h.GetPlatformPlans)
 }
 
-// RequireActiveStudio blocks studio_admins whose studio has been marked
-// inactive by a super admin. Super admins always pass through (so they can
-// access an inactive studio in order to reactivate it). Returns a structured
-// `studio_inactive` error so the frontend can render a clean lockout screen
-// rather than a generic 403.
 func (h *Handler) RequireActiveStudio(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c := identity.MustClaims(r.Context())
@@ -306,6 +303,8 @@ type updateReq struct {
 	TrialAmountUSD       *int                 `json:"trialAmountUsd"`
 	BookingHeroImageURL  *string              `json:"bookingHeroImageUrl"`
 	BookingHeroVideoURL  *string              `json:"bookingHeroVideoUrl"`
+	TrialConfirmationMessage      *string     `json:"trialConfirmationMessage"`
+	MembershipConfirmationMessage *string     `json:"membershipConfirmationMessage"`
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
@@ -351,6 +350,8 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		TrialAmountSGD:       existing.TrialAmountSGD,
 		BookingHeroImageURL:  existing.BookingHeroImageURL,
 		BookingHeroVideoURL:  existing.BookingHeroVideoURL,
+		TrialConfirmationMessage:      existing.TrialConfirmationMessage,
+		MembershipConfirmationMessage: existing.MembershipConfirmationMessage,
 	}
 	if req.Name != nil {
 		input.Name = *req.Name
@@ -421,6 +422,12 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.BookingHeroVideoURL != nil {
 		input.BookingHeroVideoURL = *req.BookingHeroVideoURL
+	}
+	if req.TrialConfirmationMessage != nil {
+		input.TrialConfirmationMessage = *req.TrialConfirmationMessage
+	}
+	if req.MembershipConfirmationMessage != nil {
+		input.MembershipConfirmationMessage = *req.MembershipConfirmationMessage
 	}
 
 	errs, err := h.svc.Update(r.Context(), id, input)
@@ -533,6 +540,10 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 		KnowledgeBaseFiles:   existing.KnowledgeBaseFiles,
 		GreetingMessage:      existing.GreetingMessage,
 		TrialAmountSGD:       existing.TrialAmountSGD,
+		BookingHeroImageURL:  existing.BookingHeroImageURL,
+		BookingHeroVideoURL:  existing.BookingHeroVideoURL,
+		TrialConfirmationMessage:      existing.TrialConfirmationMessage,
+		MembershipConfirmationMessage: existing.MembershipConfirmationMessage,
 	}
 	if req.Name != nil {
 		input.Name = *req.Name
@@ -604,6 +615,12 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.BookingHeroVideoURL != nil {
 		input.BookingHeroVideoURL = *req.BookingHeroVideoURL
+	}
+	if req.TrialConfirmationMessage != nil {
+		input.TrialConfirmationMessage = *req.TrialConfirmationMessage
+	}
+	if req.MembershipConfirmationMessage != nil {
+		input.MembershipConfirmationMessage = *req.MembershipConfirmationMessage
 	}
 	errs, err := h.svc.Update(r.Context(), studioID, input)
 	if errs != nil {

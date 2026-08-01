@@ -50,6 +50,8 @@ export interface Studio {
   bookingHeroVideoUrl?: string;
   trialAmountSgd?: number;
   subscriptionTier?: string;
+  trialConfirmationMessage?: string;
+  membershipConfirmationMessage?: string;
 }
 
 export interface Plan {

@@ -53,6 +53,8 @@ type Studio struct {
 	TrialAmountSGD      int    `json:"trialAmountSgd"`
 	BookingHeroImageURL string `json:"bookingHeroImageUrl"`
 	BookingHeroVideoURL string `json:"bookingHeroVideoUrl"`
+	TrialConfirmationMessage      string `json:"trialConfirmationMessage"`
+	MembershipConfirmationMessage string `json:"membershipConfirmationMessage"`
 
 	// Optional summary fields used by list endpoints.
 	CampaignCount int `json:"campaignCount,omitempty"`
