@@ -116,9 +116,10 @@ func (s *Service) SyncLeadToGlofoxByID(ctx context.Context, leadID string, statu
 			return
 		}
 		purchase, pErr := s.glofox.PurchaseMembership(gCtx, glofox.PurchaseMembershipInput{
-			UserID:       out.Entity.ID,
-			MembershipID: membershipID,
-			PlanCode:     planCode,
+			UserID:        out.Entity.ID,
+			MembershipID:  membershipID,
+			PlanCode:      planCode,
+			PaymentMethod: "cash",
 		})
 		if pErr != nil {
 			slog.Warn("Glofox | Membership purchase failed — lead created but no credit-pack/membership recorded",

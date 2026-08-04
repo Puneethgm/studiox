@@ -84,7 +84,7 @@ type CreateLeadInput struct {
 	LeadStatus GlofoxLeadStatus // "TRIAL" or "MEMBER"
 	// Gender / BirthDate are optional — when empty, Glofox still gets a
 	// neutral placeholder birth date (it requires one), but no gender field.
-	Gender    string // e.g. "male", "female" — sent as-is, Glofox's accepted values aren't documented beyond this
+	Gender    string // our internal values: "male", "female", "other", or "" — translated to Glofox's M/F/O/P enum by glofoxGenderCode
 	BirthDate string // "YYYY-MM-DD"; empty uses the neutral placeholder
 	// ContactSource / MarketingSource attribute where the lead came from
 	// (e.g. "whatsapp_web", "external_sheet") — shown in Glofox's lead
@@ -102,6 +102,25 @@ type CreateLeadResponse struct {
 		Name  string `json:"name"`
 	} `json:"entity"`
 	Message string `json:"message"`
+}
+
+// glofoxGenderCode translates our internal lead.gender values ("male",
+// "female", "other", or "" for prefer-not-to-say) into Glofox's fixed
+// gender enum: "M", "F", "O", "P". Anything unrecognized falls back to "P"
+// rather than sending a value Glofox would reject.
+func glofoxGenderCode(gender string) string {
+	switch strings.ToLower(strings.TrimSpace(gender)) {
+	case "male", "m":
+		return "M"
+	case "female", "f":
+		return "F"
+	case "other", "o":
+		return "O"
+	case "":
+		return ""
+	default:
+		return "P"
+	}
 }
 
 // CreateLead calls POST /2.1/branches/{branchId}/leads.
@@ -133,8 +152,8 @@ func (c *Client) CreateLead(ctx context.Context, in CreateLeadInput) (*CreateLea
 	if in.Phone != "" {
 		body["phone"] = in.Phone
 	}
-	if in.Gender != "" {
-		body["gender"] = in.Gender
+	if code := glofoxGenderCode(in.Gender); code != "" {
+		body["gender"] = code
 	}
 	if in.ContactSource != "" || in.MarketingSource != "" {
 		leads := map[string]any{}

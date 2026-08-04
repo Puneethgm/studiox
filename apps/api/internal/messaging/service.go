@@ -2299,7 +2299,9 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 	} else if autoContactStage == "awaiting_options" {
 		if isTrial && !isMember {
 			targetStage = "completed"
-			targetStatus = "trial_booked"
+			// status becomes "trial_booked" only once Stripe confirms actual
+			// payment (webhook_stripe.go's handleCheckoutComplete) — sending
+			// the link here is not a completed trial booking yet.
 			// SendTrialPaymentLink enqueues the outbound itself — capture the
 			// body only for the has_reply log below, not for re-sending.
 			sentBody, _ := s.SendTrialPaymentLink(ctx, studioID, conv.ID, conv.LeadID, firstName)
@@ -2486,7 +2488,9 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 		targetNotes = strings.ReplaceAll(targetNotes, "[Selected Trial Date]: "+dateStr, "")
 		targetNotes = strings.TrimSpace(targetNotes + "\n[Selected Trial Slot]: " + dateStr + " " + selectedTime)
 		targetStage = "completed"
-		targetStatus = "trial_booked"
+		// status becomes "trial_booked" only once Stripe confirms actual
+		// payment (webhook_stripe.go's handleCheckoutComplete), not here at
+		// checkout-session creation time.
 
 		secretKey, _, studioName, studioSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
 		if errStripe == nil && secretKey != "" {
@@ -2621,20 +2625,6 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 			                           source_kind, source_ref, scheduled_for, next_attempt_at)
 			VALUES ($1, $2, $3, '[]'::jsonb, 'automation', $4, $5, $5)
 		`, studioID, conv.ID, outboundBody, fmt.Sprintf("lead:%s:auto_reply:%s", conv.LeadID.String(), targetStage), time.Now().UTC())
-		if err != nil {
-			return err
-		}
-	}
-
-	// If they just transitioned to trial_booked AND completed (trial actually confirmed),
-	// schedule the 1-day check-in follow-up.
-	if targetStatus == "trial_booked" && leadStatus != "trial_booked" && targetStage == "completed" {
-		followupBody := fmt.Sprintf("Hi %s! We hope you had a great trial session! 🎉 Are you ready to take the next step and become a member? Reply:\n1. Yes, sign me up!\n2. Maybe later", firstName)
-		_, err = tx.Exec(ctx, `
-			INSERT INTO outbound_jobs (studio_id, conversation_id, body, attachments,
-			                           source_kind, source_ref, scheduled_for, next_attempt_at)
-			VALUES ($1, $2, $3, '[]'::jsonb, 'automation', $4, $5, $5)
-		`, studioID, conv.ID, followupBody, fmt.Sprintf("lead:%s:trial_followup:1day", conv.LeadID.String()), time.Now().UTC().Add(24*time.Hour))
 		if err != nil {
 			return err
 		}
