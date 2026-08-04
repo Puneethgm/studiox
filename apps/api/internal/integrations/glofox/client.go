@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -145,6 +146,23 @@ func (c *Client) CreateLead(ctx context.Context, in CreateLeadInput) (*CreateLea
 		body["leads"] = leads
 	}
 
+	out, err := c.createLead(ctx, body)
+	if err != nil && body["leads"] != nil && strings.Contains(err.Error(), "Contact source not allowed") {
+		// Glofox only accepts a fixed, undocumented set of contact_source
+		// values (e.g. "UNKNOWN", "MEMBER_APP") and rejects the whole lead
+		// with a 400 for anything else — "whatsapp_web" among them. Rather
+		// than lose the entire lead sync over an informational field, retry
+		// once without it.
+		delete(body, "leads")
+		return c.createLead(ctx, body)
+	}
+	return out, err
+}
+
+// createLead does the actual POST for a prepared request body — split out
+// from CreateLead so it can be retried once with the "leads" attribution
+// object stripped when Glofox rejects contact_source.
+func (c *Client) createLead(ctx context.Context, body map[string]any) (*CreateLeadResponse, error) {
 	b, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("marshal: %w", err)
