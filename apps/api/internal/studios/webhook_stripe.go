@@ -425,7 +425,7 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 				slog.Warn("stripe lead status update failed", "err", err)
 			} else {
 				slog.Info("stripe lead status updated to member", "phone", customerPhone)
-				h.svc.SyncLeadToGlofoxByID(ctx, *leadID, glofox.GlofoxStatusMember)
+				h.svc.SyncLeadToGlofoxByID(ctx, *leadID, glofox.GlofoxStatusMember, session.AmountTotal)
 
 				// Phase 5: Cancel any pending automated follow-ups since the lead became a member
 				_, _ = h.svc.repo.Pool().Exec(ctx, `
@@ -458,7 +458,7 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 				slog.Warn("stripe lead status update failed", "err", updateErr)
 			} else {
 				slog.Info("stripe lead status updated to trial_booked", "phone", customerPhone)
-				h.svc.SyncLeadToGlofoxByID(ctx, *leadID, glofox.GlofoxStatusTrial)
+				h.svc.SyncLeadToGlofoxByID(ctx, *leadID, glofox.GlofoxStatusTrial, session.AmountTotal)
 
 				// Schedule a 2-day post-trial follow-up to push membership.
 				// This fires after the trial session and nudges the lead to join.

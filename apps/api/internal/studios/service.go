@@ -31,7 +31,10 @@ func NewService(repo *Repo, id *identity.Repo, gf *glofox.Client) *Service {
 // the Stripe webhook handler, which confirms actual payment (checkout.session.
 // completed) and updates the lead via raw SQL rather than through leads.Repo,
 // so it needs its own path to Glofox rather than relying on leads.Repo's sync.
-func (s *Service) SyncLeadToGlofoxByID(ctx context.Context, leadID string, status glofox.GlofoxLeadStatus) {
+// amountCents is what Stripe actually charged (its smallest-unit convention),
+// used to auto-match a Glofox membership/plan by price when the studio hasn't
+// manually mapped one.
+func (s *Service) SyncLeadToGlofoxByID(ctx context.Context, leadID string, status glofox.GlofoxLeadStatus, amountCents int64) {
 	if s.glofox == nil || leadID == "" {
 		return
 	}
@@ -100,6 +103,15 @@ func (s *Service) SyncLeadToGlofoxByID(ctx context.Context, leadID string, statu
 		slog.Info("Glofox | Lead synced to Glofox CRM",
 			"component", "glofox", "lead_id", leadID, "new_status", string(status), "glofox_id", out.Entity.ID)
 
+		if (membershipID == "" || planCode == "") && amountCents > 0 {
+			match, mErr := s.glofox.FindMembershipPlanByPrice(gCtx, amountCents, status == glofox.GlofoxStatusTrial)
+			if mErr != nil {
+				slog.Warn("Glofox | Could not auto-match a membership plan for this payment — no purchase recorded",
+					"component", "glofox", "lead_id", leadID, "amount_cents", amountCents, "error", mErr.Error())
+			} else {
+				membershipID, planCode = match.MembershipID, match.PlanCode
+			}
+		}
 		if membershipID == "" || planCode == "" {
 			return
 		}

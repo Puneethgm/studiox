@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -279,6 +280,85 @@ func (c *Client) PurchaseMembership(ctx context.Context, in PurchaseMembershipIn
 		return nil, fmt.Errorf("glofox purchase membership failed: %s", out.Message)
 	}
 	return &out, nil
+}
+
+// MembershipMatch is a Glofox membership/plan pairing found by price.
+type MembershipMatch struct {
+	MembershipID string
+	PlanCode     string
+}
+
+// FindMembershipPlanByPrice calls GET /2.0/branches/{branchId}/memberships
+// and picks the active plan whose price matches amountCents (Stripe's
+// smallest-unit convention, same as everywhere else in this codebase) —
+// auto-detecting which Glofox membership/plan a payment corresponds to
+// instead of requiring it to be mapped by hand per studio. When more than one
+// plan matches the price, one whose membership name mentions "trial" is
+// preferred when isTrial is true (and avoided otherwise), since Glofox
+// branches commonly have both a trial and a full-price plan at the same
+// price point.
+func (c *Client) FindMembershipPlanByPrice(ctx context.Context, amountCents int64, isTrial bool) (MembershipMatch, error) {
+	if c == nil {
+		return MembershipMatch{}, fmt.Errorf("glofox client not configured")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		baseURL+"/2.0/branches/"+c.branchID+"/memberships", nil)
+	if err != nil {
+		return MembershipMatch{}, fmt.Errorf("build request: %w", err)
+	}
+	c.addAuth(req)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return MembershipMatch{}, fmt.Errorf("glofox request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return MembershipMatch{}, fmt.Errorf("glofox status %d: %s", resp.StatusCode, string(raw))
+	}
+
+	var out struct {
+		Data []struct {
+			ID     string `json:"_id"`
+			Name   string `json:"name"`
+			Active bool   `json:"active"`
+			Plans  []struct {
+				Code  json.Number `json:"code"`
+				Price float64     `json:"price"`
+			} `json:"plans"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return MembershipMatch{}, fmt.Errorf("decode memberships: %w", err)
+	}
+
+	target := math.Round(float64(amountCents) / 100.0)
+	var fallback MembershipMatch
+	for _, m := range out.Data {
+		if !m.Active {
+			continue
+		}
+		nameIsTrial := strings.Contains(strings.ToLower(m.Name), "trial")
+		for _, p := range m.Plans {
+			if math.Round(p.Price) != target {
+				continue
+			}
+			match := MembershipMatch{MembershipID: m.ID, PlanCode: p.Code.String()}
+			if nameIsTrial == isTrial {
+				return match, nil
+			}
+			if fallback.MembershipID == "" {
+				fallback = match
+			}
+		}
+	}
+	if fallback.MembershipID != "" {
+		return fallback, nil
+	}
+	return MembershipMatch{}, fmt.Errorf("no glofox membership plan found matching price %.0f", target)
 }
 
 // Booking represents a single booking record from Glofox.
