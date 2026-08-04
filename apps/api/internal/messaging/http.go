@@ -34,6 +34,55 @@ func NewHandler(svc *Service, bus Bus) *Handler {
 
 func (h *Handler) PublicRoutes(r chi.Router) {
 	r.Get("/links/{id}", h.redirectTriggerLink)
+	r.Get("/public/leads/{leadId}/trial-checkout", h.getTrialCheckoutInfo)
+	r.Post("/public/leads/{leadId}/trial-checkout", h.submitTrialCheckout)
+}
+
+func (h *Handler) getTrialCheckoutInfo(w http.ResponseWriter, r *http.Request) {
+	leadID, err := uuid.Parse(chi.URLParam(r, "leadId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid lead id")
+		return
+	}
+	info, err := h.svc.GetTrialCheckoutLeadInfo(r.Context(), leadID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "lead not found")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, info)
+}
+
+type submitTrialCheckoutReq struct {
+	FullName    string `json:"fullName"`
+	Gender      string `json:"gender"`
+	DateOfBirth string `json:"dateOfBirth"` // "YYYY-MM-DD", optional
+}
+
+func (h *Handler) submitTrialCheckout(w http.ResponseWriter, r *http.Request) {
+	leadID, err := uuid.Parse(chi.URLParam(r, "leadId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid lead id")
+		return
+	}
+	var req submitTrialCheckoutReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	req.FullName = strings.TrimSpace(req.FullName)
+	if req.FullName == "" {
+		httpx.WriteValidationError(w, map[string]string{"fullName": "required"})
+		return
+	}
+	if err := h.svc.SaveTrialCheckoutDetails(r.Context(), leadID, req.FullName, req.Gender, req.DateOfBirth); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	checkoutURL, err := h.svc.CreateTrialCheckoutSessionForLead(r.Context(), leadID)
+	if err != nil || checkoutURL == "" {
+		httpx.WriteError(w, http.StatusInternalServerError, "checkout_failed", "could not create payment session")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]string{"checkoutUrl": checkoutURL})
 }
 
 // AdminRoutes are mounted under /api/v1/studios/{studioId}/messaging.

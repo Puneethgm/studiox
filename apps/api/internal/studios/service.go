@@ -35,14 +35,20 @@ func (s *Service) SyncLeadToGlofoxByID(ctx context.Context, leadID string, statu
 	if s.glofox == nil || leadID == "" {
 		return
 	}
-	var firstName, lastName, name, email, phone string
+	var firstName, lastName, name, email, phone, source, studioIDStr string
+	var gender string
+	var dateOfBirth *time.Time
 	err := s.repo.Pool().QueryRow(ctx, `
-		SELECT COALESCE(first_name,''), COALESCE(last_name,''), COALESCE(name,''), COALESCE(email,''), COALESCE(phone,'')
+		SELECT COALESCE(first_name,''), COALESCE(last_name,''), COALESCE(name,''), COALESCE(email,''), COALESCE(phone,''), COALESCE(source,''), studio_id::text, COALESCE(gender,''), date_of_birth
 		FROM leads WHERE id = $1
-	`, leadID).Scan(&firstName, &lastName, &name, &email, &phone)
+	`, leadID).Scan(&firstName, &lastName, &name, &email, &phone, &source, &studioIDStr, &gender, &dateOfBirth)
 	if err != nil {
 		slog.Warn("Glofox | Lead sync: failed to load lead for sync", "component", "glofox", "lead_id", leadID, "err", err.Error())
 		return
+	}
+	birthDate := ""
+	if dateOfBirth != nil {
+		birthDate = dateOfBirth.Format("2006-01-02")
 	}
 	if firstName == "" && lastName == "" && name != "" {
 		parts := strings.SplitN(name, " ", 2)
@@ -56,22 +62,61 @@ func (s *Service) SyncLeadToGlofoxByID(ctx context.Context, leadID string, statu
 		// WhatsApp leads only ever give a first name.
 		lastName = "-"
 	}
+
+	// Look up the studio's Glofox membership/plan-code mapping (if any) so
+	// we can also record an actual credit-pack/membership purchase, not
+	// just a bare lead record.
+	var membershipID, planCode string
+	if studioID, parseErr := uuid.Parse(studioIDStr); parseErr == nil {
+		if studio, sErr := s.repo.GetByID(ctx, studioID); sErr == nil && studio != nil {
+			if status == glofox.GlofoxStatusMember {
+				membershipID = studio.MembershipGlofoxMembershipID
+				planCode = studio.MembershipGlofoxPlanCode
+			} else {
+				membershipID = studio.TrialGlofoxMembershipID
+				planCode = studio.TrialGlofoxPlanCode
+			}
+		}
+	}
+
 	go func() {
 		gCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		out, err := s.glofox.CreateLead(gCtx, glofox.CreateLeadInput{
-			Email:      email,
-			FirstName:  firstName,
-			LastName:   lastName,
-			Phone:      phone,
-			LeadStatus: status,
+			Email:         email,
+			FirstName:     firstName,
+			LastName:      lastName,
+			Phone:         phone,
+			LeadStatus:    status,
+			ContactSource: source,
+			Gender:        gender,
+			BirthDate:     birthDate,
 		})
 		if err != nil {
 			slog.Warn("Glofox | Lead sync failed — lead conversion not reflected in Glofox CRM",
 				"component", "glofox", "lead_id", leadID, "new_status", string(status), "error", err.Error())
-		} else {
-			slog.Info("Glofox | Lead synced to Glofox CRM",
-				"component", "glofox", "lead_id", leadID, "new_status", string(status), "glofox_id", out.Entity.ID)
+			return
+		}
+		slog.Info("Glofox | Lead synced to Glofox CRM",
+			"component", "glofox", "lead_id", leadID, "new_status", string(status), "glofox_id", out.Entity.ID)
+
+		if membershipID == "" || planCode == "" {
+			return
+		}
+		purchase, pErr := s.glofox.PurchaseMembership(gCtx, glofox.PurchaseMembershipInput{
+			UserID:       out.Entity.ID,
+			MembershipID: membershipID,
+			PlanCode:     planCode,
+		})
+		if pErr != nil {
+			slog.Warn("Glofox | Membership purchase failed — lead created but no credit-pack/membership recorded",
+				"component", "glofox", "lead_id", leadID, "membership_id", membershipID, "plan_code", planCode, "error", pErr.Error())
+			return
+		}
+		slog.Info("Glofox | Membership purchase recorded",
+			"component", "glofox", "lead_id", leadID, "invoice_id", purchase.InvoiceID, "status", purchase.Status)
+		if purchase.InvoiceID != "" {
+			_, _ = s.repo.Pool().Exec(gCtx, `UPDATE leads SET glofox_invoice_id = $2 WHERE id = $1`, leadID, purchase.InvoiceID)
 		}
 	}()
 }
@@ -277,6 +322,10 @@ type UpdateStudioInput struct {
 	BookingHeroVideoURL  string              `json:"bookingHeroVideoUrl"`
 	TrialConfirmationMessage      string     `json:"trialConfirmationMessage"`
 	MembershipConfirmationMessage string     `json:"membershipConfirmationMessage"`
+	TrialGlofoxMembershipID      string      `json:"trialGlofoxMembershipId"`
+	TrialGlofoxPlanCode          string      `json:"trialGlofoxPlanCode"`
+	MembershipGlofoxMembershipID string      `json:"membershipGlofoxMembershipId"`
+	MembershipGlofoxPlanCode     string      `json:"membershipGlofoxPlanCode"`
 }
 
 func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput) (map[string]string, error) {
@@ -315,7 +364,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput
 	if len(errs) > 0 {
 		return errs, nil
 	}
-	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.ContactPhone, in.Active, in.ManagedBy1Hero, in.AvailabilitySlots, in.AvailabilityTimezone, in.GeminiAPIKey, in.GroqAPIKey, in.MetaAppID, in.MetaAppSecret, in.GoogleClientID, in.GoogleClientSecret, in.GoogleDeveloperToken, in.SocialPlannerEnabled, in.KnowledgeBase, in.KnowledgeBaseFiles, in.GreetingMessage, in.TrialAmountSGD, in.BookingHeroImageURL, in.BookingHeroVideoURL, in.TrialConfirmationMessage, in.MembershipConfirmationMessage); err != nil {
+	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.ContactPhone, in.Active, in.ManagedBy1Hero, in.AvailabilitySlots, in.AvailabilityTimezone, in.GeminiAPIKey, in.GroqAPIKey, in.MetaAppID, in.MetaAppSecret, in.GoogleClientID, in.GoogleClientSecret, in.GoogleDeveloperToken, in.SocialPlannerEnabled, in.KnowledgeBase, in.KnowledgeBaseFiles, in.GreetingMessage, in.TrialAmountSGD, in.BookingHeroImageURL, in.BookingHeroVideoURL, in.TrialConfirmationMessage, in.MembershipConfirmationMessage, in.TrialGlofoxMembershipID, in.TrialGlofoxPlanCode, in.MembershipGlofoxMembershipID, in.MembershipGlofoxPlanCode); err != nil {
 		return nil, err
 	}
 

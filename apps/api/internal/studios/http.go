@@ -63,6 +63,10 @@ type studioResponse struct {
 	BookingHeroVideoURL  string              `json:"bookingHeroVideoUrl"`
 	TrialConfirmationMessage      string     `json:"trialConfirmationMessage"`
 	MembershipConfirmationMessage string     `json:"membershipConfirmationMessage"`
+	TrialGlofoxMembershipID      string      `json:"trialGlofoxMembershipId"`
+	TrialGlofoxPlanCode          string      `json:"trialGlofoxPlanCode"`
+	MembershipGlofoxMembershipID string      `json:"membershipGlofoxMembershipId"`
+	MembershipGlofoxPlanCode     string      `json:"membershipGlofoxPlanCode"`
 	CampaignCount        int                 `json:"campaignCount,omitempty"`
 	LeadCount            int                 `json:"leadCount,omitempty"`
 	// Presence indicators — actual secret values are never returned.
@@ -104,6 +108,10 @@ func toStudioResponse(s *Studio) studioResponse {
 		BookingHeroVideoURL:     s.BookingHeroVideoURL,
 		TrialConfirmationMessage:      s.TrialConfirmationMessage,
 		MembershipConfirmationMessage: s.MembershipConfirmationMessage,
+		TrialGlofoxMembershipID:      s.TrialGlofoxMembershipID,
+		TrialGlofoxPlanCode:          s.TrialGlofoxPlanCode,
+		MembershipGlofoxMembershipID: s.MembershipGlofoxMembershipID,
+		MembershipGlofoxPlanCode:     s.MembershipGlofoxPlanCode,
 		CampaignCount:           s.CampaignCount,
 		LeadCount:               s.LeadCount,
 		HasGeminiApiKey:         s.GeminiAPIKey != "",
@@ -305,6 +313,10 @@ type updateReq struct {
 	BookingHeroVideoURL  *string              `json:"bookingHeroVideoUrl"`
 	TrialConfirmationMessage      *string     `json:"trialConfirmationMessage"`
 	MembershipConfirmationMessage *string     `json:"membershipConfirmationMessage"`
+	TrialGlofoxMembershipID      *string      `json:"trialGlofoxMembershipId"`
+	TrialGlofoxPlanCode          *string      `json:"trialGlofoxPlanCode"`
+	MembershipGlofoxMembershipID *string      `json:"membershipGlofoxMembershipId"`
+	MembershipGlofoxPlanCode     *string      `json:"membershipGlofoxPlanCode"`
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
@@ -352,6 +364,10 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		BookingHeroVideoURL:  existing.BookingHeroVideoURL,
 		TrialConfirmationMessage:      existing.TrialConfirmationMessage,
 		MembershipConfirmationMessage: existing.MembershipConfirmationMessage,
+		TrialGlofoxMembershipID:      existing.TrialGlofoxMembershipID,
+		TrialGlofoxPlanCode:          existing.TrialGlofoxPlanCode,
+		MembershipGlofoxMembershipID: existing.MembershipGlofoxMembershipID,
+		MembershipGlofoxPlanCode:     existing.MembershipGlofoxPlanCode,
 	}
 	if req.Name != nil {
 		input.Name = *req.Name
@@ -428,6 +444,18 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.MembershipConfirmationMessage != nil {
 		input.MembershipConfirmationMessage = *req.MembershipConfirmationMessage
+	}
+	if req.TrialGlofoxMembershipID != nil {
+		input.TrialGlofoxMembershipID = *req.TrialGlofoxMembershipID
+	}
+	if req.TrialGlofoxPlanCode != nil {
+		input.TrialGlofoxPlanCode = *req.TrialGlofoxPlanCode
+	}
+	if req.MembershipGlofoxMembershipID != nil {
+		input.MembershipGlofoxMembershipID = *req.MembershipGlofoxMembershipID
+	}
+	if req.MembershipGlofoxPlanCode != nil {
+		input.MembershipGlofoxPlanCode = *req.MembershipGlofoxPlanCode
 	}
 
 	errs, err := h.svc.Update(r.Context(), id, input)
@@ -544,6 +572,10 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 		BookingHeroVideoURL:  existing.BookingHeroVideoURL,
 		TrialConfirmationMessage:      existing.TrialConfirmationMessage,
 		MembershipConfirmationMessage: existing.MembershipConfirmationMessage,
+		TrialGlofoxMembershipID:      existing.TrialGlofoxMembershipID,
+		TrialGlofoxPlanCode:          existing.TrialGlofoxPlanCode,
+		MembershipGlofoxMembershipID: existing.MembershipGlofoxMembershipID,
+		MembershipGlofoxPlanCode:     existing.MembershipGlofoxPlanCode,
 	}
 	if req.Name != nil {
 		input.Name = *req.Name
@@ -621,6 +653,18 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.MembershipConfirmationMessage != nil {
 		input.MembershipConfirmationMessage = *req.MembershipConfirmationMessage
+	}
+	if req.TrialGlofoxMembershipID != nil {
+		input.TrialGlofoxMembershipID = *req.TrialGlofoxMembershipID
+	}
+	if req.TrialGlofoxPlanCode != nil {
+		input.TrialGlofoxPlanCode = *req.TrialGlofoxPlanCode
+	}
+	if req.MembershipGlofoxMembershipID != nil {
+		input.MembershipGlofoxMembershipID = *req.MembershipGlofoxMembershipID
+	}
+	if req.MembershipGlofoxPlanCode != nil {
+		input.MembershipGlofoxPlanCode = *req.MembershipGlofoxPlanCode
 	}
 	errs, err := h.svc.Update(r.Context(), studioID, input)
 	if errs != nil {

@@ -63,15 +63,23 @@ func (r *Repo) syncLeadToGlofoxAsync(l *Lead, status LeadStatus) {
 		// WhatsApp leads only ever give a first name.
 		lastName = "-"
 	}
+	gender := l.Gender
+	birthDate := ""
+	if l.DateOfBirth != nil {
+		birthDate = l.DateOfBirth.Format("2006-01-02")
+	}
 	go func() {
 		gCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		out, err := r.glofox.CreateLead(gCtx, glofox.CreateLeadInput{
-			Email:      leadEmail,
-			FirstName:  firstName,
-			LastName:   lastName,
-			Phone:      leadPhone,
-			LeadStatus: gfStatus,
+			Email:         leadEmail,
+			FirstName:     firstName,
+			LastName:      lastName,
+			Phone:         leadPhone,
+			LeadStatus:    gfStatus,
+			ContactSource: l.Source,
+			Gender:        gender,
+			BirthDate:     birthDate,
 		})
 		if err != nil {
 			slog.Warn("Glofox | Lead sync failed — lead conversion not reflected in Glofox CRM",
@@ -495,7 +503,7 @@ func (r *Repo) GetLead(ctx context.Context, studioID, id uuid.UUID) (*Lead, erro
 		       l.name, COALESCE(l.first_name, ''), COALESCE(l.last_name, ''), l.email, l.phone, l.fitness_plan, l.goals,
 		       l.source, l.status, l.currency, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage,
 		       COALESCE(l.assigned_to, ''), l.trial_attended, l.member_sold, l.monthly_fee, COALESCE(l.offer, ''), COALESCE(l.further_notes, ''),
-		       l.dnd_enabled, l.created_at, l.updated_at
+		       l.dnd_enabled, l.created_at, l.updated_at, COALESCE(l.gender, ''), l.date_of_birth
 		FROM leads l
 		JOIN campaigns c ON c.id = l.campaign_id
 		JOIN studios s ON s.id = l.studio_id
@@ -505,7 +513,7 @@ func (r *Repo) GetLead(ctx context.Context, studioID, id uuid.UUID) (*Lead, erro
 	if err := row.Scan(&l.ID, &l.StudioID, &l.StudioName, &l.StudioSlug, &l.CampaignID, &l.CampaignName, &l.CampaignSlug,
 		&l.Name, &l.FirstName, &l.LastName, &l.Email, &l.Phone, &l.FitnessPlan, &l.Goals,
 		&l.Source, &l.Status, &l.Currency, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage,
-		&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.DNDEnabled, &l.CreatedAt, &l.UpdatedAt); err != nil {
+		&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.DNDEnabled, &l.CreatedAt, &l.UpdatedAt, &l.Gender, &l.DateOfBirth); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrLeadNotFound
 		}
@@ -520,7 +528,7 @@ func (r *Repo) GetLeadTx(ctx context.Context, tx pgx.Tx, studioID, id uuid.UUID)
 		       l.name, COALESCE(l.first_name, ''), COALESCE(l.last_name, ''), l.email, l.phone, l.fitness_plan, l.goals,
 		       l.source, l.status, l.currency, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage,
 		       COALESCE(l.assigned_to, ''), l.trial_attended, l.member_sold, l.monthly_fee, COALESCE(l.offer, ''), COALESCE(l.further_notes, ''),
-		       l.dnd_enabled, l.created_at, l.updated_at
+		       l.dnd_enabled, l.created_at, l.updated_at, COALESCE(l.gender, ''), l.date_of_birth
 		FROM leads l
 		JOIN campaigns c ON c.id = l.campaign_id
 		JOIN studios s ON s.id = l.studio_id
@@ -530,13 +538,63 @@ func (r *Repo) GetLeadTx(ctx context.Context, tx pgx.Tx, studioID, id uuid.UUID)
 	if err := row.Scan(&l.ID, &l.StudioID, &l.StudioName, &l.StudioSlug, &l.CampaignID, &l.CampaignName, &l.CampaignSlug,
 		&l.Name, &l.FirstName, &l.LastName, &l.Email, &l.Phone, &l.FitnessPlan, &l.Goals,
 		&l.Source, &l.Status, &l.Currency, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage,
-		&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.DNDEnabled, &l.CreatedAt, &l.UpdatedAt); err != nil {
+		&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.DNDEnabled, &l.CreatedAt, &l.UpdatedAt, &l.Gender, &l.DateOfBirth); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrLeadNotFound
 		}
 		return nil, fmt.Errorf("get lead tx: %w", err)
 	}
 	return &l, nil
+}
+
+// GetLeadPublic is a minimal, auth-free lookup for the pre-payment trial
+// details page — returns only what's safe to expose without a session (no
+// notes, no assigned staff, no contact history).
+func (r *Repo) GetLeadPublic(ctx context.Context, id uuid.UUID) (*Lead, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT l.id, l.studio_id, s.name, s.slug, l.campaign_id,
+		       l.name, COALESCE(l.first_name,''), COALESCE(l.last_name,''), l.phone,
+		       l.status, l.trial_purchased, COALESCE(l.gender,''), l.date_of_birth
+		FROM leads l
+		JOIN studios s ON s.id = l.studio_id
+		WHERE l.id = $1
+	`, id)
+	var l Lead
+	if err := row.Scan(&l.ID, &l.StudioID, &l.StudioName, &l.StudioSlug, &l.CampaignID,
+		&l.Name, &l.FirstName, &l.LastName, &l.Phone,
+		&l.Status, &l.TrialPurchased, &l.Gender, &l.DateOfBirth); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrLeadNotFound
+		}
+		return nil, fmt.Errorf("get lead public: %w", err)
+	}
+	return &l, nil
+}
+
+// SaveTrialCheckoutDetails saves the full name/gender/date-of-birth collected
+// on the pre-payment trial details page, right before Stripe checkout is
+// created. Public-facing (no studio_id scoping needed — the lead id itself,
+// a UUID, is the only thing an outsider could possibly have).
+func (r *Repo) SaveTrialCheckoutDetails(ctx context.Context, id uuid.UUID, fullName, gender string, dob *time.Time) error {
+	fullName = strings.TrimSpace(fullName)
+	parts := strings.SplitN(fullName, " ", 2)
+	firstName := parts[0]
+	lastName := ""
+	if len(parts) > 1 {
+		lastName = parts[1]
+	}
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE leads
+		SET name = $2, first_name = $3, last_name = $4, gender = $5, date_of_birth = $6, updated_at = now()
+		WHERE id = $1
+	`, id, fullName, firstName, lastName, gender, dob)
+	if err != nil {
+		return fmt.Errorf("save trial checkout details: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrLeadNotFound
+	}
+	return nil
 }
 
 // LeadStats is a tiny aggregate used by the studio overview widgets and by

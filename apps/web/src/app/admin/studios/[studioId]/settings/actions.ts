@@ -42,6 +42,10 @@ export async function updateStudioSettings(
     trialAmountSgd?: number;
     trialConfirmationMessage?: string;
     membershipConfirmationMessage?: string;
+    trialGlofoxMembershipId?: string;
+    trialGlofoxPlanCode?: string;
+    membershipGlofoxMembershipId?: string;
+    membershipGlofoxPlanCode?: string;
   },
 ): Promise<UpdateStudioResult> {
   const cookieStore = await cookies();

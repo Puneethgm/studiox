@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Check, MessageSquareText } from 'lucide-react';
+import { Check, MessageSquareText, Link2 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import type { Studio } from '@/lib/types';
@@ -46,6 +46,10 @@ function PlaceholderHints() {
 export function TemplatesClient({ studio }: { studio: Studio }) {
   const [trialMessage, setTrialMessage] = useState(studio.trialConfirmationMessage || DEFAULT_TRIAL_MESSAGE);
   const [membershipMessage, setMembershipMessage] = useState(studio.membershipConfirmationMessage || DEFAULT_MEMBERSHIP_MESSAGE);
+  const [trialMembershipId, setTrialMembershipId] = useState(studio.trialGlofoxMembershipId || '');
+  const [trialPlanCode, setTrialPlanCode] = useState(studio.trialGlofoxPlanCode || '');
+  const [membershipMembershipId, setMembershipMembershipId] = useState(studio.membershipGlofoxMembershipId || '');
+  const [membershipPlanCode, setMembershipPlanCode] = useState(studio.membershipGlofoxPlanCode || '');
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -56,6 +60,10 @@ export function TemplatesClient({ studio }: { studio: Studio }) {
       const result = await updateStudioSettings(studio.id, studio.slug, {
         trialConfirmationMessage: trialMessage,
         membershipConfirmationMessage: membershipMessage,
+        trialGlofoxMembershipId: trialMembershipId,
+        trialGlofoxPlanCode: trialPlanCode,
+        membershipGlofoxMembershipId: membershipMembershipId,
+        membershipGlofoxPlanCode: membershipPlanCode,
       });
       if (result.ok) {
         setToast('Templates saved.');
@@ -104,6 +112,63 @@ export function TemplatesClient({ studio }: { studio: Studio }) {
           className="w-full rounded-xl border border-zinc-200/50 bg-white/50 px-3 py-2.5 text-sm font-medium text-zinc-800 shadow-sm focus:border-brand-500 focus:outline-none dark:border-zinc-800/50 dark:bg-zinc-950/50 dark:text-zinc-100 font-mono whitespace-pre-wrap"
         />
         <PlaceholderHints />
+      </Card>
+
+      <Card>
+        <div className="flex items-center gap-2 mb-1">
+          <Link2 className="h-4 w-4 text-brand-500" />
+          <h3 className="text-sm font-black text-zinc-950 dark:text-white">Glofox Membership Mapping</h3>
+        </div>
+        <p className="text-[11px] text-zinc-400 mb-4 leading-relaxed">
+          Optional. When set, a real trial/membership payment also creates an actual credit-pack/membership purchase in Glofox (not just a bare lead record) —
+          look these up once via Glofox&rsquo;s own dashboard (<code className="font-mono">GET /2.0/memberships</code>) and enter them here. Leave blank to skip this step.
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label className="mb-1 block text-[10px] font-black uppercase tracking-wider text-zinc-500">
+              Trial: Glofox Membership ID
+            </label>
+            <input
+              value={trialMembershipId}
+              onChange={(e) => setTrialMembershipId(e.target.value)}
+              placeholder="(optional)"
+              className="w-full rounded-xl border border-zinc-200/50 bg-white/50 px-3 py-2 text-sm font-mono text-zinc-800 shadow-sm focus:border-brand-500 focus:outline-none dark:border-zinc-800/50 dark:bg-zinc-950/50 dark:text-zinc-100"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-[10px] font-black uppercase tracking-wider text-zinc-500">
+              Trial: Glofox Plan Code
+            </label>
+            <input
+              value={trialPlanCode}
+              onChange={(e) => setTrialPlanCode(e.target.value)}
+              placeholder="(optional)"
+              className="w-full rounded-xl border border-zinc-200/50 bg-white/50 px-3 py-2 text-sm font-mono text-zinc-800 shadow-sm focus:border-brand-500 focus:outline-none dark:border-zinc-800/50 dark:bg-zinc-950/50 dark:text-zinc-100"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-[10px] font-black uppercase tracking-wider text-zinc-500">
+              Membership: Glofox Membership ID
+            </label>
+            <input
+              value={membershipMembershipId}
+              onChange={(e) => setMembershipMembershipId(e.target.value)}
+              placeholder="(optional)"
+              className="w-full rounded-xl border border-zinc-200/50 bg-white/50 px-3 py-2 text-sm font-mono text-zinc-800 shadow-sm focus:border-brand-500 focus:outline-none dark:border-zinc-800/50 dark:bg-zinc-950/50 dark:text-zinc-100"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-[10px] font-black uppercase tracking-wider text-zinc-500">
+              Membership: Glofox Plan Code
+            </label>
+            <input
+              value={membershipPlanCode}
+              onChange={(e) => setMembershipPlanCode(e.target.value)}
+              placeholder="(optional)"
+              className="w-full rounded-xl border border-zinc-200/50 bg-white/50 px-3 py-2 text-sm font-mono text-zinc-800 shadow-sm focus:border-brand-500 focus:outline-none dark:border-zinc-800/50 dark:bg-zinc-950/50 dark:text-zinc-100"
+            />
+          </div>
+        </div>
       </Card>
 
       <div className="flex items-center gap-3">

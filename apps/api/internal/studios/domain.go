@@ -55,6 +55,13 @@ type Studio struct {
 	BookingHeroVideoURL string `json:"bookingHeroVideoUrl"`
 	TrialConfirmationMessage      string `json:"trialConfirmationMessage"`
 	MembershipConfirmationMessage string `json:"membershipConfirmationMessage"`
+	// Glofox membership/plan-code mapping — when set, a real Stripe payment
+	// creates an actual credit-pack/membership purchase in Glofox (not just
+	// a bare lead record). Looked up once via Glofox's own dashboard/API.
+	TrialGlofoxMembershipID      string `json:"trialGlofoxMembershipId"`
+	TrialGlofoxPlanCode          string `json:"trialGlofoxPlanCode"`
+	MembershipGlofoxMembershipID string `json:"membershipGlofoxMembershipId"`
+	MembershipGlofoxPlanCode     string `json:"membershipGlofoxPlanCode"`
 
 	// Optional summary fields used by list endpoints.
 	CampaignCount int `json:"campaignCount,omitempty"`

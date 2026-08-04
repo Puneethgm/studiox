@@ -78,6 +78,11 @@ type Lead struct {
 	Referrer         string     `json:"referrer,omitempty"`
 	UserAgent        string     `json:"userAgent,omitempty"`
 	IPAddress        *net.IP    `json:"ipAddress,omitempty"`
+	// Gender / DateOfBirth are collected on the pre-payment trial details
+	// page, right before Stripe checkout — optional, used to send real
+	// values to Glofox instead of a neutral placeholder birth date.
+	Gender       string     `json:"gender,omitempty"`
+	DateOfBirth  *time.Time `json:"dateOfBirth,omitempty"`
 	CreatedAt        time.Time  `json:"createdAt"`
 	UpdatedAt        time.Time  `json:"updatedAt"`
 }

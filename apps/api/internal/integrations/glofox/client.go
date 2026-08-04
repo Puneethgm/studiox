@@ -80,6 +80,15 @@ type CreateLeadInput struct {
 	LastName   string
 	Phone      string
 	LeadStatus GlofoxLeadStatus // "TRIAL" or "MEMBER"
+	// Gender / BirthDate are optional — when empty, Glofox still gets a
+	// neutral placeholder birth date (it requires one), but no gender field.
+	Gender    string // e.g. "male", "female" — sent as-is, Glofox's accepted values aren't documented beyond this
+	BirthDate string // "YYYY-MM-DD"; empty uses the neutral placeholder
+	// ContactSource / MarketingSource attribute where the lead came from
+	// (e.g. "whatsapp_web", "external_sheet") — shown in Glofox's lead
+	// source reporting. Optional.
+	ContactSource   string
+	MarketingSource string
 }
 
 // CreateLeadResponse is the relevant subset of Glofox's lead-creation reply.
@@ -107,16 +116,33 @@ func (c *Client) CreateLead(ctx context.Context, in CreateLeadInput) (*CreateLea
 		status = GlofoxStatusTrial
 	}
 
+	birth := in.BirthDate
+	if birth == "" {
+		birth = "1990-01-01" // neutral default when not collected
+	}
 	body := map[string]any{
 		"email":       in.Email,
 		"first_name":  in.FirstName,
 		"last_name":   in.LastName,
 		"type":        "MEMBER",
 		"lead_status": string(status),
-		"birth":       "1990-01-01", // neutral default — DOB not collected at lead capture
+		"birth":       birth,
 	}
 	if in.Phone != "" {
 		body["phone"] = in.Phone
+	}
+	if in.Gender != "" {
+		body["gender"] = in.Gender
+	}
+	if in.ContactSource != "" || in.MarketingSource != "" {
+		leads := map[string]any{}
+		if in.ContactSource != "" {
+			leads["contact_source"] = in.ContactSource
+		}
+		if in.MarketingSource != "" {
+			leads["marketing_source"] = in.MarketingSource
+		}
+		body["leads"] = leads
 	}
 
 	b, err := json.Marshal(body)
@@ -148,6 +174,91 @@ func (c *Client) CreateLead(ctx context.Context, in CreateLeadInput) (*CreateLea
 	}
 	if !out.Success {
 		return nil, fmt.Errorf("glofox create lead failed: %s", out.Message)
+	}
+	return &out, nil
+}
+
+// PurchaseMembershipInput holds the fields sent to
+// POST /2.2/branches/{branchId}/users/{userId}/memberships/{membershipId}/plans/{planCode}/purchase.
+type PurchaseMembershipInput struct {
+	UserID        string // Glofox user id — the CreateLeadResponse.Entity.ID from CreateLead
+	MembershipID  string // studio-specific, looked up via GET /2.0/memberships
+	PlanCode      string // studio-specific plan code within that membership
+	StartDateUnix int64  // epoch seconds, in the branch's local time
+	// PaymentMethod is optional and its accepted values aren't fully
+	// documented — since payment was already collected externally via
+	// Stripe, this is intentionally left empty by default so Glofox
+	// doesn't attempt to charge the customer again through its own
+	// payment processor. Only set this if/when confirmed safe to do so.
+	PaymentMethod string
+}
+
+// PurchaseMembershipResponse is Glofox's reply to a purchase call. Status is
+// commonly "PENDING-INTENT" even on success — this reflects Glofox's own
+// invoice/payment reconciliation state, not necessarily a failed or
+// incomplete purchase from our side.
+type PurchaseMembershipResponse struct {
+	Success     bool   `json:"success"`
+	Message     string `json:"message"`
+	MessageCode string `json:"message_code"`
+	Status      string `json:"status"`
+	InvoiceID   string `json:"invoice_id"`
+}
+
+// PurchaseMembership calls POST /2.2/branches/{branchId}/users/{userId}/memberships/{membershipId}/plans/{planCode}/purchase.
+// Triggered after a real Stripe trial/membership payment confirms, using the
+// studio's own Glofox membership/plan-code mapping — this is what actually
+// creates the credit-pack/membership purchase (and Transactions entry) in
+// Glofox, not just a bare lead record.
+func (c *Client) PurchaseMembership(ctx context.Context, in PurchaseMembershipInput) (*PurchaseMembershipResponse, error) {
+	if c == nil {
+		return nil, fmt.Errorf("glofox client not configured")
+	}
+	if in.UserID == "" || in.MembershipID == "" || in.PlanCode == "" {
+		return nil, fmt.Errorf("userID, membershipID, and planCode are all required")
+	}
+
+	startDate := in.StartDateUnix
+	if startDate == 0 {
+		startDate = time.Now().Unix()
+	}
+	body := map[string]any{
+		"start_date": startDate,
+	}
+	if in.PaymentMethod != "" {
+		body["payment_method"] = in.PaymentMethod
+	}
+
+	b, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/2.2/branches/%s/users/%s/memberships/%s/plans/%s/purchase",
+		baseURL, c.branchID, in.UserID, in.MembershipID, in.PlanCode)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	c.addAuth(req)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("glofox request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("glofox status %d: %s", resp.StatusCode, string(raw))
+	}
+
+	var out PurchaseMembershipResponse
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	if !out.Success {
+		return nil, fmt.Errorf("glofox purchase membership failed: %s", out.Message)
 	}
 	return &out, nil
 }

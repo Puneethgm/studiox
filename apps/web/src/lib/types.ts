@@ -52,6 +52,10 @@ export interface Studio {
   subscriptionTier?: string;
   trialConfirmationMessage?: string;
   membershipConfirmationMessage?: string;
+  trialGlofoxMembershipId?: string;
+  trialGlofoxPlanCode?: string;
+  membershipGlofoxMembershipId?: string;
+  membershipGlofoxPlanCode?: string;
 }
 
 export interface Plan {

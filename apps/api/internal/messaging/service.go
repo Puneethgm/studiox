@@ -2712,16 +2712,23 @@ func (s *Service) ConnectXChannel(ctx context.Context, studioID uuid.UUID, in Co
 // SendTrialPaymentLink creates a Stripe one-time checkout for a trial session,
 // shortens it via trigger_links, enqueues the outbound message, and returns the
 // message body. Called by both the automation flow and the AI worker.
-func (s *Service) SendTrialPaymentLink(ctx context.Context, studioID, convID uuid.UUID, leadID *uuid.UUID, firstName string) (string, error) {
-	secretKey, trialAmountSGD, studioName, studioSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
+func frontendBaseURL() string {
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "http://localhost:3000"
+	}
+	return frontendURL
+}
+
+// createTrialCheckoutSession builds a Stripe Checkout Session for a trial
+// payment and returns its hosted URL plus the studio's name/slug. Shared by
+// SendTrialPaymentLink's no-lead fallback and CreateTrialCheckoutSessionForLead
+// (used by the public pre-payment trial-details page, which creates the
+// session only after the lead submits their name/gender/DOB).
+func (s *Service) createTrialCheckoutSession(ctx context.Context, studioID uuid.UUID, leadID *uuid.UUID) (checkoutURL, studioName, studioSlug string, err error) {
+	secretKey, trialAmountSGD, sName, sSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
 	if errStripe != nil || secretKey == "" {
-		body := fmt.Sprintf("Hi %s! Great choice. Our team will reach out to you within 24 hours to schedule your trial. We look forward to seeing you!", firstName)
-		_, err := s.repo.EnqueueOutbound(ctx, OutboundJob{
-			StudioID: studioID, ConversationID: convID,
-			Body: body, SourceKind: SourceAI, SourceRef: "trial_link",
-			ScheduledFor: time.Now().UTC(),
-		})
-		return body, err
+		return "", sName, sSlug, fmt.Errorf("stripe not configured for studio")
 	}
 
 	// Resolve amount: studio trial_amount_sgd → lowest active plan → 2500 fallback
@@ -2743,13 +2750,18 @@ func (s *Service) SendTrialPaymentLink(ctx context.Context, studioID, convID uui
 		_ = s.repo.pool.QueryRow(ctx, "SELECT phone, name FROM leads WHERE id = $1", *leadID).Scan(&leadPhone, &leadName)
 	}
 
-	frontendURL := os.Getenv("FRONTEND_URL")
-	if frontendURL == "" {
-		frontendURL = "http://localhost:3000"
-	}
+	frontendURL := frontendBaseURL()
 
 	sc := &client.API{}
 	sc.Init(secretKey, nil)
+	metadata := map[string]string{
+		"customer_phone": leadPhone,
+		"customer_name":  leadName,
+		"studio_id":      studioID.String(),
+	}
+	if leadID != nil {
+		metadata["lead_id"] = leadID.String()
+	}
 	params := &stripe.CheckoutSessionParams{
 		PaymentMethodTypes: stripe.StringSlice([]string{"card"}),
 		LineItems: []*stripe.CheckoutSessionLineItemParams{
@@ -2758,36 +2770,120 @@ func (s *Service) SendTrialPaymentLink(ctx context.Context, studioID, convID uui
 					Currency:   stripe.String("sgd"),
 					UnitAmount: stripe.Int64(amount),
 					ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
-						Name:        stripe.String(fmt.Sprintf("%s Trial Session", studioName)),
-						Description: stripe.String("Secure your trial workout session at " + studioName),
+						Name:        stripe.String(fmt.Sprintf("%s Trial Session", sName)),
+						Description: stripe.String("Secure your trial workout session at " + sName),
 					},
 				},
 				Quantity: stripe.Int64(1),
 			},
 		},
 		Mode:       stripe.String("payment"),
-		SuccessURL: stripe.String(fmt.Sprintf("%s/payment-success?studio=%s&session_id={CHECKOUT_SESSION_ID}", frontendURL, studioSlug)),
-		CancelURL:  stripe.String(fmt.Sprintf("%s/payment-cancelled?studio=%s", frontendURL, studioSlug)),
-		Metadata: map[string]string{
-			"customer_phone": leadPhone,
-			"customer_name":  leadName,
-			"studio_id":      studioID.String(),
-		},
+		SuccessURL: stripe.String(fmt.Sprintf("%s/payment-success?studio=%s&session_id={CHECKOUT_SESSION_ID}", frontendURL, sSlug)),
+		CancelURL:  stripe.String(fmt.Sprintf("%s/payment-cancelled?studio=%s", frontendURL, sSlug)),
+		Metadata:   metadata,
 	}
 
 	session, errSess := sc.CheckoutSessions.New(params)
+	if errSess != nil || session == nil || session.URL == "" {
+		return "", sName, sSlug, fmt.Errorf("create checkout session: %w", errSess)
+	}
+	return session.URL, sName, sSlug, nil
+}
 
+// CreateTrialCheckoutSessionForLead is called by the public pre-payment
+// trial-details endpoint right after the lead submits their full name,
+// gender, and date of birth — creates the actual Stripe Checkout Session at
+// this point (not earlier), and returns its hosted URL for the frontend to
+// redirect the browser to.
+func (s *Service) CreateTrialCheckoutSessionForLead(ctx context.Context, leadID uuid.UUID) (string, error) {
+	var studioID uuid.UUID
+	if err := s.repo.pool.QueryRow(ctx, "SELECT studio_id FROM leads WHERE id = $1", leadID).Scan(&studioID); err != nil {
+		return "", fmt.Errorf("resolve studio for lead: %w", err)
+	}
+	url, _, _, err := s.createTrialCheckoutSession(ctx, studioID, &leadID)
+	return url, err
+}
+
+// TrialCheckoutLeadInfo is the minimal, safe-to-expose-publicly info shown
+// on the pre-payment trial-details page.
+type TrialCheckoutLeadInfo struct {
+	LeadName         string `json:"leadName"`
+	StudioName       string `json:"studioName"`
+	AlreadyPurchased bool   `json:"alreadyPurchased"`
+}
+
+// GetTrialCheckoutLeadInfo loads what the pre-payment trial-details page
+// needs to render — no auth, the lead's own UUID is the only credential.
+func (s *Service) GetTrialCheckoutLeadInfo(ctx context.Context, leadID uuid.UUID) (*TrialCheckoutLeadInfo, error) {
+	var info TrialCheckoutLeadInfo
+	err := s.repo.pool.QueryRow(ctx, `
+		SELECT COALESCE(l.name, ''), s.name, l.trial_purchased
+		FROM leads l JOIN studios s ON s.id = l.studio_id
+		WHERE l.id = $1
+	`, leadID).Scan(&info.LeadName, &info.StudioName, &info.AlreadyPurchased)
+	if err != nil {
+		return nil, fmt.Errorf("get trial checkout lead info: %w", err)
+	}
+	return &info, nil
+}
+
+// SaveTrialCheckoutDetails saves the full name/gender/date-of-birth
+// collected on the pre-payment trial-details page, right before the Stripe
+// Checkout Session gets created.
+func (s *Service) SaveTrialCheckoutDetails(ctx context.Context, leadID uuid.UUID, fullName, gender, dob string) error {
+	fullName = strings.TrimSpace(fullName)
+	parts := strings.SplitN(fullName, " ", 2)
+	firstName := parts[0]
+	lastName := ""
+	if len(parts) > 1 {
+		lastName = parts[1]
+	}
+	var dobArg any
+	if dob != "" {
+		dobArg = dob
+	}
+	_, err := s.repo.pool.Exec(ctx, `
+		UPDATE leads SET name = $2, first_name = $3, last_name = $4, gender = $5, date_of_birth = $6, updated_at = now()
+		WHERE id = $1
+	`, leadID, fullName, firstName, lastName, gender, dobArg)
+	if err != nil {
+		return fmt.Errorf("save trial checkout details: %w", err)
+	}
+	return nil
+}
+
+// SendTrialPaymentLink sends the customer a link to confirm/pay for their
+// trial. When a lead is attached, this is a link to our own pre-payment
+// details page (collects full name/gender/date of birth) rather than
+// jumping straight to Stripe — the actual Checkout Session is only created
+// once that form is submitted, via CreateTrialCheckoutSessionForLead.
+func (s *Service) SendTrialPaymentLink(ctx context.Context, studioID, convID uuid.UUID, leadID *uuid.UUID, firstName string) (string, error) {
+	frontendURL := frontendBaseURL()
 	var body string
-	if errSess == nil && session != nil && session.URL != "" {
-		tl := &TriggerLink{StudioID: studioID, Name: fmt.Sprintf("Trial - %s", leadName), URL: session.URL}
-		if errLink := s.repo.CreateTriggerLink(ctx, tl); errLink == nil {
-			shortURL := fmt.Sprintf("%s/api/v1/links/%s", frontendURL, tl.ID.String())
-			body = fmt.Sprintf("Hi %s! Great choice. Here's your secure trial booking link for %s:\n\n%s\n\nComplete your payment to confirm your spot. We look forward to seeing you!", firstName, studioName, shortURL)
+
+	if leadID != nil {
+		_, _, _, studioSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
+		if errStripe == nil && studioSlug != "" {
+			detailsURL := fmt.Sprintf("%s/trial-details/%s?studio=%s", frontendURL, leadID.String(), studioSlug)
+			tl := &TriggerLink{StudioID: studioID, Name: fmt.Sprintf("Trial - %s", firstName), URL: detailsURL}
+			if errLink := s.repo.CreateTriggerLink(ctx, tl); errLink == nil {
+				shortURL := fmt.Sprintf("%s/api/v1/links/%s", frontendURL, tl.ID.String())
+				body = fmt.Sprintf("Hi %s! Great choice. Here's your secure trial booking link:\n\n%s\n\nJust a couple of quick details and payment to confirm your spot. We look forward to seeing you!", firstName, shortURL)
+			} else {
+				body = fmt.Sprintf("Hi %s! Great choice. Here's your secure trial booking link:\n\n%s\n\nWe look forward to seeing you!", firstName, detailsURL)
+			}
 		} else {
-			body = fmt.Sprintf("Hi %s! Great choice. Here's your secure trial booking link for %s:\n\n%s\n\nWe look forward to seeing you!", firstName, studioName, session.URL)
+			body = fmt.Sprintf("Hi %s! Great choice. Our team will reach out to you within 24 hours to schedule your trial. We look forward to seeing you!", firstName)
 		}
 	} else {
-		body = fmt.Sprintf("Hi %s! Great choice. Our team will reach out to you within 24 hours to confirm your trial at %s. We look forward to seeing you!", firstName, studioName)
+		// No lead attached — nothing to collect details against, fall back
+		// to the old immediate-Stripe-session behavior.
+		checkoutURL, studioName, _, err := s.createTrialCheckoutSession(ctx, studioID, leadID)
+		if err == nil && checkoutURL != "" {
+			body = fmt.Sprintf("Hi %s! Great choice. Here's your secure trial booking link for %s:\n\n%s\n\nWe look forward to seeing you!", firstName, studioName, checkoutURL)
+		} else {
+			body = fmt.Sprintf("Hi %s! Great choice. Our team will reach out to you within 24 hours to confirm your trial. We look forward to seeing you!", firstName)
+		}
 	}
 
 	_, err := s.repo.EnqueueOutbound(ctx, OutboundJob{

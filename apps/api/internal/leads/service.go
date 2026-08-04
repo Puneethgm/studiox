@@ -310,15 +310,23 @@ func (s *Service) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status
 		leadName := fn + " " + ln
 		leadEmail := existing.Email
 		leadPhone := existing.Phone
+		leadGender := existing.Gender
+		leadBirthDate := ""
+		if existing.DateOfBirth != nil {
+			leadBirthDate = existing.DateOfBirth.Format("2006-01-02")
+		}
 		go func() {
 			gCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			out, err := s.glofox.CreateLead(gCtx, glofox.CreateLeadInput{
-				Email:      leadEmail,
-				FirstName:  fn,
-				LastName:   ln,
-				Phone:      leadPhone,
-				LeadStatus: gfStatus,
+				Email:         leadEmail,
+				FirstName:     fn,
+				LastName:      ln,
+				Phone:         leadPhone,
+				LeadStatus:    gfStatus,
+				ContactSource: existing.Source,
+				Gender:        leadGender,
+				BirthDate:     leadBirthDate,
 			})
 			if err != nil {
 				slog.Warn("Glofox | Lead sync failed — lead conversion not reflected in Glofox CRM",
