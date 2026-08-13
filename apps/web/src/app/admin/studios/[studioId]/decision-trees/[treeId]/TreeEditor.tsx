@@ -1,51 +1,22 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  GitBranch, Plus, Trash2, ChevronDown, ChevronRight,
+  GitBranch, Plus, Trash2, Sparkles, Loader2,
   CheckCircle2, Circle, Play, ArrowLeft, Save, CornerDownRight, X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { MultiSelect } from '@/components/ui/MultiSelect';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import type { DecisionTree, TreeNode, ConditionType, NodeAction, SimulateResult } from '@/lib/types';
 import { ImportNodesButton } from './ImportNodesButton';
-
-const CONDITION_LABELS: Record<ConditionType, string> = {
-  keyword: 'Keyword match',
-  intent: 'AI intent',
-  sentiment: 'Sentiment',
-  default: 'Default (catch-all)',
-  lead_status: 'Lead status',
-};
-
-const ACTION_LABELS: Record<NodeAction, string> = {
-  reply: 'Send reply',
-  escalate_human: 'Escalate to human',
-  book_trial: 'Book trial',
-  send_link: 'Send link',
-  change_status: 'Change lead status',
-};
-
-const ACTION_COLORS: Record<NodeAction, string> = {
-  reply: 'bg-blue-50 text-blue-700 border-blue-200',
-  escalate_human: 'bg-amber-50 text-amber-700 border-amber-200',
-  book_trial: 'bg-green-50 text-green-700 border-green-200',
-  send_link: 'bg-purple-50 text-purple-700 border-purple-200',
-  change_status: 'bg-orange-50 text-orange-700 border-orange-200',
-};
-
-const LEAD_STATUSES = [
-  { value: 'new', label: 'New' },
-  { value: 'contacted', label: 'Contacted' },
-  { value: 'trial_booked', label: 'Trial booked' },
-  { value: 'member', label: 'Member' },
-  { value: 'dropped', label: 'Dropped' },
-  { value: 'paused', label: 'Paused' },
-];
+import { TreeCanvas } from './TreeCanvas';
+import { BlockTypePicker } from './BlockTypePicker';
+import { CONDITION_LABELS, ACTION_LABELS, ACTION_COLORS, LEAD_STATUSES } from './treeNodeMeta';
+import { computeNewNodePosition, computeFullLayout } from './treeLayout';
 
 interface Props {
   studioId: string;
@@ -112,6 +83,7 @@ export function TreeEditor({ studioId, initialTree }: Props) {
   const [saving, setSaving] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [suggesting, setSuggesting] = useState(false);
 
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [confirm, setConfirm] = useState<ConfirmDialog | null>(null);
@@ -127,6 +99,20 @@ export function TreeEditor({ studioId, initialTree }: Props) {
   const [simResult, setSimResult] = useState<SimulateResult | null>(null);
   const [simLoading, setSimLoading] = useState(false);
   const [showSim, setShowSim] = useState(false);
+  const [headerPickerOpen, setHeaderPickerOpen] = useState(false);
+  const [emptyStatePickerOpen, setEmptyStatePickerOpen] = useState(false);
+  const headerAddRef = useRef<HTMLDivElement>(null);
+  const emptyStateAddRef = useRef<HTMLDivElement>(null);
+  const [pipelineModalOpen, setPipelineModalOpen] = useState(false);
+  // Tracks whether the current Keywords field content came from the AI
+  // auto-suggest (safe to silently replace/clear as label/reply change) or
+  // was typed by the admin themselves (never touched automatically again).
+  const [keywordsIsAI, setKeywordsIsAI] = useState(false);
+  // label+replyTemplate combo we last generated (or scheduled a generation)
+  // for — prevents the effect from re-triggering itself just because
+  // applying a suggestion changes form.keywords (which is one of its own
+  // dependencies). Only an actual label/reply change should fire it again.
+  const lastSuggestKeyRef = useRef<string | null>(null);
 
   const refreshTree = useCallback(async () => {
     const updated = await api<DecisionTree>(
@@ -135,15 +121,44 @@ export function TreeEditor({ studioId, initialTree }: Props) {
     setTree(updated);
   }, [studioId, tree.id]);
 
-  function openAddRoot() {
+  // Fire-and-forget: persist a dragged node's new position. No toast/loading
+  // state — this is a minor, frequent adjustment, not a tracked save action.
+  const handleNodePositionChange = useCallback((nodeId: string, x: number, y: number) => {
+    api(`/api/v1/studios/${studioId}/decision-trees/${tree.id}/nodes/${nodeId}`, {
+      method: 'PATCH',
+      json: { positionX: x, positionY: y },
+    }).catch(() => {});
+  }, [studioId, tree.id]);
+
+  // Runs once whenever the canvas had to fall back to auto-layout (a node had
+  // no saved position yet — first load after this feature shipped, or right
+  // after a bulk XLSX import) so the computed layout is saved and won't jump
+  // around on the next load. Silent, no toast. Refreshes `tree` afterward so
+  // the just-healed positions show up in local state — otherwise the fallback
+  // keeps re-triggering every render (state still shows null positions).
+  const handleHealPositions = useCallback(async (positions: { id: string; x: number; y: number }[]) => {
+    await Promise.all(positions.map(({ id, x, y }) =>
+      api(`/api/v1/studios/${studioId}/decision-trees/${tree.id}/nodes/${id}`, {
+        method: 'PATCH',
+        json: { positionX: x, positionY: y },
+      }).catch(() => {}),
+    ));
+    await refreshTree();
+  }, [studioId, tree.id, refreshTree]);
+
+  function openAddRoot(initialAction?: NodeAction) {
     setPanel({ kind: 'addRoot' });
-    setForm({ ...defaultForm(), sortOrder: tree.nodes?.length ?? 0 });
+    setForm({ ...defaultForm(), action: initialAction ?? defaultForm().action, sortOrder: tree.nodes?.length ?? 0 });
+    setKeywordsIsAI(false);
+    lastSuggestKeyRef.current = null;
   }
 
-  function openAddChild(parentId: string, parentLabel: string) {
+  function openAddChild(parentId: string, parentLabel: string, initialAction?: NodeAction) {
     setPanel({ kind: 'addChild', parentId, parentLabel });
     const childCount = countChildren(tree.nodes ?? [], parentId);
-    setForm({ ...defaultForm(), sortOrder: Math.max(0, childCount) });
+    setForm({ ...defaultForm(), action: initialAction ?? defaultForm().action, sortOrder: Math.max(0, childCount) });
+    setKeywordsIsAI(false);
+    lastSuggestKeyRef.current = null;
   }
 
   function openEdit(node: TreeNode) {
@@ -161,6 +176,8 @@ export function TreeEditor({ studioId, initialTree }: Props) {
       targetStatus,
       sortOrder: node.sortOrder,
     });
+    setKeywordsIsAI(false);
+    lastSuggestKeyRef.current = null;
   }
 
   function closePanel() {
@@ -202,6 +219,65 @@ export function TreeEditor({ studioId, initialTree }: Props) {
     });
   }
 
+  const suggestKeywords = useCallback(async (label: string, replyTemplate: string, keywordsSnapshot: string) => {
+    setSuggesting(true);
+    try {
+      const { keywords } = await api<{ keywords: string[] }>(
+        `/api/v1/studios/${studioId}/decision-trees/suggest-keywords`,
+        { method: 'POST', json: { label, replyTemplate } },
+      );
+      setForm((f) => {
+        // If the keywords field changed since this request started (the
+        // admin typed their own, or another suggestion already landed),
+        // this result is stale — don't clobber whatever's there now.
+        if (f.keywords !== keywordsSnapshot) return f;
+        return { ...f, keywords: keywords.join(', ') };
+      });
+      setKeywordsIsAI(true);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : 'Could not generate keyword suggestions';
+      showToast(
+        message.includes('no AI key configured')
+          ? 'No AI key configured for this studio — add a Groq API key in Settings to enable keyword suggestions'
+          : message,
+        'error',
+      );
+    } finally {
+      setSuggesting(false);
+    }
+  }, [studioId]);
+
+  // Keeps Keywords in sync with Label/Reply Template as the admin edits them
+  // — no manual trigger. Only ever touches AI-generated content: once the
+  // admin types their own keywords, this stops adjusting them entirely.
+  // Guarded by lastSuggestKeyRef so applying a suggestion (which changes
+  // form.keywords, one of this effect's own dependencies) doesn't cause the
+  // effect to immediately re-schedule itself — only an actual change to
+  // label/replyTemplate counts as something new to generate for.
+  useEffect(() => {
+    if (panel.kind === 'idle') return;
+    if (form.conditionType !== 'keyword') return;
+    if (form.keywords.trim() && !keywordsIsAI) return; // admin's own — hands off
+
+    if (!form.label.trim()) {
+      if (form.keywords.trim()) {
+        setForm((f) => ({ ...f, keywords: '' }));
+        setKeywordsIsAI(false);
+      }
+      lastSuggestKeyRef.current = null;
+      return;
+    }
+
+    const key = `${form.label} ${form.replyTemplate}`;
+    if (key === lastSuggestKeyRef.current) return; // nothing actually changed — don't re-fire
+
+    const timer = setTimeout(() => {
+      lastSuggestKeyRef.current = key;
+      suggestKeywords(form.label, form.replyTemplate, form.keywords);
+    }, 900);
+    return () => clearTimeout(timer);
+  }, [panel.kind, form.conditionType, form.label, form.replyTemplate, form.keywords, keywordsIsAI, suggestKeywords]);
+
   async function handleSave() {
     if (!form.label.trim()) return;
     setSaving(true);
@@ -239,10 +315,22 @@ export function TreeEditor({ studioId, initialTree }: Props) {
         );
       } else {
         const parentId = panel.kind === 'addChild' ? panel.parentId : null;
+        const position = computeNewNodePosition(tree.nodes ?? [], parentId);
         await api(`/api/v1/studios/${studioId}/decision-trees/${tree.id}/nodes`, {
           method: 'POST',
-          json: { ...nodePayload, parentId },
+          json: { ...nodePayload, parentId, positionX: position.x, positionY: position.y },
         });
+        // Re-layout the whole tree in one coherent pass now that a new node
+        // exists, so it and its siblings never end up overlapping (see
+        // computeFullLayout's doc comment for why a per-node calc isn't enough).
+        const updated = await api<DecisionTree>(`/api/v1/studios/${studioId}/decision-trees/${tree.id}`);
+        const layout = computeFullLayout(updated.nodes ?? []);
+        await Promise.all(layout.map(({ id, x, y }) =>
+          api(`/api/v1/studios/${studioId}/decision-trees/${tree.id}/nodes/${id}`, {
+            method: 'PATCH',
+            json: { positionX: x, positionY: y },
+          }).catch(() => {}),
+        ));
       }
       await refreshTree();
       showToast(panel.kind === 'edit' ? 'Node updated successfully' : 'Node added successfully');
@@ -360,6 +448,8 @@ export function TreeEditor({ studioId, initialTree }: Props) {
       <PipelineGroupBanner
         statuses={tree.targetStatuses ?? []}
         onSave={handleSaveTargetStatuses}
+        open={pipelineModalOpen}
+        onOpenChange={setPipelineModalOpen}
       />
 
       {/* Simulate panel */}
@@ -417,31 +507,51 @@ export function TreeEditor({ studioId, initialTree }: Props) {
           <Card className="p-4">
             <div className="flex items-center justify-between mb-4">
               <p className="text-sm font-medium text-gray-600">Tree nodes</p>
-              <Button
-                size="sm"
-                variant="ghost"
-                leftIcon={<Plus className="h-3.5 w-3.5" />}
-                onClick={openAddRoot}
-              >
-                Add root node
-              </Button>
+              <div ref={headerAddRef} className="relative inline-block">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  leftIcon={<Plus className="h-3.5 w-3.5" />}
+                  onClick={() => setHeaderPickerOpen(true)}
+                >
+                  Add root node
+                </Button>
+                {headerPickerOpen && headerAddRef.current && (
+                  <BlockTypePicker
+                    anchorRect={headerAddRef.current.getBoundingClientRect()}
+                    onPick={(action) => { setHeaderPickerOpen(false); openAddRoot(action); }}
+                    onClose={() => setHeaderPickerOpen(false)}
+                  />
+                )}
+              </div>
             </div>
             {(!tree.nodes || tree.nodes.length === 0) ? (
               <div className="text-center py-10 space-y-3">
                 <p className="text-gray-400 text-sm">No nodes yet.</p>
-                <Button size="sm" leftIcon={<Plus className="h-3.5 w-3.5" />} onClick={openAddRoot}>
-                  Add first node
-                </Button>
+                <div ref={emptyStateAddRef} className="relative inline-block">
+                  <Button size="sm" leftIcon={<Plus className="h-3.5 w-3.5" />} onClick={() => setEmptyStatePickerOpen(true)}>
+                    Add first node
+                  </Button>
+                  {emptyStatePickerOpen && emptyStateAddRef.current && (
+                    <BlockTypePicker
+                      anchorRect={emptyStateAddRef.current.getBoundingClientRect()}
+                      onPick={(action) => { setEmptyStatePickerOpen(false); openAddRoot(action); }}
+                      onClose={() => setEmptyStatePickerOpen(false)}
+                    />
+                  )}
+                </div>
               </div>
             ) : (
-              <NodeList
+              <TreeCanvas
                 nodes={tree.nodes}
-                depth={0}
                 selectedId={selectedNodeId}
                 deletingId={deleting}
                 onSelect={openEdit}
                 onAddChild={openAddChild}
                 onDelete={handleDeleteNode}
+                onNodePositionChange={handleNodePositionChange}
+                onHealPositions={handleHealPositions}
+                onOpenTriggerConfig={() => setPipelineModalOpen(true)}
               />
             )}
           </Card>
@@ -492,12 +602,25 @@ export function TreeEditor({ studioId, initialTree }: Props) {
 
               {form.conditionType === 'keyword' && (
                 <label className="block space-y-1">
-                  <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Keywords (comma separated)</span>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Keywords (comma separated)</span>
+                    {suggesting && (
+                      <span className="flex items-center gap-1 text-[11px] font-medium text-brand-600">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        <Sparkles className="h-3 w-3" />
+                        Suggesting…
+                      </span>
+                    )}
+                  </div>
                   <input
                     className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30"
                     placeholder="price, cost, fee, membership"
                     value={form.keywords}
-                    onChange={(e) => setForm((f) => ({ ...f, keywords: e.target.value }))}
+                    onChange={(e) => {
+                      setKeywordsIsAI(false);
+                      lastSuggestKeyRef.current = null;
+                      setForm((f) => ({ ...f, keywords: e.target.value }));
+                    }}
                   />
                 </label>
               )}
@@ -699,120 +822,24 @@ export function TreeEditor({ studioId, initialTree }: Props) {
   );
 }
 
-function NodeList({
-  nodes, depth, selectedId, deletingId, onSelect, onAddChild, onDelete,
-}: {
-  nodes: TreeNode[];
-  depth: number;
-  selectedId?: string;
-  deletingId: string | null;
-  onSelect: (node: TreeNode) => void;
-  onAddChild: (parentId: string, parentLabel: string) => void;
-  onDelete: (nodeId: string) => void;
-}) {
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-
-  function toggle(id: string) {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  }
-
-  return (
-    <div className={depth > 0 ? 'ml-5 border-l-2 border-violet-100 pl-3 space-y-1 mt-1' : 'space-y-1'}>
-      {nodes.map((node) => {
-        const hasChildren = node.children && node.children.length > 0;
-        const isCollapsed = collapsed.has(node.id);
-        const isSelected = selectedId === node.id;
-
-        return (
-          <div key={node.id}>
-            <div
-              className={`flex items-center gap-2 rounded-lg px-2 py-2 cursor-pointer transition-colors ${
-                isSelected
-                  ? 'bg-violet-50 border border-violet-300'
-                  : 'hover:bg-gray-50 border border-transparent'
-              }`}
-              onClick={() => onSelect(node)}
-            >
-              {/* Collapse toggle */}
-              <button
-                className="text-gray-300 hover:text-gray-500 shrink-0 w-4"
-                onClick={(e) => { e.stopPropagation(); toggle(node.id); }}
-              >
-                {hasChildren
-                  ? (isCollapsed
-                      ? <ChevronRight className="h-3.5 w-3.5" />
-                      : <ChevronDown className="h-3.5 w-3.5" />)
-                  : <span className="h-3.5 w-3.5 block" />
-                }
-              </button>
-
-              {/* Condition pill */}
-              <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 shrink-0 capitalize">
-                {node.conditionType}
-              </span>
-
-              {/* Label */}
-              <span className="text-sm flex-1 min-w-0 truncate font-medium text-slate-700">
-                {node.label}
-              </span>
-
-              {/* Action badge */}
-              <span className={`text-xs px-1.5 py-0.5 rounded border shrink-0 ${ACTION_COLORS[node.action]}`}>
-                {ACTION_LABELS[node.action]}
-              </span>
-
-              {/* Always-visible action buttons */}
-              <div className="flex items-center gap-1 shrink-0">
-                <button
-                  title="Add child node"
-                  className="p-1 rounded text-gray-400 hover:text-violet-600 hover:bg-violet-50 transition-colors"
-                  onClick={(e) => { e.stopPropagation(); onAddChild(node.id, node.label); }}
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  title="Delete node"
-                  className="p-1 rounded text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
-                  disabled={deletingId === node.id}
-                  onClick={(e) => { e.stopPropagation(); onDelete(node.id); }}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </div>
-
-            {hasChildren && !isCollapsed && (
-              <NodeList
-                nodes={node.children!}
-                depth={depth + 1}
-                selectedId={selectedId}
-                deletingId={deletingId}
-                onSelect={onSelect}
-                onAddChild={onAddChild}
-                onDelete={onDelete}
-              />
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function PipelineGroupBanner({
   statuses,
   onSave,
+  open,
+  onOpenChange,
 }: {
   statuses: string[];
   onSave: (statuses: string[]) => Promise<void>;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<string[]>(statuses);
   const [saving, setSaving] = useState(false);
+  const setOpen = onOpenChange;
+
+  useEffect(() => {
+    if (open) setDraft(statuses);
+  }, [open, statuses]);
 
   async function save() {
     setSaving(true);

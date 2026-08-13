@@ -2,10 +2,15 @@ package decisiontree
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
+
+	"github.com/projectx/api/internal/integrations/groq"
 )
 
 type Service struct {
@@ -13,6 +18,156 @@ type Service struct {
 }
 
 func NewService(repo *Repo) *Service { return &Service{repo: repo} }
+
+// SuggestKeywords asks Groq for a short list of keywords/phrases a customer
+// might type that should trigger this node, based on its label and reply
+// text. Returned as a plain suggestion — the caller/admin edits before
+// saving, this never persists anything itself.
+//
+// Always returns something usable, never an error to the caller: when no
+// Groq key is configured (studio or platform), or the AI call itself fails
+// for any reason, this falls back to extractKeywordsLocally — a plain
+// word-frequency heuristic over the label/reply text. Lower quality than the
+// LLM, but the feature should never just silently do nothing.
+func (s *Service) SuggestKeywords(ctx context.Context, studioID uuid.UUID, label, replyTemplate string) ([]string, error) {
+	key, err := s.repo.resolveGroqKey(ctx, studioID)
+	if err != nil || key == "" {
+		return extractKeywordsLocally(label, replyTemplate), nil
+	}
+
+	prompt := fmt.Sprintf(`You are helping configure a WhatsApp bot's decision tree for a fitness studio.
+
+A node in the tree is labeled: %q
+When it fires, the bot replies: %q
+
+Suggest 4 to 8 short keywords or phrases a customer might type in WhatsApp that should trigger this node. Keep them short (1-3 words each), lowercase, and directly relevant.
+
+Reply with ONLY a valid JSON array of strings — no markdown, no explanation. Example: ["price", "how much", "cost"]`, label, replyTemplate)
+
+	reply, err := groq.New(key).GenerateReply(ctx, prompt, groq.Model8B)
+	if err != nil {
+		return extractKeywordsLocally(label, replyTemplate), nil
+	}
+
+	text := strings.TrimSpace(reply.Text)
+	text = strings.TrimPrefix(text, "```json")
+	text = strings.TrimPrefix(text, "```")
+	text = strings.TrimSuffix(text, "```")
+	text = strings.TrimSpace(text)
+
+	var raw []string
+	if err := json.Unmarshal([]byte(text), &raw); err != nil {
+		return extractKeywordsLocally(label, replyTemplate), nil
+	}
+
+	seen := map[string]bool{}
+	out := make([]string, 0, len(raw))
+	for _, kw := range raw {
+		kw = strings.ToLower(strings.TrimSpace(kw))
+		if kw == "" || seen[kw] {
+			continue
+		}
+		seen[kw] = true
+		out = append(out, kw)
+		if len(out) >= 8 {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return extractKeywordsLocally(label, replyTemplate), nil
+	}
+	return out, nil
+}
+
+// keywordStopwords are filtered out of local keyword extraction — common
+// filler/grammar words that are never useful as a customer-typed trigger.
+// Deliberately does NOT include short greeting words like "hi"/"yo" since
+// those are common, legitimate WhatsApp triggers.
+var keywordStopwords = map[string]bool{
+	"the": true, "a": true, "an": true, "is": true, "are": true, "was": true, "were": true,
+	"be": true, "been": true, "being": true, "have": true, "has": true, "had": true,
+	"do": true, "does": true, "did": true, "will": true, "would": true, "could": true, "should": true,
+	"and": true, "or": true, "but": true, "if": true, "then": true, "so": true, "not": true,
+	"of": true, "in": true, "on": true, "at": true, "to": true, "for": true, "with": true, "from": true, "by": true,
+	"this": true, "that": true, "these": true, "those": true, "it": true, "its": true,
+	"i": true, "you": true, "we": true, "they": true, "he": true, "she": true, "us": true, "our": true,
+	"your": true, "their": true, "my": true, "me": true, "let": true, "know": true,
+	"great": true, "please": true, "thanks": true, "thank": true, "welcome": true, "there": true, "here": true,
+}
+
+var (
+	templatePlaceholderRe = regexp.MustCompile(`\{\{[^}]*\}\}`)
+	nonAlphaNumRe          = regexp.MustCompile(`[^a-z0-9\s]`)
+)
+
+// extractKeywordsLocally derives a short keyword list from a node's label
+// and reply text without calling any external AI — a plain frequency count
+// over meaningful (non-stopword, 3+ char) words, with words that also
+// appear in the label ranked first since that's the most direct signal.
+func extractKeywordsLocally(label, replyTemplate string) []string {
+	text := strings.ToLower(label + " " + replyTemplate)
+	text = templatePlaceholderRe.ReplaceAllString(text, " ")
+	text = nonAlphaNumRe.ReplaceAllString(text, " ")
+
+	freq := map[string]int{}
+	var order []string
+	for _, w := range strings.Fields(text) {
+		if len(w) < 3 || keywordStopwords[w] {
+			continue
+		}
+		if freq[w] == 0 {
+			order = append(order, w)
+		}
+		freq[w]++
+	}
+
+	labelWords := map[string]bool{}
+	labelText := nonAlphaNumRe.ReplaceAllString(strings.ToLower(label), " ")
+	for _, w := range strings.Fields(labelText) {
+		if len(w) >= 3 && !keywordStopwords[w] {
+			labelWords[w] = true
+		}
+	}
+
+	sort.SliceStable(order, func(i, j int) bool {
+		bi, bj := freq[order[i]], freq[order[j]]
+		if labelWords[order[i]] {
+			bi += 100
+		}
+		if labelWords[order[j]] {
+			bj += 100
+		}
+		return bi > bj
+	})
+
+	out := make([]string, 0, 6)
+	for _, w := range order {
+		out = append(out, w)
+		if len(out) >= 6 {
+			break
+		}
+	}
+
+	// The full label itself, if short, is often the single best keyword —
+	// lead with it when it's not already covered by the word list above.
+	labelPhrase := strings.TrimSpace(strings.ToLower(label))
+	if labelPhrase != "" && len(strings.Fields(labelPhrase)) <= 3 {
+		already := false
+		for _, o := range out {
+			if o == labelPhrase {
+				already = true
+				break
+			}
+		}
+		if !already {
+			out = append([]string{labelPhrase}, out...)
+			if len(out) > 8 {
+				out = out[:8]
+			}
+		}
+	}
+	return out
+}
 
 func (s *Service) CreateTree(ctx context.Context, studioID uuid.UUID, input CreateTreeInput) (*Tree, map[string]string, error) {
 	if errs := validateTree(input); errs != nil {
@@ -450,7 +605,11 @@ func matchKeyword(n *Node, msgLower string) bool {
 	if !ok {
 		return false
 	}
-	msgWords := strings.Fields(msgLower)
+	rawWords := strings.Fields(msgLower)
+	msgWords := make([]string, len(rawWords))
+	for i, w := range rawWords {
+		msgWords[i] = strings.Trim(w, ".,!?;:\"'()[]{}")
+	}
 	for _, kw := range list {
 		s, ok := kw.(string)
 		if !ok {
@@ -460,9 +619,21 @@ func matchKeyword(n *Node, msgLower string) bool {
 		if keyword == "" {
 			continue
 		}
-		// Exact substring match first (handles multi-word keywords like "how much")
-		if strings.Contains(msgLower, keyword) {
-			return true
+		if strings.Contains(keyword, " ") {
+			// Multi-word phrase (e.g. "how much") — a substring match is the
+			// right semantics here since it can't be a single whole-word match.
+			if strings.Contains(msgLower, keyword) {
+				return true
+			}
+		} else {
+			// Single-word keyword — must match a whole word, not a substring.
+			// A raw strings.Contains would let short keywords like "hi" match
+			// inside unrelated words ("this", "shirt", "history").
+			for _, word := range msgWords {
+				if word == keyword {
+					return true
+				}
+			}
 		}
 		// Fuzzy match: check each word in the message against the keyword
 		// allowing 1 typo for keywords ≥5 chars, 2 typos for keywords ≥8 chars

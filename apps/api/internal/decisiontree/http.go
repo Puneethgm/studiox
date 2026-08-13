@@ -37,6 +37,8 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 
 	r.Get("/decision-trees/import-template", h.importTemplate)
 	r.Post("/decision-trees/{treeId}/nodes/import", h.importNodes)
+
+	r.Post("/decision-trees/suggest-keywords", h.suggestKeywords)
 }
 
 func (h *Handler) resolveStudioID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
@@ -211,6 +213,8 @@ type createNodeReq struct {
 	Action         Action         `json:"action"`
 	ActionValue    ConditionValue `json:"actionValue"`
 	SortOrder      int            `json:"sortOrder"`
+	PositionX      *float64       `json:"positionX"`
+	PositionY      *float64       `json:"positionY"`
 }
 
 func (h *Handler) createNode(w http.ResponseWriter, r *http.Request) {
@@ -236,6 +240,8 @@ func (h *Handler) createNode(w http.ResponseWriter, r *http.Request) {
 		Action:         req.Action,
 		ActionValue:    req.ActionValue,
 		SortOrder:      req.SortOrder,
+		PositionX:      req.PositionX,
+		PositionY:      req.PositionY,
 	})
 	if errs != nil {
 		httpx.WriteValidationError(w, errs)
@@ -260,6 +266,8 @@ type updateNodeReq struct {
 	Action         *Action        `json:"action"`
 	ActionValue    ConditionValue `json:"actionValue"`
 	SortOrder      *int           `json:"sortOrder"`
+	PositionX      *float64       `json:"positionX"`
+	PositionY      *float64       `json:"positionY"`
 }
 
 func (h *Handler) updateNode(w http.ResponseWriter, r *http.Request) {
@@ -289,6 +297,8 @@ func (h *Handler) updateNode(w http.ResponseWriter, r *http.Request) {
 		Action:         req.Action,
 		ActionValue:    req.ActionValue,
 		SortOrder:      req.SortOrder,
+		PositionX:      req.PositionX,
+		PositionY:      req.PositionY,
 	})
 	if errors.Is(err, ErrTreeNotFound) {
 		httpx.WriteError(w, http.StatusNotFound, "not_found", "tree not found")
@@ -303,6 +313,32 @@ func (h *Handler) updateNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, n)
+}
+
+type suggestKeywordsReq struct {
+	Label         string `json:"label"`
+	ReplyTemplate string `json:"replyTemplate"`
+}
+
+func (h *Handler) suggestKeywords(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := h.resolveStudioID(w, r)
+	if !ok {
+		return
+	}
+	var req suggestKeywordsReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if strings.TrimSpace(req.Label) == "" {
+		httpx.WriteValidationError(w, map[string]string{"label": "required"})
+		return
+	}
+	keywords, err := h.svc.SuggestKeywords(r.Context(), studioID, req.Label, req.ReplyTemplate)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadGateway, "suggest_failed", err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"keywords": keywords})
 }
 
 func (h *Handler) deleteNode(w http.ResponseWriter, r *http.Request) {

@@ -80,9 +80,14 @@ type Node struct {
 	// ActionValue stores action-specific config, e.g. {"target_status":"member"} for change_status.
 	ActionValue ConditionValue `json:"actionValue"`
 	SortOrder   int            `json:"sortOrder"`
-	Children    []Node         `json:"children,omitempty"`
-	CreatedAt   time.Time      `json:"createdAt"`
-	UpdatedAt   time.Time      `json:"updatedAt"`
+	// PositionX/PositionY are the node's canvas coordinates in the visual tree
+	// builder. Nil means "not yet positioned" — the frontend falls back to an
+	// auto-computed layout and persists the result back for next time.
+	PositionX *float64  `json:"positionX"`
+	PositionY *float64  `json:"positionY"`
+	Children  []Node    `json:"children,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 type CreateTreeInput struct {
@@ -107,6 +112,8 @@ type CreateNodeInput struct {
 	Action         Action
 	ActionValue    ConditionValue
 	SortOrder      int
+	PositionX      *float64
+	PositionY      *float64
 }
 
 type UpdateNodeInput struct {
@@ -117,6 +124,8 @@ type UpdateNodeInput struct {
 	Action         *Action
 	ActionValue    ConditionValue
 	SortOrder      *int
+	PositionX      *float64
+	PositionY      *float64
 }
 
 // SimulateResult holds which node fired for a test message.

@@ -31,6 +31,8 @@ import {
   Phone,
   Bot,
   ChevronLeft,
+  AlertTriangle,
+  UserCheck,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { brandInitials } from '@/lib/color';
@@ -139,7 +141,7 @@ interface PendingJob {
   status: string;
 }
 
-type InboxTab = 'conversations' | 'automated_messages' | 'snippets' | 'trigger_links';
+type InboxTab = 'conversations' | 'escalation' | 'automated_messages' | 'snippets' | 'trigger_links';
 
 export function InboxLive({
   studioId,
@@ -157,7 +159,7 @@ export function InboxLive({
   const searchParams = useSearchParams();
   const [mounted, setMounted] = useState(false);
 
-  const VALID_TABS: InboxTab[] = ['conversations', 'automated_messages', 'snippets', 'trigger_links'];
+  const VALID_TABS: InboxTab[] = ['conversations', 'escalation', 'automated_messages', 'snippets', 'trigger_links'];
   const VALID_CHANNELS: ChannelKind[] = ['whatsapp_web', 'whatsapp_meta', 'instagram_meta', 'messenger_meta', 'sms', 'telegram', 'telegram_mtproto'];
 
   const initialTab = (VALID_TABS.includes(searchParams.get('tab') as InboxTab) ? searchParams.get('tab') : 'conversations') as InboxTab;
@@ -175,6 +177,7 @@ export function InboxLive({
   const [activeChannel, setActiveChannel] = useState<ChannelKind>(initialChannel);
   const [unrespondedOnly, setUnrespondedOnly] = useState(initialUnresponded);
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [escalatedConversations, setEscalatedConversations] = useState<Conversation[]>([]);
   const [inboxTab, setInboxTab] = useState<'all' | 'unread' | 'recents' | 'starred'>('all');
   const [starredIds, setStarredIds] = useState<string[]>([]);
 
@@ -428,7 +431,7 @@ export function InboxLive({
     setTabVisibleLinksCount(5);
   }, [currentTab]);
 
-  const selected = conversations.find((c) => c.id === selectedId);
+  const selected = conversations.find((c) => c.id === selectedId) || escalatedConversations.find((c) => c.id === selectedId);
 
   const refreshConversations = useCallback(async () => {
     try {
@@ -438,7 +441,7 @@ export function InboxLive({
       if (!unrespondedOnly) {
         url += `&channelKind=${activeChannel}`;
       }
-      url += `&status=open`;
+      url += `&status=open&escalated=false`;
       const res = await api<{ conversations: Conversation[] }>(url, { cache: 'no-store' });
       let filtered = res.conversations;
 
@@ -465,6 +468,34 @@ export function InboxLive({
       throw error;
     }
   }, [studioId, activeChannel, unrespondedOnly, inboxTab, starredIds, handleAuthError]);
+
+  const refreshEscalatedConversations = useCallback(async () => {
+    try {
+      const res = await api<{ conversations: Conversation[] }>(
+        `/api/v1/studios/${studioId}/messaging/conversations?limit=50&escalated=true`,
+        { cache: 'no-store' },
+      );
+      setEscalatedConversations(res.conversations);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        handleAuthError();
+        return;
+      }
+      throw error;
+    }
+  }, [studioId, handleAuthError]);
+
+  const resolveEscalation = useCallback(async (conversationId: string) => {
+    try {
+      await api(`/api/v1/studios/${studioId}/messaging/conversations/${conversationId}/resolve-escalation`, {
+        method: 'POST',
+      });
+      setEscalatedConversations((prev) => prev.filter((c) => c.id !== conversationId));
+      refreshConversations();
+    } catch (error) {
+      console.error('Failed to resolve escalation', error);
+    }
+  }, [studioId, refreshConversations]);
 
   const refreshMessages = useCallback(
     async (convId: string) => {
@@ -563,6 +594,7 @@ export function InboxLive({
         const evt: SSEEvent = JSON.parse(e.data);
         if (evt.studioId !== studioId) return;
         refreshConversations();
+        refreshEscalatedConversations();
         if (evt.conversationId === selectedIdRef.current) {
           refreshMessages(evt.conversationId);
         }
@@ -580,7 +612,7 @@ export function InboxLive({
     return () => {
       es.close();
     };
-  }, [studioId, refreshConversations, refreshMessages, fetchJobs]);
+  }, [studioId, refreshConversations, refreshEscalatedConversations, refreshMessages, fetchJobs]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -785,6 +817,10 @@ export function InboxLive({
   useEffect(() => {
     refreshConversations();
   }, [activeChannel, unrespondedOnly, refreshConversations]);
+
+  useEffect(() => {
+    refreshEscalatedConversations();
+  }, [refreshEscalatedConversations]);
 
   // Handler calls for Templates
   async function handleCreateTemplate(e: React.FormEvent) {
@@ -1071,6 +1107,7 @@ export function InboxLive({
           {(
             [
               { id: 'conversations', label: 'Conversations' },
+              { id: 'escalation', label: 'Escalation' },
               { id: 'automated_messages', label: 'Manual Actions' },
               { id: 'snippets', label: 'Snippets' },
               { id: 'trigger_links', label: 'Trigger Links' },
@@ -1081,13 +1118,18 @@ export function InboxLive({
               type="button"
               onClick={() => setCurrentTab(t.id)}
               className={cn(
-                "py-3 text-xs font-black uppercase tracking-wider transition-all border-b-2 whitespace-nowrap shrink-0",
+                "py-3 text-xs font-black uppercase tracking-wider transition-all border-b-2 whitespace-nowrap shrink-0 flex items-center gap-1.5",
                 currentTab === t.id
                   ? "border-brand-500 text-brand-500 dark:text-brand-400"
                   : "border-transparent text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
               )}
             >
               {t.label}
+              {t.id === 'escalation' && escalatedConversations.length > 0 && (
+                <span className="grid h-4 min-w-[16px] place-items-center rounded-full bg-rose-500 px-1 text-[9px] font-black text-white">
+                  {escalatedConversations.length}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -1904,6 +1946,69 @@ export function InboxLive({
               />
             )}
           </>
+        )}
+
+        {currentTab === 'escalation' && (
+          <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+            {escalatedConversations.length === 0 ? (
+              <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-zinc-400">
+                <UserCheck className="h-8 w-8" />
+                <p className="text-xs font-bold">No conversations are currently escalated.</p>
+                <p className="max-w-xs text-[11px] text-zinc-400">
+                  When a decision tree routes a chat to a human (an &ldquo;escalate&rdquo; node), it shows up here instead of the regular Conversations list.
+                </p>
+              </div>
+            ) : (
+              <ul className="mx-auto flex max-w-2xl flex-col gap-2">
+                {escalatedConversations.map((c) => (
+                  <li
+                    key={c.id}
+                    className="flex items-start gap-3 rounded-lg border border-rose-200 bg-rose-50/60 p-3 dark:border-rose-900/50 dark:bg-rose-950/20"
+                  >
+                    <ChannelAvatar kind={c.channelKind} name={c.contactDisplayName || c.contactValue} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate text-xs font-black text-zinc-800 dark:text-zinc-100">
+                          {c.contactDisplayName || displayContact(c.contactValue)}
+                        </span>
+                        <span className="shrink-0 text-[9px] font-semibold text-zinc-400" suppressHydrationWarning>
+                          {c.escalatedAt ? relativeTime(c.escalatedAt) : ''}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 truncate text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                        {c.lastMessagePreview}
+                      </p>
+                      <div className="mt-1.5 flex items-center gap-1.5">
+                        <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[8px] font-extrabold uppercase tracking-wider text-rose-700 bg-rose-100 dark:bg-rose-900/40 dark:text-rose-300">
+                          <AlertTriangle className="h-2.5 w-2.5" />
+                          {c.escalatedReason || 'Escalated'}
+                        </span>
+                      </div>
+                      <div className="mt-2 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedId(c.id);
+                            setCurrentTab('conversations');
+                          }}
+                          className="rounded border border-zinc-200 px-2 py-1 text-[10px] font-bold text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-white/5"
+                        >
+                          Open chat
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => resolveEscalation(c.id)}
+                          className="rounded bg-emerald-500 px-2 py-1 text-[10px] font-bold text-white hover:bg-emerald-600"
+                        >
+                          Resolve escalation
+                        </button>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         )}
 
         {currentTab === 'automated_messages' && renderAutomatedMessages()}

@@ -134,6 +134,11 @@ type Conversation struct {
 	DNDEnabled bool      `json:"dndEnabled"`
 	CreatedAt  time.Time `json:"createdAt"`
 	UpdatedAt  time.Time `json:"updatedAt"`
+	// EscalatedAt is set when a decision-tree escalate_human node matches for
+	// this conversation; it gates the conversation out of the regular Inbox
+	// list and into the Escalation tab until resolved. See EscalateConversation.
+	EscalatedAt     *time.Time `json:"escalatedAt,omitempty"`
+	EscalatedReason string     `json:"escalatedReason,omitempty"`
 }
 
 // ----- message -----

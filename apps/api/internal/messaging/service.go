@@ -2307,22 +2307,8 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 			sentBody, _ := s.SendTrialPaymentLink(ctx, studioID, conv.ID, conv.LeadID, firstName)
 			alreadySent = sentBody != ""
 		} else if isMember && !isTrial {
-			plans, errPlans := s.repo.ListActivePlans(ctx, studioID)
-			if errPlans != nil || len(plans) == 0 {
-				targetStage = "completed"
-				outboundBody = "Our team will reach out to you ASAP to discuss membership options."
-			} else {
-				targetStage = "awaiting_plan_selection"
-				var sb strings.Builder
-				sb.WriteString("Awesome! Please select a membership plan:\n")
-				for idx, p := range plans {
-					sb.WriteString(fmt.Sprintf("%d. %s (S$ %.2f/%s)\n", idx+1, p.PlanName, float64(p.PriceSGD)/100.0, p.BillingCycle))
-					if len(p.Features) > 0 {
-						sb.WriteString(fmt.Sprintf("*- %s:* %s\n", p.PlanName, strings.Join(p.Features, ", ")))
-					}
-				}
-				outboundBody = sb.String()
-			}
+			targetStage = "completed"
+			outboundBody = "Awesome! Our team will reach out to you ASAP to discuss membership options."
 		}
 		// Unrecognised message at awaiting_options — let the AI worker answer the question.
 		// The AI prompt already appends "1. Book a Trial / 2. Become a Member" for new/contacted leads.
@@ -2582,22 +2568,8 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 			strings.Contains(text, "premium") ||
 			strings.Contains(text, "package"))
 		if wantsMembership {
-			plans, errPlans := s.repo.ListActivePlans(ctx, studioID)
-			if errPlans != nil || len(plans) == 0 {
-				targetStage = "awaiting_plan_selection"
-				outboundBody = "Our team will reach out to you ASAP to discuss membership options."
-			} else {
-				targetStage = "awaiting_plan_selection"
-				var sb strings.Builder
-				sb.WriteString("Awesome! Please select a membership plan:\n")
-				for idx, p := range plans {
-					sb.WriteString(fmt.Sprintf("%d. %s (S$ %.2f/%s)\n", idx+1, p.PlanName, float64(p.PriceSGD)/100.0, p.BillingCycle))
-					if len(p.Features) > 0 {
-						sb.WriteString(fmt.Sprintf("*- %s:* %s\n", p.PlanName, strings.Join(p.Features, ", ")))
-					}
-				}
-				outboundBody = sb.String()
-			}
+			targetStage = "completed"
+			outboundBody = "Awesome! Our team will reach out to you ASAP to discuss membership options."
 		}
 	}
 

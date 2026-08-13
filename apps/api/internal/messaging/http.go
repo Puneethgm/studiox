@@ -108,6 +108,7 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Post("/conversations/{id}/read", h.markRead)
 	r.Post("/conversations/{id}/ai", h.setConversationAI)
 	r.Post("/conversations/{id}/dnd", h.setConversationDND)
+	r.Post("/conversations/{id}/resolve-escalation", h.resolveConversationEscalation)
 	r.Delete("/conversations/{id}", h.deleteConversation)
 
 	// Templates
@@ -428,6 +429,10 @@ func (h *Handler) listConversations(w http.ResponseWriter, r *http.Request) {
 		n, _ := strconv.Atoi(v)
 		f.Offset = n
 	}
+	if v := q.Get("escalated"); v != "" {
+		b := v == "true"
+		f.Escalated = &b
+	}
 	list, total, err := h.svc.ListConversations(r.Context(), studioID, f)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
@@ -622,6 +627,25 @@ func (h *Handler) setConversationDND(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]bool{"enabled": body.Enabled})
+}
+
+// resolveConversationEscalation clears a decision-tree escalation, restoring
+// AI auto-reply and moving the conversation back into the regular Inbox list.
+func (h *Handler) resolveConversationEscalation(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	if err := h.svc.repo.ResolveConversationEscalation(r.Context(), studioID, id); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.NoContent(w)
 }
 
 func (h *Handler) setAllConversationsAI(w http.ResponseWriter, r *http.Request) {

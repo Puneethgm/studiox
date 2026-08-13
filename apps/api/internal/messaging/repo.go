@@ -576,6 +576,7 @@ func (r *Repo) FindOrCreateConversation(ctx context.Context, tx pgx.Tx, studioID
 type ListConversationsFilter struct {
 	Status      *ConvStatus
 	ChannelKind *ChannelKind
+	Escalated   *bool
 	Limit       int
 	Offset      int
 }
@@ -594,6 +595,13 @@ func (r *Repo) ListConversations(ctx context.Context, studioID uuid.UUID, f List
 		args = append(args, *f.ChannelKind)
 		cond += fmt.Sprintf(" AND ch.kind = $%d", len(args))
 	}
+	if f.Escalated != nil {
+		if *f.Escalated {
+			cond += " AND c.escalated_at IS NOT NULL"
+		} else {
+			cond += " AND c.escalated_at IS NULL"
+		}
+	}
 
 	var total int
 	countQ := `SELECT COUNT(*) FROM conversations c JOIN channel_accounts ch ON ch.id = c.channel_account_id WHERE ` + cond
@@ -607,7 +615,8 @@ func (r *Repo) ListConversations(ctx context.Context, studioID uuid.UUID, f List
 		       c.contact_identity_id, COALESCE(NULLIF(l.name, ''), ci.display_name), ci.value, c.external_thread_id,
 		       c.lead_id, c.status, c.assigned_to, c.unread_count,
 		       c.last_message_at, c.last_message_preview, c.last_message_direction,
-		       c.created_at, c.updated_at, l.status, c.ai_enabled, c.dnd_enabled
+		       c.created_at, c.updated_at, l.status, c.ai_enabled, c.dnd_enabled,
+		       c.escalated_at, c.escalated_reason
 		FROM conversations c
 		JOIN channel_accounts ch ON ch.id = c.channel_account_id
 		JOIN contact_identities ci ON ci.id = c.contact_identity_id
@@ -639,7 +648,8 @@ func (r *Repo) GetConversation(ctx context.Context, studioID, id uuid.UUID) (*Co
 		       c.contact_identity_id, COALESCE(NULLIF(l.name, ''), ci.display_name), ci.value, c.external_thread_id,
 		       c.lead_id, c.status, c.assigned_to, c.unread_count,
 		       c.last_message_at, c.last_message_preview, c.last_message_direction,
-		       c.created_at, c.updated_at, l.status, c.ai_enabled, c.dnd_enabled
+		       c.created_at, c.updated_at, l.status, c.ai_enabled, c.dnd_enabled,
+		       c.escalated_at, c.escalated_reason
 		FROM conversations c
 		JOIN channel_accounts ch ON ch.id = c.channel_account_id
 		JOIN contact_identities ci ON ci.id = c.contact_identity_id
@@ -652,11 +662,13 @@ func (r *Repo) GetConversation(ctx context.Context, studioID, id uuid.UUID) (*Co
 func scanConversationRow(row pgx.Row) (*Conversation, error) {
 	var c Conversation
 	var dir *string
+	var escalatedReason *string
 	if err := row.Scan(&c.ID, &c.StudioID, &c.ChannelAccountID, &c.ChannelKind, &c.ChannelHandle,
 		&c.ContactIdentityID, &c.ContactDisplayName, &c.ContactValue, &c.ExternalThreadID,
 		&c.LeadID, &c.Status, &c.AssignedTo, &c.UnreadCount,
 		&c.LastMessageAt, &c.LastMessagePreview, &dir,
-		&c.CreatedAt, &c.UpdatedAt, &c.LeadStatus, &c.AIEnabled, &c.DNDEnabled); err != nil {
+		&c.CreatedAt, &c.UpdatedAt, &c.LeadStatus, &c.AIEnabled, &c.DNDEnabled,
+		&c.EscalatedAt, &escalatedReason); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -665,6 +677,9 @@ func scanConversationRow(row pgx.Row) (*Conversation, error) {
 	if dir != nil {
 		d := Direction(*dir)
 		c.LastMessageDirection = &d
+	}
+	if escalatedReason != nil {
+		c.EscalatedReason = *escalatedReason
 	}
 	return &c, nil
 }
@@ -711,6 +726,28 @@ func (r *Repo) SetConversationAIEnabled(ctx context.Context, studioID, convID uu
 		UPDATE conversations SET ai_enabled = $3, updated_at = now()
 		WHERE studio_id = $1 AND id = $2
 	`, studioID, convID, enabled)
+	return err
+}
+
+// EscalateConversation marks a conversation as needing a human, tagging it
+// with the decision-tree node that triggered the handoff, and turns off
+// ai_enabled so the AI worker (which checks ai_enabled first) goes silent on
+// this thread until a staff member resolves the escalation.
+func (r *Repo) EscalateConversation(ctx context.Context, studioID, convID uuid.UUID, reason string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE conversations SET escalated_at = now(), escalated_reason = $3, ai_enabled = false, updated_at = now()
+		WHERE studio_id = $1 AND id = $2
+	`, studioID, convID, reason)
+	return err
+}
+
+// ResolveConversationEscalation clears an escalation and restores AI
+// auto-reply, moving the conversation back into the regular Inbox list.
+func (r *Repo) ResolveConversationEscalation(ctx context.Context, studioID, convID uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE conversations SET escalated_at = NULL, escalated_reason = NULL, ai_enabled = true, updated_at = now()
+		WHERE studio_id = $1 AND id = $2
+	`, studioID, convID)
 	return err
 }
 

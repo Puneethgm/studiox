@@ -23,6 +23,25 @@ func NewRepo(pool *pgxpool.Pool) *Repo {
 	return &Repo{pool: pool, cache: cache.New()}
 }
 
+// resolveGroqKey returns the studio's own Groq API key, falling back to the
+// platform-wide key (same studio-then-platform precedence used everywhere
+// else AI keys are resolved, e.g. messaging's ai_worker.go).
+func (r *Repo) resolveGroqKey(ctx context.Context, studioID uuid.UUID) (string, error) {
+	var key string
+	err := r.pool.QueryRow(ctx, `SELECT groq_api_key FROM studios WHERE id = $1`, studioID).Scan(&key)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return "", fmt.Errorf("resolve studio groq key: %w", err)
+	}
+	if key != "" {
+		return key, nil
+	}
+	err = r.pool.QueryRow(ctx, `SELECT value FROM platform_settings WHERE key = 'groq_api_key'`).Scan(&key)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return "", fmt.Errorf("resolve platform groq key: %w", err)
+	}
+	return key, nil
+}
+
 // InvalidateCache clears all cached trees for a studio (call after any tree/node mutation).
 func (r *Repo) InvalidateCache(studioID uuid.UUID) {
 	r.cache.ClearByPrefix("dt:" + studioID.String())
@@ -202,7 +221,7 @@ func (r *Repo) DeleteTree(ctx context.Context, studioID, treeID uuid.UUID) error
 func (r *Repo) listNodes(ctx context.Context, treeID uuid.UUID) ([]Node, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, tree_id, parent_id, label, condition_type, condition_value,
-		       reply_template, action, action_value, sort_order, created_at, updated_at
+		       reply_template, action, action_value, sort_order, position_x, position_y, created_at, updated_at
 		FROM tree_nodes
 		WHERE tree_id = $1
 		ORDER BY sort_order ASC, created_at ASC
@@ -234,12 +253,13 @@ func (r *Repo) CreateNode(ctx context.Context, input CreateNodeInput) (*Node, er
 	}
 	row := r.pool.QueryRow(ctx, `
 		INSERT INTO tree_nodes
-		    (tree_id, parent_id, label, condition_type, condition_value, reply_template, action, action_value, sort_order)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		    (tree_id, parent_id, label, condition_type, condition_value, reply_template, action, action_value, sort_order, position_x, position_y)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 		RETURNING id, tree_id, parent_id, label, condition_type, condition_value,
-		          reply_template, action, action_value, sort_order, created_at, updated_at
+		          reply_template, action, action_value, sort_order, position_x, position_y, created_at, updated_at
 	`, input.TreeID, input.ParentID, input.Label, string(input.ConditionType),
-		string(cvJSON), input.ReplyTemplate, string(input.Action), string(avJSON), input.SortOrder)
+		string(cvJSON), input.ReplyTemplate, string(input.Action), string(avJSON), input.SortOrder,
+		input.PositionX, input.PositionY)
 	n, err := scanNode(row)
 	if err != nil {
 		return nil, fmt.Errorf("create node: %w", err)
@@ -287,11 +307,14 @@ func (r *Repo) UpdateNode(ctx context.Context, treeID, nodeID uuid.UUID, input U
 			action          = COALESCE($7, action),
 			action_value    = COALESCE($8::jsonb, action_value),
 			sort_order      = COALESCE($9, sort_order),
+			position_x      = COALESCE($10, position_x),
+			position_y      = COALESCE($11, position_y),
 			updated_at      = now()
 		WHERE id = $1 AND tree_id = $2
 		RETURNING id, tree_id, parent_id, label, condition_type, condition_value,
-		          reply_template, action, action_value, sort_order, created_at, updated_at
-	`, nodeID, treeID, input.Label, ct, cvJSON, input.ReplyTemplate, act, avJSON, input.SortOrder)
+		          reply_template, action, action_value, sort_order, position_x, position_y, created_at, updated_at
+	`, nodeID, treeID, input.Label, ct, cvJSON, input.ReplyTemplate, act, avJSON, input.SortOrder,
+		input.PositionX, input.PositionY)
 
 	n, err := scanNode(row)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -330,6 +353,7 @@ func scanNode(s scanner) (Node, error) {
 		&n.ID, &n.TreeID, &n.ParentID, &n.Label,
 		&ct, &cvRaw,
 		&n.ReplyTemplate, &act, &avRaw, &n.SortOrder,
+		&n.PositionX, &n.PositionY,
 		&n.CreatedAt, &n.UpdatedAt,
 	)
 	if err != nil {

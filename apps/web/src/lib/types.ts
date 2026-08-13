@@ -204,6 +204,8 @@ export interface Conversation {
   dndEnabled: boolean;
   createdAt: string;
   updatedAt: string;
+  escalatedAt?: string;
+  escalatedReason?: string;
 }
 
 export interface Attachment {
@@ -249,6 +251,8 @@ export interface TreeNode {
   action: NodeAction;
   actionValue: Record<string, unknown>;
   sortOrder: number;
+  positionX?: number | null;
+  positionY?: number | null;
   children?: TreeNode[];
   createdAt: string;
   updatedAt: string;

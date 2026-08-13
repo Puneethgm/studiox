@@ -696,6 +696,30 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 				return nil
 			case decisiontree.ActionEscalate:
 				w.log.Info("decision tree matched, escalating to human", "studio_id", studioID, "node", treeResult.NodeLabel)
+				if err := w.msgRepo.EscalateConversation(ctx, studioID, msg.ConversationID, treeResult.NodeLabel); err != nil {
+					w.log.Warn("failed to mark conversation escalated", "studio_id", studioID, "err", err)
+				}
+				if treeResult.Reply != "" {
+					reply := treeResult.Reply
+					if lead != nil {
+						reply = strings.ReplaceAll(reply, "{{lead_name}}", lead.Name)
+						reply = strings.ReplaceAll(reply, "{{lead_first_name}}", lead.FirstName)
+					}
+					if _, err := w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
+						StudioID:       studioID,
+						ConversationID: msg.ConversationID,
+						Body:           reply,
+						SourceKind:     SourceAI,
+						SourceRef:      "decision_tree",
+						ScheduledFor:   time.Now().UTC(),
+					}); err == nil {
+						w.bus.Publish(ctx, Event{
+							Kind:           EvtOutboundJobEnqueued,
+							StudioID:       studioID,
+							ConversationID: msg.ConversationID,
+						})
+					}
+				}
 				return nil
 			case decisiontree.ActionBookTrial:
 				// Tree matched a booking node — drive the lead into the options menu.
