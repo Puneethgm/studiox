@@ -1,4 +1,4 @@
-import { TrialDetailsForm } from './TrialDetailsForm';
+import { TrialPaymentPage } from './TrialPaymentPage';
 
 export default async function TrialDetailsPage({
   params,
@@ -6,5 +6,5 @@ export default async function TrialDetailsPage({
   params: Promise<{ leadId: string }>;
 }) {
   const { leadId } = await params;
-  return <TrialDetailsForm leadId={leadId} />;
+  return <TrialPaymentPage leadId={leadId} />;
 }

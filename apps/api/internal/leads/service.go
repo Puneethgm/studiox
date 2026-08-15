@@ -236,6 +236,93 @@ func (s *Service) SubmitPublicLead(ctx context.Context, in SubmitLeadInput) (*Le
 	return l, nil, nil
 }
 
+// TrialSignupInput is the payload for the studio-wide (no-lead-attached)
+// trial signup link — a static URL a studio can share manually (WhatsApp
+// broadcast, bio link, etc.) that creates a brand-new lead on submit, unlike
+// the per-lead trial-details link which requires an existing lead ID.
+type TrialSignupInput struct {
+	StudioSlug  string
+	FullName    string
+	Phone       string
+	Gender      string
+	DateOfBirth string // "YYYY-MM-DD", optional
+	Referrer    string
+	UserAgent   string
+	IPAddress   string
+}
+
+// SubmitTrialSignup creates a brand-new lead for a studio from its static
+// trial signup link, resolving a default campaign the same way CSV imports
+// do (oldest active campaign), since campaign_id is a required FK and this
+// link has no campaign context of its own.
+func (s *Service) SubmitTrialSignup(ctx context.Context, in TrialSignupInput) (*Lead, map[string]string, error) {
+	c, err := s.repo.GetOldestActiveCampaignByStudioSlug(ctx, in.StudioSlug)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	fullName := strings.TrimSpace(in.FullName)
+	phone := strings.TrimSpace(in.Phone)
+
+	errs := map[string]string{}
+	if fullName == "" {
+		errs["fullName"] = "required"
+	}
+	if !phoneRe.MatchString(phone) {
+		errs["phone"] = "invalid phone number"
+	}
+	if len(errs) > 0 {
+		return nil, errs, nil
+	}
+
+	firstName, lastName := fullName, ""
+	if parts := strings.SplitN(fullName, " ", 2); len(parts) > 1 {
+		firstName, lastName = parts[0], parts[1]
+	}
+
+	fitnessPlan := "General"
+	if len(c.FitnessPlans) > 0 {
+		fitnessPlan = c.FitnessPlans[0]
+	}
+
+	var dob *time.Time
+	if in.DateOfBirth != "" {
+		if parsed, err := time.Parse("2006-01-02", in.DateOfBirth); err == nil {
+			dob = &parsed
+		}
+	}
+
+	var ip *net.IP
+	if parsed := net.ParseIP(in.IPAddress); parsed != nil {
+		ip = &parsed
+	}
+
+	l := &Lead{
+		StudioID:     c.StudioID,
+		StudioName:   c.StudioName,
+		StudioSlug:   c.StudioSlug,
+		CampaignID:   c.ID,
+		CampaignName: c.Name,
+		CampaignSlug: c.Slug,
+		Name:         fullName,
+		FirstName:    firstName,
+		LastName:     lastName,
+		Phone:        phone,
+		FitnessPlan:  fitnessPlan,
+		Source:       "trial_link",
+		Status:       StatusTrialBooked,
+		Gender:       strings.TrimSpace(in.Gender),
+		DateOfBirth:  dob,
+		Referrer:     in.Referrer,
+		UserAgent:    in.UserAgent,
+		IPAddress:    ip,
+	}
+	if err := s.repo.CreateLeadWithOutbox(ctx, l, sheetsDestination, false); err != nil {
+		return nil, nil, err
+	}
+	return l, nil, nil
+}
+
 func (s *Service) ListLeads(ctx context.Context, studioID uuid.UUID, f ListLeadsFilter) ([]Lead, int, error) {
 	return s.repo.ListLeads(ctx, studioID, f)
 }

@@ -186,6 +186,39 @@ func (r *Repo) Update(ctx context.Context, id uuid.UUID, name, brandColor, logoU
 	return nil
 }
 
+// GetTrialPageLayout returns a studio's saved trial-payment-page block
+// layout, or nil if it has never customized one (the frontend falls back to
+// a sensible built-in default in that case). Deliberately NOT part of
+// GetByID/GetBySlug's cached Studio struct — this is edited from its own
+// dedicated builder page and must reflect a save immediately, not wait out
+// the 10-minute studio cache TTL.
+func (r *Repo) GetTrialPageLayout(ctx context.Context, studioID uuid.UUID) (json.RawMessage, error) {
+	var layout []byte
+	err := r.pool.QueryRow(ctx, `SELECT trial_page_layout FROM studios WHERE id = $1`, studioID).Scan(&layout)
+	if err != nil {
+		return nil, err
+	}
+	return layout, nil
+}
+
+// GetTrialPageLayoutBySlug is the public-read counterpart, used by the
+// customer-facing trial payment page.
+func (r *Repo) GetTrialPageLayoutBySlug(ctx context.Context, slug string) (json.RawMessage, error) {
+	var layout []byte
+	err := r.pool.QueryRow(ctx, `SELECT trial_page_layout FROM studios WHERE slug = $1`, slug).Scan(&layout)
+	if err != nil {
+		return nil, err
+	}
+	return layout, nil
+}
+
+func (r *Repo) SetTrialPageLayout(ctx context.Context, studioID uuid.UUID, layout json.RawMessage) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE studios SET trial_page_layout = $2, updated_at = now() WHERE id = $1
+	`, studioID, layout)
+	return err
+}
+
 func scanStudio(row pgx.Row, cipher *secrets.Cipher) (*Studio, error) {
 	var s Studio
 	if err := row.Scan(&s.ID, &s.Slug, &s.Name, &s.BrandColor, &s.LogoURL, &s.ContactEmail, &s.ContactPhone,

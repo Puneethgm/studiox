@@ -55,10 +55,12 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 //
 //	GET  /public/studios/{studioSlug}/campaigns/{campaignSlug}
 //	POST /public/studios/{studioSlug}/campaigns/{campaignSlug}/leads
+//	POST /public/studios/{studioSlug}/trial-signup
 func (h *Handler) PublicRoutes(r chi.Router) {
 	r.Get("/public/studios/{studioSlug}/campaigns/{campaignSlug}", h.publicCampaign)
 	r.Post("/public/studios/{studioSlug}/campaigns/{campaignSlug}/leads", h.publicSubmit)
 	r.Patch("/public/leads/{leadId}/trial-slot", h.publicBookSlot)
+	r.Post("/public/studios/{studioSlug}/trial-signup", h.publicTrialSignup)
 }
 
 // resolveStudioID returns the effective studio_id for the request and
@@ -672,6 +674,56 @@ func (h *Handler) publicSubmit(w http.ResponseWriter, r *http.Request) {
 		"studioName":   lead.StudioName,
 		"campaignName": lead.CampaignName,
 	})
+}
+
+type publicTrialSignupReq struct {
+	FullName    string `json:"fullName"`
+	Phone       string `json:"phone"`
+	Gender      string `json:"gender"`
+	DateOfBirth string `json:"dateOfBirth"`
+}
+
+func (h *Handler) publicTrialSignup(w http.ResponseWriter, r *http.Request) {
+	studioSlug := chi.URLParam(r, "studioSlug")
+	var req publicTrialSignupReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	valErrs := map[string]string{}
+	if len(req.FullName) > 255 {
+		valErrs["fullName"] = "must be 255 characters or less"
+	}
+	if len(req.Phone) > 30 {
+		valErrs["phone"] = "must be 30 characters or less"
+	}
+	if len(valErrs) > 0 {
+		httpx.WriteValidationError(w, valErrs)
+		return
+	}
+	lead, errs, err := h.svc.SubmitTrialSignup(r.Context(), TrialSignupInput{
+		StudioSlug:  studioSlug,
+		FullName:    req.FullName,
+		Phone:       req.Phone,
+		Gender:      req.Gender,
+		DateOfBirth: req.DateOfBirth,
+		Referrer:    r.Header.Get("Referer"),
+		UserAgent:   r.UserAgent(),
+		IPAddress:   httpx.ClientIP(r),
+	})
+	if errs != nil {
+		httpx.WriteValidationError(w, errs)
+		return
+	}
+	if err != nil {
+		if errors.Is(err, ErrCampaignNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "this studio doesn't have a trial link set up yet")
+			return
+		}
+		slog.Error("publicTrialSignup failed", "err", err)
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, map[string]any{"leadId": lead.ID})
 }
 
 func (h *Handler) publicBookSlot(w http.ResponseWriter, r *http.Request) {

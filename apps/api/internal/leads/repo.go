@@ -973,6 +973,30 @@ func (r *Repo) GetOldestActiveCampaign(ctx context.Context, studioID uuid.UUID) 
 	return &c, nil
 }
 
+// GetOldestActiveCampaignByStudioSlug is the same "default campaign" lookup
+// as GetOldestActiveCampaign, but resolved directly from a public studio
+// slug — used by the studio-wide (no-lead-attached) trial signup link.
+func (r *Repo) GetOldestActiveCampaignByStudioSlug(ctx context.Context, studioSlug string) (*Campaign, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT c.id, c.studio_id, s.slug, s.name, c.slug, c.name, c.description, c.fitness_plans,
+		       c.active, c.created_by, c.created_at, c.updated_at
+		FROM campaigns c
+		JOIN studios s ON s.id = c.studio_id
+		WHERE s.slug = $1 AND c.active = true AND s.active = true
+		ORDER BY c.created_at ASC
+		LIMIT 1
+	`, studioSlug)
+	var c Campaign
+	if err := row.Scan(&c.ID, &c.StudioID, &c.StudioSlug, &c.StudioName, &c.Slug, &c.Name, &c.Description,
+		&c.FitnessPlans, &c.Active, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrCampaignNotFound
+		}
+		return nil, fmt.Errorf("get oldest active campaign by studio slug: %w", err)
+	}
+	return &c, nil
+}
+
 func (r *Repo) SaveSheetsSettings(ctx context.Context, s *StudioSheetsSettings) error {
 	row := r.pool.QueryRow(ctx, `
 		INSERT INTO studio_sheets_settings (studio_id, spreadsheet_id, tab_name, active)

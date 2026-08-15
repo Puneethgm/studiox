@@ -276,6 +276,80 @@ export interface FollowupStep {
   messageTemplate: string;
 }
 
+// ===== Trial Payment Page Builder =====
+
+export type PageBlockType =
+  | 'text'
+  | 'image'
+  | 'video'
+  | 'name_field'
+  | 'gender_field'
+  | 'dob_field'
+  | 'amount_display'
+  | 'pay_button'
+  | 'card_fields';
+
+export interface PageBlockGeometry {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  zIndex: number;
+}
+
+export type PageFontFamily =
+  | 'system' | 'serif' | 'monospace' | 'georgia' | 'times' | 'courier' | 'verdana' | 'trebuchet';
+
+export const FONT_FAMILY_STACKS: Record<PageFontFamily, string> = {
+  system: 'system-ui, -apple-system, sans-serif',
+  serif: 'Georgia, "Times New Roman", serif',
+  monospace: '"Courier New", monospace',
+  georgia: 'Georgia, serif',
+  times: '"Times New Roman", Times, serif',
+  courier: '"Courier New", Courier, monospace',
+  verdana: 'Verdana, Geneva, sans-serif',
+  trebuchet: '"Trebuchet MS", sans-serif',
+};
+
+export type PageTextAlign = 'left' | 'center' | 'right';
+
+// italic/underline/align are optional so layouts saved before these existed
+// keep rendering exactly as before (left-aligned, not italic, not underlined).
+export interface TextBlockContent {
+  text: string; fontSize: number; color: string; weight: 'normal' | 'bold'; fontFamily: PageFontFamily;
+  italic?: boolean; underline?: boolean; align?: PageTextAlign;
+}
+export interface ImageBlockContent { url: string; }
+export interface VideoBlockContent { url: string; }
+// backgroundColor/textColor/labelColor are optional so layouts saved before
+// these existed keep rendering with their old hardcoded white/gray look.
+export interface FieldBlockContent { label: string; backgroundColor?: string; textColor?: string; labelColor?: string; }
+export interface AmountBlockContent { label: string; backgroundColor?: string; textColor?: string; labelColor?: string; }
+export interface PayButtonBlockContent { label: string; color: string; }
+
+export interface PageBlock extends PageBlockGeometry {
+  id: string;
+  type: PageBlockType;
+  content:
+    | TextBlockContent
+    | ImageBlockContent
+    | VideoBlockContent
+    | FieldBlockContent
+    | AmountBlockContent
+    | PayButtonBlockContent
+    | Record<string, never>; // card_fields — no configurable content
+}
+
+export interface PageBackground {
+  color: string;
+  imageUrl?: string;
+}
+
+export interface TrialPageLayout {
+  blocks: PageBlock[] | null;
+  background: PageBackground | null;
+}
+
 export interface SimulateResult {
   matched: boolean;
   nodeId?: string;

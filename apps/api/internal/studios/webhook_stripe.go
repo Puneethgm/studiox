@@ -146,6 +146,18 @@ func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Requ
 		if err := json.Unmarshal(rawBytes, &session); err == nil {
 			go h.handleCheckoutComplete(context.Background(), &session)
 		}
+	case "payment_intent.succeeded":
+		// The embedded-Stripe-Elements trial payment flow (studios.
+		// publicCreateTrialPaymentIntent) — unlike the hosted Checkout
+		// Session flow above, side effects for this path only fire here.
+		var pi stripe.PaymentIntent
+		rawBytes := event.Data.Raw
+		if len(rawBytes) == 0 {
+			rawBytes, _ = json.Marshal(event.Data.Object)
+		}
+		if err := json.Unmarshal(rawBytes, &pi); err == nil {
+			go h.handlePaymentIntentSucceeded(context.Background(), &pi)
+		}
 	case "invoice.paid":
 		// Existing invoice handling (platform billing)
 	case "invoice.payment_failed":
@@ -489,6 +501,127 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 		}
 	} else {
 		slog.Warn("stripe conversation not found", "phone", customerPhone, "err", err)
+	}
+}
+
+// handlePaymentIntentSucceeded fires for the embedded-Stripe-Elements trial
+// payment flow (studios.publicCreateTrialPaymentIntent + the customer-facing
+// trial payment page's confirmCardPayment) — the counterpart to
+// handleCheckoutComplete's trial branch above, but for a PaymentIntent
+// rather than a CheckoutSession, since that flow never creates a Checkout
+// Session at all. Firing side effects here (not client-side after
+// confirmCardPayment resolves) means a customer closing the tab right after
+// a successful charge still gets their status update / Glofox sync /
+// confirmation message — the client can't be trusted to always call back.
+func (h *StripeWebhookHandler) handlePaymentIntentSucceeded(ctx context.Context, pi *stripe.PaymentIntent) {
+	if pi == nil || pi.Metadata["kind"] != "trial" {
+		return // not ours — e.g. platform billing or a membership PaymentIntent
+	}
+	studioIDStr := pi.Metadata["studio_id"]
+	leadIDStr := pi.Metadata["lead_id"]
+	if studioIDStr == "" || leadIDStr == "" {
+		slog.Warn("stripe payment_intent.succeeded missing metadata", "pi_id", pi.ID)
+		return
+	}
+	studioID, err := uuid.Parse(studioIDStr)
+	if err != nil {
+		return
+	}
+	studio, err := h.svc.repo.GetByID(ctx, studioID)
+	if err != nil || studio == nil {
+		slog.Warn("stripe payment_intent.succeeded: studio not found", "studio_id", studioIDStr)
+		return
+	}
+
+	// Re-fetch with the charge expanded — the webhook payload itself doesn't
+	// include billing details/receipt URL, same as handleCheckoutComplete's
+	// approach for the trial branch there.
+	customerEmail, receiptURL := "", ""
+	if studio.StripeSecretKey != "" {
+		sc := &client.API{}
+		sc.Init(studio.StripeSecretKey, nil)
+		full, errPI := sc.PaymentIntents.Get(pi.ID, &stripe.PaymentIntentParams{
+			Params: stripe.Params{Expand: stripe.StringSlice([]string{"latest_charge"})},
+		})
+		if errPI == nil && full != nil && full.LatestCharge != nil {
+			receiptURL = full.LatestCharge.ReceiptURL
+			if full.LatestCharge.BillingDetails != nil {
+				customerEmail = strings.TrimSpace(full.LatestCharge.BillingDetails.Email)
+			}
+		}
+	}
+
+	var leadName string
+	_ = h.svc.repo.Pool().QueryRow(ctx, "SELECT name FROM leads WHERE id = $1", leadIDStr).Scan(&leadName)
+	name := leadName
+	if name == "" {
+		name = "there"
+	}
+
+	if customerEmail != "" {
+		if _, err := h.svc.repo.Pool().Exec(ctx, `
+			UPDATE leads SET email = $1, updated_at = now() WHERE id = $2
+		`, customerEmail, leadIDStr); err != nil {
+			slog.Warn("stripe: failed to save customer email from trial payment", "err", err, "lead_id", leadIDStr)
+		}
+	}
+
+	_, updateErr := h.svc.repo.Pool().Exec(ctx, `
+		UPDATE leads SET trial_purchased = true, status = 'trial_booked', updated_at = now()
+		WHERE id = $1
+	`, leadIDStr)
+	if updateErr != nil {
+		slog.Warn("stripe trial payment: lead status update failed", "err", updateErr)
+		return
+	}
+	slog.Info("stripe trial payment: lead status updated to trial_booked", "lead_id", leadIDStr)
+	h.svc.SyncLeadToGlofoxByID(ctx, leadIDStr, glofox.GlofoxStatusTrial, pi.Amount)
+
+	var convID string
+	_ = h.svc.repo.Pool().QueryRow(ctx, `
+		SELECT id FROM conversations WHERE lead_id = $1 ORDER BY created_at DESC LIMIT 1
+	`, leadIDStr).Scan(&convID)
+	if convID == "" {
+		slog.Warn("stripe trial payment: no conversation found for lead — confirmation message dropped", "lead_id", leadIDStr)
+		return
+	}
+
+	// Schedule a 2-day post-trial follow-up to push membership — same as
+	// handleCheckoutComplete's trial branch.
+	postTrialMsg := fmt.Sprintf(
+		"Hi %s! 👋 How was your trial at *%s*? We hope you loved it!\n\n"+
+			"Ready to make it official and become a member? Reply *2* to choose a membership plan and keep the momentum going! 💪",
+		name, studio.Name,
+	)
+	_, _ = h.svc.repo.Pool().Exec(ctx, `
+		INSERT INTO outbound_jobs (studio_id, conversation_id, source_kind, body, scheduled_for, next_attempt_at)
+		VALUES ($1, $2, 'automation', $3, now() + interval '2 days', now() + interval '2 days')
+	`, studio.ID, convID, postTrialMsg)
+
+	amountStr := fmt.Sprintf("%.2f %s", float64(pi.Amount)/100.0, strings.ToUpper(string(pi.Currency)))
+	receiptLine := ""
+	if receiptURL != "" {
+		receiptLine = fmt.Sprintf("\n\n📄 *Your Receipt:* %s", receiptURL)
+	}
+	var message string
+	if studio.TrialConfirmationMessage != "" {
+		message = renderConfirmationTemplate(studio.TrialConfirmationMessage, name, studio.Name, amountStr, receiptURL)
+	} else {
+		message = fmt.Sprintf(
+			"🎉 Hi %s! Thank you for booking your Trial at *%s*!\n\n"+
+				"Your payment of *%s* was received successfully. We can't wait to see you! 💪\n\n"+
+				"Your session is confirmed. Please arrive 10 minutes early.%s\n\n"+
+				"See you soon! — The %s Team",
+			name, studio.Name, amountStr, receiptLine, studio.Name,
+		)
+	}
+	if _, err := h.svc.repo.Pool().Exec(ctx, `
+		INSERT INTO outbound_jobs (studio_id, conversation_id, source_kind, body, scheduled_for, next_attempt_at)
+		VALUES ($1, $2, 'automation', $3, now(), now())
+	`, studio.ID, convID, message); err != nil {
+		slog.Warn("stripe trial payment: whatsapp enqueue failed", "err", err)
+	} else {
+		slog.Info("stripe trial payment: whatsapp confirmation enqueued", "lead_id", leadIDStr)
 	}
 }
 

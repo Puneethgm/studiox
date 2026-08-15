@@ -1,3 +1,5 @@
+import Link from 'next/link';
+import { LayoutTemplate } from 'lucide-react';
 import { requireSession, serverFetch } from '@/lib/auth';
 import type { Campaign, Studio, Plan } from '@/lib/types';
 import { SettingsForm } from './SettingsForm';
@@ -31,6 +33,13 @@ export default async function SettingsPage({
       <div className="text-[11px] font-semibold text-zinc-400 dark:text-zinc-500 px-2">
         Update the studio&rsquo;s name, logo, and brand color configuration.
       </div>
+      <Link
+        href={`/admin/studios/${studioId}/settings/trial-page`}
+        className="mx-2 flex items-center gap-2.5 rounded-lg border border-violet-200 bg-violet-50 px-3.5 py-2.5 text-sm font-semibold text-violet-700 transition-colors hover:bg-violet-100 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300 dark:hover:bg-violet-500/20"
+      >
+        <LayoutTemplate className="h-4 w-4" />
+        Customize the Trial Payment Page
+      </Link>
       <SettingsForm studio={studio} previewHref={previewHref} initialPlans={plans} />
     </div>
   );

@@ -77,12 +77,11 @@ func (h *Handler) submitTrialCheckout(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return
 	}
-	checkoutURL, err := h.svc.CreateTrialCheckoutSessionForLead(r.Context(), leadID)
-	if err != nil || checkoutURL == "" {
-		httpx.WriteError(w, http.StatusInternalServerError, "checkout_failed", "could not create payment session")
-		return
-	}
-	httpx.JSON(w, http.StatusOK, map[string]string{"checkoutUrl": checkoutURL})
+	// Payment itself now happens on the same page via embedded Stripe
+	// Elements (studios.publicCreateTrialPaymentIntent), not a redirect to a
+	// separate Stripe-hosted Checkout Session — this endpoint just saves the
+	// details collected so far.
+	httpx.JSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // AdminRoutes are mounted under /api/v1/studios/{studioId}/messaging.

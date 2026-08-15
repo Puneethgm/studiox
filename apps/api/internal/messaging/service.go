@@ -2683,10 +2683,10 @@ func frontendBaseURL() string {
 }
 
 // createTrialCheckoutSession builds a Stripe Checkout Session for a trial
-// payment and returns its hosted URL plus the studio's name/slug. Shared by
-// SendTrialPaymentLink's no-lead fallback and CreateTrialCheckoutSessionForLead
-// (used by the public pre-payment trial-details page, which creates the
-// session only after the lead submits their name/gender/DOB).
+// payment and returns its hosted URL plus the studio's name/slug. Only
+// SendTrialPaymentLink's no-lead fallback still uses this hosted-redirect
+// path — once a lead exists, the trial-details page embeds Stripe Elements
+// directly instead (studios.publicCreateTrialPaymentIntent).
 func (s *Service) createTrialCheckoutSession(ctx context.Context, studioID uuid.UUID, leadID *uuid.UUID) (checkoutURL, studioName, studioSlug string, err error) {
 	secretKey, trialAmountSGD, sName, sSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
 	if errStripe != nil || secretKey == "" {
@@ -2750,20 +2750,6 @@ func (s *Service) createTrialCheckoutSession(ctx context.Context, studioID uuid.
 		return "", sName, sSlug, fmt.Errorf("create checkout session: %w", errSess)
 	}
 	return session.URL, sName, sSlug, nil
-}
-
-// CreateTrialCheckoutSessionForLead is called by the public pre-payment
-// trial-details endpoint right after the lead submits their full name,
-// gender, and date of birth — creates the actual Stripe Checkout Session at
-// this point (not earlier), and returns its hosted URL for the frontend to
-// redirect the browser to.
-func (s *Service) CreateTrialCheckoutSessionForLead(ctx context.Context, leadID uuid.UUID) (string, error) {
-	var studioID uuid.UUID
-	if err := s.repo.pool.QueryRow(ctx, "SELECT studio_id FROM leads WHERE id = $1", leadID).Scan(&studioID); err != nil {
-		return "", fmt.Errorf("resolve studio for lead: %w", err)
-	}
-	url, _, _, err := s.createTrialCheckoutSession(ctx, studioID, &leadID)
-	return url, err
 }
 
 // TrialCheckoutLeadInfo is the minimal, safe-to-expose-publicly info shown

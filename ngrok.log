@@ -1,10 +1,1 @@
-nohup: ignoring input
-t=2026-06-08T10:11:51+0530 lvl=info msg="no configuration paths supplied"
-t=2026-06-08T10:11:51+0530 lvl=info msg="using configuration at default config path" path=/home/infaira/.config/ngrok/ngrok.yml
-t=2026-06-08T10:11:51+0530 lvl=info msg="open config file" path=/home/infaira/.config/ngrok/ngrok.yml err=nil
-t=2026-06-08T10:11:51+0530 lvl=info msg="FIPS 140 mode" enabled=false
-t=2026-06-08T10:11:51+0530 lvl=info msg="starting web service" obj=web addr=127.0.0.1:4040 allow_hosts=[]
-t=2026-06-08T10:11:52+0530 lvl=info msg="update available" obj=updater
-t=2026-06-08T10:11:53+0530 lvl=info msg="client session established" obj=tunnels.session
-t=2026-06-08T10:11:53+0530 lvl=info msg="tunnel session started" obj=tunnels.session
-t=2026-06-08T10:11:53+0530 lvl=info msg="started tunnel" obj=tunnels name=command_line addr=http://localhost:3000 url=https://consuela-miscultivated-nonviscidly.ngrok-free.dev
+Flag --domain has been deprecated, use --url instead

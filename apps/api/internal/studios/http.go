@@ -156,6 +156,8 @@ func (h *Handler) SelfRoutes(r chi.Router) {
 	r.Post("/studios/{id}/billing/portal", h.CreatePortalSession)
 	r.Post("/studios/{id}/billing/sync", h.SyncBillingStatus)
 	r.Post("/studios/{id}/trial-checkout", h.createTrialCheckout)
+	r.Get("/studios/{id}/trial-page-layout", h.getTrialPageLayout)
+	r.Put("/studios/{id}/trial-page-layout", h.putTrialPageLayout)
 
 	// Account deletion
 	r.Delete("/studios/{id}/delete-account", h.deleteAccount)
@@ -169,6 +171,8 @@ func (h *Handler) PublicRoutes(r chi.Router) {
 	r.Post("/public/studios/{slug}/payment-intent", h.publicCreatePaymentIntent)
 	r.Get("/public/studios/{slug}/payment-receipt/{piId}", h.publicGetPaymentReceipt)
 	r.Get("/public/platform/plans", h.GetPlatformPlans)
+	r.Get("/public/studios/{slug}/trial-page-layout", h.publicGetTrialPageLayout)
+	r.Post("/public/leads/{leadId}/trial-payment-intent", h.publicCreateTrialPaymentIntent)
 }
 
 func (h *Handler) RequireActiveStudio(next http.Handler) http.Handler {
@@ -1385,6 +1389,175 @@ func (h *Handler) createTrialCheckout(w http.ResponseWriter, r *http.Request) {
 		"url":      session.URL,
 		"amount":   amount,
 		"currency": cur,
+	})
+}
+
+// ----- trial payment page builder -----
+
+// trialPageBlockCheck is deliberately minimal — just enough to validate the
+// block-type invariants below. The full block JSON (position, size, content,
+// styling) round-trips through storage as raw bytes; this handler doesn't
+// need to understand any of it beyond "type".
+type trialPageBlockCheck struct {
+	Type string `json:"type"`
+}
+
+// validateTrialPageBlocks enforces the one invariant that keeps a customized
+// page actually usable: exactly one card_fields block (the Stripe card
+// inputs) and exactly one pay_button block. Everything else is free-form.
+func validateTrialPageBlocks(raw []byte) error {
+	var blocks []trialPageBlockCheck
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return fmt.Errorf("invalid layout: %w", err)
+	}
+	cardFields, payButtons := 0, 0
+	for _, b := range blocks {
+		switch b.Type {
+		case "card_fields":
+			cardFields++
+		case "pay_button":
+			payButtons++
+		}
+	}
+	if cardFields != 1 {
+		return fmt.Errorf("layout must have exactly one card_fields block (found %d)", cardFields)
+	}
+	if payButtons != 1 {
+		return fmt.Errorf("layout must have exactly one pay_button block (found %d)", payButtons)
+	}
+	return nil
+}
+
+// emptyTrialPageLayout is returned when a studio has never saved a custom
+// layout — the frontend falls back to its own built-in default in that case.
+var emptyTrialPageLayout = map[string]any{"blocks": nil, "background": nil}
+
+func (h *Handler) getTrialPageLayout(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	layout, err := h.svc.repo.GetTrialPageLayout(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	if layout == nil {
+		httpx.JSON(w, http.StatusOK, emptyTrialPageLayout)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, json.RawMessage(layout))
+}
+
+func (h *Handler) putTrialPageLayout(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	var req struct {
+		Blocks     json.RawMessage `json:"blocks"`
+		Background json.RawMessage `json:"background"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if err := validateTrialPageBlocks(req.Blocks); err != nil {
+		httpx.WriteValidationError(w, map[string]string{"blocks": err.Error()})
+		return
+	}
+	combined, err := json.Marshal(map[string]json.RawMessage{"blocks": req.Blocks, "background": req.Background})
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	if err := h.svc.repo.SetTrialPageLayout(r.Context(), id, combined); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, json.RawMessage(combined))
+}
+
+// publicGetTrialPageLayout is the customer-facing read — no auth, just the
+// studio slug from the link. Returns null blocks/background if the studio
+// never opened the builder, so the frontend renders its own built-in default.
+func (h *Handler) publicGetTrialPageLayout(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "slug")
+	layout, err := h.svc.repo.GetTrialPageLayoutBySlug(r.Context(), slug)
+	if err != nil {
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "studio not found")
+		return
+	}
+	if layout == nil {
+		httpx.JSON(w, http.StatusOK, emptyTrialPageLayout)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, json.RawMessage(layout))
+}
+
+// publicCreateTrialPaymentIntent mirrors publicCreatePaymentIntent's
+// embedded-Stripe-Elements pattern, but for the trial-link flow: amount
+// resolution matches messaging.Service.createTrialCheckoutSession (studio
+// trial_amount_sgd → lowest active plan → 2500 fallback), and metadata
+// carries lead_id/studio_id/kind="trial" for the payment_intent.succeeded
+// webhook handler to pick up (see webhook_stripe.go).
+func (h *Handler) publicCreateTrialPaymentIntent(w http.ResponseWriter, r *http.Request) {
+	leadID, err := uuid.Parse(chi.URLParam(r, "leadId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid lead id")
+		return
+	}
+
+	var studioID uuid.UUID
+	if err := h.svc.repo.Pool().QueryRow(r.Context(),
+		"SELECT studio_id FROM leads WHERE id = $1", leadID,
+	).Scan(&studioID); err != nil {
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "lead not found")
+		return
+	}
+
+	s, err := h.svc.GetByID(r.Context(), studioID)
+	if err != nil || s.StripeSecretKey == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "stripe_not_configured", "Stripe not connected for this studio")
+		return
+	}
+
+	amount := int64(s.TrialAmountSGD)
+	if amount == 0 {
+		plans, _ := h.svc.ListPlans(r.Context(), studioID)
+		for _, p := range plans {
+			if !p.IsActive {
+				continue
+			}
+			if amount == 0 || int64(p.PriceSGD) < amount {
+				amount = int64(p.PriceSGD)
+			}
+		}
+	}
+	if amount == 0 {
+		amount = 2500
+	}
+
+	sc := &client.API{}
+	sc.Init(s.StripeSecretKey, nil)
+	pi, err := sc.PaymentIntents.New(&stripe.PaymentIntentParams{
+		Amount:      stripe.Int64(amount),
+		Currency:    stripe.String("sgd"),
+		Description: stripe.String(fmt.Sprintf("%s Trial Session", s.Name)),
+		Metadata: map[string]string{
+			"studio_id": studioID.String(),
+			"lead_id":   leadID.String(),
+			"kind":      "trial",
+		},
+	})
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "stripe_error", fmt.Sprintf("failed to create payment intent: %v", err))
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"clientSecret": pi.ClientSecret,
+		"amount":       amount,
 	})
 }
 

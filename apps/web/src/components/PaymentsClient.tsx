@@ -83,6 +83,10 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
   const [campaigns, setCampaigns] = useState<{ slug: string; name: string; studioSlug: string; shareUrl: string }[]>([]);
   const [selectedCampaignSlug, setSelectedCampaignSlug] = useState('');
   const [bookingLinkCopied, setBookingLinkCopied] = useState(false);
+  const [leadQuery, setLeadQuery] = useState('');
+  const [leadResults, setLeadResults] = useState<{ id: string; name: string; phone: string }[]>([]);
+  const [leadResultsOpen, setLeadResultsOpen] = useState(false);
+  const [selectedLead, setSelectedLead] = useState<{ id: string; name: string; phone: string } | null>(null);
 
   // Filters
   const [duration, setDuration] = useState('');
@@ -291,6 +295,24 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
     setTimeout(() => setBookingLinkCopied(false), 2000);
   };
 
+  // Debounced lead search — powers the "pick a lead" dropdown below so the
+  // copied booking link points at a real lead id instead of the inert
+  // "LEAD_ID" placeholder (which 404s if opened directly).
+  useEffect(() => {
+    if (studioId === 'global' || leadQuery.trim().length < 2) {
+      setLeadResults([]);
+      return;
+    }
+    const handle = setTimeout(() => {
+      api<{ leads: { id: string; name: string; phone: string }[] }>(
+        `/api/v1/studios/${studioId}/leads?search=${encodeURIComponent(leadQuery.trim())}&limit=8`
+      )
+        .then((res) => setLeadResults(res.leads || []))
+        .catch(() => setLeadResults([]));
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [leadQuery, studioId]);
+
   const handleDisconnect = async () => {
     if (studioId === 'global') return;
     try {
@@ -341,7 +363,14 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
           {/* Booking Links Card */}
           {studioId !== 'global' && campaigns.length > 0 && (() => {
             const selected = campaigns.find(c => c.slug === selectedCampaignSlug) ?? campaigns[0]!;
-            const bookUrl = `${selected.shareUrl}/book?leadId=LEAD_ID`;
+            // Points at the same customizable trial-details page the bot's
+            // WhatsApp link uses (Settings → Trial Payment Page), not the
+            // separate, uncustomizable /book campaign page — one page, one
+            // design, whichever way the link reaches the lead. A real lead
+            // must be picked below — "LEAD_ID" alone isn't a valid id, it's
+            // only ever auto-filled when the bot sends the link itself.
+            const leadIdPart = selectedLead ? selectedLead.id : 'LEAD_ID';
+            const bookUrl = `${new URL(selected.shareUrl).origin}/trial-details/${leadIdPart}?studio=${selected.studioSlug}`;
             return (
               <Card className="border-white/30 bg-white/20 dark:border-white/5 dark:bg-neutral-900/30 backdrop-blur-2xl">
                 <div className="flex items-center gap-2 mb-1">
@@ -352,7 +381,7 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
                   </span>
                 </div>
                 <p className="text-[11px] text-zinc-400 mb-3 leading-relaxed">
-                  Send to your lead — <code className="font-mono bg-white/10 px-1 rounded text-[10px]">leadId</code> is filled automatically by the bot.
+                  The bot fills this in automatically when it sends the link itself. To copy a working link and send it manually, search and pick the lead below first.
                 </p>
 
                 {/* Campaign picker — only shown when > 1 */}
@@ -371,6 +400,57 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
                   </div>
                 )}
 
+                {/* Lead picker — search by name/phone, pick a real lead so the link below is valid */}
+                <div className="mb-3 relative">
+                  <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block mb-1">Lead</label>
+                  {selectedLead ? (
+                    <div className="flex items-center justify-between rounded-xl border border-brand-500/30 bg-brand-500/5 px-3 py-2">
+                      <div className="min-w-0">
+                        <span className="text-xs font-bold text-zinc-800 dark:text-white block truncate">{selectedLead.name || 'Unnamed lead'}</span>
+                        <span className="text-[10px] text-zinc-400 block truncate">{selectedLead.phone}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => { setSelectedLead(null); setLeadQuery(''); setBookingLinkCopied(false); }}
+                        className="text-[10px] font-bold text-brand-500 hover:text-brand-600 shrink-0 ml-2"
+                      >
+                        Change
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <input
+                        type="text"
+                        value={leadQuery}
+                        onChange={(e) => { setLeadQuery(e.target.value); setLeadResultsOpen(true); }}
+                        onFocus={() => setLeadResultsOpen(true)}
+                        onBlur={() => setTimeout(() => setLeadResultsOpen(false), 150)}
+                        placeholder="Search by name or phone…"
+                        className="w-full rounded-xl border border-white/20 bg-white/10 dark:bg-neutral-800 px-3 py-2 text-xs font-bold text-zinc-800 dark:text-white focus:outline-none focus:border-brand-500"
+                      />
+                      {leadResultsOpen && leadQuery.trim().length >= 2 && (
+                        <div className="absolute z-20 mt-1 w-full rounded-xl border border-white/10 bg-white dark:bg-neutral-900 shadow-lg max-h-48 overflow-y-auto">
+                          {leadResults.length === 0 ? (
+                            <div className="px-3 py-2 text-[10px] text-zinc-400">No matching leads</div>
+                          ) : (
+                            leadResults.map((l) => (
+                              <button
+                                key={l.id}
+                                type="button"
+                                onMouseDown={() => { setSelectedLead(l); setLeadResultsOpen(false); setBookingLinkCopied(false); }}
+                                className="w-full text-left px-3 py-2 hover:bg-brand-500/10 border-b border-white/5 last:border-0"
+                              >
+                                <span className="text-xs font-bold text-zinc-800 dark:text-white block truncate">{l.name || 'Unnamed lead'}</span>
+                                <span className="text-[10px] text-zinc-400 block truncate">{l.phone}</span>
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+
                 {/* URL display + copy */}
                 <div className="rounded-xl border border-white/10 bg-white/10 dark:bg-neutral-900/40 px-3 py-2.5 mb-2">
                   <code className="block text-[10px] font-mono text-zinc-600 dark:text-zinc-300 break-all leading-relaxed">
@@ -379,8 +459,9 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
                 </div>
                 <button
                   type="button"
+                  disabled={!selectedLead}
                   onClick={() => copyBookingLink(bookUrl)}
-                  className={`w-full flex items-center justify-center gap-2 rounded-xl py-2 text-xs font-bold text-white transition-all ${bookingLinkCopied ? 'bg-emerald-500' : 'bg-brand-500 hover:bg-brand-600'}`}
+                  className={`w-full flex items-center justify-center gap-2 rounded-xl py-2 text-xs font-bold text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed ${bookingLinkCopied ? 'bg-emerald-500' : 'bg-brand-500 hover:bg-brand-600'}`}
                 >
                   {bookingLinkCopied
                     ? <><Check className="h-3.5 w-3.5" />Copied to clipboard!</>
