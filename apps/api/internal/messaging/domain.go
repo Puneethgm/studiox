@@ -139,6 +139,12 @@ type Conversation struct {
 	// list and into the Escalation tab until resolved. See EscalateConversation.
 	EscalatedAt     *time.Time `json:"escalatedAt,omitempty"`
 	EscalatedReason string     `json:"escalatedReason,omitempty"`
+	// CurrentTreeNodeID is the last decision-tree node this conversation
+	// matched — the next inbound message is checked against this node's
+	// children first (continuing the "flow") before falling back to a full
+	// root match. Nil means start from the tree root. See
+	// decisiontree.Service.TraverseActiveTree and Repo.SetConversationTreeNode.
+	CurrentTreeNodeID *uuid.UUID `json:"currentTreeNodeId,omitempty"`
 }
 
 // ----- message -----
@@ -218,6 +224,18 @@ type OutboundJob struct {
 	MessageID      *uuid.UUID
 	CreatedAt      time.Time
 	SentAt         *time.Time
+}
+
+// ----- follow-up cadence -----
+
+// FollowupStep is one step of a studio's configurable no-reply follow-up
+// cascade — see AutoContactWorker.processItem, which enqueues one
+// OutboundJob per step at DelayMinutes after the lead's initial greeting.
+type FollowupStep struct {
+	ID              uuid.UUID `json:"id"`
+	StepOrder       int       `json:"stepOrder"`
+	DelayMinutes    int       `json:"delayMinutes"`
+	MessageTemplate string    `json:"messageTemplate"`
 }
 
 // ----- errors -----

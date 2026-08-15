@@ -269,6 +269,13 @@ export interface DecisionTree {
   updatedAt: string;
 }
 
+export interface FollowupStep {
+  id: string;
+  stepOrder: number;
+  delayMinutes: number;
+  messageTemplate: string;
+}
+
 export interface SimulateResult {
   matched: boolean;
   nodeId?: string;

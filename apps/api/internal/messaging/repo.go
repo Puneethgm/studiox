@@ -616,7 +616,7 @@ func (r *Repo) ListConversations(ctx context.Context, studioID uuid.UUID, f List
 		       c.lead_id, c.status, c.assigned_to, c.unread_count,
 		       c.last_message_at, c.last_message_preview, c.last_message_direction,
 		       c.created_at, c.updated_at, l.status, c.ai_enabled, c.dnd_enabled,
-		       c.escalated_at, c.escalated_reason
+		       c.escalated_at, c.escalated_reason, c.current_tree_node_id
 		FROM conversations c
 		JOIN channel_accounts ch ON ch.id = c.channel_account_id
 		JOIN contact_identities ci ON ci.id = c.contact_identity_id
@@ -649,7 +649,7 @@ func (r *Repo) GetConversation(ctx context.Context, studioID, id uuid.UUID) (*Co
 		       c.lead_id, c.status, c.assigned_to, c.unread_count,
 		       c.last_message_at, c.last_message_preview, c.last_message_direction,
 		       c.created_at, c.updated_at, l.status, c.ai_enabled, c.dnd_enabled,
-		       c.escalated_at, c.escalated_reason
+		       c.escalated_at, c.escalated_reason, c.current_tree_node_id
 		FROM conversations c
 		JOIN channel_accounts ch ON ch.id = c.channel_account_id
 		JOIN contact_identities ci ON ci.id = c.contact_identity_id
@@ -668,7 +668,7 @@ func scanConversationRow(row pgx.Row) (*Conversation, error) {
 		&c.LeadID, &c.Status, &c.AssignedTo, &c.UnreadCount,
 		&c.LastMessageAt, &c.LastMessagePreview, &dir,
 		&c.CreatedAt, &c.UpdatedAt, &c.LeadStatus, &c.AIEnabled, &c.DNDEnabled,
-		&c.EscalatedAt, &escalatedReason); err != nil {
+		&c.EscalatedAt, &escalatedReason, &c.CurrentTreeNodeID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -742,12 +742,27 @@ func (r *Repo) EscalateConversation(ctx context.Context, studioID, convID uuid.U
 }
 
 // ResolveConversationEscalation clears an escalation and restores AI
-// auto-reply, moving the conversation back into the regular Inbox list.
+// auto-reply, moving the conversation back into the regular Inbox list. Also
+// resets the decision-tree stage to root — a human just intervened, so the
+// next message should start fresh rather than resume mid-branch.
 func (r *Repo) ResolveConversationEscalation(ctx context.Context, studioID, convID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `
-		UPDATE conversations SET escalated_at = NULL, escalated_reason = NULL, ai_enabled = true, updated_at = now()
+		UPDATE conversations SET escalated_at = NULL, escalated_reason = NULL, ai_enabled = true,
+		       current_tree_node_id = NULL, updated_at = now()
 		WHERE studio_id = $1 AND id = $2
 	`, studioID, convID)
+	return err
+}
+
+// SetConversationTreeNode records the decision-tree node a conversation last
+// matched (nil resets it to the tree root) — see decisiontree.Service.
+// TraverseActiveTree, which checks this node's children first before falling
+// back to a full root match.
+func (r *Repo) SetConversationTreeNode(ctx context.Context, studioID, convID uuid.UUID, nodeID *uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE conversations SET current_tree_node_id = $3, updated_at = now()
+		WHERE studio_id = $1 AND id = $2
+	`, studioID, convID, nodeID)
 	return err
 }
 
@@ -1512,6 +1527,70 @@ func (r *Repo) CancelPendingJobsForLead(ctx context.Context, studioID, leadID uu
 		return 0, fmt.Errorf("cancel pending jobs for lead: %w", err)
 	}
 	return int(tag.RowsAffected()), nil
+}
+
+// CancelPendingFollowupJobsForLead deletes only the pending no-reply
+// follow-up jobs for a lead (SourceRef "lead:<id>:followup:*") — scoped
+// narrowly so it doesn't touch unrelated staff-scheduled messages from the
+// Inbox's Manual Actions tab. Called when the lead sends any genuine reply,
+// since a reply means the "no reply" cascade no longer applies.
+func (r *Repo) CancelPendingFollowupJobsForLead(ctx context.Context, studioID, leadID uuid.UUID) (int, error) {
+	tag, err := r.pool.Exec(ctx, `
+		DELETE FROM outbound_jobs
+		WHERE studio_id = $1 AND status = 'pending' AND source_ref LIKE $2
+	`, studioID, "lead:"+leadID.String()+":followup:%")
+	if err != nil {
+		return 0, fmt.Errorf("cancel pending followup jobs: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
+// ListFollowupSteps returns a studio's configured no-reply follow-up steps,
+// ordered. An empty result means follow-ups are off for that studio.
+func (r *Repo) ListFollowupSteps(ctx context.Context, studioID uuid.UUID) ([]FollowupStep, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, step_order, delay_minutes, message_template
+		FROM studio_followup_steps
+		WHERE studio_id = $1
+		ORDER BY step_order
+	`, studioID)
+	if err != nil {
+		return nil, fmt.Errorf("list followup steps: %w", err)
+	}
+	defer rows.Close()
+	steps := make([]FollowupStep, 0)
+	for rows.Next() {
+		var s FollowupStep
+		if err := rows.Scan(&s.ID, &s.StepOrder, &s.DelayMinutes, &s.MessageTemplate); err != nil {
+			return nil, fmt.Errorf("scan followup step: %w", err)
+		}
+		steps = append(steps, s)
+	}
+	return steps, rows.Err()
+}
+
+// ReplaceFollowupSteps atomically replaces a studio's entire follow-up step
+// list with the given ordered set — the admin UI edits the whole cascade as
+// one list, so there's no need for per-row create/update/delete identity.
+func (r *Repo) ReplaceFollowupSteps(ctx context.Context, studioID uuid.UUID, steps []FollowupStep) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `DELETE FROM studio_followup_steps WHERE studio_id = $1`, studioID); err != nil {
+		return fmt.Errorf("clear followup steps: %w", err)
+	}
+	for i, s := range steps {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO studio_followup_steps (studio_id, step_order, delay_minutes, message_template)
+			VALUES ($1, $2, $3, $4)
+		`, studioID, i+1, s.DelayMinutes, s.MessageTemplate); err != nil {
+			return fmt.Errorf("insert followup step: %w", err)
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *Repo) DeleteJob(ctx context.Context, studioID uuid.UUID, id int64) error {

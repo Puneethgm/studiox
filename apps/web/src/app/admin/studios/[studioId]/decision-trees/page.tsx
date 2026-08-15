@@ -8,6 +8,7 @@ import { serverFetch } from '@/lib/auth';
 import type { DecisionTree } from '@/lib/types';
 import { HeaderActions } from '@/components/HeaderActions';
 import { NewTreeButton } from './NewTreeButton';
+import { DecisionTreesTabs } from './DecisionTreesTabs';
 
 interface ListResp {
   trees: DecisionTree[];
@@ -34,6 +35,8 @@ export default async function DecisionTreesPage({
         title="Decision Trees"
         description="Configure branching reply flows for customer messages. The active tree is used automatically when a customer message arrives."
       />
+
+      <DecisionTreesTabs studioId={studioId} />
 
       {trees.length === 0 ? (
         <EmptyState

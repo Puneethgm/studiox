@@ -432,7 +432,14 @@ func (s *Service) Simulate(ctx context.Context, studioID, treeID uuid.UUID, mess
 
 // TraverseActiveTree finds the best active tree for the lead's pipeline status and
 // traverses it against the message. Returns nil result if no matching tree is configured.
-func (s *Service) TraverseActiveTree(ctx context.Context, studioID uuid.UUID, message, leadStatus string) (*SimulateResult, error) {
+//
+// currentNodeID, when set, is the node the conversation last matched (see
+// messaging.Conversation.CurrentTreeNodeID) — the message is checked against
+// that node's children first, continuing the flow, before falling back to a
+// full root match if none of them match (e.g. the customer asked something
+// unrelated) or the node no longer exists in the resolved tree (deleted, or
+// a different tree became active for this lead).
+func (s *Service) TraverseActiveTree(ctx context.Context, studioID uuid.UUID, message, leadStatus string, currentNodeID *uuid.UUID) (*SimulateResult, error) {
 	tree, err := s.repo.GetActiveTreeForLead(ctx, studioID, leadStatus)
 	if err == ErrTreeNotFound {
 		return nil, nil
@@ -440,9 +447,32 @@ func (s *Service) TraverseActiveTree(ctx context.Context, studioID uuid.UUID, me
 	if err != nil {
 		return nil, err
 	}
+	msgLower := strings.ToLower(message)
 	result := &SimulateResult{TraversalPath: []string{}}
-	traverseNodes(tree.Nodes, strings.ToLower(message), leadStatus, result)
+	if currentNodeID != nil {
+		if node := findNodeByID(tree.Nodes, *currentNodeID); node != nil {
+			if traverseNodes(node.Children, msgLower, leadStatus, result) {
+				return result, nil
+			}
+			result.TraversalPath = nil // no child matched — fall through to a fresh root match
+		}
+	}
+	traverseNodes(tree.Nodes, msgLower, leadStatus, result)
 	return result, nil
+}
+
+// findNodeByID searches a node tree depth-first for the node with the given
+// ID, returning nil if it isn't found (deleted, or belongs to another tree).
+func findNodeByID(nodes []Node, id uuid.UUID) *Node {
+	for i := range nodes {
+		if nodes[i].ID == id {
+			return &nodes[i]
+		}
+		if found := findNodeByID(nodes[i].Children, id); found != nil {
+			return found
+		}
+	}
+	return nil
 }
 
 // traverseNodes walks the node tree depth-first matching all condition types.

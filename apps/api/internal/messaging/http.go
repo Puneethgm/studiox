@@ -130,6 +130,10 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Post("/jobs/{id}/trigger", h.triggerJobNow)
 	r.Delete("/jobs/{id}", h.deleteJob)
 
+	// No-reply follow-up cadence (Decision Trees → Follow-ups tab)
+	r.Get("/followup-steps", h.listFollowupSteps)
+	r.Put("/followup-steps", h.replaceFollowupSteps)
+
 	// AI Assistant
 	r.Post("/ai/generate", h.aiGenerateTemplate)
 
@@ -646,6 +650,66 @@ func (h *Handler) resolveConversationEscalation(w http.ResponseWriter, r *http.R
 		return
 	}
 	httpx.NoContent(w)
+}
+
+// ============================================================
+// no-reply follow-up cadence
+// ============================================================
+
+func (h *Handler) listFollowupSteps(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	steps, err := h.svc.repo.ListFollowupSteps(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"steps": steps})
+}
+
+type replaceFollowupStepsReq struct {
+	Steps []struct {
+		DelayMinutes    int    `json:"delayMinutes"`
+		MessageTemplate string `json:"messageTemplate"`
+	} `json:"steps"`
+}
+
+func (h *Handler) replaceFollowupSteps(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	var req replaceFollowupStepsReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	errs := map[string]string{}
+	steps := make([]FollowupStep, 0, len(req.Steps))
+	for i, s := range req.Steps {
+		if s.DelayMinutes <= 0 {
+			errs[fmt.Sprintf("steps[%d].delayMinutes", i)] = "must be greater than 0"
+		}
+		if strings.TrimSpace(s.MessageTemplate) == "" {
+			errs[fmt.Sprintf("steps[%d].messageTemplate", i)] = "required"
+		}
+		steps = append(steps, FollowupStep{DelayMinutes: s.DelayMinutes, MessageTemplate: s.MessageTemplate})
+	}
+	if len(errs) > 0 {
+		httpx.WriteValidationError(w, errs)
+		return
+	}
+	if err := h.svc.repo.ReplaceFollowupSteps(r.Context(), studioID, steps); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	updated, err := h.svc.repo.ListFollowupSteps(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"steps": updated})
 }
 
 func (h *Handler) setAllConversationsAI(w http.ResponseWriter, r *http.Request) {

@@ -183,30 +183,26 @@ func (w *AutoContactWorker) processItem(ctx context.Context, it leads.OutboxItem
 			w.log.Error("enqueue 1-day trial followup failed", "lead", l.ID, "err", err)
 		}
 	} else {
-		// Schedule no-reply follow-ups: 2h, 12h, 1 day, 3 days, 7 days.
-		// Each fires only if the lead hasn't replied yet (CancelPendingJobsForConversation
-		// wipes these the moment the AI worker processes an inbound message).
-		type followup struct {
-			delay time.Duration
-			body  string
+		// Schedule the studio's configured no-reply follow-up cascade (Decision
+		// Trees → Follow-ups tab). Each step fires only if the lead hasn't
+		// replied yet — CancelPendingFollowupJobsForLead wipes any still-pending
+		// steps the moment the lead sends a genuine reply. An empty list means
+		// this studio has follow-ups turned off.
+		steps, err := w.msgRepo.ListFollowupSteps(ctx, l.StudioID)
+		if err != nil {
+			w.log.Error("load followup steps failed", "studio", l.StudioID, "err", err)
 		}
-		followups := []followup{
-			{2 * time.Hour, renderGreeting("Hi {{lead_first_name}}, still thinking about joining {{studio_name}}? We'd love to have you! 💪 Reply *1* to book a trial or *2* to become a member.", studio, l)},
-			{12 * time.Hour, renderGreeting("Hey {{lead_first_name}}! Don't miss out — spots are limited at {{studio_name}}. Ready to get started? Reply *1* for a trial or *2* for membership.", studio, l)},
-			{24 * time.Hour, renderGreeting("Hi {{lead_first_name}}, just checking in one more time. We have a great community at {{studio_name}} and we'd love for you to experience it. Reply *1* to book a trial!", studio, l)},
-			{3 * 24 * time.Hour, renderGreeting("{{lead_first_name}}, your spot is still available at {{studio_name}}! 🏋️ Take the first step — reply *1* to book your trial session.", studio, l)},
-			{7 * 24 * time.Hour, renderGreeting("Last follow-up from us, {{lead_first_name}}! If you ever want to start your fitness journey with {{studio_name}}, we're here for you. Reply *1* anytime to book a trial. 💪", studio, l)},
-		}
-		for i, f := range followups {
+		for _, s := range steps {
+			body := renderGreeting(s.MessageTemplate, studio, l)
 			if _, err := w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
 				StudioID:       l.StudioID,
 				ConversationID: conv.ID,
-				Body:           f.body,
+				Body:           body,
 				SourceKind:     SourceAutomation,
-				SourceRef:      fmt.Sprintf("lead:%s:followup:%d", l.ID.String(), i+1),
-				ScheduledFor:   time.Now().UTC().Add(f.delay),
+				SourceRef:      fmt.Sprintf("lead:%s:followup:%d", l.ID.String(), s.StepOrder),
+				ScheduledFor:   time.Now().UTC().Add(time.Duration(s.DelayMinutes) * time.Minute),
 			}); err != nil {
-				w.log.Error("schedule followup failed", "lead", l.ID, "attempt", i+1, "err", err)
+				w.log.Error("schedule followup failed", "lead", l.ID, "step", s.StepOrder, "err", err)
 			}
 		}
 	}

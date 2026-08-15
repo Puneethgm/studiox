@@ -367,6 +367,16 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		}
 	}
 
+	// A genuine reply means the "no reply" follow-up cascade no longer
+	// applies to this lead — cancel any of its still-pending steps. Runs
+	// regardless of ai_enabled/DND below, since even a lead being handled
+	// manually (or opting out) has, by definition, replied.
+	if lead != nil {
+		if _, err := w.msgRepo.CancelPendingFollowupJobsForLead(ctx, studioID, lead.ID); err != nil {
+			w.log.Error("failed to cancel pending followup jobs", "lead", lead.ID, "err", err)
+		}
+	}
+
 	// AI auto-reply is off for this conversation — studio user hasn't enabled it yet.
 	if !conv.AIEnabled {
 		w.log.Info("ai worker: ai_enabled=false — no reply sent", "conversation", conv.ID)
@@ -643,11 +653,24 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		if lead != nil {
 			leadStatus = string(lead.Status)
 		}
-		treeResult, treeErr := w.dtSvc.TraverseActiveTree(ctx, studioID, msg.Body, leadStatus)
+		treeResult, treeErr := w.dtSvc.TraverseActiveTree(ctx, studioID, msg.Body, leadStatus, conv.CurrentTreeNodeID)
 		w.log.Info("decision tree traversal", "studio_id", studioID, "lead_status", leadStatus, "msg", msg.Body, "tree_found", treeResult != nil, "matched", treeResult != nil && treeResult.Matched, "err", treeErr)
 		if treeErr != nil {
 			w.log.Warn("decision tree traversal failed", "studio_id", studioID, "err", treeErr)
 		} else if treeResult != nil && treeResult.Matched {
+			// Remember where this conversation is in the flow so the next
+			// message is checked against this node's children first — but
+			// only for a plain reply ("still chatting"). Every other action
+			// hands the conversation off elsewhere (human, the auto-contact
+			// state machine, a status change), so reset to root for next time.
+			nextNodeID := treeResult.NodeID
+			if treeResult.Action != decisiontree.ActionReply {
+				nextNodeID = nil
+			}
+			if err := w.msgRepo.SetConversationTreeNode(ctx, studioID, msg.ConversationID, nextNodeID); err != nil {
+				w.log.Warn("failed to update conversation tree stage", "studio_id", studioID, "err", err)
+			}
+
 			// Pipeline: change lead status before or alongside reply.
 			if treeResult.TargetStatus != "" && lead != nil {
 				newStatus := leads.LeadStatus(treeResult.TargetStatus)
