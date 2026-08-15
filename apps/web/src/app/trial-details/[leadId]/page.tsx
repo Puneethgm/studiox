@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import { TrialPaymentPage } from './TrialPaymentPage';
 
 export default async function TrialDetailsPage({
@@ -6,5 +7,9 @@ export default async function TrialDetailsPage({
   params: Promise<{ leadId: string }>;
 }) {
   const { leadId } = await params;
-  return <TrialPaymentPage leadId={leadId} />;
+  return (
+    <Suspense>
+      <TrialPaymentPage leadId={leadId} />
+    </Suspense>
+  );
 }

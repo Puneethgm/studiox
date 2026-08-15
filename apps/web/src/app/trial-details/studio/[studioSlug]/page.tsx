@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import { TrialPaymentPage } from '../../[leadId]/TrialPaymentPage';
 
 // Static, no-lead-attached trial signup link — safe to share manually
@@ -10,5 +11,9 @@ export default async function TrialDetailsStudioPage({
   params: Promise<{ studioSlug: string }>;
 }) {
   const { studioSlug } = await params;
-  return <TrialPaymentPage standalone studioSlug={studioSlug} />;
+  return (
+    <Suspense>
+      <TrialPaymentPage standalone studioSlug={studioSlug} />
+    </Suspense>
+  );
 }
