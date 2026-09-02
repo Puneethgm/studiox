@@ -483,6 +483,11 @@ func (s *Service) SaveExternalLeadsSheetSettings(ctx context.Context, studioID u
 		SourceColumn:    strings.ToUpper(strings.TrimSpace(in.SourceColumn)),
 		NotesColumn:     strings.ToUpper(strings.TrimSpace(in.NotesColumn)),
 		DateColumn:      strings.ToUpper(strings.TrimSpace(in.DateColumn)),
+		HotLeadColumn:   strings.ToUpper(strings.TrimSpace(in.HotLeadColumn)),
+		TrialPurchasedColumn: strings.ToUpper(strings.TrimSpace(in.TrialPurchasedColumn)),
+		ContinueAIAfterGreeting: in.ContinueAIAfterGreeting,
+		AutoContactEnabled: in.AutoContactEnabled,
+		AutoContactBatchLimit: in.AutoContactBatchLimit,
 		Active:          in.Active,
 	}
 	if settings.TabName == "" {

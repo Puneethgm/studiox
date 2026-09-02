@@ -89,6 +89,8 @@ func (h *Handler) submitTrialCheckout(w http.ResponseWriter, r *http.Request) {
 // RequireActiveStudio); we just trust the path's studioId here.
 func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Get("/channels", h.listChannels)
+	r.Get("/settings/send-spacing", h.getSendSpacing)
+	r.Put("/settings/send-spacing", h.setSendSpacing)
 	r.Post("/channels/whatsapp", h.connectWhatsApp)
 	r.Post("/channels/instagram", h.connectInstagram)
 	r.Post("/channels/messenger", h.connectMessenger)
@@ -193,6 +195,39 @@ func (h *Handler) listChannels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"channels": list})
+}
+
+func (h *Handler) getSendSpacing(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	seconds, err := h.svc.GetWhatsAppSendSpacing(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"whatsappSendSpacingSeconds": seconds})
+}
+
+type setSendSpacingReq struct {
+	WhatsAppSendSpacingSeconds int `json:"whatsappSendSpacingSeconds"`
+}
+
+func (h *Handler) setSendSpacing(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	var req setSendSpacingReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if err := h.svc.SetWhatsAppSendSpacing(r.Context(), studioID, req.WhatsAppSendSpacingSeconds); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"whatsappSendSpacingSeconds": req.WhatsAppSendSpacingSeconds})
 }
 
 type connectMetaReq struct {

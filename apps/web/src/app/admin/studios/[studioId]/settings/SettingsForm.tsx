@@ -2,7 +2,7 @@
 
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { useState, useEffect } from 'react';
-import { Eye, EyeOff, Database, Building, Calendar, Cpu, Lock, Save, CheckCircle2, X, DollarSign, Upload, Loader2 } from 'lucide-react';
+import { Eye, EyeOff, Database, Building, Calendar, Cpu, Lock, Save, CheckCircle2, X, DollarSign, Upload, Loader2, Timer } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { FieldError, FieldHint, Label } from '@/components/ui/Label';
@@ -14,6 +14,10 @@ import {
   saveSheetsSettings,
   getExternalLeadsSheetSettings,
   saveExternalLeadsSheetSettings,
+  getWhatsAppSendSpacing,
+  saveWhatsAppSendSpacing,
+  getInitialContactDelay,
+  saveInitialContactDelay,
 } from './actions';
 import { AvailabilitySettings } from './AvailabilitySettings';
 import { PlansManagement } from './PlansManagement';
@@ -125,9 +129,18 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
   // No dedicated input here (the toggle lives in the Inbox top bar) — just
   // round-tripped so saving from this form doesn't silently reset it.
   const [extContinueAIAfterGreeting, setExtContinueAIAfterGreeting] = useState(true);
+  const [extAutoContactEnabled, setExtAutoContactEnabled] = useState(true);
+  const [extAutoContactBatchLimit, setExtAutoContactBatchLimit] = useState(0);
   const [extActive, setExtActive] = useState(false);
   const [extSaving, setExtSaving] = useState(false);
   const [extError, setExtError] = useState<string | null>(null);
+  const [sendSpacingSeconds, setSendSpacingSeconds] = useState(20);
+  const [sendSpacingSaving, setSendSpacingSaving] = useState(false);
+  const [sendSpacingError, setSendSpacingError] = useState<string | null>(null);
+  const [initialDelayValue, setInitialDelayValue] = useState(0);
+  const [initialDelayUnit, setInitialDelayUnit] = useState<'minutes' | 'hours'>('minutes');
+  const [initialDelaySaving, setInitialDelaySaving] = useState(false);
+  const [initialDelayError, setInitialDelayError] = useState<string | null>(null);
   const [metaSaving, setMetaSaving] = useState(false);
   const [googleSaving, setGoogleSaving] = useState(false);
   const [showGoogleClientSecret, setShowGoogleClientSecret] = useState(false);
@@ -146,34 +159,99 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
   const [uploadingLogo, setUploadingLogo] = useState(false);
 
   useEffect(() => {
+    // Fetch both sheet integrations together — the external (import) sheet's
+    // Spreadsheet ID prefills from the primary (export) sheet's ID when the
+    // former hasn't been set yet, since studios usually reuse the same sheet.
     void (async () => {
-      const res = await getSheetsSettings(studio.id);
-      if (res.ok && res.data) {
-        setSpreadsheetId(res.data.spreadsheetId || '');
-        setTabName(res.data.tabName || 'Leads');
-        setSheetsActive(res.data.active || false);
+      const [sheetsRes, extRes] = await Promise.all([
+        getSheetsSettings(studio.id),
+        getExternalLeadsSheetSettings(studio.id),
+      ]);
+
+      let primarySpreadsheetId = '';
+      if (sheetsRes.ok && sheetsRes.data) {
+        primarySpreadsheetId = sheetsRes.data.spreadsheetId || '';
+        setSpreadsheetId(primarySpreadsheetId);
+        setTabName(sheetsRes.data.tabName || 'Leads');
+        setSheetsActive(sheetsRes.data.active || false);
+      }
+
+      if (extRes.ok && extRes.data) {
+        setExtSpreadsheetId(extRes.data.spreadsheetId || primarySpreadsheetId);
+        setExtTabName(extRes.data.tabName || 'Sheet1');
+        setExtNameColumn(extRes.data.nameColumn || '');
+        setExtFirstNameColumn(extRes.data.firstNameColumn || 'A');
+        setExtLastNameColumn(extRes.data.lastNameColumn || 'B');
+        setExtEmailColumn(extRes.data.emailColumn || 'C');
+        setExtPhoneColumn(extRes.data.phoneColumn || 'D');
+        setExtSourceColumn(extRes.data.sourceColumn || '');
+        setExtNotesColumn(extRes.data.notesColumn || '');
+        setExtDateColumn(extRes.data.dateColumn || '');
+        setExtHotLeadColumn(extRes.data.hotLeadColumn || '');
+        setExtContinueAIAfterGreeting(extRes.data.continueAiAfterGreeting ?? true);
+        setExtAutoContactEnabled(extRes.data.autoContactEnabled ?? true);
+        setExtAutoContactBatchLimit(extRes.data.autoContactBatchLimit ?? 0);
+        setExtTrialPurchasedColumn(extRes.data.trialPurchasedColumn || '');
+        setExtActive(extRes.data.active || false);
       }
     })();
     void (async () => {
-      const res = await getExternalLeadsSheetSettings(studio.id);
+      const res = await getWhatsAppSendSpacing(studio.id);
       if (res.ok && res.data) {
-        setExtSpreadsheetId(res.data.spreadsheetId || '');
-        setExtTabName(res.data.tabName || 'Sheet1');
-        setExtNameColumn(res.data.nameColumn || '');
-        setExtFirstNameColumn(res.data.firstNameColumn || 'A');
-        setExtLastNameColumn(res.data.lastNameColumn || 'B');
-        setExtEmailColumn(res.data.emailColumn || 'C');
-        setExtPhoneColumn(res.data.phoneColumn || 'D');
-        setExtSourceColumn(res.data.sourceColumn || '');
-        setExtNotesColumn(res.data.notesColumn || '');
-        setExtDateColumn(res.data.dateColumn || '');
-        setExtHotLeadColumn(res.data.hotLeadColumn || '');
-        setExtContinueAIAfterGreeting(res.data.continueAiAfterGreeting ?? true);
-        setExtTrialPurchasedColumn(res.data.trialPurchasedColumn || '');
-        setExtActive(res.data.active || false);
+        setSendSpacingSeconds(res.data.whatsappSendSpacingSeconds ?? 20);
+      }
+    })();
+    void (async () => {
+      const res = await getInitialContactDelay(studio.id);
+      if (res.ok && res.data) {
+        const minutes = res.data.initialContactDelayMinutes ?? 0;
+        if (minutes > 0 && minutes % 60 === 0) {
+          setInitialDelayValue(minutes / 60);
+          setInitialDelayUnit('hours');
+        } else {
+          setInitialDelayValue(minutes);
+          setInitialDelayUnit('minutes');
+        }
       }
     })();
   }, [studio.id]);
+
+  async function onSaveSendSpacing(e: React.FormEvent) {
+    e.preventDefault();
+    setSendSpacingError(null);
+    setSendSpacingSaving(true);
+    try {
+      const res = await saveWhatsAppSendSpacing(studio.id, sendSpacingSeconds);
+      if (res.ok) {
+        showToast('WhatsApp message pacing saved successfully.');
+      } else {
+        setSendSpacingError(res.error || 'Failed to save pacing.');
+      }
+    } catch (err: any) {
+      setSendSpacingError(err.message || 'An error occurred.');
+    } finally {
+      setSendSpacingSaving(false);
+    }
+  }
+
+  async function onSaveInitialDelay(e: React.FormEvent) {
+    e.preventDefault();
+    setInitialDelayError(null);
+    setInitialDelaySaving(true);
+    try {
+      const minutes = initialDelayUnit === 'hours' ? initialDelayValue * 60 : initialDelayValue;
+      const res = await saveInitialContactDelay(studio.id, minutes);
+      if (res.ok) {
+        showToast('Initial message delay saved successfully.');
+      } else {
+        setInitialDelayError(res.error || 'Failed to save delay.');
+      }
+    } catch (err: any) {
+      setInitialDelayError(err.message || 'An error occurred.');
+    } finally {
+      setInitialDelaySaving(false);
+    }
+  }
 
   async function onSaveExternalLeadsSheetSettings(e: React.FormEvent) {
     e.preventDefault();
@@ -194,6 +272,8 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
         hotLeadColumn: extHotLeadColumn,
         trialPurchasedColumn: extTrialPurchasedColumn,
         continueAiAfterGreeting: extContinueAIAfterGreeting,
+        autoContactEnabled: extAutoContactEnabled,
+        autoContactBatchLimit: extAutoContactBatchLimit,
         active: extActive,
       });
       if (res.ok) {
@@ -245,6 +325,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
         contactPhone: fullPhone,
         active,
         managedBy1Hero,
+        trialAmountSgd: Math.round(trialAmountSgd * 100),
       });
       if (!result.ok) {
         setErrors(result.details ?? { _: result.error });
@@ -540,6 +621,22 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                   <FieldError message={errors.contactPhone} />
                 </div>
 
+                <div>
+                  <Label htmlFor="trialAmountSgd">Trial Price (S$)</Label>
+                  <Input
+                    id="trialAmountSgd"
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    value={trialAmountSgd}
+                    onChange={(e) => setTrialAmountSgd(Math.max(0, Number(e.target.value) || 0))}
+                  />
+                  <FieldHint>
+                    The price shown and charged on the trial payment page (including the shareable static signup link).
+                    If left at S$0, the page falls back to a default of S$25.
+                  </FieldHint>
+                </div>
+
                 <div className="flex items-center gap-3 p-3 rounded border border-zinc-100 bg-zinc-50 dark:bg-zinc-900/50 dark:border-zinc-800/50">
                   <input
                     type="checkbox"
@@ -754,7 +851,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
         )}
 
         {activeSection === 'integrations' && (
-          <div className="grid gap-6 lg:grid-cols-2 items-start">
+          <div className="space-y-6">
             <div className="space-y-6">
               {/* Meta App Settings Card */}
               <form onSubmit={onSaveMetaConfig} className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 p-6 space-y-5">
@@ -1164,6 +1261,42 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                   </div>
                 </div>
 
+                <div className="flex items-center gap-3 p-3 rounded border border-zinc-100 bg-zinc-50 dark:bg-zinc-900/50 dark:border-zinc-800/50">
+                  <input
+                    type="checkbox"
+                    id="extAutoContactEnabled"
+                    checked={extAutoContactEnabled}
+                    onChange={(e) => setExtAutoContactEnabled(e.target.checked)}
+                    className="h-4 w-4 rounded border-zinc-300 text-brand-500 focus:ring-brand-500 cursor-pointer"
+                  />
+                  <div>
+                    <Label htmlFor="extAutoContactEnabled" className="mb-0 cursor-pointer text-xs font-black uppercase tracking-wider">Auto-Contact Imported Leads</Label>
+                    <p className="text-[10px] text-zinc-400">
+                      When on, new leads imported from this sheet get the initial WhatsApp message and follow-up sequence automatically.
+                      When off, leads are imported silently — no messages are sent.
+                    </p>
+                  </div>
+                </div>
+
+                {extAutoContactEnabled ? (
+                  <div className="max-w-xs">
+                    <Label htmlFor="extAutoContactBatchLimit">Max Auto-Contacted Per Sync</Label>
+                    <Input
+                      id="extAutoContactBatchLimit"
+                      type="number"
+                      min={0}
+                      value={extAutoContactBatchLimit}
+                      onChange={(e) => setExtAutoContactBatchLimit(Math.max(0, Number(e.target.value) || 0))}
+                    />
+                    <FieldHint>
+                      Caps how many newly-imported leads get an automatic WhatsApp message in a single sync — the
+                      rest are still imported, just silently, same as if auto-contact were off for them. Protects
+                      against a large one-time import (e.g. an old contact list added to the sheet) triggering
+                      hundreds of messages at once. Set to 0 for no cap.
+                    </FieldHint>
+                  </div>
+                ) : null}
+
                 {extError ? (
                   <p className="text-xs font-black text-rose-500 uppercase tracking-wider">{extError}</p>
                 ) : null}
@@ -1175,6 +1308,103 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                     className="bg-brand-500 hover:bg-brand-600 text-white text-xs font-black uppercase tracking-widest rounded h-10 px-6"
                   >
                     Save Connection
+                  </Button>
+                </div>
+              </form>
+            </div>
+
+            {/* WhatsApp Message Pacing — throttle between consecutive sends */}
+            <div className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+              <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800 flex items-center gap-2">
+                <Timer className="h-4 w-4 text-brand-500" />
+                <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">WhatsApp Message Pacing</h3>
+              </div>
+              <form onSubmit={onSaveSendSpacing} className="space-y-4 p-6">
+                <p className="text-[10px] text-zinc-400">
+                  Controls the minimum gap between consecutive WhatsApp messages sent on the same connected number —
+                  including the initial message right after a lead is imported or a number is freshly connected.
+                  A larger gap reduces the risk of the number being flagged by WhatsApp during bulk sends.
+                </p>
+
+                <div className="max-w-xs">
+                  <Label htmlFor="sendSpacingSeconds">Delay Between Messages (seconds)</Label>
+                  <Input
+                    id="sendSpacingSeconds"
+                    type="number"
+                    min={0}
+                    max={300}
+                    value={sendSpacingSeconds}
+                    onChange={(e) => setSendSpacingSeconds(Math.max(0, Math.min(300, Number(e.target.value) || 0)))}
+                  />
+                  <FieldHint>e.g. 20 = wait 20 seconds after each WhatsApp message before sending the next one on this number. 0-300s.</FieldHint>
+                </div>
+
+                {sendSpacingError ? (
+                  <p className="text-xs font-black text-rose-500 uppercase tracking-wider">{sendSpacingError}</p>
+                ) : null}
+
+                <div className="flex items-center justify-end border-t border-zinc-200 dark:border-zinc-800 pt-4">
+                  <Button
+                    type="submit"
+                    loading={sendSpacingSaving}
+                    className="bg-brand-500 hover:bg-brand-600 text-white text-xs font-black uppercase tracking-widest rounded h-10 px-6"
+                  >
+                    Save Pacing
+                  </Button>
+                </div>
+              </form>
+            </div>
+
+            {/* Initial Message Delay — wait before the very first auto-contact send */}
+            <div className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+              <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800 flex items-center gap-2">
+                <Timer className="h-4 w-4 text-brand-500" />
+                <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Initial Message Delay</h3>
+              </div>
+              <form onSubmit={onSaveInitialDelay} className="space-y-4 p-6">
+                <p className="text-[10px] text-zinc-400">
+                  How long to wait before sending the very first WhatsApp message to a newly-created lead
+                  (right after connecting WhatsApp, or a batch of leads coming in at once). Set to 0 to send immediately.
+                </p>
+
+                <div className="flex items-end gap-3">
+                  <div className="max-w-[140px]">
+                    <Label htmlFor="initialDelayValue">Wait</Label>
+                    <Input
+                      id="initialDelayValue"
+                      type="number"
+                      min={0}
+                      max={initialDelayUnit === 'hours' ? 24 : 1440}
+                      value={initialDelayValue}
+                      onChange={(e) => setInitialDelayValue(Math.max(0, Number(e.target.value) || 0))}
+                    />
+                  </div>
+                  <div className="max-w-[160px]">
+                    <Label htmlFor="initialDelayUnit">Unit</Label>
+                    <select
+                      id="initialDelayUnit"
+                      value={initialDelayUnit}
+                      onChange={(e) => setInitialDelayUnit(e.target.value as 'minutes' | 'hours')}
+                      className="h-10 w-full rounded border border-zinc-200 bg-white px-3 text-sm text-zinc-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100"
+                    >
+                      <option value="minutes">Minutes</option>
+                      <option value="hours">Hours</option>
+                    </select>
+                  </div>
+                </div>
+                <FieldHint>e.g. 15 minutes, or 1 hour, before the first message goes out after a lead comes in.</FieldHint>
+
+                {initialDelayError ? (
+                  <p className="text-xs font-black text-rose-500 uppercase tracking-wider">{initialDelayError}</p>
+                ) : null}
+
+                <div className="flex items-center justify-end border-t border-zinc-200 dark:border-zinc-800 pt-4">
+                  <Button
+                    type="submit"
+                    loading={initialDelaySaving}
+                    className="bg-brand-500 hover:bg-brand-600 text-white text-xs font-black uppercase tracking-widest rounded h-10 px-6"
+                  >
+                    Save Delay
                   </Button>
                 </div>
               </form>

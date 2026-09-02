@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   GitBranch, Plus, Trash2, Sparkles, Loader2,
-  CheckCircle2, Circle, Play, ArrowLeft, Save, CornerDownRight, X,
+  CheckCircle2, Circle, Play, ArrowLeft, Save, CornerDownRight, X, Download,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -422,6 +422,15 @@ export function TreeEditor({ studioId, initialTree }: Props) {
         </div>
         <div className="flex items-center gap-2">
           <ImportNodesButton studioId={studioId} treeId={tree.id} onImported={refreshTree} />
+          <a
+            href={`/api/v1/studios/${studioId}/decision-trees/${tree.id}/export`}
+            download={`${tree.name || 'decision-tree'}.xlsx`}
+            className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-zinc-800 transition-colors"
+            title="Download this tree as an .xlsx file — upload it via Import on another studio's tree to recreate it there"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Download
+          </a>
           <Button
             variant="ghost"
             size="sm"

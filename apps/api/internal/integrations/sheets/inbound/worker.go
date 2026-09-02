@@ -115,6 +115,7 @@ func (w *Worker) importFromSheet(ctx context.Context, cfg leads.ExternalLeadsShe
 
 	var defaultCampaign *leads.Campaign
 	imported := 0
+	autoContacted := 0
 	maxRowSeen := lastImported
 
 	for i, row := range rows {
@@ -166,7 +167,19 @@ func (w *Worker) importFromSheet(ctx context.Context, cfg leads.ExternalLeadsShe
 		hotLeadRaw := strings.ToUpper(cell(row, hotLeadCol))
 		hotLead := hotLeadRaw == "HOT" || hotLeadRaw == "WARM"
 		trialPurchased := strings.EqualFold(cell(row, trialPurchasedCol), "YES")
-		skipAutoContact := trialPurchased || hotLeadRaw == "HOT" || hotLeadRaw == "COLD"
+		skipAutoContact := !cfg.AutoContactEnabled || trialPurchased || hotLeadRaw == "HOT" || hotLeadRaw == "COLD"
+
+		// Cap how many leads get auto-contacted per sync cycle (0 = no cap).
+		// Leads beyond the cap are still imported, just silently — same as
+		// if AutoContactEnabled were off for them specifically. Protects
+		// against a large one-time sheet import (e.g. migrating an old
+		// contact list into the sheet) blasting out hundreds of WhatsApp
+		// messages at once. Rows are watermarked once processed either way,
+		// so a lead that lands beyond the cap does NOT get auto-contacted on
+		// a later cycle either — this caps per-sync volume, it isn't a queue.
+		if !skipAutoContact && cfg.AutoContactBatchLimit > 0 && autoContacted >= cfg.AutoContactBatchLimit {
+			skipAutoContact = true
+		}
 
 		lead := &leads.Lead{
 			StudioID:       cfg.StudioID,
@@ -195,6 +208,9 @@ func (w *Worker) importFromSheet(ctx context.Context, cfg leads.ExternalLeadsShe
 		w.log.Info("Sheets | External leads import worker — imported lead",
 			"component", "external_leads_sheet", "studio_id", cfg.StudioID, "row", sheetRowNum, "lead_id", lead.ID)
 		imported++
+		if !skipAutoContact {
+			autoContacted++
+		}
 	}
 
 	if maxRowSeen > lastImported {

@@ -146,14 +146,22 @@ func (w *AutoContactWorker) processItem(ctx context.Context, it leads.OutboxItem
 		w.log.Error("update lead auto contact stage failed", "lead", l.ID, "err", err)
 	}
 
-	// Enqueue immediate outbound message
+	// Initial send can be delayed per studio (Settings → WhatsApp Message
+	// Pacing) so a burst of freshly-imported leads doesn't all get contacted
+	// in the same instant. Defaults to 0 (immediate) if unset.
+	initialDelay := time.Duration(0)
+	if minutes, dErr := w.studiosRepo.GetInitialContactDelayMinutes(ctx, l.StudioID); dErr == nil {
+		initialDelay = time.Duration(minutes) * time.Minute
+	}
+
+	// Enqueue outbound message (immediate, unless a studio-configured delay applies)
 	if _, err := w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
 		StudioID:       l.StudioID,
 		ConversationID: conv.ID,
 		Body:           body,
 		SourceKind:     SourceAutomation,
 		SourceRef:      fmt.Sprintf("lead:%s:followup:0", l.ID.String()),
-		ScheduledFor:   time.Now().UTC(),
+		ScheduledFor:   time.Now().UTC().Add(initialDelay),
 	}); err != nil {
 		return fmt.Errorf("enqueue outbound initial: %w", err)
 	}

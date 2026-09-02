@@ -157,6 +157,20 @@ func (s *Service) ListChannels(ctx context.Context, studioID uuid.UUID) ([]Chann
 	return s.repo.ListChannels(ctx, studioID)
 }
 
+func (s *Service) GetWhatsAppSendSpacing(ctx context.Context, studioID uuid.UUID) (int, error) {
+	return s.repo.GetWhatsAppSendSpacing(ctx, studioID)
+}
+
+func (s *Service) SetWhatsAppSendSpacing(ctx context.Context, studioID uuid.UUID, seconds int) error {
+	if seconds < 0 {
+		seconds = 0
+	}
+	if seconds > 300 {
+		seconds = 300
+	}
+	return s.repo.SetWhatsAppSendSpacing(ctx, studioID, seconds)
+}
+
 func (s *Service) DisconnectChannel(ctx context.Context, studioID, id uuid.UUID) error {
 	// Look up the channel's kind before disconnecting so we know whether it
 	// needs a follow-up call to log out an external session (WhatsApp Web).

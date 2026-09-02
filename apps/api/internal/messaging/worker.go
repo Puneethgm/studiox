@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,24 +28,64 @@ type OutboundWorker struct {
 	x         channels.Sender
 	telegram  channels.Sender
 	log       *slog.Logger
+
+	waPaceMu   sync.Mutex
+	waLastSent map[uuid.UUID]time.Time
 }
 
 const (
 	workerPollInterval = 2 * time.Second
 	workerBatchSize    = 10
 	maxAttempts        = 6
+
+	// defaultWhatsAppSendSpacing throttles consecutive WhatsApp sends on the
+	// same channel so bulk sends (sheet import, fresh connect, etc.) don't
+	// fire back-to-back and risk the number getting flagged/banned by
+	// WhatsApp. A studio can override this via the Settings UI
+	// (studios.whatsapp_send_spacing_seconds); this is only the fallback
+	// used if that lookup fails.
+	defaultWhatsAppSendSpacing = 20 * time.Second
 )
 
 func NewOutboundWorker(repo *Repo, bus Bus, whatsapp, messenger, twilio, x, telegram channels.Sender, log *slog.Logger) *OutboundWorker {
 	return &OutboundWorker{
-		repo:      repo,
-		bus:       bus,
-		whatsapp:  whatsapp,
-		messenger: messenger,
-		twilio:    twilio,
-		x:         x,
-		telegram:  telegram,
-		log:       log,
+		repo:       repo,
+		bus:        bus,
+		whatsapp:   whatsapp,
+		messenger:  messenger,
+		twilio:     twilio,
+		x:          x,
+		telegram:   telegram,
+		log:        log,
+		waLastSent: make(map[uuid.UUID]time.Time),
+	}
+}
+
+// paceWhatsAppSend blocks, if needed, so that consecutive sends on the same
+// WhatsApp channel are spaced at least `spacing` apart. Pacing is tracked per
+// channel so independent numbers aren't throttled by each other.
+func (w *OutboundWorker) paceWhatsAppSend(ctx context.Context, channelID uuid.UUID, spacing time.Duration) {
+	w.waPaceMu.Lock()
+	last, ok := w.waLastSent[channelID]
+	wait := time.Duration(0)
+	now := time.Now()
+	if ok {
+		elapsed := now.Sub(last)
+		if elapsed < spacing {
+			wait = spacing - elapsed
+		}
+	}
+	w.waLastSent[channelID] = now.Add(wait)
+	w.waPaceMu.Unlock()
+
+	if wait <= 0 {
+		return
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
 	}
 }
 
@@ -190,6 +231,13 @@ func (w *OutboundWorker) dispatch(ctx context.Context, j OutboundJob) {
 	var chAtts []channels.Attachment
 	for _, a := range j.Attachments {
 		chAtts = append(chAtts, channels.Attachment{Type: a.Type, URL: a.URL, Name: a.Name})
+	}
+	if channel.Kind == KindWhatsAppMeta || channel.Kind == KindWhatsAppWeb {
+		spacing := defaultWhatsAppSendSpacing
+		if secs, err := w.repo.GetWhatsAppSendSpacing(ctx, j.StudioID); err == nil {
+			spacing = time.Duration(secs) * time.Second
+		}
+		w.paceWhatsAppSend(ctx, channel.ID, spacing)
 	}
 	res, err := sender.SendText(ctx, channel.AccessToken, channel.ExternalID, conv.ContactValue, j.Body, chAtts)
 	if err != nil {

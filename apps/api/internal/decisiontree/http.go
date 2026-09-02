@@ -37,6 +37,7 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 
 	r.Get("/decision-trees/import-template", h.importTemplate)
 	r.Post("/decision-trees/{treeId}/nodes/import", h.importNodes)
+	r.Get("/decision-trees/{treeId}/export", h.exportTree)
 
 	r.Post("/decision-trees/suggest-keywords", h.suggestKeywords)
 }
@@ -451,6 +452,138 @@ func (h *Handler) importTemplate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to generate template")
 		return
 	}
+}
+
+// exportTree downloads a whole tree's nodes as an .xlsx in the exact same
+// column layout importTemplate/importNodes use, so it can be re-uploaded via
+// "Import" on a different studio's (empty) tree to recreate the same flow.
+func (h *Handler) exportTree(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := h.resolveStudioID(w, r)
+	if !ok {
+		return
+	}
+	treeID, err := uuid.Parse(chi.URLParam(r, "treeId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid treeId")
+		return
+	}
+	tree, err := h.svc.GetTree(r.Context(), studioID, treeID)
+	if errors.Is(err, ErrTreeNotFound) {
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "tree not found")
+		return
+	}
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+
+	f := excelize.NewFile()
+	defer f.Close()
+	sheet := f.GetSheetName(0)
+
+	for i, header := range importTemplateHeaders {
+		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+		f.SetCellValue(sheet, cell, header)
+	}
+
+	rowNum := 2
+	var writeNode func(n Node, parentLabel string)
+	writeNode = func(n Node, parentLabel string) {
+		row := []any{
+			n.Label,
+			parentLabel,
+			string(n.ConditionType),
+			conditionValueToCell(n.ConditionType, n.ConditionValue),
+			n.ReplyTemplate,
+			string(n.Action),
+			actionValueToCell(n.Action, n.ActionValue),
+			n.SortOrder,
+		}
+		for c, val := range row {
+			cell, _ := excelize.CoordinatesToCellName(c+1, rowNum)
+			f.SetCellValue(sheet, cell, val)
+		}
+		rowNum++
+		for _, child := range n.Children {
+			writeNode(child, n.Label)
+		}
+	}
+	for _, n := range tree.Nodes {
+		writeNode(n, "")
+	}
+
+	f.SetColWidth(sheet, "A", "B", 24)
+	f.SetColWidth(sheet, "C", "D", 20)
+	f.SetColWidth(sheet, "E", "E", 40)
+	f.SetColWidth(sheet, "F", "H", 16)
+
+	filename := strings.ReplaceAll(tree.Name, `"`, "")
+	if filename == "" {
+		filename = "decision-tree"
+	}
+	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.xlsx"`, filename))
+	if err := f.Write(w); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to generate export")
+		return
+	}
+}
+
+// toStringSlice reads a ConditionValue field back out regardless of whether
+// it decoded as []string (freshly created in-process) or []interface{} (the
+// common shape after a JSONB round-trip through the database).
+func toStringSlice(v any) []string {
+	switch vv := v.(type) {
+	case []string:
+		return vv
+	case []any:
+		out := make([]string, 0, len(vv))
+		for _, item := range vv {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+// conditionValueToCell is the inverse of conditionValueToJSON — renders a
+// node's ConditionValue map back into the plain-text cell format the import
+// template expects for that condition type.
+func conditionValueToCell(ct ConditionType, cv ConditionValue) string {
+	if cv == nil {
+		return ""
+	}
+	switch ct {
+	case ConditionKeyword:
+		return strings.Join(toStringSlice(cv["keywords"]), ",")
+	case ConditionIntent:
+		if s, ok := cv["intent"].(string); ok {
+			return s
+		}
+		return ""
+	case ConditionSentiment:
+		if s, ok := cv["sentiment"].(string); ok {
+			return s
+		}
+		return ""
+	case ConditionLeadStatus:
+		return strings.Join(toStringSlice(cv["statuses"]), ",")
+	default:
+		return ""
+	}
+}
+
+// actionValueToCell is the inverse of actionValueToJSON.
+func actionValueToCell(a Action, av ConditionValue) string {
+	if a == ActionChangeStatus && av != nil {
+		if s, ok := av["target_status"].(string); ok {
+			return s
+		}
+	}
+	return ""
 }
 
 // importNodes bulk-creates nodes for an existing tree from an uploaded

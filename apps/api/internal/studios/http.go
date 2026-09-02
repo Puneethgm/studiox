@@ -1479,6 +1479,52 @@ func (h *Handler) putTrialPageLayout(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, json.RawMessage(combined))
 }
 
+// GetInitialContactDelay / PutInitialContactDelay are exported (unlike most
+// handlers here) because they're mounted directly under the studio-scoped
+// "/studios/{studioId}" route group in main.go, not via AdminRoutes (which is
+// super-admin-only) — any active studio-admin needs to edit this setting.
+func (h *Handler) GetInitialContactDelay(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "studioId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	minutes, err := h.svc.repo.GetInitialContactDelayMinutes(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"initialContactDelayMinutes": minutes})
+}
+
+type putInitialContactDelayReq struct {
+	InitialContactDelayMinutes int `json:"initialContactDelayMinutes"`
+}
+
+func (h *Handler) PutInitialContactDelay(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "studioId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	var req putInitialContactDelayReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	minutes := req.InitialContactDelayMinutes
+	if minutes < 0 {
+		minutes = 0
+	}
+	if minutes > 1440 {
+		minutes = 1440
+	}
+	if err := h.svc.repo.SetInitialContactDelayMinutes(r.Context(), id, minutes); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"initialContactDelayMinutes": minutes})
+}
+
 // publicGetTrialPageLayout is the customer-facing read — no auth, just the
 // studio slug from the link. Returns null blocks/background if the studio
 // never opened the builder, so the frontend renders its own built-in default.

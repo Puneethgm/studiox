@@ -322,6 +322,8 @@ func main() {
 				dtHandler.AdminRoutes(r)
 				r.Get("/google-oauth/login", googleOAuth.LoginHandler)
 				r.Get("/stripe-oauth/login", studiosHandler.StripeConnectRedirect)
+				r.Get("/initial-contact-delay", studiosHandler.GetInitialContactDelay)
+				r.Put("/initial-contact-delay", studiosHandler.PutInitialContactDelay)
 				leadsHandler.AdminRoutes(r)
 				r.Get("/social-posts", studiosHandler.ListSocialPosts)
 				r.Post("/social-posts", studiosHandler.CreateSocialPost)

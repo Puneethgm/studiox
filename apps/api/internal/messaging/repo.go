@@ -1650,6 +1650,27 @@ func (r *Repo) GetStudioMetaAppSecret(ctx context.Context, studioID uuid.UUID) (
 	return secret, nil
 }
 
+// GetWhatsAppSendSpacing returns how many seconds must elapse between
+// consecutive WhatsApp sends on the same channel for this studio (used by
+// the outbound worker's pacing to avoid bulk sends looking like spam).
+func (r *Repo) GetWhatsAppSendSpacing(ctx context.Context, studioID uuid.UUID) (int, error) {
+	var seconds int
+	err := r.pool.QueryRow(ctx, `
+		SELECT whatsapp_send_spacing_seconds FROM studios WHERE id = $1
+	`, studioID).Scan(&seconds)
+	if err != nil {
+		return 0, err
+	}
+	return seconds, nil
+}
+
+func (r *Repo) SetWhatsAppSendSpacing(ctx context.Context, studioID uuid.UUID, seconds int) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE studios SET whatsapp_send_spacing_seconds = $2, updated_at = now() WHERE id = $1
+	`, studioID, seconds)
+	return err
+}
+
 func (r *Repo) GetStripeConfig(ctx context.Context, studioID uuid.UUID) (secretKey string, amountSGD int, name string, slug string, err error) {
 	var encKey string
 	err = r.pool.QueryRow(ctx, "SELECT stripe_secret_key, trial_amount_sgd, name, slug FROM studios WHERE id = $1", studioID).Scan(&encKey, &amountSGD, &name, &slug)

@@ -125,6 +125,14 @@ export class SessionManager {
     if (s?.historyTimer) clearTimeout(s.historyTimer);
     if (s?.historySettleTimer) clearTimeout(s.historySettleTimer);
     if (s?.sock) {
+      // Mark this session as intentionally torn down *before* logging out —
+      // sock.logout() itself fires a 'close' event on this same entry, and
+      // the connection.update handler below unconditionally schedules an
+      // auto-reconnect on close. Without this flag, an explicit disconnect
+      // silently kicks off a brand-new session a second later (racing the
+      // rmSync below against that new session's own auth-dir writes, which
+      // can crash the whole process — see the 'close' handler).
+      s.intentionalDisconnect = true;
       await s.sock.logout().catch(() => {});
       s.sock.end(undefined);
     }
@@ -467,6 +475,8 @@ export class SessionManager {
           // fresh QR scan rather than looping on a dead credential set.
           rmSync(dataPath, { recursive: true, force: true });
         }
+        if (entry.intentionalDisconnect) return;
+
         // Reconnect with exponential backoff (capped at 30s) — a tight,
         // unthrottled reconnect loop on a genuine protocol/handshake failure
         // just hammers WhatsApp's servers repeatedly instead of recovering.

@@ -219,6 +219,28 @@ func (r *Repo) SetTrialPageLayout(ctx context.Context, studioID uuid.UUID, layou
 	return err
 }
 
+// GetInitialContactDelayMinutes returns how long the autocontact worker
+// should wait before sending a newly-created lead's initial WhatsApp
+// message. Read fresh on every call (not cached) since it's cheap and
+// avoids invalidation coupling with the GetByID studio cache.
+func (r *Repo) GetInitialContactDelayMinutes(ctx context.Context, studioID uuid.UUID) (int, error) {
+	var minutes int
+	err := r.pool.QueryRow(ctx, `
+		SELECT initial_contact_delay_minutes FROM studios WHERE id = $1
+	`, studioID).Scan(&minutes)
+	if err != nil {
+		return 0, err
+	}
+	return minutes, nil
+}
+
+func (r *Repo) SetInitialContactDelayMinutes(ctx context.Context, studioID uuid.UUID, minutes int) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE studios SET initial_contact_delay_minutes = $2, updated_at = now() WHERE id = $1
+	`, studioID, minutes)
+	return err
+}
+
 func scanStudio(row pgx.Row, cipher *secrets.Cipher) (*Studio, error) {
 	var s Studio
 	if err := row.Scan(&s.ID, &s.Slug, &s.Name, &s.BrandColor, &s.LogoURL, &s.ContactEmail, &s.ContactPhone,

@@ -117,6 +117,17 @@ type ExternalLeadsSheetSettings struct {
 	HotLeadColumn   string    `json:"hotLeadColumn"`
 	TrialPurchasedColumn string `json:"trialPurchasedColumn"`
 	ContinueAIAfterGreeting bool `json:"continueAiAfterGreeting"`
+	// AutoContactEnabled controls whether newly-synced leads get an initial
+	// outreach message. When false, leads are imported silently regardless
+	// of what the sheet's HOT/COLD column says.
+	AutoContactEnabled bool `json:"autoContactEnabled"`
+	// AutoContactBatchLimit caps how many leads get auto-contacted in a
+	// single sync cycle (0 = unlimited). Leads beyond the cap are still
+	// imported, just silently — same as if AutoContactEnabled were off for
+	// them specifically. Protects against a large one-time sheet import
+	// (e.g. migrating an old contact list into the sheet) blasting out
+	// hundreds of WhatsApp messages at once and getting the number flagged.
+	AutoContactBatchLimit int  `json:"autoContactBatchLimit"`
 	Active          bool      `json:"active"`
 	CreatedAt       time.Time `json:"createdAt"`
 	UpdatedAt       time.Time `json:"updatedAt"`
