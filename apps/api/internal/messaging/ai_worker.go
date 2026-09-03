@@ -449,6 +449,15 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		return fmt.Errorf("fetch studio for ai context: %w", err)
 	}
 
+	// Delay the AI's reply by a configurable number of seconds so it doesn't
+	// look robotically instant. Only applies to replies within an
+	// already-started conversation — the first outreach to a brand-new lead
+	// uses initial_contact_delay_minutes instead (see autocontact_worker.go).
+	replyDelay := time.Duration(0)
+	if secs, dErr := w.studiosRepo.GetAIReplyDelaySeconds(ctx, studioID); dErr == nil {
+		replyDelay = time.Duration(secs) * time.Second
+	}
+
 	// Fetch active plans for this studio
 	plans, err := w.msgRepo.ListActivePlans(ctx, studioID)
 	if err != nil {
@@ -493,7 +502,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 			Body:           greetingBody,
 			SourceKind:     SourceAI,
 			SourceRef:      "greeting",
-			ScheduledFor:   time.Now().UTC(),
+			ScheduledFor:   time.Now().UTC().Add(replyDelay),
 		}); sendErr != nil {
 			w.log.Error("failed to enqueue greeting message", "err", sendErr, "conv_id", conv.ID)
 		} else {
@@ -706,7 +715,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 					Body:           reply,
 					SourceKind:     SourceAI,
 					SourceRef:      "decision_tree",
-					ScheduledFor:   time.Now().UTC(),
+					ScheduledFor:   time.Now().UTC().Add(replyDelay),
 				})
 				if err != nil {
 					return fmt.Errorf("enqueue tree reply: %w", err)
@@ -734,7 +743,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 						Body:           reply,
 						SourceKind:     SourceAI,
 						SourceRef:      "decision_tree",
-						ScheduledFor:   time.Now().UTC(),
+						ScheduledFor:   time.Now().UTC().Add(replyDelay),
 					}); err == nil {
 						w.bus.Publish(ctx, Event{
 							Kind:           EvtOutboundJobEnqueued,
@@ -766,7 +775,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 					Body:           bookBody,
 					SourceKind:     SourceAutomation,
 					SourceRef:      fmt.Sprintf("decision_tree:%s", treeResult.NodeLabel),
-					ScheduledFor:   time.Now().UTC(),
+					ScheduledFor:   time.Now().UTC().Add(replyDelay),
 				})
 				if err != nil {
 					return fmt.Errorf("enqueue book_trial reply: %w", err)
@@ -794,7 +803,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 					Body:           reply,
 					SourceKind:     SourceAI,
 					SourceRef:      "decision_tree",
-					ScheduledFor:   time.Now().UTC(),
+					ScheduledFor:   time.Now().UTC().Add(replyDelay),
 				})
 				if err != nil {
 					return fmt.Errorf("enqueue send_link reply: %w", err)
@@ -844,7 +853,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 				Body:           body,
 				SourceKind:     SourceAutomation,
 				SourceRef:      sourceRef,
-				ScheduledFor:   time.Now().UTC(),
+				ScheduledFor:   time.Now().UTC().Add(replyDelay),
 			}); err != nil {
 				return fmt.Errorf("booking shortcut enqueue: %w", err)
 			}
@@ -960,7 +969,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 							Body:           body,
 							SourceKind:     SourceAutomation,
 							SourceRef:      fmt.Sprintf("lead:%s:plan_change_options", lead.ID),
-							ScheduledFor:   time.Now().UTC(),
+							ScheduledFor:   time.Now().UTC().Add(replyDelay),
 						}); err != nil {
 							w.log.Error("yes-to-upgrade: failed to enqueue plan list", "err", err, "conv", conv.ID)
 						} else {

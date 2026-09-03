@@ -324,6 +324,8 @@ func main() {
 				r.Get("/stripe-oauth/login", studiosHandler.StripeConnectRedirect)
 				r.Get("/initial-contact-delay", studiosHandler.GetInitialContactDelay)
 				r.Put("/initial-contact-delay", studiosHandler.PutInitialContactDelay)
+				r.Get("/ai-reply-delay", studiosHandler.GetAIReplyDelay)
+				r.Put("/ai-reply-delay", studiosHandler.PutAIReplyDelay)
 				leadsHandler.AdminRoutes(r)
 				r.Get("/social-posts", studiosHandler.ListSocialPosts)
 				r.Post("/social-posts", studiosHandler.CreateSocialPost)

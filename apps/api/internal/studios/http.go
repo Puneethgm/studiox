@@ -1525,6 +1525,52 @@ func (h *Handler) PutInitialContactDelay(w http.ResponseWriter, r *http.Request)
 	httpx.JSON(w, http.StatusOK, map[string]any{"initialContactDelayMinutes": minutes})
 }
 
+// GetAIReplyDelay / PutAIReplyDelay control how long the AI worker waits
+// before sending its auto-reply to an inbound conversation message (not the
+// first outreach to a new lead — see GetInitialContactDelay for that).
+// Exported and mounted the same way as GetInitialContactDelay.
+func (h *Handler) GetAIReplyDelay(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "studioId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	seconds, err := h.svc.repo.GetAIReplyDelaySeconds(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"aiReplyDelaySeconds": seconds})
+}
+
+type putAIReplyDelayReq struct {
+	AIReplyDelaySeconds int `json:"aiReplyDelaySeconds"`
+}
+
+func (h *Handler) PutAIReplyDelay(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "studioId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	var req putAIReplyDelayReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	seconds := req.AIReplyDelaySeconds
+	if seconds < 0 {
+		seconds = 0
+	}
+	if seconds > 300 {
+		seconds = 300
+	}
+	if err := h.svc.repo.SetAIReplyDelaySeconds(r.Context(), id, seconds); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"aiReplyDelaySeconds": seconds})
+}
+
 // publicGetTrialPageLayout is the customer-facing read — no auth, just the
 // studio slug from the link. Returns null blocks/background if the studio
 // never opened the builder, so the frontend renders its own built-in default.

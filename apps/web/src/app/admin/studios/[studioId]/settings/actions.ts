@@ -305,6 +305,61 @@ export async function saveWhatsAppSendSpacing(studioId: string, seconds: number)
   return { ok: true };
 }
 
+export interface AIReplyDelayResult {
+  ok: boolean;
+  error?: string;
+  data?: { aiReplyDelaySeconds: number };
+}
+
+export async function getAIReplyDelay(studioId: string): Promise<AIReplyDelayResult> {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/ai-reply-delay`, {
+      method: 'GET',
+      headers: {
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      },
+      cache: 'no-store',
+    });
+    if (!res.ok) {
+      return { ok: false, error: `HTTP ${res.status}` };
+    }
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (err: any) {
+    return { ok: false, error: err.message };
+  }
+}
+
+export async function saveAIReplyDelay(studioId: string, seconds: number): Promise<UpdateStudioResult> {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
+  const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/ai-reply-delay`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+    },
+    body: JSON.stringify({ aiReplyDelaySeconds: seconds }),
+    cache: 'no-store',
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    return { ok: false, error: body?.error || `HTTP ${res.status}` };
+  }
+  return { ok: true };
+}
+
 export interface ExternalLeadsSheetSettingsData {
   spreadsheetId: string;
   tabName: string;
@@ -320,7 +375,6 @@ export interface ExternalLeadsSheetSettingsData {
   trialPurchasedColumn: string;
   continueAiAfterGreeting: boolean;
   autoContactEnabled: boolean;
-  autoContactBatchLimit: number;
   active: boolean;
 }
 

@@ -820,7 +820,6 @@ type saveExternalLeadsSheetSettingsReq struct {
 	TrialPurchasedColumn string `json:"trialPurchasedColumn"`
 	ContinueAIAfterGreeting bool `json:"continueAiAfterGreeting"`
 	AutoContactEnabled *bool `json:"autoContactEnabled"`
-	AutoContactBatchLimit int `json:"autoContactBatchLimit"`
 	Active          bool   `json:"active"`
 }
 
@@ -842,7 +841,6 @@ func (h *Handler) getExternalLeadsSheetSettings(w http.ResponseWriter, r *http.R
 			"hotLeadColumn": "", "trialPurchasedColumn": "",
 			"continueAiAfterGreeting": true,
 			"autoContactEnabled": true,
-			"autoContactBatchLimit": 0,
 			"active": false,
 		})
 		return
@@ -867,10 +865,6 @@ func (h *Handler) saveExternalLeadsSheetSettings(w http.ResponseWriter, r *http.
 	if req.AutoContactEnabled != nil {
 		autoContactEnabled = *req.AutoContactEnabled
 	}
-	batchLimit := req.AutoContactBatchLimit
-	if batchLimit < 0 {
-		batchLimit = 0
-	}
 	settings, err := h.svc.SaveExternalLeadsSheetSettings(r.Context(), studioID, ExternalLeadsSheetSettings{
 		SpreadsheetID:   req.SpreadsheetID,
 		TabName:         req.TabName,
@@ -886,7 +880,6 @@ func (h *Handler) saveExternalLeadsSheetSettings(w http.ResponseWriter, r *http.
 		TrialPurchasedColumn: req.TrialPurchasedColumn,
 		ContinueAIAfterGreeting: req.ContinueAIAfterGreeting,
 		AutoContactEnabled: autoContactEnabled,
-		AutoContactBatchLimit: batchLimit,
 		Active:          req.Active,
 	})
 	if err != nil {

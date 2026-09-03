@@ -18,6 +18,8 @@ import {
   saveWhatsAppSendSpacing,
   getInitialContactDelay,
   saveInitialContactDelay,
+  getAIReplyDelay,
+  saveAIReplyDelay,
 } from './actions';
 import { AvailabilitySettings } from './AvailabilitySettings';
 import { PlansManagement } from './PlansManagement';
@@ -45,8 +47,8 @@ function parsePhone(fullPhone: string) {
   return { countryCode: '+65', phoneNumber: fullPhone };
 }
 
-type SettingsSection = 'general' | 'plans' | 'availability' | 'booking' | 'integrations' | 'security' | 'billing';
-const VALID_SECTIONS: SettingsSection[] = ['general', 'plans', 'availability', 'booking', 'integrations', 'security', 'billing'];
+type SettingsSection = 'general' | 'plans' | 'availability' | 'booking' | 'sheets' | 'integrations' | 'security' | 'billing';
+const VALID_SECTIONS: SettingsSection[] = ['general', 'plans', 'availability', 'booking', 'sheets', 'integrations', 'security', 'billing'];
 
 export function SettingsForm({ studio, previewHref, initialPlans }: { studio: Studio; previewHref: string | null; initialPlans: any[] }) {
   const router = useRouter();
@@ -130,7 +132,6 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
   // round-tripped so saving from this form doesn't silently reset it.
   const [extContinueAIAfterGreeting, setExtContinueAIAfterGreeting] = useState(true);
   const [extAutoContactEnabled, setExtAutoContactEnabled] = useState(true);
-  const [extAutoContactBatchLimit, setExtAutoContactBatchLimit] = useState(0);
   const [extActive, setExtActive] = useState(false);
   const [extSaving, setExtSaving] = useState(false);
   const [extError, setExtError] = useState<string | null>(null);
@@ -139,6 +140,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
   const [sendSpacingError, setSendSpacingError] = useState<string | null>(null);
   const [initialDelayValue, setInitialDelayValue] = useState(0);
   const [initialDelayUnit, setInitialDelayUnit] = useState<'minutes' | 'hours'>('minutes');
+  const [aiReplyDelaySeconds, setAiReplyDelaySeconds] = useState(0);
   const [initialDelaySaving, setInitialDelaySaving] = useState(false);
   const [initialDelayError, setInitialDelayError] = useState<string | null>(null);
   const [metaSaving, setMetaSaving] = useState(false);
@@ -190,7 +192,6 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
         setExtHotLeadColumn(extRes.data.hotLeadColumn || '');
         setExtContinueAIAfterGreeting(extRes.data.continueAiAfterGreeting ?? true);
         setExtAutoContactEnabled(extRes.data.autoContactEnabled ?? true);
-        setExtAutoContactBatchLimit(extRes.data.autoContactBatchLimit ?? 0);
         setExtTrialPurchasedColumn(extRes.data.trialPurchasedColumn || '');
         setExtActive(extRes.data.active || false);
       }
@@ -212,6 +213,12 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
           setInitialDelayValue(minutes);
           setInitialDelayUnit('minutes');
         }
+      }
+    })();
+    void (async () => {
+      const res = await getAIReplyDelay(studio.id);
+      if (res.ok && res.data) {
+        setAiReplyDelaySeconds(res.data.aiReplyDelaySeconds ?? 0);
       }
     })();
   }, [studio.id]);
@@ -240,11 +247,14 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
     setInitialDelaySaving(true);
     try {
       const minutes = initialDelayUnit === 'hours' ? initialDelayValue * 60 : initialDelayValue;
-      const res = await saveInitialContactDelay(studio.id, minutes);
-      if (res.ok) {
-        showToast('Initial message delay saved successfully.');
+      const [delayRes, aiReplyRes] = await Promise.all([
+        saveInitialContactDelay(studio.id, minutes),
+        saveAIReplyDelay(studio.id, aiReplyDelaySeconds),
+      ]);
+      if (delayRes.ok && aiReplyRes.ok) {
+        showToast('Message timing saved successfully.');
       } else {
-        setInitialDelayError(res.error || 'Failed to save delay.');
+        setInitialDelayError(delayRes.error || aiReplyRes.error || 'Failed to save timing.');
       }
     } catch (err: any) {
       setInitialDelayError(err.message || 'An error occurred.');
@@ -273,7 +283,6 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
         trialPurchasedColumn: extTrialPurchasedColumn,
         continueAiAfterGreeting: extContinueAIAfterGreeting,
         autoContactEnabled: extAutoContactEnabled,
-        autoContactBatchLimit: extAutoContactBatchLimit,
         active: extActive,
       });
       if (res.ok) {
@@ -490,6 +499,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
           { id: 'plans', label: 'Plans', icon: DollarSign },
           { id: 'availability', label: 'Availability', icon: Calendar },
           { id: 'booking', label: 'Booking Page', icon: Eye },
+          { id: 'sheets', label: 'Google Sheets', icon: Database },
           { id: 'integrations', label: 'Integrations', icon: Cpu },
           { id: 'security', label: 'Security', icon: Lock },
           { id: 'billing', label: 'Platform Billing', icon: DollarSign },
@@ -850,9 +860,250 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
           </div>
         )}
 
+        {activeSection === 'sheets' && (
+          <div className="grid gap-6 lg:grid-cols-2 items-start">
+            {/* Google Sheets Card */}
+            <div className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+              <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800 flex items-center gap-2">
+                <Database className="h-4 w-4 text-brand-500" />
+                <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Google Sheets Sync</h3>
+              </div>
+              <form onSubmit={onSaveSheetsSettings} className="space-y-4 p-6">
+                <div>
+                  <Label htmlFor="spreadsheetId">Spreadsheet ID or URL</Label>
+                  <Input
+                    id="spreadsheetId"
+                    placeholder="Paste full Google Sheets link or just the ID"
+                    value={spreadsheetId}
+                    onChange={(e) => setSpreadsheetId(e.target.value)}
+                  />
+                  <FieldHint>Paste the full Google Sheets URL or just the spreadsheet ID — both work</FieldHint>
+                </div>
+
+                <div>
+                  <Label htmlFor="tabName">Tab Name</Label>
+                  <Input
+                    id="tabName"
+                    placeholder="Leads"
+                    value={tabName}
+                    onChange={(e) => setTabName(e.target.value)}
+                  />
+                </div>
+
+                <div className="flex items-center gap-3 p-3 rounded border border-zinc-100 bg-zinc-50 dark:bg-zinc-900/50 dark:border-zinc-800/50">
+                  <input
+                    type="checkbox"
+                    id="sheetsActive"
+                    checked={sheetsActive}
+                    onChange={(e) => setSheetsActive(e.target.checked)}
+                    className="h-4 w-4 rounded border-zinc-300 text-brand-500 focus:ring-brand-500 cursor-pointer"
+                  />
+                  <div>
+                    <Label htmlFor="sheetsActive" className="mb-0 cursor-pointer text-xs font-black uppercase tracking-wider">Enable Google Sheets Sync</Label>
+                    <p className="text-[10px] text-zinc-400">Automatically synchronize lead submissions with your Google Spreadsheet.</p>
+                  </div>
+                </div>
+
+                {sheetsError ? (
+                  <p className="text-xs font-black text-rose-500 uppercase tracking-wider">{sheetsError}</p>
+                ) : null}
+
+                <div className="flex items-center justify-end border-t border-zinc-200 dark:border-zinc-800 pt-4">
+                  <Button
+                    type="submit"
+                    loading={sheetsSaving}
+                    className="bg-brand-500 hover:bg-brand-600 text-white text-xs font-black uppercase tracking-widest rounded h-10 px-6"
+                  >
+                    Save Connection
+                  </Button>
+                </div>
+              </form>
+            </div>
+
+            {/* External Leads Sheet Card — read-only import from a third-party company's sheet */}
+            <div className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+              <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800 flex items-center gap-2">
+                <Database className="h-4 w-4 text-brand-500" />
+                <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">External Leads Sheet (Import)</h3>
+              </div>
+              <form onSubmit={onSaveExternalLeadsSheetSettings} className="space-y-4 p-6">
+                <p className="text-[10px] text-zinc-400">
+                  Poll a read-only Google Sheet owned by an external company for new lead rows.
+                  Share the sheet with our service account as <strong>Viewer</strong> — we never write to it.
+                  New rows are imported as leads and automatically trigger the WhatsApp automation.
+                </p>
+
+                <div>
+                  <Label htmlFor="extSpreadsheetId">Spreadsheet ID or URL</Label>
+                  <Input
+                    id="extSpreadsheetId"
+                    placeholder="Paste full Google Sheets link or just the ID"
+                    value={extSpreadsheetId}
+                    onChange={(e) => setExtSpreadsheetId(e.target.value)}
+                  />
+                  <FieldHint>Paste the full Google Sheets URL or just the ID — both work</FieldHint>
+                </div>
+
+                <div>
+                  <Label htmlFor="extTabName">Tab Name</Label>
+                  <Input
+                    id="extTabName"
+                    placeholder="Sheet1"
+                    value={extTabName}
+                    onChange={(e) => setExtTabName(e.target.value)}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+                  <div>
+                    <Label htmlFor="extFirstNameColumn">First Name Col</Label>
+                    <Input
+                      id="extFirstNameColumn"
+                      placeholder="A"
+                      value={extFirstNameColumn}
+                      onChange={(e) => setExtFirstNameColumn(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="extLastNameColumn">Last Name Col</Label>
+                    <Input
+                      id="extLastNameColumn"
+                      placeholder="B"
+                      value={extLastNameColumn}
+                      onChange={(e) => setExtLastNameColumn(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="extNameColumn">Full Name Col</Label>
+                    <Input
+                      id="extNameColumn"
+                      placeholder="(optional)"
+                      value={extNameColumn}
+                      onChange={(e) => setExtNameColumn(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="extEmailColumn">Email Col</Label>
+                    <Input
+                      id="extEmailColumn"
+                      placeholder="C"
+                      value={extEmailColumn}
+                      onChange={(e) => setExtEmailColumn(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="extPhoneColumn">Phone Col</Label>
+                    <Input
+                      id="extPhoneColumn"
+                      placeholder="D"
+                      value={extPhoneColumn}
+                      onChange={(e) => setExtPhoneColumn(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="extSourceColumn">Source Col</Label>
+                    <Input
+                      id="extSourceColumn"
+                      placeholder="(optional)"
+                      value={extSourceColumn}
+                      onChange={(e) => setExtSourceColumn(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="extNotesColumn">Notes Col</Label>
+                    <Input
+                      id="extNotesColumn"
+                      placeholder="(optional)"
+                      value={extNotesColumn}
+                      onChange={(e) => setExtNotesColumn(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="extDateColumn">Date Col</Label>
+                    <Input
+                      id="extDateColumn"
+                      placeholder="(optional)"
+                      value={extDateColumn}
+                      onChange={(e) => setExtDateColumn(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="extHotLeadColumn">Hot Lead Col</Label>
+                    <Input
+                      id="extHotLeadColumn"
+                      placeholder="(optional)"
+                      value={extHotLeadColumn}
+                      onChange={(e) => setExtHotLeadColumn(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="extTrialPurchasedColumn">Trial Purchased Col</Label>
+                    <Input
+                      id="extTrialPurchasedColumn"
+                      placeholder="(optional)"
+                      value={extTrialPurchasedColumn}
+                      onChange={(e) => setExtTrialPurchasedColumn(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <FieldHint>
+                  Hot Lead Col values HOT/WARM/COLD: only WARM leads get auto-contacted. Trial Purchased Col = YES also skips auto-contact.
+                </FieldHint>
+                <FieldHint>
+                  Use the full name column if the sheet has one combined column instead of separate first/last name columns.
+                </FieldHint>
+
+                <div className="flex items-center gap-3 p-3 rounded border border-zinc-100 bg-zinc-50 dark:bg-zinc-900/50 dark:border-zinc-800/50">
+                  <input
+                    type="checkbox"
+                    id="extActive"
+                    checked={extActive}
+                    onChange={(e) => setExtActive(e.target.checked)}
+                    className="h-4 w-4 rounded border-zinc-300 text-brand-500 focus:ring-brand-500 cursor-pointer"
+                  />
+                  <div>
+                    <Label htmlFor="extActive" className="mb-0 cursor-pointer text-xs font-black uppercase tracking-wider">Enable External Sheet Import</Label>
+                    <p className="text-[10px] text-zinc-400">Automatically poll this sheet every few minutes and import new leads.</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 p-3 rounded border border-zinc-100 bg-zinc-50 dark:bg-zinc-900/50 dark:border-zinc-800/50">
+                  <input
+                    type="checkbox"
+                    id="extAutoContactEnabled"
+                    checked={extAutoContactEnabled}
+                    onChange={(e) => setExtAutoContactEnabled(e.target.checked)}
+                    className="h-4 w-4 rounded border-zinc-300 text-brand-500 focus:ring-brand-500 cursor-pointer"
+                  />
+                  <div>
+                    <Label htmlFor="extAutoContactEnabled" className="mb-0 cursor-pointer text-xs font-black uppercase tracking-wider">Auto-Contact Imported Leads</Label>
+                    <p className="text-[10px] text-zinc-400">
+                      When on, new leads imported from this sheet get the initial WhatsApp message and follow-up sequence automatically.
+                      When off, leads are imported silently — no messages are sent.
+                    </p>
+                  </div>
+                </div>
+
+                {extError ? (
+                  <p className="text-xs font-black text-rose-500 uppercase tracking-wider">{extError}</p>
+                ) : null}
+
+                <div className="flex items-center justify-end border-t border-zinc-200 dark:border-zinc-800 pt-4">
+                  <Button
+                    type="submit"
+                    loading={extSaving}
+                    className="bg-brand-500 hover:bg-brand-600 text-white text-xs font-black uppercase tracking-widest rounded h-10 px-6"
+                  >
+                    Save Connection
+                  </Button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
         {activeSection === 'integrations' && (
-          <div className="space-y-6">
-            <div className="space-y-6">
+          <div className="grid gap-6 lg:grid-cols-2 items-start">
               {/* Meta App Settings Card */}
               <form onSubmit={onSaveMetaConfig} className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 p-6 space-y-5">
                 <div>
@@ -1052,266 +1303,6 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                   </Button>
                 </div>
               </form>
-            </div>
-
-            {/* Right Column */}
-            <div className="space-y-6">
-              {/* Google Sheets Card */}
-            <div className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-              <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800 flex items-center gap-2">
-                <Database className="h-4 w-4 text-brand-500" />
-                <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Google Sheets Sync</h3>
-              </div>
-              <form onSubmit={onSaveSheetsSettings} className="space-y-4 p-6">
-                <div>
-                  <Label htmlFor="spreadsheetId">Spreadsheet ID or URL</Label>
-                  <Input
-                    id="spreadsheetId"
-                    placeholder="Paste full Google Sheets link or just the ID"
-                    value={spreadsheetId}
-                    onChange={(e) => setSpreadsheetId(e.target.value)}
-                  />
-                  <FieldHint>Paste the full Google Sheets URL or just the spreadsheet ID — both work</FieldHint>
-                </div>
-
-                <div>
-                  <Label htmlFor="tabName">Tab Name</Label>
-                  <Input
-                    id="tabName"
-                    placeholder="Leads"
-                    value={tabName}
-                    onChange={(e) => setTabName(e.target.value)}
-                  />
-                </div>
-
-                <div className="flex items-center gap-3 p-3 rounded border border-zinc-100 bg-zinc-50 dark:bg-zinc-900/50 dark:border-zinc-800/50">
-                  <input
-                    type="checkbox"
-                    id="sheetsActive"
-                    checked={sheetsActive}
-                    onChange={(e) => setSheetsActive(e.target.checked)}
-                    className="h-4 w-4 rounded border-zinc-300 text-brand-500 focus:ring-brand-500 cursor-pointer"
-                  />
-                  <div>
-                    <Label htmlFor="sheetsActive" className="mb-0 cursor-pointer text-xs font-black uppercase tracking-wider">Enable Google Sheets Sync</Label>
-                    <p className="text-[10px] text-zinc-400">Automatically synchronize lead submissions with your Google Spreadsheet.</p>
-                  </div>
-                </div>
-
-                {sheetsError ? (
-                  <p className="text-xs font-black text-rose-500 uppercase tracking-wider">{sheetsError}</p>
-                ) : null}
-
-                <div className="flex items-center justify-end border-t border-zinc-200 dark:border-zinc-800 pt-4">
-                  <Button 
-                    type="submit" 
-                    loading={sheetsSaving}
-                    className="bg-brand-500 hover:bg-brand-600 text-white text-xs font-black uppercase tracking-widest rounded h-10 px-6"
-                  >
-                    Save Connection
-                  </Button>
-                </div>
-              </form>
-            </div>
-
-            {/* External Leads Sheet Card — read-only import from a third-party company's sheet */}
-            <div className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-              <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800 flex items-center gap-2">
-                <Database className="h-4 w-4 text-brand-500" />
-                <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">External Leads Sheet (Import)</h3>
-              </div>
-              <form onSubmit={onSaveExternalLeadsSheetSettings} className="space-y-4 p-6">
-                <p className="text-[10px] text-zinc-400">
-                  Poll a read-only Google Sheet owned by an external company for new lead rows.
-                  Share the sheet with our service account as <strong>Viewer</strong> — we never write to it.
-                  New rows are imported as leads and automatically trigger the WhatsApp automation.
-                </p>
-
-                <div>
-                  <Label htmlFor="extSpreadsheetId">Spreadsheet ID or URL</Label>
-                  <Input
-                    id="extSpreadsheetId"
-                    placeholder="Paste full Google Sheets link or just the ID"
-                    value={extSpreadsheetId}
-                    onChange={(e) => setExtSpreadsheetId(e.target.value)}
-                  />
-                  <FieldHint>Paste the full Google Sheets URL or just the ID — both work</FieldHint>
-                </div>
-
-                <div>
-                  <Label htmlFor="extTabName">Tab Name</Label>
-                  <Input
-                    id="extTabName"
-                    placeholder="Sheet1"
-                    value={extTabName}
-                    onChange={(e) => setExtTabName(e.target.value)}
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-                  <div>
-                    <Label htmlFor="extFirstNameColumn">First Name Col</Label>
-                    <Input
-                      id="extFirstNameColumn"
-                      placeholder="A"
-                      value={extFirstNameColumn}
-                      onChange={(e) => setExtFirstNameColumn(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="extLastNameColumn">Last Name Col</Label>
-                    <Input
-                      id="extLastNameColumn"
-                      placeholder="B"
-                      value={extLastNameColumn}
-                      onChange={(e) => setExtLastNameColumn(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="extNameColumn">Full Name Col</Label>
-                    <Input
-                      id="extNameColumn"
-                      placeholder="(optional)"
-                      value={extNameColumn}
-                      onChange={(e) => setExtNameColumn(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="extEmailColumn">Email Col</Label>
-                    <Input
-                      id="extEmailColumn"
-                      placeholder="C"
-                      value={extEmailColumn}
-                      onChange={(e) => setExtEmailColumn(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="extPhoneColumn">Phone Col</Label>
-                    <Input
-                      id="extPhoneColumn"
-                      placeholder="D"
-                      value={extPhoneColumn}
-                      onChange={(e) => setExtPhoneColumn(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="extSourceColumn">Source Col</Label>
-                    <Input
-                      id="extSourceColumn"
-                      placeholder="(optional)"
-                      value={extSourceColumn}
-                      onChange={(e) => setExtSourceColumn(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="extNotesColumn">Notes Col</Label>
-                    <Input
-                      id="extNotesColumn"
-                      placeholder="(optional)"
-                      value={extNotesColumn}
-                      onChange={(e) => setExtNotesColumn(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="extDateColumn">Date Col</Label>
-                    <Input
-                      id="extDateColumn"
-                      placeholder="(optional)"
-                      value={extDateColumn}
-                      onChange={(e) => setExtDateColumn(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="extHotLeadColumn">Hot Lead Col</Label>
-                    <Input
-                      id="extHotLeadColumn"
-                      placeholder="(optional)"
-                      value={extHotLeadColumn}
-                      onChange={(e) => setExtHotLeadColumn(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="extTrialPurchasedColumn">Trial Purchased Col</Label>
-                    <Input
-                      id="extTrialPurchasedColumn"
-                      placeholder="(optional)"
-                      value={extTrialPurchasedColumn}
-                      onChange={(e) => setExtTrialPurchasedColumn(e.target.value)}
-                    />
-                  </div>
-                </div>
-                <FieldHint>
-                  Hot Lead Col values HOT/WARM/COLD: only WARM leads get auto-contacted. Trial Purchased Col = YES also skips auto-contact.
-                </FieldHint>
-                <FieldHint>
-                  Use the full name column if the sheet has one combined column instead of separate first/last name columns.
-                </FieldHint>
-
-                <div className="flex items-center gap-3 p-3 rounded border border-zinc-100 bg-zinc-50 dark:bg-zinc-900/50 dark:border-zinc-800/50">
-                  <input
-                    type="checkbox"
-                    id="extActive"
-                    checked={extActive}
-                    onChange={(e) => setExtActive(e.target.checked)}
-                    className="h-4 w-4 rounded border-zinc-300 text-brand-500 focus:ring-brand-500 cursor-pointer"
-                  />
-                  <div>
-                    <Label htmlFor="extActive" className="mb-0 cursor-pointer text-xs font-black uppercase tracking-wider">Enable External Sheet Import</Label>
-                    <p className="text-[10px] text-zinc-400">Automatically poll this sheet every few minutes and import new leads.</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3 p-3 rounded border border-zinc-100 bg-zinc-50 dark:bg-zinc-900/50 dark:border-zinc-800/50">
-                  <input
-                    type="checkbox"
-                    id="extAutoContactEnabled"
-                    checked={extAutoContactEnabled}
-                    onChange={(e) => setExtAutoContactEnabled(e.target.checked)}
-                    className="h-4 w-4 rounded border-zinc-300 text-brand-500 focus:ring-brand-500 cursor-pointer"
-                  />
-                  <div>
-                    <Label htmlFor="extAutoContactEnabled" className="mb-0 cursor-pointer text-xs font-black uppercase tracking-wider">Auto-Contact Imported Leads</Label>
-                    <p className="text-[10px] text-zinc-400">
-                      When on, new leads imported from this sheet get the initial WhatsApp message and follow-up sequence automatically.
-                      When off, leads are imported silently — no messages are sent.
-                    </p>
-                  </div>
-                </div>
-
-                {extAutoContactEnabled ? (
-                  <div className="max-w-xs">
-                    <Label htmlFor="extAutoContactBatchLimit">Max Auto-Contacted Per Sync</Label>
-                    <Input
-                      id="extAutoContactBatchLimit"
-                      type="number"
-                      min={0}
-                      value={extAutoContactBatchLimit}
-                      onChange={(e) => setExtAutoContactBatchLimit(Math.max(0, Number(e.target.value) || 0))}
-                    />
-                    <FieldHint>
-                      Caps how many newly-imported leads get an automatic WhatsApp message in a single sync — the
-                      rest are still imported, just silently, same as if auto-contact were off for them. Protects
-                      against a large one-time import (e.g. an old contact list added to the sheet) triggering
-                      hundreds of messages at once. Set to 0 for no cap.
-                    </FieldHint>
-                  </div>
-                ) : null}
-
-                {extError ? (
-                  <p className="text-xs font-black text-rose-500 uppercase tracking-wider">{extError}</p>
-                ) : null}
-
-                <div className="flex items-center justify-end border-t border-zinc-200 dark:border-zinc-800 pt-4">
-                  <Button
-                    type="submit"
-                    loading={extSaving}
-                    className="bg-brand-500 hover:bg-brand-600 text-white text-xs font-black uppercase tracking-widest rounded h-10 px-6"
-                  >
-                    Save Connection
-                  </Button>
-                </div>
-              </form>
-            </div>
 
             {/* WhatsApp Message Pacing — throttle between consecutive sends */}
             <div className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
@@ -1321,9 +1312,10 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
               </div>
               <form onSubmit={onSaveSendSpacing} className="space-y-4 p-6">
                 <p className="text-[10px] text-zinc-400">
-                  Controls the minimum gap between consecutive WhatsApp messages sent on the same connected number —
-                  including the initial message right after a lead is imported or a number is freshly connected.
-                  A larger gap reduces the risk of the number being flagged by WhatsApp during bulk sends.
+                  Controls the gap between consecutive WhatsApp messages sent on the same connected number —
+                  lead to lead, one at a time. Applies everywhere, including a batch of newly-imported leads or a
+                  number freshly connected: each one waits its turn instead of firing at once. A larger gap
+                  reduces the risk of the number being flagged by WhatsApp during bulk sends.
                 </p>
 
                 <div className="max-w-xs">
@@ -1359,7 +1351,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
             <div className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
               <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800 flex items-center gap-2">
                 <Timer className="h-4 w-4 text-brand-500" />
-                <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Initial Message Delay</h3>
+                <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Message Timing</h3>
               </div>
               <form onSubmit={onSaveInitialDelay} className="space-y-4 p-6">
                 <p className="text-[10px] text-zinc-400">
@@ -1394,6 +1386,23 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                 </div>
                 <FieldHint>e.g. 15 minutes, or 1 hour, before the first message goes out after a lead comes in.</FieldHint>
 
+                <div className="max-w-xs border-t border-zinc-200 dark:border-zinc-800 pt-4">
+                  <Label htmlFor="aiReplyDelaySeconds">AI Reply Delay (seconds)</Label>
+                  <Input
+                    id="aiReplyDelaySeconds"
+                    type="number"
+                    min={0}
+                    max={300}
+                    value={aiReplyDelaySeconds}
+                    onChange={(e) => setAiReplyDelaySeconds(Math.max(0, Math.min(300, Number(e.target.value) || 0)))}
+                  />
+                  <FieldHint>
+                    Separate from the delay above — this is how long the AI waits before replying to a message
+                    within an already-started conversation (not the first outreach). e.g. 8 = wait 8 seconds
+                    after a lead messages in before the AI's reply goes out. 0 = instant.
+                  </FieldHint>
+                </div>
+
                 {initialDelayError ? (
                   <p className="text-xs font-black text-rose-500 uppercase tracking-wider">{initialDelayError}</p>
                 ) : null}
@@ -1404,12 +1413,11 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                     loading={initialDelaySaving}
                     className="bg-brand-500 hover:bg-brand-600 text-white text-xs font-black uppercase tracking-widest rounded h-10 px-6"
                   >
-                    Save Delay
+                    Save Timing
                   </Button>
                 </div>
               </form>
             </div>
-          </div>
         </div>
         )}
 

@@ -241,6 +241,29 @@ func (r *Repo) SetInitialContactDelayMinutes(ctx context.Context, studioID uuid.
 	return err
 }
 
+// GetAIReplyDelaySeconds returns how long the AI worker should wait before
+// sending its auto-reply to an inbound conversation message (0 = immediate).
+// A brief delay reads as more human than an instant reply. Doesn't apply to
+// the very first outreach to a lead — see initial_contact_delay_minutes for
+// that — only to replies within an already-started conversation.
+func (r *Repo) GetAIReplyDelaySeconds(ctx context.Context, studioID uuid.UUID) (int, error) {
+	var seconds int
+	err := r.pool.QueryRow(ctx, `
+		SELECT ai_reply_delay_seconds FROM studios WHERE id = $1
+	`, studioID).Scan(&seconds)
+	if err != nil {
+		return 0, err
+	}
+	return seconds, nil
+}
+
+func (r *Repo) SetAIReplyDelaySeconds(ctx context.Context, studioID uuid.UUID, seconds int) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE studios SET ai_reply_delay_seconds = $2, updated_at = now() WHERE id = $1
+	`, studioID, seconds)
+	return err
+}
+
 func scanStudio(row pgx.Row, cipher *secrets.Cipher) (*Studio, error) {
 	var s Studio
 	if err := row.Scan(&s.ID, &s.Slug, &s.Name, &s.BrandColor, &s.LogoURL, &s.ContactEmail, &s.ContactPhone,
