@@ -254,7 +254,9 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
       if (delayRes.ok && aiReplyRes.ok) {
         showToast('Message timing saved successfully.');
       } else {
-        setInitialDelayError(delayRes.error || aiReplyRes.error || 'Failed to save timing.');
+        setInitialDelayError(
+          (!delayRes.ok && delayRes.error) || (!aiReplyRes.ok && aiReplyRes.error) || 'Failed to save timing.'
+        );
       }
     } catch (err: any) {
       setInitialDelayError(err.message || 'An error occurred.');
