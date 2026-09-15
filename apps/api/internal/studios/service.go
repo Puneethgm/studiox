@@ -536,6 +536,31 @@ func (s *Service) ListPlans(ctx context.Context, studioID uuid.UUID) ([]Plan, er
 	return s.repo.ListPlans(ctx, studioID)
 }
 
+// ResolveTrialAmountSGD is the single source of truth for "what does this
+// studio's trial actually cost, in cents" — studio.trial_amount_sgd override
+// → lowest active Plan price → 2500 (S$25) fallback. Used both by the public
+// trial-details page (so the price shown matches what Stripe will charge)
+// and by trial payment-intent/checkout creation. Don't duplicate this
+// resolution elsewhere — call this instead.
+func (s *Service) ResolveTrialAmountSGD(ctx context.Context, studioID uuid.UUID, trialAmountSGD int) int64 {
+	amount := int64(trialAmountSGD)
+	if amount == 0 {
+		plans, _ := s.ListPlans(ctx, studioID)
+		for _, p := range plans {
+			if !p.IsActive {
+				continue
+			}
+			if amount == 0 || int64(p.PriceSGD) < amount {
+				amount = int64(p.PriceSGD)
+			}
+		}
+	}
+	if amount == 0 {
+		amount = 2500
+	}
+	return amount
+}
+
 func (s *Service) CreatePlan(ctx context.Context, studioID uuid.UUID, in CreatePlanInput) (Plan, error) {
 	return s.repo.CreatePlan(ctx, studioID, in)
 }

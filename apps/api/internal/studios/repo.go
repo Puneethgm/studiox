@@ -120,7 +120,8 @@ func (r *Repo) GetByID(ctx context.Context, id uuid.UUID) (*Studio, error) {
 		       stripe_account_id, stripe_secret_key, stripe_publishable_key, stripe_webhook_secret, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files,
 		       greeting_message, trial_amount_sgd, managed_by_1hero, booking_hero_image_url, booking_hero_video_url,
 		       trial_confirmation_message, membership_confirmation_message,
-		       trial_glofox_membership_id, trial_glofox_plan_code, membership_glofox_membership_id, membership_glofox_plan_code
+		       trial_glofox_membership_id, trial_glofox_plan_code, membership_glofox_membership_id, membership_glofox_plan_code,
+		       communication_style_profile, style_profile_updated_at
 		FROM studios WHERE id = $1
 	`, id)
 	s, err := scanStudio(row, r.cipher)
@@ -146,7 +147,8 @@ func (r *Repo) GetBySlug(ctx context.Context, slug string) (*Studio, error) {
 		       stripe_account_id, stripe_secret_key, stripe_publishable_key, stripe_webhook_secret, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files,
 		       greeting_message, trial_amount_sgd, managed_by_1hero, booking_hero_image_url, booking_hero_video_url,
 		       trial_confirmation_message, membership_confirmation_message,
-		       trial_glofox_membership_id, trial_glofox_plan_code, membership_glofox_membership_id, membership_glofox_plan_code
+		       trial_glofox_membership_id, trial_glofox_plan_code, membership_glofox_membership_id, membership_glofox_plan_code,
+		       communication_style_profile, style_profile_updated_at
 		FROM studios WHERE slug = $1
 	`, slug)
 	s, err := scanStudio(row, r.cipher)
@@ -264,6 +266,75 @@ func (r *Repo) SetAIReplyDelaySeconds(ctx context.Context, studioID uuid.UUID, s
 	return err
 }
 
+// IncrementStaffReplyCount bumps the running counter of staff-authored
+// (source_kind='studio_user') outbound messages sent for a studio. Called
+// once per staff-sent message by the outbound worker. Deliberately not part
+// of the cached Studio struct — it's read only via ListStudiosNeedingStyleRefresh,
+// never displayed, so there's no cache-staleness concern to manage here.
+func (r *Repo) IncrementStaffReplyCount(ctx context.Context, studioID uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE studios SET staff_reply_count_total = staff_reply_count_total + 1 WHERE id = $1
+	`, studioID)
+	return err
+}
+
+// SetStaffReplyCountTotal overwrites the counter with an exact value, used
+// to reconcile it after a WhatsApp/Telegram Web backfill import inserts a
+// batch of historical staff replies directly (bypassing the per-send
+// IncrementStaffReplyCount call), so those newly-visible replies count
+// toward the next style-profile rebuild instead of being invisible to it.
+func (r *Repo) SetStaffReplyCountTotal(ctx context.Context, studioID uuid.UUID, count int) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE studios SET staff_reply_count_total = $2 WHERE id = $1
+	`, studioID, count)
+	return err
+}
+
+// ListStudiosNeedingStyleRefresh returns studio IDs that have accumulated at
+// least `threshold` new staff replies since their communication style
+// profile was last built (or have never had one built at all).
+func (r *Repo) ListStudiosNeedingStyleRefresh(ctx context.Context, threshold int) ([]uuid.UUID, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id FROM studios
+		WHERE staff_reply_count_total - style_profile_source_count >= $1
+	`, threshold)
+	if err != nil {
+		return nil, fmt.Errorf("list studios needing style refresh: %w", err)
+	}
+	defer rows.Close()
+	var out []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan studio id: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// SetCommunicationStyleProfile persists a (re)built style profile and marks
+// the source counter it was built from — so the next refresh only fires
+// once *another* `threshold` worth of new staff replies have arrived. Used
+// both by the style worker's automatic rebuilds and by a studio admin's
+// manual edit (an edit "confirms" the current text, which is exactly the
+// same reset the worker itself performs after a rebuild).
+func (r *Repo) SetCommunicationStyleProfile(ctx context.Context, studioID uuid.UUID, profile string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE studios
+		SET communication_style_profile = $2,
+		    style_profile_source_count = staff_reply_count_total,
+		    style_profile_updated_at = now(),
+		    updated_at = now()
+		WHERE id = $1
+	`, studioID, profile)
+	if err != nil {
+		return err
+	}
+	r.evict(studioID)
+	return nil
+}
+
 func scanStudio(row pgx.Row, cipher *secrets.Cipher) (*Studio, error) {
 	var s Studio
 	if err := row.Scan(&s.ID, &s.Slug, &s.Name, &s.BrandColor, &s.LogoURL, &s.ContactEmail, &s.ContactPhone,
@@ -272,7 +343,8 @@ func scanStudio(row pgx.Row, cipher *secrets.Cipher) (*Studio, error) {
 		&s.StripeAccountID, &s.StripeSecretKey, &s.StripePublishableKey, &s.StripeWebhookSecret, &s.SubscriptionTier, &s.SocialPlannerEnabled, &s.KnowledgeBase, &s.KnowledgeBaseFiles,
 		&s.GreetingMessage, &s.TrialAmountSGD, &s.ManagedBy1Hero, &s.BookingHeroImageURL, &s.BookingHeroVideoURL,
 		&s.TrialConfirmationMessage, &s.MembershipConfirmationMessage,
-		&s.TrialGlofoxMembershipID, &s.TrialGlofoxPlanCode, &s.MembershipGlofoxMembershipID, &s.MembershipGlofoxPlanCode); err != nil {
+		&s.TrialGlofoxMembershipID, &s.TrialGlofoxPlanCode, &s.MembershipGlofoxMembershipID, &s.MembershipGlofoxPlanCode,
+		&s.CommunicationStyleProfile, &s.StyleProfileUpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}

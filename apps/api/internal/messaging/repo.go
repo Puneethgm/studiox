@@ -1144,6 +1144,150 @@ func (r *Repo) SaveMessageEmbedding(ctx context.Context, messageID uuid.UUID, em
 	return err
 }
 
+// StyleExample pairs a staff-authored reply with the customer message it was
+// replying to, surfaced as a real few-shot example of how a studio handles a
+// similar situation. See SearchStyleExamples.
+type StyleExample struct {
+	CustomerMessage string
+	StudioReply     string
+	Score           float32
+}
+
+// SearchStyleExamples finds the studio's own past staff-authored replies
+// (source_kind='studio_user') most similar to queryEmbedding, searched across
+// ALL of the studio's conversations (unlike SearchSemanticHistory, which is
+// scoped to one conversation). Each hit is paired with the nearest preceding
+// inbound customer message in the same conversation via a LATERAL join, so
+// the caller gets a real {customer asked, studio replied} example rather
+// than an isolated line — this is what lets the AI prompt show genuine
+// examples of how this specific studio handles a situation, not just tone.
+func (r *Repo) SearchStyleExamples(ctx context.Context, studioID uuid.UUID, queryEmbedding []float32, limit int) ([]StyleExample, error) {
+	embStr := formatVec(queryEmbedding)
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT m.body,
+		       COALESCE(cm.body, ''),
+		       1 - (m.embedding <=> $2::vector) AS similarity_score
+		FROM messages m
+		LEFT JOIN LATERAL (
+			SELECT c.body
+			FROM messages c
+			WHERE c.conversation_id = m.conversation_id
+			  AND c.direction = $4
+			  AND c.source_kind = $5
+			  AND c.created_at < m.created_at
+			ORDER BY c.created_at DESC
+			LIMIT 1
+		) cm ON true
+		WHERE m.studio_id = $1
+		  AND m.source_kind = $6
+		  AND m.embedding IS NOT NULL
+		  AND m.body != ''
+		ORDER BY m.embedding <=> $2::vector
+		LIMIT $3
+	`, studioID, embStr, limit, DirectionInbound, SourceCustomer, SourceStudioUser)
+	if err != nil {
+		return nil, fmt.Errorf("search style examples: %w", err)
+	}
+	defer rows.Close()
+
+	var out []StyleExample
+	for rows.Next() {
+		var ex StyleExample
+		if err := rows.Scan(&ex.StudioReply, &ex.CustomerMessage, &ex.Score); err != nil {
+			return nil, fmt.Errorf("scan style example: %w", err)
+		}
+		out = append(out, ex)
+	}
+	return out, rows.Err()
+}
+
+// ListRecentStaffReplies returns a studio's most recent staff-authored
+// replies, each paired with the customer message it answered (same LATERAL
+// pattern as SearchStyleExamples), for the style worker to sample when
+// (re)building a studio's communication style profile.
+func (r *Repo) ListRecentStaffReplies(ctx context.Context, studioID uuid.UUID, limit int) ([]StyleExample, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT m.body,
+		       COALESCE(cm.body, '')
+		FROM messages m
+		LEFT JOIN LATERAL (
+			SELECT c.body
+			FROM messages c
+			WHERE c.conversation_id = m.conversation_id
+			  AND c.direction = $3
+			  AND c.source_kind = $4
+			  AND c.created_at < m.created_at
+			ORDER BY c.created_at DESC
+			LIMIT 1
+		) cm ON true
+		WHERE m.studio_id = $1
+		  AND m.source_kind = $5
+		  AND m.body != ''
+		ORDER BY m.created_at DESC
+		LIMIT $2
+	`, studioID, limit, DirectionInbound, SourceCustomer, SourceStudioUser)
+	if err != nil {
+		return nil, fmt.Errorf("list recent staff replies: %w", err)
+	}
+	defer rows.Close()
+
+	var out []StyleExample
+	for rows.Next() {
+		var ex StyleExample
+		if err := rows.Scan(&ex.StudioReply, &ex.CustomerMessage); err != nil {
+			return nil, fmt.Errorf("scan staff reply: %w", err)
+		}
+		out = append(out, ex)
+	}
+	return out, rows.Err()
+}
+
+// CountStaffReplies returns the total number of staff-authored
+// (source_kind='studio_user') messages ever recorded for a studio —
+// including ones imported via WhatsApp/Telegram Web backfill, which never
+// go through the live per-send counter increment. Used to reconcile
+// studios.staff_reply_count_total after a backfill import (see
+// StyleWorker.catchUpBackfilledReplies), since backfill can insert a large
+// batch of historical staff replies in one shot rather than one at a time.
+func (r *Repo) CountStaffReplies(ctx context.Context, studioID uuid.UUID) (int, error) {
+	var count int
+	err := r.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM messages WHERE studio_id = $1 AND source_kind = $2
+	`, studioID, SourceStudioUser).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count staff replies: %w", err)
+	}
+	return count, nil
+}
+
+// ListUnembeddedStaffReplies returns a studio's staff-authored messages that
+// don't have an embedding yet, most recent first — the backlog left behind
+// by a backfill import (which inserts rows directly, bypassing the live
+// per-send embedding hook). See StyleWorker.catchUpBackfilledReplies.
+func (r *Repo) ListUnembeddedStaffReplies(ctx context.Context, studioID uuid.UUID, limit int) ([]Message, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, body FROM messages
+		WHERE studio_id = $1 AND source_kind = $2 AND embedding IS NULL AND body != ''
+		ORDER BY created_at DESC
+		LIMIT $3
+	`, studioID, SourceStudioUser, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list unembedded staff replies: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Message
+	for rows.Next() {
+		var m Message
+		if err := rows.Scan(&m.ID, &m.Body); err != nil {
+			return nil, fmt.Errorf("scan unembedded staff reply: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // formatVec serialises []float32 → "[v1,v2,...]" for pgvector.
 func formatVec(vec []float32) string {
 	if len(vec) == 0 {

@@ -46,6 +46,8 @@ export interface Studio {
   knowledgeBase?: string;
   knowledgeBaseFiles?: { name: string; url: string; text: string; platform?: string }[];
   greetingMessage?: string;
+  communicationStyleProfile?: string;
+  styleProfileUpdatedAt?: string;
   bookingHeroImageUrl?: string;
   bookingHeroVideoUrl?: string;
   trialAmountSgd?: number;

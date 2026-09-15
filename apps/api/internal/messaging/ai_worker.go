@@ -212,9 +212,21 @@ func (w *AIWorker) summarizeConversation(ctx context.Context, studioID, convID u
 // (Groq 8B -> Groq 70B -> Gemini -> Claude) but is factored out standalone
 // since summarization has no Message/decision-tree/KB context to gather.
 func (w *AIWorker) runSummaryWaterfall(ctx context.Context, studioID uuid.UUID, studio *studios.Studio, prompt string) (text string, sourceRef string) {
+	return llmWaterfall(ctx, w.httpClient, w.studiosRepo, w.msgRepo, w.claude, w.log, studioID, studio, prompt)
+}
+
+// llmWaterfall tries Groq 8B → Gemini → Claude in order, falling through on
+// error or an empty reply, and logs every attempt via msgRepo.LogLLMUsage.
+// This is the platform's one shared "give me a completion for this prompt,
+// I don't care which provider" path — used both for AI reply generation
+// (via runSummaryWaterfall above) and for any other background task that
+// needs an LLM call without depending on a specific provider being
+// configured (see StyleWorker, which can't assume Claude is set up since
+// it's a single platform-wide key while Groq/Gemini are per-studio).
+func llmWaterfall(ctx context.Context, httpClient *http.Client, studiosRepo *studios.Repo, msgRepo *Repo, claudeClient *claude.Client, log *slog.Logger, studioID uuid.UUID, studio *studios.Studio, prompt string) (text string, sourceRef string) {
 	groqKey := studio.GroqAPIKey
 	if groqKey == "" {
-		if pk, e := w.studiosRepo.GetPlatformSetting(ctx, "groq_api_key"); e == nil {
+		if pk, e := studiosRepo.GetPlatformSetting(ctx, "groq_api_key"); e == nil {
 			groqKey = pk
 		}
 	}
@@ -227,7 +239,7 @@ func (w *AIWorker) runSummaryWaterfall(ctx context.Context, studioID uuid.UUID, 
 		if gerr != nil {
 			errMsg = gerr.Error()
 		}
-		w.msgRepo.LogLLMUsage(ctx, studioID, "groq", groq.Model8B, latMs, gerr == nil && strings.TrimSpace(gr.Text) != "", errMsg, gr.TokensIn, gr.TokensOut)
+		msgRepo.LogLLMUsage(ctx, studioID, "groq", groq.Model8B, latMs, gerr == nil && strings.TrimSpace(gr.Text) != "", errMsg, gr.TokensIn, gr.TokensOut)
 		if gerr == nil && strings.TrimSpace(gr.Text) != "" {
 			return gr.Text, "groq-8b"
 		}
@@ -235,33 +247,33 @@ func (w *AIWorker) runSummaryWaterfall(ctx context.Context, studioID uuid.UUID, 
 
 	apiKey := studio.GeminiAPIKey
 	if apiKey == "" {
-		if pk, e := w.studiosRepo.GetPlatformSetting(ctx, "gemini_api_key"); e == nil {
+		if pk, e := studiosRepo.GetPlatformSetting(ctx, "gemini_api_key"); e == nil {
 			apiKey = pk
 		}
 	}
 	if apiKey != "" {
 		t0 := time.Now()
-		gemReply, gerr := w.generateGeminiReply(ctx, apiKey, prompt)
+		gemReply, gerr := generateGeminiReply(ctx, httpClient, log, apiKey, prompt)
 		latMs := int(time.Since(t0).Milliseconds())
 		errMsg := ""
 		if gerr != nil {
 			errMsg = gerr.Error()
 		}
-		w.msgRepo.LogLLMUsage(ctx, studioID, "gemini", "gemini-2.5-flash", latMs, gerr == nil && gemReply.text != "", errMsg, gemReply.tokensIn, gemReply.tokensOut)
+		msgRepo.LogLLMUsage(ctx, studioID, "gemini", "gemini-2.5-flash", latMs, gerr == nil && gemReply.text != "", errMsg, gemReply.tokensIn, gemReply.tokensOut)
 		if gerr == nil && gemReply.text != "" {
 			return gemReply.text, "gemini"
 		}
 	}
 
-	if w.claude != nil {
+	if claudeClient != nil {
 		t0 := time.Now()
-		cr, cerr := w.claude.GenerateReply(ctx, prompt)
+		cr, cerr := claudeClient.GenerateReply(ctx, prompt)
 		latMs := int(time.Since(t0).Milliseconds())
 		errMsg := ""
 		if cerr != nil {
 			errMsg = cerr.Error()
 		}
-		w.msgRepo.LogLLMUsage(ctx, studioID, "claude", "claude-haiku-4-5", latMs, cerr == nil && cr.Text != "", errMsg, cr.TokensIn, cr.TokensOut)
+		msgRepo.LogLLMUsage(ctx, studioID, "claude", "claude-haiku-4-5", latMs, cerr == nil && cr.Text != "", errMsg, cr.TokensIn, cr.TokensOut)
 		if cerr == nil && cr.Text != "" {
 			return cr.Text, "claude"
 		}
@@ -518,6 +530,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 
 	var kbChunks []string
 	var semanticHistory []SemanticMatch
+	var styleExamples []StyleExample
 	var intent string
 	// kbConfident tracks whether retrieval found high-confidence chunks.
 	// Used to gate hallucination: if false, the prompt instructs the AI not to guess.
@@ -588,6 +601,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 			}
 			kbCh := make(chan kbResult, 1)
 			semHistCh := make(chan []SemanticMatch, 1)
+			styleCh := make(chan []StyleExample, 1)
 
 			go func() {
 				// Hybrid retrieval (8 candidates) → rerank to top 4 directly.
@@ -623,6 +637,34 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 				semHistCh <- filtered
 			}()
 
+			go func() {
+				// Studio-wide (not conversation-scoped) search over the studio's
+				// own past staff-authored replies — real examples of how THIS
+				// studio has handled a similar situation before, not just tone.
+				examples, styleErr := w.msgRepo.SearchStyleExamples(ctx, studioID, queryVec, 3)
+				if styleErr != nil {
+					w.log.Warn("failed to search style examples", "studio_id", studioID, "err", styleErr)
+					styleCh <- nil
+					return
+				}
+				// Lower bar than SearchSemanticHistory's 0.75 above: that's
+				// matching a customer message against other customer messages
+				// (near-paraphrases score high), this is matching a customer's
+				// question against a staff reply answering a DIFFERENT question
+				// — a genuinely relevant pair (verified against real studio data:
+				// "can i check on the trial" → "How are you enjoying your trial
+				// so far?" scored 0.673) naturally lands lower since question and
+				// answer aren't textually similar the way two questions are. 0.75
+				// here filtered out every real match in that same test.
+				var filtered []StyleExample
+				for _, ex := range examples {
+					if ex.Score >= 0.6 {
+						filtered = append(filtered, ex)
+					}
+				}
+				styleCh <- filtered
+			}()
+
 			kb := <-kbCh
 			kbChunks = kb.chunks
 			kbConfident = kb.confident
@@ -633,6 +675,11 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 			if semResults := <-semHistCh; len(semResults) > 0 {
 				semanticHistory = semResults
 				w.log.Info("retrieved semantic history", "studio_id", studioID, "count", len(semanticHistory))
+			}
+
+			if styleResults := <-styleCh; len(styleResults) > 0 {
+				styleExamples = styleResults
+				w.log.Info("retrieved style examples", "studio_id", studioID, "count", len(styleExamples))
 			}
 		} else {
 			w.log.Warn("failed to get message embedding for rag", "studio_id", studioID, "err", err)
@@ -990,7 +1037,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		w.log.Warn("fetch conversation ai summary failed", "err", err)
 		aiContextSummary = ""
 	}
-	prompt := w.buildPrompt(history, semanticHistory, conv, lead, studio, plans, sentiment, keywords, kbChunks, intent, kbConfident, aiContextSummary)
+	prompt := w.buildPrompt(history, semanticHistory, styleExamples, conv, lead, studio, plans, sentiment, keywords, kbChunks, intent, kbConfident, aiContextSummary)
 
 	// Waterfall: Groq 8B → Groq 70B → Gemini → Claude
 	var resp string
@@ -1111,7 +1158,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	return nil
 }
 
-func (w *AIWorker) buildPrompt(history []Message, semanticHistory []SemanticMatch, conv *Conversation, lead *leads.Lead, studio *studios.Studio, plans []Plan, sentiment int, keywords []string, kbChunks []string, intent string, kbConfident bool, aiContextSummary string) string {
+func (w *AIWorker) buildPrompt(history []Message, semanticHistory []SemanticMatch, styleExamples []StyleExample, conv *Conversation, lead *leads.Lead, studio *studios.Studio, plans []Plan, sentiment int, keywords []string, kbChunks []string, intent string, kbConfident bool, aiContextSummary string) string {
 	var sb strings.Builder
 
 	// ── System role ──────────────────────────────────────────────────────────
@@ -1270,6 +1317,27 @@ func (w *AIWorker) buildPrompt(history []Message, semanticHistory []SemanticMatc
 		} else {
 			sb.WriteString("Answer the question helpfully and concisely. Then ask one qualifying question to understand their fitness goals.\n")
 		}
+	}
+
+	// ── Learned studio voice (real examples + distilled style profile) ────────
+	// Both are derived from this studio's own past staff-authored replies —
+	// see StyleWorker and SearchStyleExamples. Empty for a studio with no
+	// staff-reply history yet, in which case the generic sentiment-based
+	// "Tone:" line below is all that applies, same as before this existed.
+	if studio.CommunicationStyleProfile != "" {
+		sb.WriteString("How " + studio.Name + "'s team communicates (learned from their own past replies):\n")
+		sb.WriteString(studio.CommunicationStyleProfile + "\n\n")
+	}
+	if len(styleExamples) > 0 {
+		sb.WriteString("Here's how " + studio.Name + "'s team has replied to similar situations before — match this voice:\n")
+		for _, ex := range styleExamples {
+			if ex.CustomerMessage != "" {
+				sb.WriteString("- Customer: \"" + ex.CustomerMessage + "\" → Reply: \"" + ex.StudioReply + "\"\n")
+			} else {
+				sb.WriteString("- Reply: \"" + ex.StudioReply + "\"\n")
+			}
+		}
+		sb.WriteString("\n")
 	}
 
 	// Sentiment overlay
@@ -1486,18 +1554,25 @@ func (w *AIWorker) scheduleTrialFollowup(ctx context.Context, studioID uuid.UUID
 }
 
 func (w *AIWorker) generateGeminiReply(ctx context.Context, apiKey string, prompt string) (geminiReply, error) {
+	return generateGeminiReply(ctx, w.httpClient, w.log, apiKey, prompt)
+}
+
+// generateGeminiReply is a free function (not a *AIWorker method) so it can
+// also be called from llmWaterfall on behalf of other workers (e.g.
+// StyleWorker) that don't have an AIWorker instance to hang off of.
+func generateGeminiReply(ctx context.Context, httpClient *http.Client, log *slog.Logger, apiKey string, prompt string) (geminiReply, error) {
 	models := []string{"gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite"}
 	for _, model := range models {
-		r, err := w.tryGeminiModel(ctx, apiKey, model, prompt)
+		r, err := tryGeminiModel(ctx, httpClient, log, apiKey, model, prompt)
 		if err == nil {
 			return r, nil
 		}
-		w.log.Warn("gemini model failed, trying next", "model", model, "err", err)
+		log.Warn("gemini model failed, trying next", "model", model, "err", err)
 	}
 	return geminiReply{}, fmt.Errorf("all Gemini models failed")
 }
 
-func (w *AIWorker) tryGeminiModel(ctx context.Context, apiKey string, model string, prompt string) (geminiReply, error) {
+func tryGeminiModel(ctx context.Context, httpClient *http.Client, log *slog.Logger, apiKey string, model string, prompt string) (geminiReply, error) {
 	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, apiKey)
 
 	reqBody, err := json.Marshal(map[string]any{
@@ -1525,11 +1600,11 @@ func (w *AIWorker) tryGeminiModel(ctx context.Context, apiKey string, model stri
 		}
 		req.Header.Set("Content-Type", "application/json")
 
-		resp, err := w.httpClient.Do(req)
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			cancel()
 			lastErr = err
-			w.log.Warn("gemini api attempt failed", "attempt", attempt, "err", err)
+			log.Warn("gemini api attempt failed", "attempt", attempt, "err", err)
 			time.Sleep(backoff)
 			backoff *= 2
 			continue
@@ -1549,7 +1624,7 @@ func (w *AIWorker) tryGeminiModel(ctx context.Context, apiKey string, model stri
 		if resp.StatusCode >= 400 {
 			lastErr = fmt.Errorf("gemini API error (HTTP %d): %s", resp.StatusCode, string(respBytes))
 			if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
-				w.log.Warn("gemini api transient response error", "attempt", attempt, "status", resp.StatusCode)
+				log.Warn("gemini api transient response error", "attempt", attempt, "status", resp.StatusCode)
 				time.Sleep(backoff)
 				backoff *= 2
 				continue

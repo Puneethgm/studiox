@@ -95,8 +95,12 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
   const [mediaUploading, setMediaUploading] = useState<'image' | 'video' | null>(null);
   const [mediaSaving, setMediaSaving] = useState(false);
 
-  // Trial Pricing (stored as cents/paise in the backend)
-  const [trialAmountSgd, setTrialAmountSgd] = useState((studio.trialAmountSgd ?? 2500) / 100);
+  // Trial Pricing (stored as cents/paise in the backend). Defaults to 0 (unset),
+  // NOT a display fallback like 2500 — this value is submitted on every General
+  // Info save, so defaulting it to a non-zero number here would silently
+  // persist that price and override the Plans-based fallback the backend
+  // otherwise uses (see FieldHint below).
+  const [trialAmountSgd, setTrialAmountSgd] = useState((studio.trialAmountSgd ?? 0) / 100);
   const [pricingSaving, setPricingSaving] = useState(false);
 
   const [currentPassword, setCurrentPassword] = useState('');
@@ -645,7 +649,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                   />
                   <FieldHint>
                     The price shown and charged on the trial payment page (including the shareable static signup link).
-                    If left at S$0, the page falls back to a default of S$25.
+                    If left at S$0, the page uses your lowest active Plan price instead (or S$25 if no active plans).
                   </FieldHint>
                 </div>
 

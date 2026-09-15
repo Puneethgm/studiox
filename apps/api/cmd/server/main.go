@@ -205,6 +205,13 @@ func main() {
 	aiWorker := messaging.NewAIWorker(msgBus, msgRepo, msgSvc, studiosRepo, leadsRepo, dtSvc, claudeClient, log.With("component", "ai_worker"))
 	go aiWorker.Run(rootCtx)
 
+	// Style worker: periodically distills each studio's own staff-authored
+	// replies into a short "communication style" writeup, shown/editable on
+	// the Knowledge Base page and injected into the AI prompt.
+	styleWorker := messaging.NewStyleWorker(studiosRepo, msgRepo, claudeClient, log.With("component", "style_worker"))
+	go styleWorker.Run(rootCtx)
+	go styleWorker.ListenForNewReplies(rootCtx, msgBus)
+
 	// Social Publisher worker
 	socialWorker := studios.NewSocialWorker(pool, cfg.TokenEncryptionKey, log.With("component", "social_worker"))
 	go socialWorker.Run(rootCtx)
@@ -326,6 +333,7 @@ func main() {
 				r.Put("/initial-contact-delay", studiosHandler.PutInitialContactDelay)
 				r.Get("/ai-reply-delay", studiosHandler.GetAIReplyDelay)
 				r.Put("/ai-reply-delay", studiosHandler.PutAIReplyDelay)
+				r.Put("/communication-style", studiosHandler.PutCommunicationStyle)
 				leadsHandler.AdminRoutes(r)
 				r.Get("/social-posts", studiosHandler.ListSocialPosts)
 				r.Post("/social-posts", studiosHandler.CreateSocialPost)

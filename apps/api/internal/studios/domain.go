@@ -49,10 +49,10 @@ type Studio struct {
 	KnowledgeBase        string              `json:"knowledgeBase"`
 	KnowledgeBaseFiles   []KnowledgeBaseFile `json:"knowledgeBaseFiles"`
 	// GreetingMessage is sent automatically on the first inbound message of a new conversation.
-	GreetingMessage     string `json:"greetingMessage"`
-	TrialAmountSGD      int    `json:"trialAmountSgd"`
-	BookingHeroImageURL string `json:"bookingHeroImageUrl"`
-	BookingHeroVideoURL string `json:"bookingHeroVideoUrl"`
+	GreetingMessage               string `json:"greetingMessage"`
+	TrialAmountSGD                int    `json:"trialAmountSgd"`
+	BookingHeroImageURL           string `json:"bookingHeroImageUrl"`
+	BookingHeroVideoURL           string `json:"bookingHeroVideoUrl"`
 	TrialConfirmationMessage      string `json:"trialConfirmationMessage"`
 	MembershipConfirmationMessage string `json:"membershipConfirmationMessage"`
 	// Glofox membership/plan-code mapping — when set, a real Stripe payment
@@ -62,6 +62,13 @@ type Studio struct {
 	TrialGlofoxPlanCode          string `json:"trialGlofoxPlanCode"`
 	MembershipGlofoxMembershipID string `json:"membershipGlofoxMembershipId"`
 	MembershipGlofoxPlanCode     string `json:"membershipGlofoxPlanCode"`
+
+	// CommunicationStyleProfile is a short writeup of how this studio's staff
+	// actually talk to customers, distilled by the style worker from their own
+	// past studio_user replies (see internal/studios/style_worker.go). Editable
+	// by the studio admin, same as the rest of the Knowledge Base page.
+	CommunicationStyleProfile string     `json:"communicationStyleProfile"`
+	StyleProfileUpdatedAt     *time.Time `json:"styleProfileUpdatedAt,omitempty"`
 
 	// Optional summary fields used by list endpoints.
 	CampaignCount int `json:"campaignCount,omitempty"`

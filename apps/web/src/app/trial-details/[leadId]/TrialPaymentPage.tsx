@@ -372,6 +372,9 @@ export function TrialPaymentPage({ leadId, preview, standalone, studioSlug: stud
           if (studioRes.ok) {
             const s: StudioInfo = await studioRes.json();
             setStudio(s);
+            // /public/studios/:slug already resolves this server-side (studio override
+            // → lowest active Plan price → S$25 fallback) — same logic the actual Stripe
+            // charge uses, so what's displayed here always matches what gets charged.
             setAmount(s.trialAmountSgd && s.trialAmountSgd > 0 ? s.trialAmountSgd : 2500);
             if (s.stripePublishableKey && !stripeRef.current) {
               stripeRef.current = loadStripe(s.stripePublishableKey);

@@ -292,7 +292,11 @@ func (w *OutboundWorker) dispatch(ctx context.Context, j OutboundJob) {
 		w.log.Error("mark outbound sent", "job_id", j.ID, "err", err)
 	}
 
-	// 4. Notify SSE / future automations / future AI.
+	// 4. Notify SSE / future automations / future AI. StyleWorker's
+	// ListenForNewReplies subscribes to this same event globally to learn
+	// from staff-authored sends — kept there instead of here so it also
+	// covers "typed directly on the linked phone" (WA-Web/TG-Web fromMe)
+	// sends, which never go through this dispatch path at all.
 	w.bus.Publish(ctx, Event{
 		Kind:           EvtMessageSent,
 		StudioID:       j.StudioID,

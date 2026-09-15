@@ -2,11 +2,11 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Database, FileText, Trash2, Upload, AlertCircle, CheckCircle, ChevronDown } from 'lucide-react';
+import { Database, FileText, Trash2, Upload, AlertCircle, CheckCircle, ChevronDown, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Label, FieldHint } from '@/components/ui/Label';
 import type { Studio } from '@/lib/types';
-import { parseDocument, updateKnowledgeBase } from './actions';
+import { parseDocument, updateKnowledgeBase, updateCommunicationStyle } from './actions';
 
 type KBFile = { name: string; url: string; text: string; platform: string };
 
@@ -71,6 +71,29 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  const [styleProfile, setStyleProfile] = useState(studio.communicationStyleProfile || '');
+  const [savingStyle, setSavingStyle] = useState(false);
+  const [styleError, setStyleError] = useState<string | null>(null);
+  const [styleSuccess, setStyleSuccess] = useState<string | null>(null);
+
+  async function handleSaveStyle() {
+    setStyleError(null);
+    setStyleSuccess(null);
+    setSavingStyle(true);
+    try {
+      const res = await updateCommunicationStyle(studio.id, styleProfile);
+      if (!res.ok) {
+        throw new Error(res.error || 'Failed to save changes');
+      }
+      setStyleSuccess('Communication style saved!');
+      router.refresh();
+    } catch (err: any) {
+      setStyleError(err.message || 'An error occurred while saving.');
+    } finally {
+      setSavingStyle(false);
+    }
+  }
 
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const filesList = e.target.files;
@@ -195,6 +218,45 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
                 />
                 <FieldHint>Direct textual instructions shown on all channels. Use the document list below to restrict content to specific platforms.</FieldHint>
               </div>
+            </div>
+          </div>
+
+          <div className="overflow-hidden rounded-[24px] border border-white/30 bg-white/30 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30" style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 4px 16px rgba(0,0,0,0.05)' }}>
+            <div className="border-b border-white/20 px-6 py-4 dark:border-white/5 flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-zinc-400" />
+              <h3 className="text-sm font-black uppercase tracking-[0.15em] text-zinc-400">Communication Style (learned)</h3>
+            </div>
+            <div className="p-6 space-y-4">
+              {styleSuccess && (
+                <div className="flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+                  <CheckCircle className="h-4 w-4 shrink-0" />
+                  <span>{styleSuccess}</span>
+                </div>
+              )}
+              {styleError && (
+                <div className="flex items-center gap-2 rounded-xl border border-rose-500/20 bg-rose-500/5 p-3 text-sm font-semibold text-rose-600 dark:text-rose-400">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  <span>{styleError}</span>
+                </div>
+              )}
+              <div>
+                <Label htmlFor="styleProfile">How your team talks to customers</Label>
+                <textarea
+                  id="styleProfile"
+                  className="flex w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:placeholder:text-slate-500 min-h-[140px]"
+                  placeholder="Once your team has sent enough WhatsApp/Instagram replies, this fills in automatically — a short summary of your tone, phrasing, and how you handle pricing questions, learned from your own conversations. Edit it any time; your edit sticks until enough new replies come in to justify a fresh rebuild."
+                  value={styleProfile}
+                  onChange={(e) => setStyleProfile(e.target.value)}
+                />
+                <FieldHint>
+                  {studio.styleProfileUpdatedAt
+                    ? `Last learned ${new Date(studio.styleProfileUpdatedAt).toLocaleDateString()}. Automatically rebuilt as your team sends more replies — the AI also pulls real past replies as examples on top of this summary.`
+                    : 'Not learned yet — needs a batch of staff-sent replies first. You can also write this yourself in the meantime.'}
+                </FieldHint>
+              </div>
+              <Button onClick={handleSaveStyle} loading={savingStyle} className="w-full sm:w-auto">
+                Save Communication Style
+              </Button>
             </div>
           </div>
 
