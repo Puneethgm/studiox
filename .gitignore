@@ -60,5 +60,7 @@ heroic-artifact-434914-d4-1b7152cf7bec.json
 !apps/wa-web/package-lock.json
 !apps/tg-web/package.json
 !apps/tg-web/package-lock.json
+# Generated Swagger spec (make swagger) — no secrets, just route/schema metadata
+!apps/api/docs/swagger.json
 apps/api/secrets/
 .aider*

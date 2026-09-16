@@ -7,6 +7,14 @@ import (
 	"github.com/projectx/api/internal/platform/httpx"
 )
 
+// GetPlatformPlans godoc
+//
+//	@Summary		Get platform subscription plans
+//	@Description	Public endpoint returning the list of subscription plans (e.g. Trial/Growth/Pro/Enterprise) shown to prospective studios. Reads the saved "platform_plans" platform setting, falling back to hardcoded defaults if none has been saved yet. No auth required.
+//	@Tags			Platform
+//	@Produce		json
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/api/v1/public/platform/plans [get]
 func (h *Handler) GetPlatformPlans(w http.ResponseWriter, r *http.Request) {
 	val, err := h.svc.GetPlatformSetting(r.Context(), "platform_plans")
 	if err != nil || val == "" {
@@ -19,6 +27,19 @@ func (h *Handler) GetPlatformPlans(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(val))
 }
 
+// UpdatePlatformPlans godoc
+//
+//	@Summary		Update platform subscription plans
+//	@Description	Replaces the "platform_plans" platform setting with the given list of plans. Intended for the platform owner to edit pricing shown to prospective studios; note the route is not itself role-restricted beyond requiring authentication.
+//	@Tags			Platform
+//	@Security		CookieAuth
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		[]map[string]interface{}	true	"Full list of plan objects to save"
+//	@Success		200		{object}	map[string]interface{}
+//	@Failure		400		{object}	httpx.ErrorResponse	"invalid request body"
+//	@Failure		500		{object}	httpx.ErrorResponse
+//	@Router			/api/v1/me/studios/global/plans [put]
 func (h *Handler) UpdatePlatformPlans(w http.ResponseWriter, r *http.Request) {
 	var payload []map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {

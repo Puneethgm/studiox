@@ -134,6 +134,17 @@ func (s *Service) DeleteSocialPost(ctx context.Context, studioID string, id uuid
 	return s.repo.DeleteSocialPost(ctx, studioID, id)
 }
 
+// ListSocialPosts godoc
+//
+//	@Summary		List social posts
+//	@Description	Returns all social planner posts for a studio, published posts last, ordered by scheduled time descending. Use studioId "global" to list posts not scoped to a single studio.
+//	@Tags			Social Planner
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Success		200			{array}		SocialPost
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/social-posts [get]
 func (h *Handler) ListSocialPosts(w http.ResponseWriter, r *http.Request) {
 	studioID := chi.URLParam(r, "studioId")
 	posts, err := h.svc.ListSocialPosts(r.Context(), studioID)
@@ -144,6 +155,19 @@ func (h *Handler) ListSocialPosts(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, posts)
 }
 
+// CreateSocialPost godoc
+//
+//	@Summary		Create a social post
+//	@Description	Creates a new social planner post (draft/scheduled/published/failed) for a studio. Cannot be used with studioId "global".
+//	@Tags			Social Planner
+//	@Security		CookieAuth
+//	@Accept			json
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Success		201			{object}	SocialPost
+//	@Failure		400			{object}	httpx.ErrorResponse	"cannot create post on global scope, invalid studio ID, or invalid request body"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/social-posts [post]
 func (h *Handler) CreateSocialPost(w http.ResponseWriter, r *http.Request) {
 	studioIDStr := chi.URLParam(r, "studioId")
 	if studioIDStr == "global" {
@@ -189,6 +213,20 @@ func (h *Handler) CreateSocialPost(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusCreated, p)
 }
 
+// UpdateSocialPost godoc
+//
+//	@Summary		Update a social post
+//	@Description	Updates an existing social planner post's campaign, platform, copy, media, status, and schedule time.
+//	@Tags			Social Planner
+//	@Security		CookieAuth
+//	@Accept			json
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Param			postId		path		string	true	"Social post ID"
+//	@Success		200			{object}	SocialPost
+//	@Failure		400			{object}	httpx.ErrorResponse	"invalid post ID or invalid request body"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/social-posts/{postId} [put]
 func (h *Handler) UpdateSocialPost(w http.ResponseWriter, r *http.Request) {
 	studioID := chi.URLParam(r, "studioId")
 	postIDStr := chi.URLParam(r, "postId")
@@ -230,6 +268,19 @@ func (h *Handler) UpdateSocialPost(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, p)
 }
 
+// DeleteSocialPost godoc
+//
+//	@Summary		Delete a social post
+//	@Description	Deletes a social planner post belonging to the studio.
+//	@Tags			Social Planner
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Param			postId		path		string	true	"Social post ID"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		400			{object}	httpx.ErrorResponse	"invalid post ID"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/social-posts/{postId} [delete]
 func (h *Handler) DeleteSocialPost(w http.ResponseWriter, r *http.Request) {
 	studioID := chi.URLParam(r, "studioId")
 	postIDStr := chi.URLParam(r, "postId")

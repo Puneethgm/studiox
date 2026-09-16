@@ -45,6 +45,7 @@ We are building it in **levels** that ladder up to the SRS phases:
 | Logs | `slog` (Go), JSON | Always include `request_id`, `tenant_id` (when present) |
 | Tests | `testify` + **testcontainers-go** for DB | Real Postgres in CI, no mocks for DB |
 | Lint | `golangci-lint` (Go), ESLint + Prettier + `prettier-plugin-tailwindcss` (TS) | |
+| API docs | **swaggo/swag** comment annotations → OpenAPI 2.0, served via `swaggo/http-swagger` at `/swagger/index.html` | `@Summary`/`@Router`/etc. comments live directly above each handler; `make swagger` regenerates `apps/api/docs/`. See §5 URLs. |
 
 ---
 
@@ -339,11 +340,19 @@ cp apps/web/.env.local.example apps/web/.env.local
 | `make migrate-new name=add_xxx` | New SQL migration |
 | `make test` | `go test ./...` |
 | `make lint` | `go vet` + `pnpm -r lint` |
+| `make swagger` | Regenerate the OpenAPI spec from handler comments (see below) |
 | `make db-down` | Stop Postgres |
 
 ### URLs
 
 - API: http://localhost:8080 (health: `/health`)
+- API docs (Swagger UI): http://localhost:8080/swagger/index.html — generated
+  from `// @Summary` / `@Router` etc. comments above each handler via
+  `swaggo/swag`. Run `make swagger` after adding or changing a route, then
+  restart the API (or let `air` pick it up) so `apps/api/docs/docs.go`
+  reflects the change. The generated files under `apps/api/docs/` are
+  committed (docs.go is imported by `cmd/server/main.go`); `swagger.json` has
+  a `.gitignore` carve-out since the repo blanket-ignores `*.json`.
 - Web app: http://localhost:3000
   - **`/login`** — single login URL for *both* roles. The JWT determines
     where each user lands. (We had `/s/<slug>/login` briefly — deleted; one

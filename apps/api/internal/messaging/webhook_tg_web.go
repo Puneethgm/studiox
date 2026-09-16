@@ -39,6 +39,17 @@ func tgWebInternalKey() string {
 // Admin routes — proxy to tg-web Node service
 // ============================================================
 
+// tgWebQR godoc
+//
+//	@Summary		Get Telegram Web QR login code
+//	@Description	Proxies to the tg-web Node service to fetch the current QR code (or pairing status) for a studio's Telegram personal-account (MTProto) session.
+//	@Tags			Messaging - Telegram Web
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/channels/telegram-web/qr [get]
 func (h *Handler) tgWebQR(w http.ResponseWriter, r *http.Request) {
 	studioID, ok := studioIDFromPath(w, r)
 	if !ok {
@@ -48,6 +59,20 @@ func (h *Handler) tgWebQR(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("%s/sessions/%s/qr", tgWebServiceURL(), studioID))
 }
 
+// tgWebPassword godoc
+//
+//	@Summary		Submit 2FA password for a Telegram Web login
+//	@Description	Forwards the studio's Telegram 2FA (two-step verification) password, submitted during QR login, to the tg-web Node service to complete the MTProto sign-in.
+//	@Tags			Messaging - Telegram Web
+//	@Security		CookieAuth
+//	@Accept			json
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		400			{object}	httpx.ErrorResponse	"could not read request body"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Failure		502			{object}	httpx.ErrorResponse	"tg-web service unavailable"
+//	@Router			/api/v1/studios/{studioId}/messaging/channels/telegram-web/password [post]
 func (h *Handler) tgWebPassword(w http.ResponseWriter, r *http.Request) {
 	studioID, ok := studioIDFromPath(w, r)
 	if !ok {
@@ -78,6 +103,17 @@ func (h *Handler) tgWebPassword(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(respBody)
 }
 
+// tgWebDisconnect godoc
+//
+//	@Summary		Disconnect a studio's Telegram Web session
+//	@Description	Marks the studio's Telegram Web channel as disconnected in our database, then proxies the disconnect request to the tg-web Node service to tear down the underlying MTProto session.
+//	@Tags			Messaging - Telegram Web
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/channels/telegram-web/disconnect [post]
 func (h *Handler) tgWebDisconnect(w http.ResponseWriter, r *http.Request) {
 	studioID, ok := studioIDFromPath(w, r)
 	if !ok {
@@ -88,6 +124,17 @@ func (h *Handler) tgWebDisconnect(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("%s/sessions/%s/disconnect", tgWebServiceURL(), studioID))
 }
 
+// tgWebStatus godoc
+//
+//	@Summary		Get a studio's Telegram Web session status
+//	@Description	Proxies to the tg-web Node service to fetch the current connection status (e.g. connected, disconnected, awaiting scan/password) of a studio's Telegram Web session.
+//	@Tags			Messaging - Telegram Web
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/channels/telegram-web/status [get]
 func (h *Handler) tgWebStatus(w http.ResponseWriter, r *http.Request) {
 	studioID, ok := studioIDFromPath(w, r)
 	if !ok {
@@ -97,6 +144,17 @@ func (h *Handler) tgWebStatus(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("%s/sessions/%s/status", tgWebServiceURL(), studioID))
 }
 
+// tgWebBackfillTrigger godoc
+//
+//	@Summary		Trigger Telegram Web chat history backfill
+//	@Description	Kicks off a one-time chat-history import for a QR-linked Telegram Web session: marks the backfill status "running" in our database, then proxies the trigger request to the tg-web Node service. Fire-and-forget from the admin's perspective — progress is polled via tgWebBackfillStatus.
+//	@Tags			Messaging - Telegram Web
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/channels/telegram-web/backfill [post]
 func (h *Handler) tgWebBackfillTrigger(w http.ResponseWriter, r *http.Request) {
 	studioID, ok := studioIDFromPath(w, r)
 	if !ok {
@@ -110,6 +168,17 @@ func (h *Handler) tgWebBackfillTrigger(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("%s/sessions/%s/backfill", tgWebServiceURL(), studioID))
 }
 
+// tgWebBackfillStatus godoc
+//
+//	@Summary		Get Telegram Web chat history backfill status
+//	@Description	Returns the current backfill status (e.g. running, done, failed, none) and imported message count for a studio's Telegram Web session, read from our database.
+//	@Tags			Messaging - Telegram Web
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/channels/telegram-web/backfill [get]
 func (h *Handler) tgWebBackfillStatus(w http.ResponseWriter, r *http.Request) {
 	studioID, ok := studioIDFromPath(w, r)
 	if !ok {
@@ -164,6 +233,17 @@ func notifyTGWebDisconnect(ctx context.Context, studioID uuid.UUID) {
 // Internal routes — called by tg-web Node service
 // ============================================================
 
+// tgWebConnected godoc
+//
+//	@Summary		Report a Telegram Web session connected
+//	@Description	Called by the tg-web Node service when a studio's MTProto session successfully signs in. Upserts the Telegram Web channel with the paired phone/username and encrypted session string. Internal-only (Docker-network only, not exposed via nginx) — no session/API-key auth, authenticated via the shared `x-internal-key` header instead.
+//	@Tags			Messaging - Internal
+//	@Accept			json
+//	@Produce		json
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		400	{object}	httpx.ErrorResponse	"invalid body or studioId"
+//	@Failure		500	{object}	httpx.ErrorResponse
+//	@Router			/internal/tg-web/connected [post]
 func (h *Handler) tgWebConnected(w http.ResponseWriter, r *http.Request) {
 	var p struct {
 		StudioID      string `json:"studioId"`
@@ -187,6 +267,17 @@ func (h *Handler) tgWebConnected(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// tgWebInbound godoc
+//
+//	@Summary		Receive an inbound Telegram Web message
+//	@Description	Called by the tg-web Node service for each inbound (or self-sent) message observed on a studio's MTProto session, along with any attachment metadata, so it can be recorded and processed by the messaging service. Internal-only (Docker-network only, not exposed via nginx) — no session/API-key auth, authenticated via the shared `x-internal-key` header instead.
+//	@Tags			Messaging - Internal
+//	@Accept			json
+//	@Produce		json
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		400	{object}	httpx.ErrorResponse	"invalid body or studioId"
+//	@Failure		500	{object}	httpx.ErrorResponse
+//	@Router			/internal/tg-web/inbound [post]
 func (h *Handler) tgWebInbound(w http.ResponseWriter, r *http.Request) {
 	var p struct {
 		StudioID       string `json:"studioId"`
@@ -225,14 +316,19 @@ func (h *Handler) tgWebInbound(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// tgWebMedia receives raw media bytes tg-web already downloaded from
-// Telegram (via GramJS's downloadMedia) and saves them under ./uploads,
-// same convention every other channel's inbound media uses. Unlike the
-// bot's TelegramDownloadFile (which the Go API can call directly against
-// Telegram's HTTP file API), an MTProto session's media can only be
-// fetched through the GramJS client that owns it — tg-web is the only
-// thing that can do that download, so it pushes the resulting bytes here
-// rather than the Go side pulling them.
+// tgWebMedia godoc
+//
+//	@Summary		Upload downloaded Telegram Web media
+//	@Description	Receives raw media bytes tg-web already downloaded from Telegram (via GramJS's downloadMedia) and saves them under ./uploads, the same convention every other channel's inbound media uses. Unlike the bot's TelegramDownloadFile (which the Go API can call directly against Telegram's HTTP file API), an MTProto session's media can only be fetched through the GramJS client that owns it — tg-web is the only thing that can do that download, so it pushes the resulting bytes here rather than the Go side pulling them. Internal-only (Docker-network only, not exposed via nginx) — no session/API-key auth, authenticated via the shared `x-internal-key` header instead.
+//	@Tags			Messaging - Internal
+//	@Accept			multipart/form-data
+//	@Produce		json
+//	@Param			file		formData	file	true	"Media file bytes"
+//	@Param			mimeType	formData	string	false	"MIME type, used to infer an extension when the filename has none"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		400			{object}	httpx.ErrorResponse	"file too large, bad multipart form, or missing file field"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/internal/tg-web/media [post]
 func (h *Handler) tgWebMedia(w http.ResponseWriter, r *http.Request) {
 	const maxSize = 20 << 20 // 20 MB, matches uploadMedia's limit
 	if err := r.ParseMultipartForm(maxSize); err != nil {
@@ -275,6 +371,17 @@ func (h *Handler) tgWebMedia(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]string{"url": "/uploads/" + filename, "name": filename})
 }
 
+// tgWebBackfill godoc
+//
+//	@Summary		Import a batch of Telegram Web backfill messages
+//	@Description	Receives a batch of historical messages for one chat, imported by the tg-web Node service after a QR-linked session connects. Called repeatedly, once per chat (or in chat-sized pages), not all-at-once; empty messages are skipped. Internal-only (Docker-network only, not exposed via nginx) — no session/API-key auth, authenticated via the shared `x-internal-key` header instead.
+//	@Tags			Messaging - Internal
+//	@Accept			json
+//	@Produce		json
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		400	{object}	httpx.ErrorResponse	"invalid body or studioId"
+//	@Failure		500	{object}	httpx.ErrorResponse
+//	@Router			/internal/tg-web/backfill [post]
 func (h *Handler) tgWebBackfill(w http.ResponseWriter, r *http.Request) {
 	var p struct {
 		StudioID    string `json:"studioId"`
@@ -317,6 +424,17 @@ func (h *Handler) tgWebBackfill(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true, "imported": imported})
 }
 
+// tgWebBackfillRunning godoc
+//
+//	@Summary		Mark Telegram Web backfill as running
+//	@Description	Lets the tg-web Node service mark history import as started the moment a session connects, so the admin UI reflects an import already underway rather than sitting on "none". Internal-only (Docker-network only, not exposed via nginx) — no session/API-key auth, authenticated via the shared `x-internal-key` header instead.
+//	@Tags			Messaging - Internal
+//	@Accept			json
+//	@Produce		json
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		400	{object}	httpx.ErrorResponse	"invalid body or studioId"
+//	@Failure		500	{object}	httpx.ErrorResponse
+//	@Router			/internal/tg-web/backfill-running [post]
 func (h *Handler) tgWebBackfillRunning(w http.ResponseWriter, r *http.Request) {
 	var p struct {
 		StudioID string `json:"studioId"`
@@ -337,6 +455,17 @@ func (h *Handler) tgWebBackfillRunning(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// tgWebBackfillDone godoc
+//
+//	@Summary		Mark Telegram Web backfill as finished
+//	@Description	Lets the tg-web Node service report that it has finished walking every chat, so the admin UI can stop showing "running". On genuine success (not failed), publishes a shared "QR-linked backfill finished" event to kick off post-backfill AI summarization of imported conversations. Internal-only (Docker-network only, not exposed via nginx) — no session/API-key auth, authenticated via the shared `x-internal-key` header instead.
+//	@Tags			Messaging - Internal
+//	@Accept			json
+//	@Produce		json
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		400	{object}	httpx.ErrorResponse	"invalid body or studioId"
+//	@Failure		500	{object}	httpx.ErrorResponse
+//	@Router			/internal/tg-web/backfill-done [post]
 func (h *Handler) tgWebBackfillDone(w http.ResponseWriter, r *http.Request) {
 	var p struct {
 		StudioID     string `json:"studioId"`
@@ -374,10 +503,15 @@ func (h *Handler) tgWebBackfillDone(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// tgWebSessions feeds tg-web's startup rehydration (see prewarmAll in
-// apps/tg-web/src/index.js) — unlike wa-web's ListWAWebStudioIDs (just IDs;
-// Baileys' real auth lives on a Docker volume), this must return the actual
-// decrypted session strings since the DB is tg-web's only persistence.
+// tgWebSessions godoc
+//
+//	@Summary		List Telegram Web sessions for rehydration
+//	@Description	Feeds tg-web's startup rehydration (see prewarmAll in apps/tg-web/src/index.js) — unlike wa-web's ListWAWebStudioIDs (just IDs; Baileys' real auth lives on a Docker volume), this must return the actual decrypted session strings since the database is tg-web's only persistence. Internal-only (Docker-network only, not exposed via nginx) — no session/API-key auth, authenticated via the shared `x-internal-key` header instead.
+//	@Tags			Messaging - Internal
+//	@Produce		json
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		500	{object}	httpx.ErrorResponse
+//	@Router			/internal/tg-web/sessions [get]
 func (h *Handler) tgWebSessions(w http.ResponseWriter, r *http.Request) {
 	sessions, err := h.svc.repo.ListTGWebSessions(r.Context())
 	if err != nil {

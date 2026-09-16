@@ -37,7 +37,21 @@ func (h *OAuthHandler) getRedirectURI() string {
 	return strings.TrimSuffix(h.baseURL, "/") + "/api/v1/auth/google/callback"
 }
 
-// LoginHandler initiates the Google OAuth 2.0 flow
+// LoginHandler godoc
+//
+//	@Summary		Start Google Ads OAuth flow
+//	@Description	Builds the Google OAuth 2.0 consent-screen URL for connecting a studio's Google Ads account. The studio must already have a Google Client ID configured (see PUT /api/v1/me/studios/{id}). The caller opens the returned URL (typically in a popup); Google redirects back to GET /api/v1/auth/google/callback on completion.
+//	@Tags			Google Ads
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			studioId		path		string	true	"Studio ID (UUID)"
+//	@Param			customerId		query		string	true	"Google Ads Customer ID (digits only, dashes/spaces are stripped)"
+//	@Param			loginCustomerId	query		string	false	"Google Ads Login/Manager (MCC) Customer ID, if the account sits under a manager account"
+//	@Success		200				{object}	map[string]interface{}	"{\"url\": \"https://accounts.google.com/o/oauth2/v2/auth?...\"}"
+//	@Failure		400				{object}	httpx.ErrorResponse
+//	@Failure		403				{object}	httpx.ErrorResponse
+//	@Failure		500				{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/google-oauth/login [get]
 func (h *OAuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	studioIDStr := chi.URLParam(r, "studioId")
 	if studioIDStr == "" {
@@ -104,7 +118,19 @@ func (h *OAuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]string{"url": u.String()})
 }
 
-// CallbackHandler handles the redirect from Google
+// CallbackHandler godoc
+//
+//	@Summary		Google OAuth callback
+//	@Description	Redirect target Google sends the browser back to after the user grants (or denies) Ads access. Exchanges the authorization code for a refresh token, then creates or updates the studio's Google Ads channel_account with it. Not called directly — Google invokes this via browser redirect after LoginHandler. Responds with a small HTML page that closes the OAuth popup and notifies the opener window. No cookie auth: the studio identity travels inside the signed `state` param round-tripped through Google.
+//	@Tags			Google Ads
+//	@Produce		html
+//	@Param			code	query	string	false	"Authorization code from Google"
+//	@Param			state	query	string	true	"Opaque state token containing studioId, customerId, and loginCustomerId"
+//	@Param			error	query	string	false	"Set by Google if the user denied consent or another OAuth error occurred"
+//	@Success		200	{string}	string	"HTML page that closes the popup"
+//	@Failure		400	{object}	httpx.ErrorResponse
+//	@Failure		500	{object}	httpx.ErrorResponse
+//	@Router			/api/v1/auth/google/callback [get]
 func (h *OAuthHandler) CallbackHandler(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state")

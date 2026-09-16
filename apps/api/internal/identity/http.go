@@ -79,6 +79,20 @@ func (h *Handler) buildMeRes(ctx context.Context, u *User) meRes {
 	return res
 }
 
+// login godoc
+//
+//	@Summary		Log in with email and password
+//	@Description	Verifies credentials, issues a JWT, and sets it as an HttpOnly session cookie. Rate limited to 10 requests/minute per IP.
+//	@Tags			Auth
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		loginReq	true	"Login credentials"
+//	@Success		200		{object}	meRes
+//	@Failure		401		{object}	httpx.ErrorResponse	"invalid email or password"
+//	@Failure		422		{object}	httpx.ErrorResponse	"email or password missing"
+//	@Failure		429		{object}	httpx.ErrorResponse	"too many attempts"
+//	@Failure		500		{object}	httpx.ErrorResponse
+//	@Router			/api/v1/auth/login [post]
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	var req loginReq
 	if !httpx.DecodeJSON(w, r, &req) {
@@ -123,6 +137,13 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, h.buildMeRes(r.Context(), u))
 }
 
+// logout godoc
+//
+//	@Summary		Log out
+//	@Description	Clears the session cookie by expiring it immediately. No auth required (safe to call even if no session exists).
+//	@Tags			Auth
+//	@Success		204	"no content"
+//	@Router			/api/v1/auth/logout [post]
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     h.cookie.Name,
@@ -138,6 +159,16 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 	httpx.NoContent(w)
 }
 
+// me godoc
+//
+//	@Summary		Get current session user
+//	@Description	Returns the authenticated user's profile and, if assigned to a studio, that studio's branding info. Clears the session cookie and returns 401 if the studio backing the session no longer exists/is accessible.
+//	@Tags			Auth
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Success		200	{object}	meRes
+//	@Failure		401	{object}	httpx.ErrorResponse
+//	@Router			/api/v1/auth/me [get]
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	c := MustClaims(r.Context())
 	u, err := h.repo.FindByID(r.Context(), c.UserID)
@@ -178,6 +209,20 @@ type changePasswordReq struct {
 	ConfirmPassword string `json:"confirmPassword"`
 }
 
+// changePassword godoc
+//
+//	@Summary		Change the current user's password
+//	@Description	Validates the new password and confirmation, verifies the current password, then updates the stored password hash. Rate limited to 10 requests/minute per IP.
+//	@Tags			Auth
+//	@Security		CookieAuth
+//	@Accept			json
+//	@Param			body	body	changePasswordReq	true	"Current and new password"
+//	@Success		204		"no content"
+//	@Failure		401		{object}	httpx.ErrorResponse	"session invalid or current password incorrect for auth check"
+//	@Failure		422		{object}	httpx.ErrorResponse	"validation failed"
+//	@Failure		429		{object}	httpx.ErrorResponse	"too many attempts"
+//	@Failure		500		{object}	httpx.ErrorResponse
+//	@Router			/api/v1/auth/password [post]
 func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 	var req changePasswordReq
 	if !httpx.DecodeJSON(w, r, &req) {
@@ -302,6 +347,19 @@ func RequireRole(allowed ...Role) func(http.Handler) http.Handler {
 	}
 }
 
+// listStudioUsers godoc
+//
+//	@Summary		List users in a studio
+//	@Description	Returns the id, email, and role of every user belonging to the given studio. Callers must be a super user or belong to the studio themselves.
+//	@Tags			Auth
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID (UUID)"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		400			{object}	httpx.ErrorResponse	"missing or invalid studioId"
+//	@Failure		403			{object}	httpx.ErrorResponse	"cannot access this studio"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/users [get]
 func (h *Handler) listStudioUsers(w http.ResponseWriter, r *http.Request) {
 	studioIDStr := chi.URLParam(r, "studioId")
 	if studioIDStr == "" {

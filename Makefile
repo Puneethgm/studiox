@@ -93,6 +93,11 @@ lint: ## Lint all code
 fmt: ## Format Go code
 	cd apps/api && go fmt ./...
 
+# ---------- docs ----------
+.PHONY: swagger
+swagger: ## Regenerate Swagger/OpenAPI docs from handler comments (serves at /swagger/index.html)
+	cd apps/api && $(HOME)/go/bin/swag init -g cmd/server/main.go -o docs --parseDependency --parseInternal
+
 # ---------- bootstrap ----------
 .PHONY: install
 install: ## Install JS deps

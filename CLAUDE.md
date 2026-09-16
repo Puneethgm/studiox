@@ -6,3 +6,5 @@ rules that govern all work here. The product vision lives in [`init.md`](init.md
 the playbook in `docs/skills.md` is what you actually act on day-to-day.
 
 Current level: **L1** — see `docs/skills.md` §1 for the level ladder.
+1. before u do anything clarify and ask questions if u dont get it 
+2. dont do any hadhook and say i have did this 

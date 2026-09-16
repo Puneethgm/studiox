@@ -45,6 +45,20 @@ func NewStripeWebhookHandler(svc *Service, webhookSecret string) *StripeWebhookH
 	}
 }
 
+// HandleInbound godoc
+//
+//	@Summary		Receive a Stripe webhook event
+//	@Description	Verifies and processes an inbound Stripe webhook event. Not authenticated via cookies — Stripe signs the request body instead, verified against the Stripe-Signature header using the studio's or platform's webhook secret. Events are deduplicated by event ID before processing. Handles checkout.session.completed and payment_link.payment.completed (finalizes trial/membership checkout, sends a WhatsApp confirmation, syncs the lead to Glofox, and cancels superseded subscriptions on upgrades/plan changes), payment_intent.succeeded (the embedded Stripe Elements trial payment flow's equivalent of checkout completion), invoice.payment_failed (marks the studio past_due), and customer.subscription.updated/deleted (marks the studio canceled). Other event types are accepted but ignored.
+//	@Tags			Stripe Webhooks
+//	@Accept			json
+//	@Produce		json
+//	@Param			studioId	path		string	false	"Studio ID, when the webhook is routed per-studio rather than to the shared platform endpoint"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		400			{object}	httpx.ErrorResponse	"invalid webhook signature"
+//	@Failure		401			{object}	httpx.ErrorResponse	"no webhook secret configured to verify the signature"
+//	@Failure		503			{object}	httpx.ErrorResponse	"failed to read request body"
+//	@Router			/api/v1/webhooks/stripe [post]
+//	@Router			/api/v1/webhooks/stripe/{studioId} [post]
 func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Request) {
 	const MaxBodyBytes = int64(65536)
 	r.Body = http.MaxBytesReader(w, r.Body, MaxBodyBytes)
@@ -438,6 +452,7 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 			} else {
 				slog.Info("stripe lead status updated to member", "phone", customerPhone)
 				h.svc.SyncLeadToGlofoxByID(ctx, *leadID, glofox.GlofoxStatusMember, session.AmountTotal)
+				h.svc.SyncLeadToMindbodyByID(ctx, *leadID, false, session.AmountTotal)
 
 				// Phase 5: Cancel any pending automated follow-ups since the lead became a member
 				_, _ = h.svc.repo.Pool().Exec(ctx, `
@@ -471,6 +486,7 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 			} else {
 				slog.Info("stripe lead status updated to trial_booked", "phone", customerPhone)
 				h.svc.SyncLeadToGlofoxByID(ctx, *leadID, glofox.GlofoxStatusTrial, session.AmountTotal)
+				h.svc.SyncLeadToMindbodyByID(ctx, *leadID, true, session.AmountTotal)
 
 				// Schedule a 2-day post-trial follow-up to push membership.
 				// This fires after the trial session and nudges the lead to join.
@@ -576,6 +592,7 @@ func (h *StripeWebhookHandler) handlePaymentIntentSucceeded(ctx context.Context,
 	}
 	slog.Info("stripe trial payment: lead status updated to trial_booked", "lead_id", leadIDStr)
 	h.svc.SyncLeadToGlofoxByID(ctx, leadIDStr, glofox.GlofoxStatusTrial, pi.Amount)
+	h.svc.SyncLeadToMindbodyByID(ctx, leadIDStr, true, pi.Amount)
 
 	var convID string
 	_ = h.svc.repo.Pool().QueryRow(ctx, `

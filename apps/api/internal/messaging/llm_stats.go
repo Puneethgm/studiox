@@ -34,9 +34,16 @@ type LLMStudioStat struct {
 	TokensOut    int        `json:"tokensOut"`
 }
 
-// GetLLMStats returns per-day, per-provider usage aggregates for the last 30 days,
-// as well as studio-level usage aggregations.
-// Accessible only to super-admins via /api/v1/admin/llm-stats.
+// GetLLMStats godoc
+//
+//	@Summary		Get platform-wide LLM usage stats
+//	@Description	Returns per-day, per-provider/model usage aggregates (request count, success count, average latency, token totals) for the last 30 days, as well as per-studio usage aggregations. Super-admin only, global platform-level view (no studio scope).
+//	@Tags			Platform Stats
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		500	{object}	httpx.ErrorResponse
+//	@Router			/api/v1/admin/llm-stats [get]
 func (h *Handler) GetLLMStats(w http.ResponseWriter, r *http.Request) {
 	since := time.Now().AddDate(0, 0, -30)
 

@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const baseURL = "https://gf-api.aws.glofox.com/prod"
+const defaultBaseURL = "https://gf-api.aws.glofox.com/prod"
 
 // Client calls the Glofox REST API on behalf of the platform.
 // Auth requires three values per request:
@@ -23,6 +23,7 @@ type Client struct {
 	apiKey   string
 	apiToken string
 	branchID string
+	baseURL  string
 	http     *http.Client
 }
 
@@ -35,8 +36,21 @@ func New(apiKey, apiToken, branchID string) *Client {
 		apiKey:   apiKey,
 		apiToken: apiToken,
 		branchID: branchID,
+		baseURL:  defaultBaseURL,
 		http:     &http.Client{Timeout: 15 * time.Second},
 	}
+}
+
+// NewWithBaseURL is New with an overridable base URL, for tests that need to
+// point the client at a local stub instead of Glofox's real API (e.g. the
+// old-vs-new-executor parity test in internal/integrations/crm). Production
+// code should always use New, which points at the real API.
+func NewWithBaseURL(apiKey, apiToken, branchID, baseURL string) *Client {
+	c := New(apiKey, apiToken, branchID)
+	if c != nil {
+		c.baseURL = baseURL
+	}
+	return c
 }
 
 func (c *Client) addAuth(req *http.Request) {
@@ -189,7 +203,7 @@ func (c *Client) createLead(ctx context.Context, body map[string]any) (*CreateLe
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		baseURL+"/2.1/branches/"+c.branchID+"/leads", bytes.NewReader(b))
+		c.baseURL+"/2.1/branches/"+c.branchID+"/leads", bytes.NewReader(b))
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
@@ -273,7 +287,7 @@ func (c *Client) PurchaseMembership(ctx context.Context, in PurchaseMembershipIn
 	}
 
 	url := fmt.Sprintf("%s/2.2/branches/%s/users/%s/memberships/%s/plans/%s/purchase",
-		baseURL, c.branchID, in.UserID, in.MembershipID, in.PlanCode)
+		c.baseURL, c.branchID, in.UserID, in.MembershipID, in.PlanCode)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
@@ -322,7 +336,7 @@ func (c *Client) FindMembershipPlanByPrice(ctx context.Context, amountCents int6
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		baseURL+"/2.0/branches/"+c.branchID+"/memberships", nil)
+		c.baseURL+"/2.0/branches/"+c.branchID+"/memberships", nil)
 	if err != nil {
 		return MembershipMatch{}, fmt.Errorf("build request: %w", err)
 	}
@@ -404,7 +418,7 @@ func (c *Client) ListBookings(ctx context.Context) ([]Booking, error) {
 		return nil, fmt.Errorf("glofox client not configured")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		baseURL+"/2.2/branches/"+c.branchID+"/bookings", nil)
+		c.baseURL+"/2.2/branches/"+c.branchID+"/bookings", nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
@@ -464,7 +478,7 @@ func (c *Client) GetMember(ctx context.Context, userID string) (*GlofoxMember, e
 		return nil, fmt.Errorf("glofox client not configured")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		baseURL+"/2.0/members/"+userID, nil)
+		c.baseURL+"/2.0/members/"+userID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
@@ -509,7 +523,7 @@ func (c *Client) RegisterUser(ctx context.Context, in RegisterUserInput) (*Regis
 		return nil, fmt.Errorf("marshal: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/2.0/register", bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/2.0/register", bytes.NewReader(b))
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}

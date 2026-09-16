@@ -30,6 +30,7 @@ import {
   GitBranch,
   Network,
   MessageSquareText,
+  Link2,
 } from 'lucide-react';
 import { useEffect, useState, useRef, type CSSProperties, type ReactNode } from 'react';
 import { Button } from '@/components/ui/Button';
@@ -89,6 +90,12 @@ function navItemsFor(me: Me, currentPath: string): NavItem[] {
         label: 'LLM Monitor',
         icon: <BarChart2 className="h-[18px] w-[18px]" />,
         match: (p) => p.startsWith('/admin/llm-monitoring'),
+      },
+      {
+        href: '/admin/crm-integrations',
+        label: 'CRM Integrations',
+        icon: <Link2 className="h-[18px] w-[18px]" />,
+        match: (p) => p.startsWith('/admin/crm-integrations'),
       },
       {
         href: '/admin/settings',

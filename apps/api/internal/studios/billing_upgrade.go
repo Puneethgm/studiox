@@ -13,6 +13,21 @@ import (
 	"github.com/stripe/stripe-go/v78/client"
 )
 
+// UpgradeStudioPlan godoc
+//
+//	@Summary		Upgrade or purchase a studio's subscription plan
+//	@Description	Looks up the requested tier's price from the platform plans setting (or hardcoded defaults) and creates a Stripe Checkout session for the studio to pay for/upgrade to that plan. Uses subscription mode for recurring tiers, or one-time payment mode for the "Trial Pass" tier. The session is tagged with plan_tier/studio_id/is_upgrade metadata so the Stripe webhook can finalize the upgrade (and cancel any superseded subscription) once payment completes. Returns the Checkout session URL to redirect the studio to.
+//	@Tags			Billing
+//	@Security		CookieAuth
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string					true	"Studio ID"
+//	@Param			body	body		object{tier=string}	true	"Target plan tier name"
+//	@Success		200		{object}	map[string]interface{}
+//	@Failure		400		{object}	httpx.ErrorResponse	"global studio, invalid studio ID, invalid request body, or invalid subscription tier"
+//	@Failure		404		{object}	httpx.ErrorResponse	"studio not found"
+//	@Failure		500		{object}	httpx.ErrorResponse	"platform Stripe account not configured, or Stripe error creating the checkout session"
+//	@Router			/api/v1/me/studios/{id}/billing/upgrade [post]
 func (h *Handler) UpgradeStudioPlan(w http.ResponseWriter, r *http.Request) {
 	studioID := chi.URLParam(r, "id")
 	if studioID == "global" {

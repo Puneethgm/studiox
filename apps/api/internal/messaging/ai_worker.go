@@ -1,11 +1,8 @@
 package messaging
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -14,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/projectx/api/internal/decisiontree"
 	"github.com/projectx/api/internal/integrations/claude"
+	"github.com/projectx/api/internal/integrations/gemini"
 	"github.com/projectx/api/internal/integrations/groq"
 	"github.com/projectx/api/internal/leads"
 	"github.com/projectx/api/internal/studios"
@@ -32,16 +30,17 @@ const (
 )
 
 type AIWorker struct {
-	bus         Bus
-	msgRepo     *Repo
-	msgSvc      *Service
-	studiosRepo *studios.Repo
-	leadsRepo   *leads.Repo
-	dtSvc       *decisiontree.Service
-	claude      *claude.Client
-	log         *slog.Logger
-	subs        map[uuid.UUID]func()
-	httpClient  *http.Client
+	bus          Bus
+	msgRepo      *Repo
+	msgSvc       *Service
+	studiosRepo  *studios.Repo
+	leadsRepo    *leads.Repo
+	dtSvc        *decisiontree.Service
+	claude       *claude.Client
+	geminiClient *gemini.Client
+	log          *slog.Logger
+	subs         map[uuid.UUID]func()
+	httpClient   *http.Client
 }
 
 func NewAIWorker(bus Bus, msgRepo *Repo, msgSvc *Service, studiosRepo *studios.Repo, leadsRepo *leads.Repo, dtSvc *decisiontree.Service, cl *claude.Client, log *slog.Logger) *AIWorker {
@@ -55,16 +54,17 @@ func NewAIWorker(bus Bus, msgRepo *Repo, msgSvc *Service, studiosRepo *studios.R
 		Timeout:   30 * time.Second,
 	}
 	return &AIWorker{
-		bus:         bus,
-		msgRepo:     msgRepo,
-		msgSvc:      msgSvc,
-		studiosRepo: studiosRepo,
-		leadsRepo:   leadsRepo,
-		dtSvc:       dtSvc,
-		claude:      cl,
-		log:         log,
-		subs:        make(map[uuid.UUID]func()),
-		httpClient:  client,
+		bus:          bus,
+		msgRepo:      msgRepo,
+		msgSvc:       msgSvc,
+		studiosRepo:  studiosRepo,
+		leadsRepo:    leadsRepo,
+		dtSvc:        dtSvc,
+		claude:       cl,
+		geminiClient: gemini.New(),
+		log:          log,
+		subs:         make(map[uuid.UUID]func()),
+		httpClient:   client,
 	}
 }
 
@@ -1553,7 +1553,12 @@ func (w *AIWorker) scheduleTrialFollowup(ctx context.Context, studioID uuid.UUID
 	}
 }
 
+// generateGeminiReply delegates to internal/integrations/gemini (extracted
+// from this method's former inline implementation so the doc-parsing LLM
+// abstraction in internal/integrations/llm can reuse the same client
+// instead of duplicating the HTTP/retry logic).
 func (w *AIWorker) generateGeminiReply(ctx context.Context, apiKey string, prompt string) (geminiReply, error) {
+	r, err := w.geminiClient.GenerateReply(ctx, apiKey, prompt)
 	return generateGeminiReply(ctx, w.httpClient, w.log, apiKey, prompt)
 }
 
@@ -1587,6 +1592,7 @@ func tryGeminiModel(ctx context.Context, httpClient *http.Client, log *slog.Logg
 	if err != nil {
 		return geminiReply{}, err
 	}
+	return geminiReply{text: r.Text, tokensIn: r.TokensIn, tokensOut: r.TokensOut}, nil
 
 	var lastErr error
 	backoff := 500 * time.Millisecond

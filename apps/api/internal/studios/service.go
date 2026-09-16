@@ -14,17 +14,19 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/projectx/api/internal/identity"
+	"github.com/projectx/api/internal/integrations/crm"
 	"github.com/projectx/api/internal/integrations/glofox"
 )
 
 type Service struct {
-	repo     *Repo
-	identity *identity.Repo
-	glofox   *glofox.Client
+	repo        *Repo
+	identity    *identity.Repo
+	glofox      *glofox.Client
+	crmExecutor *crm.Executor
 }
 
-func NewService(repo *Repo, id *identity.Repo, gf *glofox.Client) *Service {
-	return &Service{repo: repo, identity: id, glofox: gf}
+func NewService(repo *Repo, id *identity.Repo, gf *glofox.Client, crmExecutor *crm.Executor) *Service {
+	return &Service{repo: repo, identity: id, glofox: gf, crmExecutor: crmExecutor}
 }
 
 // SyncLeadToGlofoxByID pushes a lead to Glofox CRM as trial/member. Used by
@@ -130,6 +132,111 @@ func (s *Service) SyncLeadToGlofoxByID(ctx context.Context, leadID string, statu
 			"component", "glofox", "lead_id", leadID, "invoice_id", purchase.InvoiceID, "status", purchase.Status)
 		if purchase.InvoiceID != "" {
 			_, _ = s.repo.Pool().Exec(gCtx, `UPDATE leads SET glofox_invoice_id = $2 WHERE id = $1`, leadID, purchase.InvoiceID)
+		}
+	}()
+}
+
+// SyncLeadToMindbodyByID pushes a lead to Mindbody via the generic CRM
+// framework's create_lead operation (crm.Executor + a per-studio
+// crm_connections row), then looks up Mindbody's service pricing to log
+// which plan this payment likely corresponds to. Mirrors
+// SyncLeadToGlofoxByID's shape but goes through the data-driven executor
+// rather than a hardcoded client, since Mindbody is onboarded through the
+// new provider/operation/connection framework (internal/integrations/crm)
+// instead of a dedicated Go client like glofox.Client.
+//
+// Recording the actual sale (Mindbody's CheckoutShoppingCart) is
+// deliberately not done here: that endpoint requires staff-level
+// (login-then-bearer) auth, which crm.Executor.applyAuth doesn't support
+// yet, and no working staff credential has been available to build or
+// verify it against. Only create-lead + pricing lookup are wired.
+func (s *Service) SyncLeadToMindbodyByID(ctx context.Context, leadID string, isTrial bool, amountCents int64) {
+	if s.crmExecutor == nil || leadID == "" {
+		return
+	}
+	var firstName, lastName, name, email, phone, studioIDStr string
+	var dateOfBirth *time.Time
+	err := s.repo.Pool().QueryRow(ctx, `
+		SELECT COALESCE(first_name,''), COALESCE(last_name,''), COALESCE(name,''), COALESCE(email,''), COALESCE(phone,''), studio_id::text, date_of_birth
+		FROM leads WHERE id = $1
+	`, leadID).Scan(&firstName, &lastName, &name, &email, &phone, &studioIDStr, &dateOfBirth)
+	if err != nil {
+		slog.Warn("Mindbody | Lead sync: failed to load lead for sync", "component", "mindbody", "lead_id", leadID, "err", err.Error())
+		return
+	}
+	if firstName == "" && lastName == "" && name != "" {
+		parts := strings.SplitN(name, " ", 2)
+		firstName = parts[0]
+		if len(parts) > 1 {
+			lastName = parts[1]
+		}
+	}
+	if lastName == "" {
+		lastName = "-"
+	}
+	birthDate := "1990-01-01" // neutral default — Mindbody requires one, we don't always collect it
+	if dateOfBirth != nil {
+		birthDate = dateOfBirth.Format("2006-01-02")
+	}
+	studioID, err := uuid.Parse(studioIDStr)
+	if err != nil {
+		return
+	}
+
+	go func() {
+		mCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		result, err := s.crmExecutor.Execute(mCtx, studioID, crm.OpCreateLead, map[string]any{
+			"email":      email,
+			"firstName":  firstName,
+			"lastName":   lastName,
+			"phone":      phone,
+			"birthDate":  birthDate,
+			"street":     "N/A",
+			"city":       "N/A",
+			"state":      "NA",
+			"postalCode": "00000",
+			"referredBy": "Project-X",
+		})
+		if err != nil {
+			// Most studios won't have a Mindbody connection configured —
+			// that's the expected, silent path for all of them, same as
+			// Glofox's own "not configured" no-op above.
+			slog.Debug("Mindbody | Lead sync skipped or failed", "component", "mindbody", "lead_id", leadID, "err", err.Error())
+			return
+		}
+		mindbodyID, _ := result["userId"].(string)
+		slog.Info("Mindbody | Lead synced to Mindbody CRM", "component", "mindbody", "lead_id", leadID, "mindbody_client_id", mindbodyID)
+
+		if amountCents <= 0 {
+			return
+		}
+		planResult, err := s.crmExecutor.Execute(mCtx, studioID, crm.OpFindMembershipPlan, map[string]any{
+			"amountCents": amountCents,
+			"isTrial":     isTrial,
+		})
+		if err != nil {
+			slog.Warn("Mindbody | Plan/pricing lookup failed", "component", "mindbody", "lead_id", leadID, "err", err.Error())
+			return
+		}
+		services, _ := planResult["Services"].([]any)
+		target := float64(amountCents) / 100.0
+		var matchedName string
+		for _, raw := range services {
+			svc, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			if price, _ := svc["Price"].(float64); price == target {
+				matchedName, _ = svc["Name"].(string)
+				break
+			}
+		}
+		if matchedName != "" {
+			slog.Info("Mindbody | Matching service/plan found for this payment", "component", "mindbody", "lead_id", leadID, "amount_cents", amountCents, "matched_service", matchedName)
+		} else {
+			slog.Info("Mindbody | No exact-price service match found — payment logged without a plan match", "component", "mindbody", "lead_id", leadID, "amount_cents", amountCents)
 		}
 	}()
 }
@@ -310,35 +417,35 @@ func (s *Service) GetBySlug(ctx context.Context, slug string) (*Studio, error) {
 }
 
 type UpdateStudioInput struct {
-	Name                 string
-	BrandColor           string
-	LogoURL              string
-	ContactEmail         string
-	ContactPhone         string `json:"contactPhone"`
-	Active               bool
-	ManagedBy1Hero       bool
-	AvailabilitySlots    []AvailabilitySlot  `json:"availabilitySlots"`
-	AvailabilityTimezone string              `json:"availabilityTimezone"`
-	GeminiAPIKey         string              `json:"geminiApiKey"`
-	GroqAPIKey           string              `json:"groqApiKey"`
-	MetaAppID            string              `json:"metaAppId"`
-	MetaAppSecret        string              `json:"metaAppSecret"`
-	GoogleClientID       string              `json:"googleClientId"`
-	GoogleClientSecret   string              `json:"googleClientSecret"`
-	GoogleDeveloperToken string              `json:"googleDeveloperToken"`
-	SocialPlannerEnabled bool                `json:"socialPlannerEnabled"`
-	KnowledgeBase        string              `json:"knowledgeBase"`
-	KnowledgeBaseFiles   []KnowledgeBaseFile `json:"knowledgeBaseFiles"`
-	GreetingMessage      string              `json:"greetingMessage"`
-	TrialAmountSGD       int                 `json:"trialAmountSgd"`
-	BookingHeroImageURL  string              `json:"bookingHeroImageUrl"`
-	BookingHeroVideoURL  string              `json:"bookingHeroVideoUrl"`
-	TrialConfirmationMessage      string     `json:"trialConfirmationMessage"`
-	MembershipConfirmationMessage string     `json:"membershipConfirmationMessage"`
-	TrialGlofoxMembershipID      string      `json:"trialGlofoxMembershipId"`
-	TrialGlofoxPlanCode          string      `json:"trialGlofoxPlanCode"`
-	MembershipGlofoxMembershipID string      `json:"membershipGlofoxMembershipId"`
-	MembershipGlofoxPlanCode     string      `json:"membershipGlofoxPlanCode"`
+	Name                          string
+	BrandColor                    string
+	LogoURL                       string
+	ContactEmail                  string
+	ContactPhone                  string `json:"contactPhone"`
+	Active                        bool
+	ManagedBy1Hero                bool
+	AvailabilitySlots             []AvailabilitySlot  `json:"availabilitySlots"`
+	AvailabilityTimezone          string              `json:"availabilityTimezone"`
+	GeminiAPIKey                  string              `json:"geminiApiKey"`
+	GroqAPIKey                    string              `json:"groqApiKey"`
+	MetaAppID                     string              `json:"metaAppId"`
+	MetaAppSecret                 string              `json:"metaAppSecret"`
+	GoogleClientID                string              `json:"googleClientId"`
+	GoogleClientSecret            string              `json:"googleClientSecret"`
+	GoogleDeveloperToken          string              `json:"googleDeveloperToken"`
+	SocialPlannerEnabled          bool                `json:"socialPlannerEnabled"`
+	KnowledgeBase                 string              `json:"knowledgeBase"`
+	KnowledgeBaseFiles            []KnowledgeBaseFile `json:"knowledgeBaseFiles"`
+	GreetingMessage               string              `json:"greetingMessage"`
+	TrialAmountSGD                int                 `json:"trialAmountSgd"`
+	BookingHeroImageURL           string              `json:"bookingHeroImageUrl"`
+	BookingHeroVideoURL           string              `json:"bookingHeroVideoUrl"`
+	TrialConfirmationMessage      string              `json:"trialConfirmationMessage"`
+	MembershipConfirmationMessage string              `json:"membershipConfirmationMessage"`
+	TrialGlofoxMembershipID       string              `json:"trialGlofoxMembershipId"`
+	TrialGlofoxPlanCode           string              `json:"trialGlofoxPlanCode"`
+	MembershipGlofoxMembershipID  string              `json:"membershipGlofoxMembershipId"`
+	MembershipGlofoxPlanCode      string              `json:"membershipGlofoxPlanCode"`
 }
 
 func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput) (map[string]string, error) {

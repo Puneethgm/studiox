@@ -12,8 +12,18 @@ import (
 	"github.com/stripe/stripe-go/v78/client"
 )
 
-// SyncBillingStatus checks Stripe directly for the studio's subscription status
-// and updates the DB accordingly. This is the fallback for when webhooks don't fire (local dev).
+// SyncBillingStatus godoc
+//
+//	@Summary		Sync billing status from Stripe
+//	@Description	Checks Stripe directly for the studio's subscription status and updates the DB accordingly. This is the fallback for when webhooks don't fire (e.g. local dev). Looks up the Stripe customer by contact email, finds an active/trialing subscription, resolves the plan tier from subscription metadata (falling back to matching checkout session metadata), and updates the studio's stored subscription tier to canceled, past_due-restored, or the resolved tier as appropriate. In the local environment (API_ENV=local) it reports status without writing any DB changes.
+//	@Tags			Billing
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			id	path		string	true	"Studio ID"
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		400	{object}	httpx.ErrorResponse	"global studio or invalid studio ID"
+//	@Failure		404	{object}	httpx.ErrorResponse	"studio not found"
+//	@Router			/api/v1/me/studios/{id}/billing/sync [post]
 func (h *Handler) SyncBillingStatus(w http.ResponseWriter, r *http.Request) {
 	studioID := chi.URLParam(r, "id")
 	if studioID == "global" {

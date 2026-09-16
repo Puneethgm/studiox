@@ -14,6 +14,18 @@ func NewHandler(repo *Repo) *Handler {
 	return &Handler{repo: repo}
 }
 
+// Create godoc
+//
+//	@Summary		Submit a review
+//	@Description	Public endpoint for a visitor to submit a testimonial/review. No auth required.
+//	@Tags			Reviews
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		CreateReviewInput	true	"Review payload"
+//	@Success		201		{object}	Review
+//	@Failure		400		{object}	httpx.ErrorResponse	"validation failed"
+//	@Failure		500		{object}	httpx.ErrorResponse
+//	@Router			/api/v1/reviews [post]
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -36,6 +48,15 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusCreated, review)
 }
 
+// ListAll godoc
+//
+//	@Summary		List all reviews
+//	@Description	Public endpoint returning every submitted review. No auth required.
+//	@Tags			Reviews
+//	@Produce		json
+//	@Success		200	{array}		Review
+//	@Failure		500	{object}	httpx.ErrorResponse
+//	@Router			/api/v1/reviews [get]
 func (h *Handler) ListAll(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

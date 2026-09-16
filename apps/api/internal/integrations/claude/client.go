@@ -38,17 +38,39 @@ type Reply struct {
 }
 
 // GenerateReply sends a prompt to the Claude endpoint and returns text + token counts.
+// A thin wrapper over do() with the original small-chat-reply defaults —
+// unchanged so every existing call site (internal/messaging/ai_worker.go)
+// keeps behaving exactly as before.
 func (c *Client) GenerateReply(ctx context.Context, prompt string) (Reply, error) {
+	return c.do(ctx, "", prompt, 512, defaultModel)
+}
+
+// Analyze sends a system prompt + document to Claude with a token budget
+// sized for structured extraction over a full document (e.g. an uploaded
+// OpenAPI spec), not a short chat reply. model is the caller's choice
+// (typically resolved per-task via internal/integrations/llm) — empty falls
+// back to defaultModel.
+func (c *Client) Analyze(ctx context.Context, systemPrompt, document, model string) (Reply, error) {
+	if model == "" {
+		model = defaultModel
+	}
+	return c.do(ctx, systemPrompt, document, 4096, model)
+}
+
+func (c *Client) do(ctx context.Context, systemPrompt, userPrompt string, maxTokens int, model string) (Reply, error) {
 	if c == nil {
 		return Reply{}, errors.New("claude client not configured")
 	}
 	reqBody := map[string]any{
-		"model":      defaultModel,
-		"max_tokens": 512,
+		"model":      model,
+		"max_tokens": maxTokens,
 		"messages": []map[string]any{{
 			"role":    "user",
-			"content": prompt,
+			"content": userPrompt,
 		}},
+	}
+	if systemPrompt != "" {
+		reqBody["system"] = systemPrompt
 	}
 	b, _ := json.Marshal(reqBody)
 	req, err := http.NewRequestWithContext(ctx, "POST", c.url, strings.NewReader(string(b)))

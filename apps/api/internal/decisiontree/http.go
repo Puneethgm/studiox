@@ -71,6 +71,22 @@ type createTreeReq struct {
 	TargetStatuses []string `json:"targetStatuses"`
 }
 
+// createTree godoc
+//
+//	@Summary		Create a decision tree
+//	@Description	Creates a new decision tree for the studio, with a name and the lead statuses it applies to.
+//	@Tags			Decision Trees
+//	@Security		CookieAuth
+//	@Accept			json
+//	@Produce		json
+//	@Param			studioId	path		string			true	"Studio ID (UUID)"
+//	@Param			body		body		createTreeReq	true	"Tree name and target lead statuses"
+//	@Success		201			{object}	Tree
+//	@Failure		400			{object}	httpx.ErrorResponse	"invalid studioId or malformed body"
+//	@Failure		403			{object}	httpx.ErrorResponse	"no studio bound to this user"
+//	@Failure		422			{object}	httpx.ErrorResponse	"validation failed"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/decision-trees [post]
 func (h *Handler) createTree(w http.ResponseWriter, r *http.Request) {
 	studioID, ok := h.resolveStudioID(w, r)
 	if !ok {
@@ -95,6 +111,19 @@ func (h *Handler) createTree(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusCreated, t)
 }
 
+// listTrees godoc
+//
+//	@Summary		List decision trees
+//	@Description	Returns all decision trees belonging to the studio.
+//	@Tags			Decision Trees
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID (UUID)"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		400			{object}	httpx.ErrorResponse	"invalid studioId"
+//	@Failure		403			{object}	httpx.ErrorResponse	"no studio bound to this user"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/decision-trees [get]
 func (h *Handler) listTrees(w http.ResponseWriter, r *http.Request) {
 	studioID, ok := h.resolveStudioID(w, r)
 	if !ok {
@@ -108,6 +137,21 @@ func (h *Handler) listTrees(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"trees": trees})
 }
 
+// getTree godoc
+//
+//	@Summary		Get a decision tree
+//	@Description	Returns a single decision tree, including its nodes.
+//	@Tags			Decision Trees
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID (UUID)"
+//	@Param			treeId		path		string	true	"Decision tree ID"
+//	@Success		200			{object}	Tree
+//	@Failure		400			{object}	httpx.ErrorResponse	"invalid studioId or treeId"
+//	@Failure		403			{object}	httpx.ErrorResponse	"no studio bound to this user"
+//	@Failure		404			{object}	httpx.ErrorResponse	"tree not found"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/decision-trees/{treeId} [get]
 func (h *Handler) getTree(w http.ResponseWriter, r *http.Request) {
 	studioID, ok := h.resolveStudioID(w, r)
 	if !ok {
@@ -136,6 +180,23 @@ type updateTreeReq struct {
 	TargetStatuses []string `json:"targetStatuses"` // present in payload = update; absent = leave unchanged
 }
 
+// updateTree godoc
+//
+//	@Summary		Update a decision tree
+//	@Description	Partially updates a decision tree's name and/or active flag. If "targetStatuses" is present in the payload its full list is replaced; if absent, target statuses are left unchanged.
+//	@Tags			Decision Trees
+//	@Security		CookieAuth
+//	@Accept			json
+//	@Produce		json
+//	@Param			studioId	path		string					true	"Studio ID (UUID)"
+//	@Param			treeId		path		string					true	"Decision tree ID"
+//	@Param			body		body		map[string]interface{}	true	"Fields to update: name, isActive, targetStatuses"
+//	@Success		200			{object}	Tree
+//	@Failure		400			{object}	httpx.ErrorResponse	"invalid studioId, treeId, or malformed body"
+//	@Failure		403			{object}	httpx.ErrorResponse	"no studio bound to this user"
+//	@Failure		404			{object}	httpx.ErrorResponse	"tree not found"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/decision-trees/{treeId} [patch]
 func (h *Handler) updateTree(w http.ResponseWriter, r *http.Request) {
 	studioID, ok := h.resolveStudioID(w, r)
 	if !ok {
@@ -182,6 +243,21 @@ func (h *Handler) updateTree(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, t)
 }
 
+// deleteTree godoc
+//
+//	@Summary		Delete a decision tree
+//	@Description	Deletes a decision tree and its nodes.
+//	@Tags			Decision Trees
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID (UUID)"
+//	@Param			treeId		path		string	true	"Decision tree ID"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		400			{object}	httpx.ErrorResponse	"invalid studioId or treeId"
+//	@Failure		403			{object}	httpx.ErrorResponse	"no studio bound to this user"
+//	@Failure		404			{object}	httpx.ErrorResponse	"tree not found"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/decision-trees/{treeId} [delete]
 func (h *Handler) deleteTree(w http.ResponseWriter, r *http.Request) {
 	studioID, ok := h.resolveStudioID(w, r)
 	if !ok {
@@ -218,6 +294,24 @@ type createNodeReq struct {
 	PositionY      *float64       `json:"positionY"`
 }
 
+// createNode godoc
+//
+//	@Summary		Create a decision tree node
+//	@Description	Adds a node to a decision tree, optionally nested under a parent node.
+//	@Tags			Decision Trees
+//	@Security		CookieAuth
+//	@Accept			json
+//	@Produce		json
+//	@Param			studioId	path		string			true	"Studio ID (UUID)"
+//	@Param			treeId		path		string			true	"Decision tree ID"
+//	@Param			body		body		createNodeReq	true	"Node payload"
+//	@Success		201			{object}	Node
+//	@Failure		400			{object}	httpx.ErrorResponse	"invalid studioId, treeId, or malformed body"
+//	@Failure		403			{object}	httpx.ErrorResponse	"no studio bound to this user"
+//	@Failure		404			{object}	httpx.ErrorResponse	"tree not found"
+//	@Failure		422			{object}	httpx.ErrorResponse	"validation failed"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/decision-trees/{treeId}/nodes [post]
 func (h *Handler) createNode(w http.ResponseWriter, r *http.Request) {
 	studioID, ok := h.resolveStudioID(w, r)
 	if !ok {
@@ -271,6 +365,24 @@ type updateNodeReq struct {
 	PositionY      *float64       `json:"positionY"`
 }
 
+// updateNode godoc
+//
+//	@Summary		Update a decision tree node
+//	@Description	Partially updates a decision tree node's fields (label, condition, reply template, action, position, sort order, etc.).
+//	@Tags			Decision Trees
+//	@Security		CookieAuth
+//	@Accept			json
+//	@Produce		json
+//	@Param			studioId	path		string			true	"Studio ID (UUID)"
+//	@Param			treeId		path		string			true	"Decision tree ID"
+//	@Param			nodeId		path		string			true	"Node ID"
+//	@Param			body		body		updateNodeReq	true	"Fields to update"
+//	@Success		200			{object}	Node
+//	@Failure		400			{object}	httpx.ErrorResponse	"invalid studioId, treeId, nodeId, or malformed body"
+//	@Failure		403			{object}	httpx.ErrorResponse	"no studio bound to this user"
+//	@Failure		404			{object}	httpx.ErrorResponse	"tree or node not found"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/decision-trees/{treeId}/nodes/{nodeId} [patch]
 func (h *Handler) updateNode(w http.ResponseWriter, r *http.Request) {
 	studioID, ok := h.resolveStudioID(w, r)
 	if !ok {
@@ -321,6 +433,22 @@ type suggestKeywordsReq struct {
 	ReplyTemplate string `json:"replyTemplate"`
 }
 
+// suggestKeywords godoc
+//
+//	@Summary		Suggest keywords for a decision node
+//	@Description	Uses the studio's AI provider to suggest keyword phrases for a node given its label and reply template text.
+//	@Tags			Decision Trees
+//	@Security		CookieAuth
+//	@Accept			json
+//	@Produce		json
+//	@Param			studioId	path		string				true	"Studio ID (UUID)"
+//	@Param			body		body		suggestKeywordsReq	true	"Node label and reply template to derive keywords from"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		400			{object}	httpx.ErrorResponse	"invalid studioId or malformed body"
+//	@Failure		403			{object}	httpx.ErrorResponse	"no studio bound to this user"
+//	@Failure		422			{object}	httpx.ErrorResponse	"label is required"
+//	@Failure		502			{object}	httpx.ErrorResponse	"keyword suggestion failed"
+//	@Router			/api/v1/studios/{studioId}/decision-trees/suggest-keywords [post]
 func (h *Handler) suggestKeywords(w http.ResponseWriter, r *http.Request) {
 	studioID, ok := h.resolveStudioID(w, r)
 	if !ok {
@@ -342,6 +470,22 @@ func (h *Handler) suggestKeywords(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"keywords": keywords})
 }
 
+// deleteNode godoc
+//
+//	@Summary		Delete a decision tree node
+//	@Description	Deletes a single node from a decision tree.
+//	@Tags			Decision Trees
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID (UUID)"
+//	@Param			treeId		path		string	true	"Decision tree ID"
+//	@Param			nodeId		path		string	true	"Node ID"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		400			{object}	httpx.ErrorResponse	"invalid studioId, treeId, or nodeId"
+//	@Failure		403			{object}	httpx.ErrorResponse	"no studio bound to this user"
+//	@Failure		404			{object}	httpx.ErrorResponse	"tree or node not found"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/decision-trees/{treeId}/nodes/{nodeId} [delete]
 func (h *Handler) deleteNode(w http.ResponseWriter, r *http.Request) {
 	studioID, ok := h.resolveStudioID(w, r)
 	if !ok {
@@ -379,6 +523,24 @@ type simulateReq struct {
 	LeadStatus string `json:"leadStatus"` // optional: test as if lead has this status
 }
 
+// simulate godoc
+//
+//	@Summary		Simulate a message against a decision tree
+//	@Description	Walks the decision tree with the given message (and optional lead status override) and returns which node/reply/action would trigger, without affecting any real lead.
+//	@Tags			Decision Trees
+//	@Security		CookieAuth
+//	@Accept			json
+//	@Produce		json
+//	@Param			studioId	path		string		true	"Studio ID (UUID)"
+//	@Param			treeId		path		string		true	"Decision tree ID"
+//	@Param			body		body		simulateReq	true	"Message to test, and optional lead status"
+//	@Success		200			{object}	SimulateResult
+//	@Failure		400			{object}	httpx.ErrorResponse	"invalid studioId, treeId, or malformed body"
+//	@Failure		403			{object}	httpx.ErrorResponse	"no studio bound to this user"
+//	@Failure		404			{object}	httpx.ErrorResponse	"tree not found"
+//	@Failure		422			{object}	httpx.ErrorResponse	"message is required"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/decision-trees/{treeId}/simulate [post]
 func (h *Handler) simulate(w http.ResponseWriter, r *http.Request) {
 	studioID, ok := h.resolveStudioID(w, r)
 	if !ok {
@@ -418,6 +580,18 @@ var importTemplateHeaders = []string{
 
 // importTemplate serves a starter .xlsx a studio owner can fill in and
 // re-upload via importNodes. Not studio-scoped — it's a static file, not data.
+//
+// importTemplate godoc
+//
+//	@Summary		Download the node import template
+//	@Description	Returns a starter .xlsx workbook (with headers and example rows) a studio owner can fill in and re-upload via the node import endpoint. Not studio-data-specific — it's a static file and does not read from the database.
+//	@Tags			Decision Trees
+//	@Security		CookieAuth
+//	@Produce		application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+//	@Param			studioId	path	string	true	"Studio ID (UUID)"
+//	@Success		200			{file}	binary	"decision-tree-template.xlsx"
+//	@Failure		500			{object}	httpx.ErrorResponse	"failed to generate template"
+//	@Router			/api/v1/studios/{studioId}/decision-trees/import-template [get]
 func (h *Handler) importTemplate(w http.ResponseWriter, r *http.Request) {
 	f := excelize.NewFile()
 	defer f.Close()
@@ -457,6 +631,22 @@ func (h *Handler) importTemplate(w http.ResponseWriter, r *http.Request) {
 // exportTree downloads a whole tree's nodes as an .xlsx in the exact same
 // column layout importTemplate/importNodes use, so it can be re-uploaded via
 // "Import" on a different studio's (empty) tree to recreate the same flow.
+//
+// exportTree godoc
+//
+//	@Summary		Export a decision tree
+//	@Description	Downloads a whole tree's nodes as an .xlsx file in the same column layout the import template/import endpoint use, so it can be re-uploaded to recreate the same flow on another studio's tree.
+//	@Tags			Decision Trees
+//	@Security		CookieAuth
+//	@Produce		application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+//	@Param			studioId	path	string	true	"Studio ID (UUID)"
+//	@Param			treeId		path	string	true	"Decision tree ID"
+//	@Success		200			{file}	binary	"<tree name>.xlsx"
+//	@Failure		400			{object}	httpx.ErrorResponse	"invalid studioId or treeId"
+//	@Failure		403			{object}	httpx.ErrorResponse	"no studio bound to this user"
+//	@Failure		404			{object}	httpx.ErrorResponse	"tree not found"
+//	@Failure		500			{object}	httpx.ErrorResponse	"failed to generate export"
+//	@Router			/api/v1/studios/{studioId}/decision-trees/{treeId}/export [get]
 func (h *Handler) exportTree(w http.ResponseWriter, r *http.Request) {
 	studioID, ok := h.resolveStudioID(w, r)
 	if !ok {
@@ -589,6 +779,23 @@ func actionValueToCell(a Action, av ConditionValue) string {
 // importNodes bulk-creates nodes for an existing tree from an uploaded
 // .xlsx/.csv file matching the importTemplate column layout. Rows are
 // resolved parent-first regardless of sheet order (see Service.ImportNodes).
+// importNodes godoc
+//
+//	@Summary		Bulk import decision tree nodes
+//	@Description	Uploads an .xlsx file matching the import template columns and bulk-creates nodes on an existing tree. Rows are resolved parent-first regardless of sheet order. The response always includes a full (possibly empty) list of per-row errors.
+//	@Tags			Decision Trees
+//	@Security		CookieAuth
+//	@Accept			multipart/form-data
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID (UUID)"
+//	@Param			treeId		path		string	true	"Decision tree ID"
+//	@Param			file		formData	file	true	"Excel file (.xlsx) matching the import template column layout"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		400			{object}	httpx.ErrorResponse	"invalid studioId/treeId, missing file, malformed multipart form, or unreadable Excel file"
+//	@Failure		403			{object}	httpx.ErrorResponse	"no studio bound to this user"
+//	@Failure		404			{object}	httpx.ErrorResponse	"tree not found"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/decision-trees/{treeId}/nodes/import [post]
 func (h *Handler) importNodes(w http.ResponseWriter, r *http.Request) {
 	studioID, ok := h.resolveStudioID(w, r)
 	if !ok {

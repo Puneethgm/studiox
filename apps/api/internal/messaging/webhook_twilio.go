@@ -20,6 +20,16 @@ func NewTwilioWebhookHandler(svc *Service, log *slog.Logger) *TwilioWebhookHandl
 	}
 }
 
+// HandleInbound godoc
+//
+//	@Summary		Receive inbound Twilio SMS webhook
+//	@Description	Receives inbound SMS (and any MMS media attachments) from Twilio as an application/x-www-form-urlencoded webhook, then dispatches the message to the messaging service. Responds with an empty TwiML document. Always responds 200 on downstream handling errors so Twilio doesn't retry indefinitely. No session/API-key auth — Twilio webhooks are not currently signature-verified here.
+//	@Tags			Webhooks
+//	@Accept			x-www-form-urlencoded
+//	@Produce		xml
+//	@Success		200	{string}	string	"empty TwiML response"
+//	@Failure		400	{object}	httpx.ErrorResponse	"invalid form data or missing required fields"
+//	@Router			/api/v1/webhooks/twilio [post]
 func (h *TwilioWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		h.log.Warn("failed to parse twilio webhook form", "err", err)

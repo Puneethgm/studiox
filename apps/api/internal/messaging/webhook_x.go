@@ -20,6 +20,18 @@ func NewTwitterWebhookHandler(svc *Service, log *slog.Logger) *TwitterWebhookHan
 	return &TwitterWebhookHandler{svc: svc, log: log}
 }
 
+// HandleInbound godoc
+//
+//	@Summary		X (Twitter) webhook CRC challenge and inbound DM events
+//	@Description	Handles both halves of X's Account Activity webhook. On GET, responds to X's CRC challenge by HMAC-SHA256-signing the `crc_token` query param with the connected channel's consumer secret and returning the base64-encoded `response_token`. On POST, decodes the `direct_message_events` payload and dispatches each inbound (non-self) message_create event to the messaging service, always returning 200. No session/API-key auth — GET is authenticated implicitly by the shared consumer secret used to answer the CRC challenge; POST performs no signature verification.
+//	@Tags			Webhooks
+//	@Accept			json
+//	@Produce		json
+//	@Param			crc_token	query		string	false	"X CRC challenge token (GET only)"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		400			{object}	httpx.ErrorResponse	"missing crc_token or no active X channel found (GET only)"
+//	@Router			/api/v1/webhooks/x [get]
+//	@Router			/api/v1/webhooks/x [post]
 func (h *TwitterWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		crcToken := r.URL.Query().Get("crc_token")

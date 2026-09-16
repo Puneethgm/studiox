@@ -33,6 +33,18 @@ func NewTelegramWebhookHandler(svc *Service, log *slog.Logger) *TelegramWebhookH
 	return &TelegramWebhookHandler{svc: svc, log: log}
 }
 
+// HandleInbound godoc
+//
+//	@Summary		Receive inbound Telegram bot webhook events
+//	@Description	Receives inbound Telegram bot updates for a specific bot. Looks up the channel by {botID}, then verifies the request's `X-Telegram-Bot-Api-Secret-Token` header against the per-channel secret registered via setWebhook before dispatching the update to the messaging service. Always responds 200 for unknown bots or malformed payloads so Telegram doesn't retry. No session/API-key auth — authenticated via the per-bot secret token header instead.
+//	@Tags			Webhooks
+//	@Accept			json
+//	@Produce		json
+//	@Param			botID	path		string	true	"Telegram bot ID"
+//	@Success		200		{object}	map[string]interface{}
+//	@Failure		400		{string}	string	"missing bot id or bad request body"
+//	@Failure		403		{string}	string	"invalid secret token"
+//	@Router			/api/v1/webhooks/telegram/{botID} [post]
 func (h *TelegramWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Request) {
 	log := logger.FromCtx(r.Context(), h.log).With("webhook", "telegram")
 

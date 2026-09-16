@@ -40,8 +40,20 @@ func NewMetaWebhookHandler(svc *Service, verifyToken, appSecret string, log *slo
 	}
 }
 
-// GET handler: Meta sends ?hub.mode=subscribe&hub.verify_token=X&hub.challenge=Y
-// We echo `hub.challenge` if `hub.verify_token` matches our configured token.
+// Verify godoc
+//
+//	@Summary		Meta webhook verification handshake
+//	@Description	Handles Meta's webhook subscription handshake: echoes back `hub.challenge` if `hub.mode=subscribe` and `hub.verify_token` matches our configured token, otherwise responds 403. Authenticated via the verify_token query param rather than a signature — no session/API-key auth.
+//	@Tags			Webhooks
+//	@Produce		plain
+//	@Param			hub.mode			query		string	true	"Must be 'subscribe'"
+//	@Param			hub.verify_token	query		string	true	"Must match the configured verify token"
+//	@Param			hub.challenge		query		string	true	"Echoed back on success"
+//	@Success		200					{string}	string	"hub.challenge value"
+//	@Failure		403					{string}	string	"mode or token mismatch"
+//	@Router			/api/v1/webhooks/meta/whatsapp [get]
+//	@Router			/api/v1/webhooks/meta/messenger [get]
+//	@Router			/api/v1/webhooks/meta/instagram [get]
 func (h *MetaWebhookHandler) Verify(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	mode := q.Get("hub.mode")
@@ -58,7 +70,15 @@ func (h *MetaWebhookHandler) Verify(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(challenge))
 }
 
-// HandleDataDeletion processes Meta's data deletion requests (GDPR/privacy compliance)
+// HandleDataDeletion godoc
+//
+//	@Summary		Meta data deletion callback
+//	@Description	Handles Meta's GDPR/CCPA data-deletion request callback: decodes the `signed_request` payload and acknowledges it with a confirmation URL. Signature verification of the signed request is not yet implemented. No session/API-key auth — this is an unauthenticated callback URL configured in the Meta App dashboard.
+//	@Tags			Webhooks
+//	@Accept			json
+//	@Produce		json
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/api/v1/webhooks/meta/data-deletion [post]
 func (h *MetaWebhookHandler) HandleDataDeletion(w http.ResponseWriter, r *http.Request) {
 	log := logger.FromCtx(r.Context(), h.log).With("webhook", "meta_data_deletion")
 
@@ -97,9 +117,19 @@ func (h *MetaWebhookHandler) HandleDataDeletion(w http.ResponseWriter, r *http.R
 	})
 }
 
-// POST handler: receive WhatsApp events. Verify HMAC, parse, dispatch to service.
-// We always 200 to Meta even on internal errors so they don't retry forever
-// (errors are logged on our side).
+// Receive godoc
+//
+//	@Summary		Receive inbound Meta webhook events
+//	@Description	Receives inbound WhatsApp/Messenger/Instagram events from Meta. Verifies the `X-Hub-Signature-256` HMAC (using the studio's custom app secret if one is configured, falling back to the app-level secret) before dispatching messages/statuses to the messaging service. Always responds 200 (even on internal errors) so Meta doesn't retry indefinitely; errors are logged server-side. No session/API-key auth — authenticated via the HMAC signature header instead.
+//	@Tags			Webhooks
+//	@Accept			json
+//	@Produce		json
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		400	{string}	string	"bad request body"
+//	@Failure		401	{string}	string	"invalid signature"
+//	@Router			/api/v1/webhooks/meta/whatsapp [post]
+//	@Router			/api/v1/webhooks/meta/messenger [post]
+//	@Router			/api/v1/webhooks/meta/instagram [post]
 func (h *MetaWebhookHandler) Receive(w http.ResponseWriter, r *http.Request) {
 	log := logger.FromCtx(r.Context(), h.log).With("webhook", "meta_messaging")
 

@@ -34,6 +34,17 @@ func waWebInternalKey() string {
 // Admin routes — proxy to wa-web Node service
 // ============================================================
 
+// waWebQR godoc
+//
+//	@Summary		Get WhatsApp Web QR login code
+//	@Description	Proxies to the wa-web Node service to fetch the current QR code (or pairing status) for a studio's WhatsApp Web session.
+//	@Tags			Messaging - WhatsApp Web
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/channels/whatsapp-web/qr [get]
 func (h *Handler) waWebQR(w http.ResponseWriter, r *http.Request) {
 	studioID, ok := studioIDFromPath(w, r)
 	if !ok {
@@ -43,6 +54,17 @@ func (h *Handler) waWebQR(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("%s/sessions/%s/qr", waWebServiceURL(), studioID))
 }
 
+// waWebDisconnect godoc
+//
+//	@Summary		Disconnect a studio's WhatsApp Web session
+//	@Description	Marks the studio's WhatsApp Web channel as disconnected in our database, then proxies the disconnect request to the wa-web Node service to tear down the underlying Baileys session.
+//	@Tags			Messaging - WhatsApp Web
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/channels/whatsapp-web/disconnect [post]
 func (h *Handler) waWebDisconnect(w http.ResponseWriter, r *http.Request) {
 	studioID, ok := studioIDFromPath(w, r)
 	if !ok {
@@ -53,6 +75,17 @@ func (h *Handler) waWebDisconnect(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("%s/sessions/%s/disconnect", waWebServiceURL(), studioID))
 }
 
+// waWebStatus godoc
+//
+//	@Summary		Get a studio's WhatsApp Web session status
+//	@Description	Proxies to the wa-web Node service to fetch the current connection status (e.g. connected, disconnected, awaiting scan) of a studio's WhatsApp Web session.
+//	@Tags			Messaging - WhatsApp Web
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/channels/whatsapp-web/status [get]
 func (h *Handler) waWebStatus(w http.ResponseWriter, r *http.Request) {
 	studioID, ok := studioIDFromPath(w, r)
 	if !ok {
@@ -62,9 +95,17 @@ func (h *Handler) waWebStatus(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("%s/sessions/%s/status", waWebServiceURL(), studioID))
 }
 
-// waWebBackfillTrigger kicks off a one-time chat-history import for a
-// QR-linked session. Fire-and-forget from the admin's perspective — progress
-// is polled via waWebBackfillStatus.
+// waWebBackfillTrigger godoc
+//
+//	@Summary		Trigger WhatsApp Web chat history backfill
+//	@Description	Kicks off a one-time chat-history import for a QR-linked WhatsApp Web session: marks the backfill status "running" in our database, then proxies the trigger request to the wa-web Node service. Fire-and-forget from the admin's perspective — progress is polled via waWebBackfillStatus.
+//	@Tags			Messaging - WhatsApp Web
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/channels/whatsapp-web/backfill [post]
 func (h *Handler) waWebBackfillTrigger(w http.ResponseWriter, r *http.Request) {
 	studioID, ok := studioIDFromPath(w, r)
 	if !ok {
@@ -78,6 +119,17 @@ func (h *Handler) waWebBackfillTrigger(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("%s/sessions/%s/backfill", waWebServiceURL(), studioID))
 }
 
+// waWebBackfillStatus godoc
+//
+//	@Summary		Get WhatsApp Web chat history backfill status
+//	@Description	Returns the current backfill status (e.g. running, done, failed, none) and imported message count for a studio's WhatsApp Web session, read from our database.
+//	@Tags			Messaging - WhatsApp Web
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/channels/whatsapp-web/backfill [get]
 func (h *Handler) waWebBackfillStatus(w http.ResponseWriter, r *http.Request) {
 	studioID, ok := studioIDFromPath(w, r)
 	if !ok {
@@ -118,6 +170,17 @@ func proxyToWAWeb(w http.ResponseWriter, ctx context.Context, method, url string
 // Internal routes — called by wa-web Node service
 // ============================================================
 
+// waWebConnected godoc
+//
+//	@Summary		Report a WhatsApp Web session connected
+//	@Description	Called by the wa-web Node service when a studio's Baileys session successfully pairs. Upserts the WhatsApp Web channel with the paired phone number. Internal-only (Docker-network only, not exposed via nginx) — no session/API-key auth, authenticated via the shared `x-internal-key` header instead.
+//	@Tags			Messaging - Internal
+//	@Accept			json
+//	@Produce		json
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		400	{object}	httpx.ErrorResponse	"invalid body or studioId"
+//	@Failure		500	{object}	httpx.ErrorResponse
+//	@Router			/internal/wa-web/connected [post]
 func (h *Handler) waWebConnected(w http.ResponseWriter, r *http.Request) {
 	var p struct {
 		StudioID string `json:"studioId"`
@@ -139,6 +202,16 @@ func (h *Handler) waWebConnected(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// waWebDisconnected godoc
+//
+//	@Summary		Report a WhatsApp Web session disconnected
+//	@Description	Called by the wa-web Node service when a studio's Baileys session disconnects, so we can mark the WhatsApp Web channel as disconnected in our database. Internal-only (Docker-network only, not exposed via nginx) — no session/API-key auth, authenticated via the shared `x-internal-key` header instead.
+//	@Tags			Messaging - Internal
+//	@Accept			json
+//	@Produce		json
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		400	{object}	httpx.ErrorResponse	"invalid body or studioId"
+//	@Router			/internal/wa-web/disconnected [post]
 func (h *Handler) waWebDisconnected(w http.ResponseWriter, r *http.Request) {
 	var p struct {
 		StudioID string `json:"studioId"`
@@ -156,6 +229,17 @@ func (h *Handler) waWebDisconnected(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// waWebInbound godoc
+//
+//	@Summary		Receive an inbound WhatsApp Web message
+//	@Description	Called by the wa-web Node service for each inbound (or self-sent) message observed on a studio's Baileys session, so it can be recorded and processed by the messaging service. Internal-only (Docker-network only, not exposed via nginx) — no session/API-key auth, authenticated via the shared `x-internal-key` header instead.
+//	@Tags			Messaging - Internal
+//	@Accept			json
+//	@Produce		json
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		400	{object}	httpx.ErrorResponse	"invalid body or studioId"
+//	@Failure		500	{object}	httpx.ErrorResponse
+//	@Router			/internal/wa-web/inbound [post]
 func (h *Handler) waWebInbound(w http.ResponseWriter, r *http.Request) {
 	var p struct {
 		StudioID  string `json:"studioId"`
@@ -186,10 +270,17 @@ func (h *Handler) waWebInbound(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// waWebContactName records a display name for a WhatsApp contact that has no
-// message history to carry it in via waWebBackfill (a saved contact with no
-// chat yet, or a chat whose only messages were skipped as non-text) — see
-// sessions.js's messaging-history.set handler and Service.HandleWAWebContactName.
+// waWebContactName godoc
+//
+//	@Summary		Record a WhatsApp Web contact's display name
+//	@Description	Called by the wa-web Node service to record a display name for a WhatsApp contact that has no message history to carry it in via waWebBackfill (a saved contact with no chat yet, or a chat whose only messages were skipped as non-text) — see sessions.js's messaging-history.set handler and Service.HandleWAWebContactName. Internal-only (Docker-network only, not exposed via nginx) — no session/API-key auth, authenticated via the shared `x-internal-key` header instead.
+//	@Tags			Messaging - Internal
+//	@Accept			json
+//	@Produce		json
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		400	{object}	httpx.ErrorResponse	"invalid body or studioId"
+//	@Failure		500	{object}	httpx.ErrorResponse
+//	@Router			/internal/wa-web/contact-name [post]
 func (h *Handler) waWebContactName(w http.ResponseWriter, r *http.Request) {
 	var p struct {
 		StudioID    string `json:"studioId"`
@@ -212,9 +303,17 @@ func (h *Handler) waWebContactName(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// waWebBackfill receives a batch of historical messages for one chat, imported
-// by the wa-web Node service after a QR-linked session connects. Called
-// repeatedly, once per chat (or in chat-sized pages), not all-at-once.
+// waWebBackfill godoc
+//
+//	@Summary		Import a batch of WhatsApp Web backfill messages
+//	@Description	Receives a batch of historical messages for one chat, imported by the wa-web Node service after a QR-linked session connects. Called repeatedly, once per chat (or in chat-sized pages), not all-at-once; media/empty messages are skipped (text-only for now). Internal-only (Docker-network only, not exposed via nginx) — no session/API-key auth, authenticated via the shared `x-internal-key` header instead.
+//	@Tags			Messaging - Internal
+//	@Accept			json
+//	@Produce		json
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		400	{object}	httpx.ErrorResponse	"invalid body or studioId"
+//	@Failure		500	{object}	httpx.ErrorResponse
+//	@Router			/internal/wa-web/backfill [post]
 func (h *Handler) waWebBackfill(w http.ResponseWriter, r *http.Request) {
 	var p struct {
 		StudioID    string `json:"studioId"`
@@ -257,12 +356,17 @@ func (h *Handler) waWebBackfill(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true, "imported": imported})
 }
 
-// waWebBackfillRunning lets the Node service mark history import as started
-// the moment a session connects — Baileys pushes chat history automatically
-// post-pairing, so import can begin without an admin ever clicking the
-// "Import chat history" button. Without this, the admin UI would sit on
-// "none" (no button pressed yet) while an import is silently already
-// underway in the background.
+// waWebBackfillRunning godoc
+//
+//	@Summary		Mark WhatsApp Web backfill as running
+//	@Description	Lets the wa-web Node service mark history import as started the moment a session connects — Baileys pushes chat history automatically post-pairing, so import can begin without an admin ever clicking the "Import chat history" button. Without this, the admin UI would sit on "none" (no button pressed yet) while an import is silently already underway in the background. Internal-only (Docker-network only, not exposed via nginx) — no session/API-key auth, authenticated via the shared `x-internal-key` header instead.
+//	@Tags			Messaging - Internal
+//	@Accept			json
+//	@Produce		json
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		400	{object}	httpx.ErrorResponse	"invalid body or studioId"
+//	@Failure		500	{object}	httpx.ErrorResponse
+//	@Router			/internal/wa-web/backfill-running [post]
 func (h *Handler) waWebBackfillRunning(w http.ResponseWriter, r *http.Request) {
 	var p struct {
 		StudioID string `json:"studioId"`
@@ -283,8 +387,17 @@ func (h *Handler) waWebBackfillRunning(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// waWebBackfillDone lets the Node service report that it has finished walking
-// every chat, so the admin UI can stop showing "running".
+// waWebBackfillDone godoc
+//
+//	@Summary		Mark WhatsApp Web backfill as finished
+//	@Description	Lets the wa-web Node service report that it has finished walking every chat, so the admin UI can stop showing "running". On genuine success (not failed), publishes an EvtWAWebBackfillDone event to kick off post-backfill AI summarization of imported conversations. Internal-only (Docker-network only, not exposed via nginx) — no session/API-key auth, authenticated via the shared `x-internal-key` header instead.
+//	@Tags			Messaging - Internal
+//	@Accept			json
+//	@Produce		json
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		400	{object}	httpx.ErrorResponse	"invalid body or studioId"
+//	@Failure		500	{object}	httpx.ErrorResponse
+//	@Router			/internal/wa-web/backfill-done [post]
 func (h *Handler) waWebBackfillDone(w http.ResponseWriter, r *http.Request) {
 	var p struct {
 		StudioID     string `json:"studioId"`
@@ -325,6 +438,15 @@ func (h *Handler) waWebBackfillDone(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// waWebStudios godoc
+//
+//	@Summary		List studios with a WhatsApp Web channel
+//	@Description	Feeds the wa-web Node service's startup rehydration: returns the studio IDs that have a WhatsApp Web channel, so their Baileys sessions can be reconnected on boot (the real auth state lives on a Docker volume, not in this response). Internal-only (Docker-network only, not exposed via nginx) — no session/API-key auth, authenticated via the shared `x-internal-key` header instead.
+//	@Tags			Messaging - Internal
+//	@Produce		json
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		500	{object}	httpx.ErrorResponse
+//	@Router			/internal/wa-web/studios [get]
 func (h *Handler) waWebStudios(w http.ResponseWriter, r *http.Request) {
 	ids, err := h.svc.repo.ListWAWebStudioIDs(r.Context())
 	if err != nil {

@@ -12,6 +12,19 @@ import (
 	"github.com/stripe/stripe-go/v78/client"
 )
 
+// CreatePortalSession godoc
+//
+//	@Summary		Create a Stripe billing portal session
+//	@Description	Looks up the studio's Stripe customer by contact email against the platform's Stripe account and creates a Stripe billing-portal session so the studio can manage their existing subscription (update payment method, view invoices, cancel, etc.). Returns the portal session URL to redirect the studio to.
+//	@Tags			Billing
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			id	path		string	true	"Studio ID"
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		400	{object}	httpx.ErrorResponse	"global studio, invalid studio ID, or no active subscription to manage"
+//	@Failure		404	{object}	httpx.ErrorResponse	"studio not found"
+//	@Failure		500	{object}	httpx.ErrorResponse	"platform Stripe account not configured, or Stripe error creating the session"
+//	@Router			/api/v1/me/studios/{id}/billing/portal [post]
 func (h *Handler) CreatePortalSession(w http.ResponseWriter, r *http.Request) {
 	studioID := chi.URLParam(r, "id")
 	if studioID == "global" {
