@@ -253,15 +253,15 @@ func llmWaterfall(ctx context.Context, httpClient *http.Client, studiosRepo *stu
 	}
 	if apiKey != "" {
 		t0 := time.Now()
-		gemReply, gerr := generateGeminiReply(ctx, httpClient, log, apiKey, prompt)
+		gemReply, gerr := gemini.New().GenerateReply(ctx, apiKey, prompt)
 		latMs := int(time.Since(t0).Milliseconds())
 		errMsg := ""
 		if gerr != nil {
 			errMsg = gerr.Error()
 		}
-		msgRepo.LogLLMUsage(ctx, studioID, "gemini", "gemini-2.5-flash", latMs, gerr == nil && gemReply.text != "", errMsg, gemReply.tokensIn, gemReply.tokensOut)
-		if gerr == nil && gemReply.text != "" {
-			return gemReply.text, "gemini"
+		msgRepo.LogLLMUsage(ctx, studioID, "gemini", "gemini-2.5-flash", latMs, gerr == nil && gemReply.Text != "", errMsg, gemReply.TokensIn, gemReply.TokensOut)
+		if gerr == nil && gemReply.Text != "" {
+			return gemReply.Text, "gemini"
 		}
 	}
 
@@ -1559,115 +1559,10 @@ func (w *AIWorker) scheduleTrialFollowup(ctx context.Context, studioID uuid.UUID
 // instead of duplicating the HTTP/retry logic).
 func (w *AIWorker) generateGeminiReply(ctx context.Context, apiKey string, prompt string) (geminiReply, error) {
 	r, err := w.geminiClient.GenerateReply(ctx, apiKey, prompt)
-	return generateGeminiReply(ctx, w.httpClient, w.log, apiKey, prompt)
-}
-
-// generateGeminiReply is a free function (not a *AIWorker method) so it can
-// also be called from llmWaterfall on behalf of other workers (e.g.
-// StyleWorker) that don't have an AIWorker instance to hang off of.
-func generateGeminiReply(ctx context.Context, httpClient *http.Client, log *slog.Logger, apiKey string, prompt string) (geminiReply, error) {
-	models := []string{"gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite"}
-	for _, model := range models {
-		r, err := tryGeminiModel(ctx, httpClient, log, apiKey, model, prompt)
-		if err == nil {
-			return r, nil
-		}
-		log.Warn("gemini model failed, trying next", "model", model, "err", err)
-	}
-	return geminiReply{}, fmt.Errorf("all Gemini models failed")
-}
-
-func tryGeminiModel(ctx context.Context, httpClient *http.Client, log *slog.Logger, apiKey string, model string, prompt string) (geminiReply, error) {
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, apiKey)
-
-	reqBody, err := json.Marshal(map[string]any{
-		"contents": []map[string]any{
-			{
-				"parts": []map[string]any{
-					{"text": prompt},
-				},
-			},
-		},
-	})
 	if err != nil {
 		return geminiReply{}, err
 	}
 	return geminiReply{text: r.Text, tokensIn: r.TokensIn, tokensOut: r.TokensOut}, nil
-
-	var lastErr error
-	backoff := 500 * time.Millisecond
-
-	for attempt := 1; attempt <= 3; attempt++ {
-		reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, url, bytes.NewBuffer(reqBody))
-		if err != nil {
-			cancel()
-			return geminiReply{}, err
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := httpClient.Do(req)
-		if err != nil {
-			cancel()
-			lastErr = err
-			log.Warn("gemini api attempt failed", "attempt", attempt, "err", err)
-			time.Sleep(backoff)
-			backoff *= 2
-			continue
-		}
-
-		respBytes, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		cancel()
-
-		if err != nil {
-			lastErr = err
-			time.Sleep(backoff)
-			backoff *= 2
-			continue
-		}
-
-		if resp.StatusCode >= 400 {
-			lastErr = fmt.Errorf("gemini API error (HTTP %d): %s", resp.StatusCode, string(respBytes))
-			if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
-				log.Warn("gemini api transient response error", "attempt", attempt, "status", resp.StatusCode)
-				time.Sleep(backoff)
-				backoff *= 2
-				continue
-			}
-			return geminiReply{}, lastErr
-		}
-
-		var res struct {
-			Candidates []struct {
-				Content struct {
-					Parts []struct {
-						Text string `json:"text"`
-					} `json:"parts"`
-				} `json:"content"`
-			} `json:"candidates"`
-			UsageMetadata struct {
-				PromptTokenCount     int `json:"promptTokenCount"`
-				CandidatesTokenCount int `json:"candidatesTokenCount"`
-			} `json:"usageMetadata"`
-		}
-
-		if err := json.Unmarshal(respBytes, &res); err != nil {
-			return geminiReply{}, err
-		}
-
-		if len(res.Candidates) == 0 || len(res.Candidates[0].Content.Parts) == 0 {
-			return geminiReply{}, fmt.Errorf("empty response from Gemini API")
-		}
-
-		return geminiReply{
-			text:      res.Candidates[0].Content.Parts[0].Text,
-			tokensIn:  res.UsageMetadata.PromptTokenCount,
-			tokensOut: res.UsageMetadata.CandidatesTokenCount,
-		}, nil
-	}
-
-	return geminiReply{}, fmt.Errorf("gemini API call failed after 3 attempts: %w", lastErr)
 }
 
 // stripMotivationQuestions removes sentences asking about fitness goals/motivations

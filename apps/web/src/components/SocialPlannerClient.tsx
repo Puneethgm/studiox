@@ -42,6 +42,18 @@ interface SocialPost {
   deliveryMode?: 'unknown' | 'mock' | 'live';
   externalResourceName?: string;
   scheduledTime: string;
+  // Instagram never allows a clickable link in a feed/Reel caption, and
+  // Meta's API doesn't support adding a Story Link Sticker programmatically
+  // either — only a human tapping "add link" in the Instagram app can. Set
+  // once staff confirm they've manually posted the campaign link as a Story.
+  storyLinkPostedAt?: string;
+}
+
+// Uploaded media can be a video now (Instagram Reels support), not just an
+// image — an <img> tag silently fails to render a .mp4/.mov URL, so the
+// preview needs to pick the right element based on the file extension.
+function isVideoUrl(url: string): boolean {
+  return /\.(mp4|mov)(\?|$)/i.test(url);
 }
 
 export default function SocialPlannerClient({ studioId, studio, isSuperAdmin }: { studioId: string; studio?: any; isSuperAdmin?: boolean }) {
@@ -121,7 +133,7 @@ export default function SocialPlannerClient({ studioId, studio, isSuperAdmin }: 
     if (!silent) setLoadingPosts(true);
     const targetStudioId = studioId === 'global' ? 'global' : studioId;
     try {
-      const res = await api<{ id: string; campaign: string; campaignShareUrl?: string; platform: string; copy: string; mediaUrl?: string; status: string; deliveryMode?: 'unknown' | 'mock' | 'live'; externalResourceName?: string; scheduledAt: string }[]>(`/api/v1/studios/${targetStudioId}/social-posts`);
+      const res = await api<{ id: string; campaign: string; campaignShareUrl?: string; platform: string; copy: string; mediaUrl?: string; status: string; deliveryMode?: 'unknown' | 'mock' | 'live'; externalResourceName?: string; scheduledAt: string; storyLinkPostedAt?: string }[]>(`/api/v1/studios/${targetStudioId}/social-posts`);
       const mapped = res.map((p) => ({
         id: p.id,
         campaignName: p.campaign || 'General Promo',
@@ -133,6 +145,7 @@ export default function SocialPlannerClient({ studioId, studio, isSuperAdmin }: 
         deliveryMode: p.deliveryMode,
         externalResourceName: p.externalResourceName,
         scheduledTime: p.scheduledAt,
+        storyLinkPostedAt: p.storyLinkPostedAt,
       }));
       setPosts(mapped);
     } catch (err) {
@@ -199,11 +212,17 @@ export default function SocialPlannerClient({ studioId, studio, isSuperAdmin }: 
           ]);
           setCampaigns(campaignsRes.campaigns || []);
           const hasMeta = !!(studioRes.metaAppId && studioRes.hasMetaAppSecret);
+          // Instagram is checked against the real connected channel, not hasMeta —
+          // that field is the classic Facebook-Login Meta App Settings, but Instagram
+          // here is connected via Meta's newer standalone Instagram API (Instagram
+          // Login), which creates an instagram_meta channel and never touches
+          // metaAppId/metaAppSecret at all.
+          const hasInstagram = channelsRes.channels?.some(c => c.kind === 'instagram_meta' && (!c.status || c.status === 'active'));
           const hasGoogleAds = channelsRes.channels?.some(c => c.kind === 'google_ads' && (!c.status || c.status === 'active'));
           const hasX = channelsRes.channels?.some(c => c.kind === 'x_dm');
           setConnectedChannels({
             facebook: hasMeta,
-            instagram: hasMeta,
+            instagram: !!hasInstagram,
             googleAds: !!hasGoogleAds,
             x: !!hasX,
           });
@@ -413,6 +432,25 @@ export default function SocialPlannerClient({ studioId, studio, isSuperAdmin }: 
       setNotificationMessage('Failed to delete scheduled campaign post. Please verify connection and try again.');
       setShowNotificationModal(true);
       setDeletingPostId(null);
+    }
+  };
+
+  const [markingStoryPostedId, setMarkingStoryPostedId] = useState<string | null>(null);
+  const handleMarkStoryLinkPosted = async (postId: string) => {
+    setMarkingStoryPostedId(postId);
+    try {
+      const targetStudioId = studioId === 'global' ? 'global' : studioId;
+      await api(`/api/v1/studios/${targetStudioId}/social-posts/${postId}/story-link-posted`, {
+        method: 'POST'
+      });
+      fetchPosts();
+    } catch (err) {
+      console.error('Failed to mark story link as posted:', err);
+      setNotificationStatus('error');
+      setNotificationMessage('Failed to save. Please try again.');
+      setShowNotificationModal(true);
+    } finally {
+      setMarkingStoryPostedId(null);
     }
   };
 
@@ -760,18 +798,28 @@ export default function SocialPlannerClient({ studioId, studio, isSuperAdmin }: 
                       
                       {mediaUrl && (
                         <div className="mt-2 rounded-2xl border border-zinc-100/50 bg-white/5 p-2 max-w-full overflow-hidden flex justify-center shadow-inner">
-                          <img
-                            src={mediaUrl}
-                            alt="Media Preview"
-                            className="max-h-48 rounded-xl object-contain"
-                            onError={(e) => {
-                              console.error('Image failed to load:', mediaUrl);
-                              (e.target as HTMLElement).style.display = 'none';
-                            }}
-                            onLoad={() => {
-                              console.log('Image loaded successfully:', mediaUrl);
-                            }}
-                          />
+                          {isVideoUrl(mediaUrl) ? (
+                            <video
+                              src={mediaUrl}
+                              controls
+                              muted
+                              className="max-h-48 rounded-xl"
+                              onError={() => console.error('Video failed to load:', mediaUrl)}
+                            />
+                          ) : (
+                            <img
+                              src={mediaUrl}
+                              alt="Media Preview"
+                              className="max-h-48 rounded-xl object-contain"
+                              onError={(e) => {
+                                console.error('Image failed to load:', mediaUrl);
+                                (e.target as HTMLElement).style.display = 'none';
+                              }}
+                              onLoad={() => {
+                                console.log('Image loaded successfully:', mediaUrl);
+                              }}
+                            />
+                          )}
                         </div>
                       )}
                     </div>
@@ -914,6 +962,40 @@ export default function SocialPlannerClient({ studioId, studio, isSuperAdmin }: 
                               >
                                 Registration Link
                               </a>
+                            </div>
+                          )}
+                          {post.campaignShareUrl && post.platform === 'Instagram' && post.status === 'published' && !post.storyLinkPostedAt && (
+                            <div className="mt-3 rounded-xl border border-amber-300/50 bg-amber-50/40 dark:border-amber-800/40 dark:bg-amber-950/20 p-3">
+                              <p className="text-[10px] font-black uppercase tracking-wider text-amber-700 dark:text-amber-400">
+                                Action needed: post link as a Story
+                              </p>
+                              <p className="mt-1 text-[10px] font-semibold text-amber-700/90 dark:text-amber-400/80 leading-relaxed">
+                                Instagram never allows a clickable link in a feed caption, and only the Instagram app itself can attach a link sticker to a Story — that step can&apos;t be automated. Open Instagram, share this image/video as a Story, add the Link Sticker, and paste:
+                              </p>
+                              <div className="mt-2 flex items-center gap-2 rounded-lg bg-white/60 dark:bg-black/20 px-2 py-1.5">
+                                <span className="text-[10px] font-bold text-zinc-700 dark:text-zinc-300 truncate flex-1">{post.campaignShareUrl}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => navigator.clipboard?.writeText(post.campaignShareUrl || '')}
+                                  className="text-[10px] font-black text-amber-700 dark:text-amber-400 hover:underline shrink-0"
+                                >
+                                  Copy
+                                </button>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleMarkStoryLinkPosted(post.id)}
+                                disabled={markingStoryPostedId === post.id}
+                                className="mt-2 text-[10px] font-black text-emerald-700 dark:text-emerald-400 hover:underline disabled:opacity-50"
+                              >
+                                {markingStoryPostedId === post.id ? 'Saving...' : "✓ I've posted this as a Story"}
+                              </button>
+                            </div>
+                          )}
+                          {post.storyLinkPostedAt && (
+                            <div className="mt-3 flex items-center gap-2 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              Story link posted {new Date(post.storyLinkPostedAt).toLocaleDateString()}
                             </div>
                           )}
                           <div className="mt-3 flex items-center gap-4 text-[10px] text-zinc-455 font-bold border-t border-zinc-100/50 dark:border-white/5 pt-2">
@@ -1065,18 +1147,28 @@ export default function SocialPlannerClient({ studioId, studio, isSuperAdmin }: 
                     
                     {mediaUrl && (
                       <div className="mt-2 rounded-2xl border border-zinc-100/50 bg-white/5 p-2 max-w-full overflow-hidden flex justify-center shadow-inner">
-                        <img
-                          src={mediaUrl}
-                          alt="Media Preview"
-                          className="max-h-48 rounded-xl object-contain"
-                          onError={(e) => {
-                            console.error('Image failed to load:', mediaUrl);
-                            (e.target as HTMLElement).style.display = 'none';
-                          }}
-                          onLoad={() => {
-                            console.log('Image loaded successfully:', mediaUrl);
-                          }}
-                        />
+                        {isVideoUrl(mediaUrl) ? (
+                          <video
+                            src={mediaUrl}
+                            controls
+                            muted
+                            className="max-h-48 rounded-xl"
+                            onError={() => console.error('Video failed to load:', mediaUrl)}
+                          />
+                        ) : (
+                          <img
+                            src={mediaUrl}
+                            alt="Media Preview"
+                            className="max-h-48 rounded-xl object-contain"
+                            onError={(e) => {
+                              console.error('Image failed to load:', mediaUrl);
+                              (e.target as HTMLElement).style.display = 'none';
+                            }}
+                            onLoad={() => {
+                              console.log('Image loaded successfully:', mediaUrl);
+                            }}
+                          />
+                        )}
                       </div>
                     )}
                   </div>

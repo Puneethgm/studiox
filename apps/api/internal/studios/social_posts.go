@@ -28,6 +28,12 @@ type SocialPost struct {
 	ScheduledAt          time.Time `json:"scheduledAt"`
 	CreatedAt            time.Time `json:"createdAt"`
 	UpdatedAt            time.Time `json:"updatedAt"`
+	// StoryLinkPostedAt tracks a manual step: Instagram never allows a
+	// clickable link on a feed/Reel post, and Meta's API doesn't support
+	// adding a Story Link Sticker programmatically either — only a human
+	// tapping "add link" inside the Instagram app can attach one. Set once
+	// staff confirm they've posted this campaign's link as a Story.
+	StoryLinkPostedAt *time.Time `json:"storyLinkPostedAt,omitempty"`
 }
 
 func (r *Repo) ListSocialPosts(ctx context.Context, studioID string) ([]SocialPost, error) {
@@ -35,7 +41,7 @@ func (r *Repo) ListSocialPosts(ctx context.Context, studioID string) ([]SocialPo
 	var err error
 	if studioID == "global" {
 		rows, err = r.pool.Query(ctx, `
-			SELECT id, studio_id, campaign, COALESCE(campaign_share_url, ''), platform, copy, media_url, status, delivery_mode, external_resource_name, scheduled_at, created_at, updated_at
+			SELECT id, studio_id, campaign, COALESCE(campaign_share_url, ''), platform, copy, media_url, status, delivery_mode, external_resource_name, scheduled_at, created_at, updated_at, story_link_posted_at
 			FROM social_posts
 			ORDER BY CASE WHEN status = 'published' THEN 1 ELSE 0 END, scheduled_at DESC
 		`)
@@ -45,7 +51,7 @@ func (r *Repo) ListSocialPosts(ctx context.Context, studioID string) ([]SocialPo
 			return nil, fmt.Errorf("invalid studio ID: %w", errParse)
 		}
 		rows, err = r.pool.Query(ctx, `
-			SELECT id, studio_id, campaign, COALESCE(campaign_share_url, ''), platform, copy, media_url, status, delivery_mode, external_resource_name, scheduled_at, created_at, updated_at
+			SELECT id, studio_id, campaign, COALESCE(campaign_share_url, ''), platform, copy, media_url, status, delivery_mode, external_resource_name, scheduled_at, created_at, updated_at, story_link_posted_at
 			FROM social_posts
 			WHERE studio_id = $1
 			ORDER BY CASE WHEN status = 'published' THEN 1 ELSE 0 END, scheduled_at DESC
@@ -59,12 +65,29 @@ func (r *Repo) ListSocialPosts(ctx context.Context, studioID string) ([]SocialPo
 	posts := make([]SocialPost, 0)
 	for rows.Next() {
 		var p SocialPost
-		if err := rows.Scan(&p.ID, &p.StudioID, &p.Campaign, &p.CampaignShareUrl, &p.Platform, &p.Copy, &p.MediaURL, &p.Status, &p.DeliveryMode, &p.ExternalResourceName, &p.ScheduledAt, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.StudioID, &p.Campaign, &p.CampaignShareUrl, &p.Platform, &p.Copy, &p.MediaURL, &p.Status, &p.DeliveryMode, &p.ExternalResourceName, &p.ScheduledAt, &p.CreatedAt, &p.UpdatedAt, &p.StoryLinkPostedAt); err != nil {
 			return nil, fmt.Errorf("scan social post: %w", err)
 		}
 		posts = append(posts, p)
 	}
 	return posts, rows.Err()
+}
+
+// MarkStoryLinkPosted records that staff have manually posted this
+// campaign's link as an Instagram Story with a Link Sticker — the one
+// genuinely clickable path Meta allows, but only via a human tapping "add
+// link" in the app, never through the Content Publishing API.
+func (r *Repo) MarkStoryLinkPosted(ctx context.Context, studioID string, id uuid.UUID) error {
+	if studioID == "global" {
+		_, err := r.pool.Exec(ctx, `UPDATE social_posts SET story_link_posted_at = now() WHERE id = $1`, id)
+		return err
+	}
+	sID, errParse := uuid.Parse(studioID)
+	if errParse != nil {
+		return fmt.Errorf("invalid studio ID: %w", errParse)
+	}
+	_, err := r.pool.Exec(ctx, `UPDATE social_posts SET story_link_posted_at = now() WHERE id = $1 AND studio_id = $2`, id, sID)
+	return err
 }
 
 func (r *Repo) CreateSocialPost(ctx context.Context, p *SocialPost) error {
@@ -132,6 +155,10 @@ func (s *Service) UpdateSocialPost(ctx context.Context, studioID string, id uuid
 
 func (s *Service) DeleteSocialPost(ctx context.Context, studioID string, id uuid.UUID) error {
 	return s.repo.DeleteSocialPost(ctx, studioID, id)
+}
+
+func (s *Service) MarkStoryLinkPosted(ctx context.Context, studioID string, id uuid.UUID) error {
+	return s.repo.MarkStoryLinkPosted(ctx, studioID, id)
 }
 
 // ListSocialPosts godoc
@@ -291,6 +318,36 @@ func (h *Handler) DeleteSocialPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.DeleteSocialPost(r.Context(), studioID, postID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// MarkStoryLinkPosted godoc
+//
+//	@Summary		Mark a post's Instagram Story link as posted
+//	@Description	Instagram never allows a clickable link in a feed/Reel caption, and Meta's Content Publishing API does not support adding a Story Link Sticker programmatically — only a human tapping "add link" inside the Instagram app can attach one. This marks that staff have manually posted the campaign link as a Story with the link sticker for this post.
+//	@Tags			Social Planner
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Param			postId		path		string	true	"Social post ID"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		400			{object}	httpx.ErrorResponse	"invalid post ID"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/social-posts/{postId}/story-link-posted [post]
+func (h *Handler) MarkStoryLinkPosted(w http.ResponseWriter, r *http.Request) {
+	studioID := chi.URLParam(r, "studioId")
+	postIDStr := chi.URLParam(r, "postId")
+	postID, err := uuid.Parse(postIDStr)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_id", "invalid post ID")
+		return
+	}
+
+	if err := h.svc.MarkStoryLinkPosted(r.Context(), studioID, postID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}

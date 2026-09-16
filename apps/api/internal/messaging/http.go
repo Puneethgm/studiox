@@ -1755,7 +1755,11 @@ func (h *Handler) updateJob(w http.ResponseWriter, r *http.Request) {
 
 func callGeminiAPI(ctx context.Context, apiKey string, prompt string) (string, error) {
 	// Try models in order; fall back when a model is unavailable or overloaded.
-	models := []string{"gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite"}
+	// "-latest" aliases, not pinned version numbers — Google retires dated
+	// model IDs outright (gemini-2.0-flash and gemini-2.0-flash-lite both now
+	// 404 "no longer available"), the alias keeps resolving to whatever the
+	// current equivalent model is instead of going stale the same way again.
+	models := []string{"gemini-flash-latest", "gemini-flash-lite-latest"}
 
 	reqBody, err := json.Marshal(map[string]any{
 		"contents": []map[string]any{

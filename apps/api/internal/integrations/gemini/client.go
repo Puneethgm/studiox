@@ -20,8 +20,13 @@ import (
 
 // Models is the fallback order tried by GenerateReply — a newer model can
 // be rate-limited or briefly unavailable, so the next one in line is tried
-// automatically rather than failing the whole request.
-var Models = []string{"gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite"}
+// automatically rather than failing the whole request. Uses Google's
+// "-latest" alias names rather than pinned version numbers (e.g.
+// "gemini-2.0-flash") deliberately — Google retires dated model IDs
+// outright (confirmed live: gemini-2.0-flash and gemini-2.0-flash-lite both
+// now 404 with "no longer available"), while the alias keeps resolving to
+// whatever the current equivalent model is without this list going stale.
+var Models = []string{"gemini-flash-latest", "gemini-flash-lite-latest"}
 
 // Reply bundles the text response with token usage from the Gemini API.
 type Reply struct {

@@ -18,6 +18,7 @@ import (
 // MetaMessenger talks to Meta's Messenger/Instagram Graph API.
 type MetaMessenger struct {
 	apiVersion string
+	baseURL    string
 	httpClient *http.Client
 }
 
@@ -27,8 +28,23 @@ func NewMetaMessenger(apiVersion string) *MetaMessenger {
 	}
 	return &MetaMessenger{
 		apiVersion: apiVersion,
+		baseURL:    MetaGraphBaseURL,
 		httpClient: &http.Client{Timeout: 20 * time.Second},
 	}
+}
+
+// NewMetaInstagram is for Instagram accounts connected via Meta's newer
+// standalone Instagram API ("Instagram business login", not the classic
+// Facebook-Login-based integration). That flow issues IGAA-prefixed access
+// tokens that graph.facebook.com rejects outright ("Cannot parse access
+// token") — they're only valid against graph.instagram.com. Everything else
+// about sending (payload shape, quick-reply parsing, media upload) is
+// identical to Messenger, so this just points the same MetaMessenger logic
+// at a different host rather than duplicating it.
+func NewMetaInstagram(apiVersion string) *MetaMessenger {
+	m := NewMetaMessenger(apiVersion)
+	m.baseURL = "https://graph.instagram.com"
+	return m
 }
 
 // uploadMediaToMeta reads a local file from disk, uploads it to Meta's
@@ -86,7 +102,7 @@ func (m *MetaMessenger) uploadMediaToMeta(ctx context.Context, accessToken, page
 	}
 	mw.Close()
 
-	uploadURL := fmt.Sprintf("%s/%s/%s/message_attachments", MetaGraphBaseURL, m.apiVersion, pageID)
+	uploadURL := fmt.Sprintf("%s/%s/%s/message_attachments", m.baseURL, m.apiVersion, pageID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, &buf)
 	if err != nil {
 		return "", err
@@ -131,7 +147,7 @@ func (m *MetaMessenger) SendText(ctx context.Context, accessToken, channelExtern
 		return nil, ErrInvalidCredentials
 	}
 
-	url := fmt.Sprintf("%s/%s/%s/messages", MetaGraphBaseURL, m.apiVersion, channelExternalID)
+	url := fmt.Sprintf("%s/%s/%s/messages", m.baseURL, m.apiVersion, channelExternalID)
 
 	var lastResult *SendResult
 	if len(attachments) > 0 && attachments[0].URL != "" {

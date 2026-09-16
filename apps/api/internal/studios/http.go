@@ -67,39 +67,6 @@ type studioResponse struct {
 	TrialGlofoxPlanCode           string              `json:"trialGlofoxPlanCode"`
 	MembershipGlofoxMembershipID  string              `json:"membershipGlofoxMembershipId"`
 	MembershipGlofoxPlanCode      string              `json:"membershipGlofoxPlanCode"`
-	CampaignCount                 int                 `json:"campaignCount,omitempty"`
-	LeadCount                     int                 `json:"leadCount,omitempty"`
-	ID                            uuid.UUID           `json:"id"`
-	Slug                          string              `json:"slug"`
-	Name                          string              `json:"name"`
-	BrandColor                    string              `json:"brandColor"`
-	LogoURL                       string              `json:"logoUrl"`
-	ContactEmail                  string              `json:"contactEmail"`
-	ContactPhone                  string              `json:"contactPhone"`
-	Active                        bool                `json:"active"`
-	ManagedBy1Hero                bool                `json:"managedBy1Hero"`
-	CreatedAt                     time.Time           `json:"createdAt"`
-	UpdatedAt                     time.Time           `json:"updatedAt"`
-	AvailabilitySlots             []AvailabilitySlot  `json:"availabilitySlots"`
-	AvailabilityTimezone          string              `json:"availabilityTimezone"`
-	MetaAppID                     string              `json:"metaAppId"`
-	GoogleClientID                string              `json:"googleClientId"`
-	StripeAccountID               string              `json:"stripeAccountId"`
-	StripePublishableKey          string              `json:"stripePublishableKey"`
-	SubscriptionTier              string              `json:"subscriptionTier"`
-	SocialPlannerEnabled          bool                `json:"socialPlannerEnabled"`
-	KnowledgeBase                 string              `json:"knowledgeBase"`
-	KnowledgeBaseFiles            []KnowledgeBaseFile `json:"knowledgeBaseFiles"`
-	GreetingMessage               string              `json:"greetingMessage"`
-	TrialAmountSGD                int                 `json:"trialAmountSgd"`
-	BookingHeroImageURL           string              `json:"bookingHeroImageUrl"`
-	BookingHeroVideoURL           string              `json:"bookingHeroVideoUrl"`
-	TrialConfirmationMessage      string              `json:"trialConfirmationMessage"`
-	MembershipConfirmationMessage string              `json:"membershipConfirmationMessage"`
-	TrialGlofoxMembershipID       string              `json:"trialGlofoxMembershipId"`
-	TrialGlofoxPlanCode           string              `json:"trialGlofoxPlanCode"`
-	MembershipGlofoxMembershipID  string              `json:"membershipGlofoxMembershipId"`
-	MembershipGlofoxPlanCode      string              `json:"membershipGlofoxPlanCode"`
 	CommunicationStyleProfile     string              `json:"communicationStyleProfile"`
 	StyleProfileUpdatedAt         *time.Time          `json:"styleProfileUpdatedAt,omitempty"`
 	CampaignCount                 int                 `json:"campaignCount,omitempty"`
@@ -141,46 +108,8 @@ func toStudioResponse(s *Studio) studioResponse {
 		TrialAmountSGD:                s.TrialAmountSGD,
 		BookingHeroImageURL:           s.BookingHeroImageURL,
 		BookingHeroVideoURL:           s.BookingHeroVideoURL,
-		ID:                            s.ID,
-		Slug:                          s.Slug,
-		Name:                          s.Name,
-		BrandColor:                    s.BrandColor,
-		LogoURL:                       s.LogoURL,
-		ContactEmail:                  s.ContactEmail,
-		ContactPhone:                  s.ContactPhone,
-		Active:                        s.Active,
-		ManagedBy1Hero:                s.ManagedBy1Hero,
-		CreatedAt:                     s.CreatedAt,
-		UpdatedAt:                     s.UpdatedAt,
-		AvailabilitySlots:             s.AvailabilitySlots,
-		AvailabilityTimezone:          s.AvailabilityTimezone,
-		MetaAppID:                     s.MetaAppID,
-		GoogleClientID:                s.GoogleClientID,
-		StripeAccountID:               s.StripeAccountID,
-		StripePublishableKey:          s.StripePublishableKey,
-		SubscriptionTier:              s.SubscriptionTier,
-		SocialPlannerEnabled:          s.SocialPlannerEnabled,
-		KnowledgeBase:                 s.KnowledgeBase,
-		KnowledgeBaseFiles:            s.KnowledgeBaseFiles,
-		GreetingMessage:               s.GreetingMessage,
-		TrialAmountSGD:                s.TrialAmountSGD,
-		BookingHeroImageURL:           s.BookingHeroImageURL,
-		BookingHeroVideoURL:           s.BookingHeroVideoURL,
 		TrialConfirmationMessage:      s.TrialConfirmationMessage,
 		MembershipConfirmationMessage: s.MembershipConfirmationMessage,
-		TrialGlofoxMembershipID:       s.TrialGlofoxMembershipID,
-		TrialGlofoxPlanCode:           s.TrialGlofoxPlanCode,
-		MembershipGlofoxMembershipID:  s.MembershipGlofoxMembershipID,
-		MembershipGlofoxPlanCode:      s.MembershipGlofoxPlanCode,
-		CampaignCount:                 s.CampaignCount,
-		LeadCount:                     s.LeadCount,
-		HasGeminiApiKey:               s.GeminiAPIKey != "",
-		HasGroqApiKey:                 s.GroqAPIKey != "",
-		HasMetaAppSecret:              s.MetaAppSecret != "",
-		HasGoogleClientSecret:         s.GoogleClientSecret != "",
-		HasGoogleDeveloperToken:       s.GoogleDeveloperToken != "",
-		HasStripeSecretKey:            s.StripeSecretKey != "",
-		HasStripeWebhookSecret:        s.StripeWebhookSecret != "",
 		TrialGlofoxMembershipID:       s.TrialGlofoxMembershipID,
 		TrialGlofoxPlanCode:           s.TrialGlofoxPlanCode,
 		MembershipGlofoxMembershipID:  s.MembershipGlofoxMembershipID,
@@ -432,37 +361,6 @@ type updateReq struct {
 	TrialGlofoxPlanCode           *string              `json:"trialGlofoxPlanCode"`
 	MembershipGlofoxMembershipID  *string              `json:"membershipGlofoxMembershipId"`
 	MembershipGlofoxPlanCode      *string              `json:"membershipGlofoxPlanCode"`
-	Name                          *string              `json:"name"`
-	BrandColor                    *string              `json:"brandColor"`
-	LogoURL                       *string              `json:"logoUrl"`
-	ContactEmail                  *string              `json:"contactEmail"`
-	ContactPhone                  *string              `json:"contactPhone"`
-	Active                        *bool                `json:"active"`
-	ManagedBy1Hero                *bool                `json:"managedBy1Hero"`
-	AvailabilitySlots             *[]AvailabilitySlot  `json:"availabilitySlots"`
-	AvailabilityTimezone          *string              `json:"availabilityTimezone"`
-	GeminiAPIKey                  *string              `json:"geminiApiKey"`
-	GroqAPIKey                    *string              `json:"groqApiKey"`
-	MetaAppID                     *string              `json:"metaAppId"`
-	MetaAppSecret                 *string              `json:"metaAppSecret"`
-	GoogleClientID                *string              `json:"googleClientId"`
-	GoogleClientSecret            *string              `json:"googleClientSecret"`
-	GoogleDeveloperToken          *string              `json:"googleDeveloperToken"`
-	SocialPlannerEnabled          *bool                `json:"socialPlannerEnabled"`
-	KnowledgeBase                 *string              `json:"knowledgeBase"`
-	KnowledgeBaseFiles            *[]KnowledgeBaseFile `json:"knowledgeBaseFiles"`
-	GreetingMessage               *string              `json:"greetingMessage"`
-	TrialAmountSGD                *int                 `json:"trialAmountSgd"`
-	TrialAmountINR                *int                 `json:"trialAmountInr"`
-	TrialAmountUSD                *int                 `json:"trialAmountUsd"`
-	BookingHeroImageURL           *string              `json:"bookingHeroImageUrl"`
-	BookingHeroVideoURL           *string              `json:"bookingHeroVideoUrl"`
-	TrialConfirmationMessage      *string              `json:"trialConfirmationMessage"`
-	MembershipConfirmationMessage *string              `json:"membershipConfirmationMessage"`
-	TrialGlofoxMembershipID       *string              `json:"trialGlofoxMembershipId"`
-	TrialGlofoxPlanCode           *string              `json:"trialGlofoxPlanCode"`
-	MembershipGlofoxMembershipID  *string              `json:"membershipGlofoxMembershipId"`
-	MembershipGlofoxPlanCode      *string              `json:"membershipGlofoxPlanCode"`
 }
 
 // update godoc
@@ -523,35 +421,8 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		TrialAmountSGD:                existing.TrialAmountSGD,
 		BookingHeroImageURL:           existing.BookingHeroImageURL,
 		BookingHeroVideoURL:           existing.BookingHeroVideoURL,
-		Name:                          existing.Name,
-		BrandColor:                    existing.BrandColor,
-		LogoURL:                       existing.LogoURL,
-		ContactEmail:                  existing.ContactEmail,
-		ContactPhone:                  existing.ContactPhone,
-		Active:                        existing.Active,
-		ManagedBy1Hero:                existing.ManagedBy1Hero,
-		AvailabilitySlots:             existing.AvailabilitySlots,
-		AvailabilityTimezone:          existing.AvailabilityTimezone,
-		GeminiAPIKey:                  existing.GeminiAPIKey,
-		GroqAPIKey:                    existing.GroqAPIKey,
-		MetaAppID:                     existing.MetaAppID,
-		MetaAppSecret:                 existing.MetaAppSecret,
-		GoogleClientID:                existing.GoogleClientID,
-		GoogleClientSecret:            existing.GoogleClientSecret,
-		GoogleDeveloperToken:          existing.GoogleDeveloperToken,
-		SocialPlannerEnabled:          existing.SocialPlannerEnabled,
-		KnowledgeBase:                 existing.KnowledgeBase,
-		KnowledgeBaseFiles:            existing.KnowledgeBaseFiles,
-		GreetingMessage:               existing.GreetingMessage,
-		TrialAmountSGD:                existing.TrialAmountSGD,
-		BookingHeroImageURL:           existing.BookingHeroImageURL,
-		BookingHeroVideoURL:           existing.BookingHeroVideoURL,
 		TrialConfirmationMessage:      existing.TrialConfirmationMessage,
 		MembershipConfirmationMessage: existing.MembershipConfirmationMessage,
-		TrialGlofoxMembershipID:       existing.TrialGlofoxMembershipID,
-		TrialGlofoxPlanCode:           existing.TrialGlofoxPlanCode,
-		MembershipGlofoxMembershipID:  existing.MembershipGlofoxMembershipID,
-		MembershipGlofoxPlanCode:      existing.MembershipGlofoxPlanCode,
 		TrialGlofoxMembershipID:       existing.TrialGlofoxMembershipID,
 		TrialGlofoxPlanCode:           existing.TrialGlofoxPlanCode,
 		MembershipGlofoxMembershipID:  existing.MembershipGlofoxMembershipID,
@@ -788,35 +659,8 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 		TrialAmountSGD:                existing.TrialAmountSGD,
 		BookingHeroImageURL:           existing.BookingHeroImageURL,
 		BookingHeroVideoURL:           existing.BookingHeroVideoURL,
-		Name:                          existing.Name,
-		BrandColor:                    existing.BrandColor,
-		LogoURL:                       existing.LogoURL,
-		ContactEmail:                  existing.ContactEmail,
-		ContactPhone:                  existing.ContactPhone,
-		Active:                        existing.Active,
-		ManagedBy1Hero:                existing.ManagedBy1Hero,
-		AvailabilitySlots:             existing.AvailabilitySlots,
-		AvailabilityTimezone:          existing.AvailabilityTimezone,
-		GeminiAPIKey:                  existing.GeminiAPIKey,
-		GroqAPIKey:                    existing.GroqAPIKey,
-		MetaAppID:                     existing.MetaAppID,
-		MetaAppSecret:                 existing.MetaAppSecret,
-		GoogleClientID:                existing.GoogleClientID,
-		GoogleClientSecret:            existing.GoogleClientSecret,
-		GoogleDeveloperToken:          existing.GoogleDeveloperToken,
-		SocialPlannerEnabled:          existing.SocialPlannerEnabled,
-		KnowledgeBase:                 existing.KnowledgeBase,
-		KnowledgeBaseFiles:            existing.KnowledgeBaseFiles,
-		GreetingMessage:               existing.GreetingMessage,
-		TrialAmountSGD:                existing.TrialAmountSGD,
-		BookingHeroImageURL:           existing.BookingHeroImageURL,
-		BookingHeroVideoURL:           existing.BookingHeroVideoURL,
 		TrialConfirmationMessage:      existing.TrialConfirmationMessage,
 		MembershipConfirmationMessage: existing.MembershipConfirmationMessage,
-		TrialGlofoxMembershipID:       existing.TrialGlofoxMembershipID,
-		TrialGlofoxPlanCode:           existing.TrialGlofoxPlanCode,
-		MembershipGlofoxMembershipID:  existing.MembershipGlofoxMembershipID,
-		MembershipGlofoxPlanCode:      existing.MembershipGlofoxPlanCode,
 		TrialGlofoxMembershipID:       existing.TrialGlofoxMembershipID,
 		TrialGlofoxPlanCode:           existing.TrialGlofoxPlanCode,
 		MembershipGlofoxMembershipID:  existing.MembershipGlofoxMembershipID,
@@ -1048,25 +892,21 @@ func (h *Handler) uploadLogo(w http.ResponseWriter, r *http.Request) {
 
 // UploadSocialPostImage godoc
 //
-//	@Summary		Upload a social post image
-//	@Description	Uploads an image (max 10MB, JPEG/PNG/WebP/GIF) for use in the studio's social planner. Stores the image in S3 when configured, otherwise falls back to local disk storage, and returns the resulting media URL. Studio-admins may only upload for their own studio; super-admins are forbidden from this endpoint.
+//	@Summary		Upload a social post image or video
+//	@Description	Uploads an image or video (max 100MB — JPEG/PNG/WebP/GIF, or MP4/MOV for Instagram Reels) for use in the studio's social planner. Stores the file in S3 when configured, otherwise falls back to local disk storage, and returns the resulting media URL. Studio-admins may only upload for their own studio; super-admins may upload on behalf of any studio.
 //	@Tags			Social Planner
 //	@Accept			multipart/form-data
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			studioId	path		string	true	"Studio ID"
-//	@Param			file		formData	file	true	"Social post image file (JPEG, PNG, WebP, or GIF)"
+//	@Param			file		formData	file	true	"Social post image or video file (JPEG, PNG, WebP, GIF, MP4, or MOV)"
 //	@Success		200			{object}	map[string]interface{}
 //	@Failure		400			{object}	httpx.ErrorResponse	"invalid studio id, missing file, or unsupported file type"
-//	@Failure		403			{object}	httpx.ErrorResponse	"super admins cannot upload social post images, or cannot access this studio"
+//	@Failure		403			{object}	httpx.ErrorResponse	"cannot access this studio"
 //	@Failure		500			{object}	httpx.ErrorResponse	"upload failed"
 //	@Router			/api/v1/studios/{studioId}/social-posts/upload-image [post]
 func (h *Handler) UploadSocialPostImage(w http.ResponseWriter, r *http.Request) {
 	c := identity.MustClaims(r.Context())
-	if c.IsSuper() {
-		httpx.WriteError(w, http.StatusForbidden, "forbidden", "super admins cannot upload social post images")
-		return
-	}
 
 	studioIDStr := chi.URLParam(r, "studioId")
 	studioID, err := uuid.Parse(studioIDStr)
@@ -1075,14 +915,20 @@ func (h *Handler) UploadSocialPostImage(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Verify the user owns the studio
-	if c.StudioID == nil || c.StudioID.String() != studioID.String() {
+	// Super-admins may upload on behalf of any studio; studio-admins may only
+	// upload for their own — same pattern as ListSocialPosts/UpdateSocialPost/
+	// DeleteSocialPost's "global" studioId handling in this same file, and the
+	// platform's general RequireActiveStudio convention (super-admins act on
+	// the studio in the URL, studio-admins must match their own).
+	if !c.IsSuper() && (c.StudioID == nil || c.StudioID.String() != studioID.String()) {
 		httpx.WriteError(w, http.StatusForbidden, "forbidden", "cannot access this studio")
 		return
 	}
 
-	// 10MB max for social media images
-	if err := r.ParseMultipartForm(10 << 20); err != nil {
+	// 100MB max — covers both images and the video/reel uploads
+	// SocialWorker.sendToInstagram supports (.mp4/.mov), which run far larger
+	// than the old 10MB image-only cap.
+	if err := r.ParseMultipartForm(100 << 20); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "failed to parse multipart form")
 		return
 	}
@@ -1094,16 +940,19 @@ func (h *Handler) UploadSocialPostImage(w http.ResponseWriter, r *http.Request) 
 	}
 	defer file.Close()
 
-	// Validate image type
+	// Validate media type — images plus the two video formats
+	// SocialWorker.sendToInstagram recognizes for Reels (.mp4/.mov).
 	contentType := header.Header.Get("Content-Type")
 	validTypes := map[string]bool{
-		"image/jpeg": true,
-		"image/png":  true,
-		"image/webp": true,
-		"image/gif":  true,
+		"image/jpeg":      true,
+		"image/png":       true,
+		"image/webp":      true,
+		"image/gif":       true,
+		"video/mp4":       true,
+		"video/quicktime": true, // .mov
 	}
 	if !validTypes[contentType] {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid_type", "only JPEG, PNG, WebP, GIF allowed")
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_type", "only JPEG, PNG, WebP, GIF, MP4, or MOV allowed")
 		return
 	}
 
@@ -1118,10 +967,12 @@ func (h *Handler) UploadSocialPostImage(w http.ResponseWriter, r *http.Request) 
 	ext := filepath.Ext(header.Filename)
 	if ext == "" {
 		ext = map[string]string{
-			"image/jpeg": ".jpg",
-			"image/png":  ".png",
-			"image/webp": ".webp",
-			"image/gif":  ".gif",
+			"image/jpeg":      ".jpg",
+			"image/png":       ".png",
+			"image/webp":      ".webp",
+			"image/gif":       ".gif",
+			"video/mp4":       ".mp4",
+			"video/quicktime": ".mov",
 		}[contentType]
 	}
 

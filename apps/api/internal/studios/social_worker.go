@@ -64,7 +64,7 @@ func (w *SocialWorker) tick(ctx context.Context) {
 	// Find scheduled posts that are due
 	now := time.Now().UTC()
 	rows, err := w.pool.Query(ctx, `
-		SELECT id, studio_id, campaign, platform, copy, media_url, status, delivery_mode, external_resource_name, scheduled_at
+		SELECT id, studio_id, campaign, COALESCE(campaign_share_url, ''), platform, copy, media_url, status, delivery_mode, external_resource_name, scheduled_at
 		FROM social_posts
 		WHERE status = 'scheduled' AND scheduled_at <= $1
 	`, now)
@@ -77,7 +77,7 @@ func (w *SocialWorker) tick(ctx context.Context) {
 	var posts []SocialPost
 	for rows.Next() {
 		var p SocialPost
-		err := rows.Scan(&p.ID, &p.StudioID, &p.Campaign, &p.Platform, &p.Copy, &p.MediaURL, &p.Status, &p.DeliveryMode, &p.ExternalResourceName, &p.ScheduledAt)
+		err := rows.Scan(&p.ID, &p.StudioID, &p.Campaign, &p.CampaignShareUrl, &p.Platform, &p.Copy, &p.MediaURL, &p.Status, &p.DeliveryMode, &p.ExternalResourceName, &p.ScheduledAt)
 		if err != nil {
 			w.log.Error("scan social post", "err", err)
 			continue
@@ -103,27 +103,32 @@ func (w *SocialWorker) publishPost(ctx context.Context, post SocialPost) {
 		return
 	}
 
-	// Fetch connected Meta Channel Account for Page ID & Access Token
+	channelKind := "messenger_meta" // Facebook Page
+	if post.Platform == "Instagram" {
+		channelKind = "instagram_meta"
+	}
+
+	// Fetch connected Meta Channel Account for Page/IG User ID & Access Token
 	var pageID string
 	var accessTokenEnc string
 	err := w.pool.QueryRow(ctx, `
 		SELECT external_id, access_token_enc
 		FROM channel_accounts
-		WHERE studio_id = $1 AND kind = 'messenger_meta' AND status = 'active'
+		WHERE studio_id = $1 AND kind = $2 AND status = 'active'
 		LIMIT 1
-	`, post.StudioID).Scan(&pageID, &accessTokenEnc)
+	`, post.StudioID, channelKind).Scan(&pageID, &accessTokenEnc)
 
 	isLocalDev := os.Getenv("API_ENV") == "local"
 
 	if err != nil {
 		if isLocalDev {
 			// In local dev, allow publishing using fallback credentials/mocking
-			w.log.Info("[MOCK PUBLISH] No active Meta integration found. Simulating publish in local dev.", "post_id", post.ID)
+			w.log.Info("[MOCK PUBLISH] No active Meta integration found. Simulating publish in local dev.", "post_id", post.ID, "platform", post.Platform)
 			w.markStatus(ctx, post.ID, "published", "mock", "")
 			return
 		}
 
-		w.log.Error("no active Facebook page connected for studio", "studio_id", post.StudioID, "post_id", post.ID)
+		w.log.Error("no active channel connected for studio", "studio_id", post.StudioID, "post_id", post.ID, "platform", post.Platform, "channel_kind", channelKind)
 		w.markStatus(ctx, post.ID, "failed", "live", "")
 		return
 	}
@@ -148,7 +153,8 @@ func (w *SocialWorker) publishPost(ctx context.Context, post SocialPost) {
 
 	// If in local dev with test/empty token, mock the API call
 	if isLocalDev && (accessToken == "" || accessToken == "test") {
-		w.log.Info("[MOCK PUBLISH] Successfully published scheduled post to Facebook Page feed",
+		w.log.Info("[MOCK PUBLISH] Successfully published scheduled post",
+			"platform", post.Platform,
 			"page_id", pageID,
 			"copy", post.Copy,
 			"media", post.MediaURL,
@@ -158,11 +164,16 @@ func (w *SocialWorker) publishPost(ctx context.Context, post SocialPost) {
 	}
 
 	// Make Meta Graph API Request
-	err = w.sendToFacebook(ctx, pageID, accessToken, post.Copy, post.MediaURL)
+	caption := withRegistrationLink(post.Copy, post.CampaignShareUrl)
+	if post.Platform == "Instagram" {
+		err = w.sendToInstagram(ctx, pageID, accessToken, caption, post.MediaURL)
+	} else {
+		err = w.sendToFacebook(ctx, pageID, accessToken, caption, post.MediaURL)
+	}
 	if err != nil {
-		w.log.Error("failed to publish to facebook", "err", err, "post_id", post.ID)
+		w.log.Error("failed to publish", "platform", post.Platform, "err", err, "post_id", post.ID)
 		if isLocalDev {
-			w.log.Warn("[LOCAL DEV FALLBACK] Meta API call failed (likely due to missing App permissions like pages_manage_posts). Marking post as published for local UI testing.", "post_id", post.ID)
+			w.log.Warn("[LOCAL DEV FALLBACK] Meta API call failed (likely due to missing App permissions). Marking post as published for local UI testing.", "post_id", post.ID)
 			w.markStatus(ctx, post.ID, "published", "mock", "")
 			return
 		}
@@ -170,8 +181,28 @@ func (w *SocialWorker) publishPost(ctx context.Context, post SocialPost) {
 		return
 	}
 
-	w.log.Info("successfully published to facebook page", "post_id", post.ID)
+	w.log.Info("successfully published", "platform", post.Platform, "post_id", post.ID)
 	w.markStatus(ctx, post.ID, "published", "live", "")
+}
+
+// withRegistrationLink appends a campaign's share URL to a post's caption
+// before publishing. The link is stored on social_posts and shown as a
+// "Registration Link" chip in our own admin dashboard, but was never
+// actually making it into the text sent to Facebook/Instagram — this is
+// what puts it in front of the actual audience instead of just us.
+// Neither platform renders a bare URL in a caption as a clickable link
+// (Instagram never does; Facebook only auto-links it for the built-in "link"
+// field on a link-type post, not a photo/video caption) — so the URL is
+// plain text here, same as the "link in bio" convention every business
+// account already works around, not a broken link.
+func withRegistrationLink(copy, shareURL string) string {
+	if shareURL == "" {
+		return copy
+	}
+	if strings.TrimSpace(copy) == "" {
+		return shareURL
+	}
+	return copy + "\n\n" + shareURL
 }
 
 func (w *SocialWorker) markStatus(ctx context.Context, postID uuid.UUID, status, deliveryMode, externalResourceName string) {
@@ -343,6 +374,138 @@ func (w *SocialWorker) sendToFacebook(ctx context.Context, pageID, accessToken, 
 	}
 
 	return nil
+}
+
+// sendToInstagram publishes an image or video to the studio's connected
+// Instagram account's main feed, via the Instagram Content Publishing API
+// (graph.instagram.com — this account is connected through Meta's newer
+// standalone Instagram Login flow, same reason the DM sender needs that
+// host instead of graph.facebook.com; see channels.NewMetaInstagram).
+// Two steps: create a media container, then publish it once Instagram has
+// finished processing the media (required for video — an image is usually
+// ready almost immediately, but we poll either way rather than guessing
+// with a fixed sleep).
+func (w *SocialWorker) sendToInstagram(ctx context.Context, igUserID, accessToken, caption, mediaURL string) error {
+	if mediaURL == "" {
+		return fmt.Errorf("instagram requires an image or video — text-only posts aren't supported by the Content Publishing API")
+	}
+
+	publicURL := mediaURL
+	if !strings.HasPrefix(mediaURL, "http") {
+		baseURL := os.Getenv("API_BASE_URL")
+		if baseURL == "" {
+			baseURL = "http://localhost:8080"
+		}
+		publicURL = baseURL + mediaURL
+	}
+
+	ext := strings.ToLower(filepath.Ext(publicURL))
+	isVideo := ext == ".mp4" || ext == ".mov"
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	containerValues := url.Values{}
+	containerValues.Set("access_token", accessToken)
+	containerValues.Set("caption", caption)
+	if isVideo {
+		// Instagram no longer has a separate "feed video" media type — a video
+		// meant for the main feed is a Reel with share_to_feed enabled.
+		containerValues.Set("media_type", "REELS")
+		containerValues.Set("video_url", publicURL)
+		containerValues.Set("share_to_feed", "true")
+	} else {
+		containerValues.Set("image_url", publicURL)
+	}
+
+	createURL := fmt.Sprintf("https://graph.instagram.com/v21.0/%s/media", igUserID)
+	containerID, err := w.instagramAPICall(ctx, client, createURL, containerValues)
+	if err != nil {
+		return fmt.Errorf("create media container: %w", err)
+	}
+	id, ok := containerID["id"].(string)
+	if !ok || id == "" {
+		return fmt.Errorf("create media container: no id in response: %+v", containerID)
+	}
+
+	// Poll for processing to finish — required for video, and cheap/fast for
+	// images. 30 attempts * 2s = up to 60s before giving up.
+	if err := w.waitForInstagramContainer(ctx, client, id, accessToken); err != nil {
+		return err
+	}
+
+	publishValues := url.Values{}
+	publishValues.Set("access_token", accessToken)
+	publishValues.Set("creation_id", id)
+	publishURL := fmt.Sprintf("https://graph.instagram.com/v21.0/%s/media_publish", igUserID)
+	if _, err := w.instagramAPICall(ctx, client, publishURL, publishValues); err != nil {
+		return fmt.Errorf("publish media: %w", err)
+	}
+	return nil
+}
+
+// waitForInstagramContainer polls a media container's processing status
+// until it's FINISHED (ready to publish), errors, or expires (containers
+// are discarded after 24h, but we give up long before that — 30 attempts *
+// 2s = up to 60s, which comfortably covers normal image/video processing
+// time without leaving a scheduled post hanging indefinitely on a stuck one).
+func (w *SocialWorker) waitForInstagramContainer(ctx context.Context, client *http.Client, containerID, accessToken string) error {
+	statusURL := fmt.Sprintf("https://graph.instagram.com/v21.0/%s?fields=status_code&access_token=%s", containerID, url.QueryEscape(accessToken))
+	for attempt := 0; attempt < 30; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, statusURL, nil)
+		if err != nil {
+			return fmt.Errorf("build status request: %w", err)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return fmt.Errorf("check container status: %w", err)
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		var status struct {
+			StatusCode string `json:"status_code"`
+		}
+		_ = json.Unmarshal(raw, &status)
+		switch status.StatusCode {
+		case "FINISHED":
+			return nil
+		case "ERROR", "EXPIRED":
+			return fmt.Errorf("instagram media processing failed: status_code=%s, response=%s", status.StatusCode, string(raw))
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("instagram media container %s did not finish processing within 60s", containerID)
+}
+
+// instagramAPICall POSTs form-encoded values to the Instagram Graph API and
+// returns the decoded JSON response, or an error carrying Meta's own error
+// message on a non-2xx status.
+func (w *SocialWorker) instagramAPICall(ctx context.Context, client *http.Client, apiURL string, values url.Values) (map[string]any, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, strings.NewReader(values.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+
+	var out map[string]any
+	_ = json.Unmarshal(raw, &out)
+
+	if resp.StatusCode >= 400 {
+		var errEnv struct {
+			Error struct {
+				Message string `json:"message"`
+				Code    int    `json:"code"`
+			} `json:"error"`
+		}
+		_ = json.Unmarshal(raw, &errEnv)
+		return nil, fmt.Errorf("instagram api response: HTTP %d, error: %s (code %d)", resp.StatusCode, errEnv.Error.Message, errEnv.Error.Code)
+	}
+	return out, nil
 }
 
 func (w *SocialWorker) publishGoogleAds(ctx context.Context, post SocialPost) {

@@ -183,10 +183,11 @@ func main() {
 
 	whatsappClient := channels.NewMetaWhatsApp(cfg.Meta.GraphAPIVersion)
 	messengerClient := channels.NewMetaMessenger(cfg.Meta.GraphAPIVersion)
+	instagramClient := channels.NewMetaInstagram(cfg.Meta.GraphAPIVersion)
 	twilioClient := channels.NewTwilioSMS()
 	xClient := channels.NewXSender()
 	telegramClient := channels.NewTelegramSender()
-	msgWorker := messaging.NewOutboundWorker(msgRepo, msgBus, whatsappClient, messengerClient, twilioClient, xClient, telegramClient,
+	msgWorker := messaging.NewOutboundWorker(msgRepo, msgBus, whatsappClient, messengerClient, instagramClient, twilioClient, xClient, telegramClient,
 		log.With("component", "messaging_worker"))
 	go msgWorker.Run(rootCtx)
 
@@ -375,6 +376,7 @@ func main() {
 				r.Put("/social-posts/{postId}", studiosHandler.UpdateSocialPost)
 				r.Delete("/social-posts/{postId}", studiosHandler.DeleteSocialPost)
 				r.Post("/social-posts/upload-image", studiosHandler.UploadSocialPostImage)
+				r.Post("/social-posts/{postId}/story-link-posted", studiosHandler.MarkStoryLinkPosted)
 				identityHandler.StudioRoutes(r)
 				r.Route("/messaging", func(r chi.Router) {
 					msgHandler.AdminRoutes(r)

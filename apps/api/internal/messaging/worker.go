@@ -24,6 +24,7 @@ type OutboundWorker struct {
 	bus       Bus
 	whatsapp  channels.Sender
 	messenger channels.Sender
+	instagram channels.Sender
 	twilio    channels.Sender
 	x         channels.Sender
 	telegram  channels.Sender
@@ -47,12 +48,13 @@ const (
 	defaultWhatsAppSendSpacing = 20 * time.Second
 )
 
-func NewOutboundWorker(repo *Repo, bus Bus, whatsapp, messenger, twilio, x, telegram channels.Sender, log *slog.Logger) *OutboundWorker {
+func NewOutboundWorker(repo *Repo, bus Bus, whatsapp, messenger, instagram, twilio, x, telegram channels.Sender, log *slog.Logger) *OutboundWorker {
 	return &OutboundWorker{
 		repo:       repo,
 		bus:        bus,
 		whatsapp:   whatsapp,
 		messenger:  messenger,
+		instagram:  instagram,
 		twilio:     twilio,
 		x:          x,
 		telegram:   telegram,
@@ -200,7 +202,14 @@ func (w *OutboundWorker) dispatch(ctx context.Context, j OutboundJob) {
 		} else {
 			sender = w.whatsapp
 		}
-	case KindInstagramMeta, KindMessengerMeta:
+	case KindInstagramMeta:
+		if isLocalDev && channel.AccessToken == "" {
+			w.log.Info("test mode: using mock sender for Meta Messaging", "job_id", j.ID)
+			sender = &testSender{}
+		} else {
+			sender = w.instagram
+		}
+	case KindMessengerMeta:
 		if isLocalDev && channel.AccessToken == "" {
 			w.log.Info("test mode: using mock sender for Meta Messaging", "job_id", j.ID)
 			sender = &testSender{}
