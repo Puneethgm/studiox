@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 
+	"github.com/projectx/api/internal/integrations/llm"
 	"github.com/projectx/api/internal/leads"
 	"github.com/projectx/api/internal/platform/secrets"
 	"github.com/projectx/api/internal/studios"
@@ -99,8 +100,9 @@ func setupDNDTestEnv(t *testing.T) *dndTestEnv {
 	msgBus := NewInProcBus()
 	msgSvc := NewService(msgRepo, msgBus, "", "")
 	studiosRepo := studios.NewRepo(pool, cipher)
+	llmRepo := llm.NewRepo(pool, cipher)
 
-	worker := NewAIWorker(msgBus, msgRepo, msgSvc, studiosRepo, leadsRepo, nil, nil, slog.Default())
+	worker := NewAIWorker(msgBus, msgRepo, msgSvc, studiosRepo, leadsRepo, nil, nil, "", nil, llmRepo, slog.Default())
 
 	return &dndTestEnv{
 		pool:      pool,

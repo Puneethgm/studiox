@@ -614,6 +614,8 @@ definitions:
     properties:
       dateOfBirth:
         type: string
+      email:
+        type: string
       fullName:
         type: string
       gender:
@@ -873,6 +875,28 @@ definitions:
       whatsappTemplateName:
         type: string
     type: object
+  internal_messaging.TestChatRequest:
+    properties:
+      history:
+        items:
+          $ref: '#/definitions/internal_messaging.TestChatTurn'
+        type: array
+      message:
+        type: string
+    type: object
+  internal_messaging.TestChatResponse:
+    properties:
+      reply:
+        type: string
+    type: object
+  internal_messaging.TestChatTurn:
+    properties:
+      role:
+        description: '"user" | "assistant"'
+        type: string
+      text:
+        type: string
+    type: object
   internal_messaging.TrialCheckoutLeadInfo:
     properties:
       alreadyPurchased:
@@ -952,6 +976,8 @@ definitions:
     properties:
       dateOfBirth:
         description: '"YYYY-MM-DD", optional'
+        type: string
+      email:
         type: string
       fullName:
         type: string
@@ -1036,6 +1062,14 @@ definitions:
       status:
         description: draft, scheduled, published, failed
         type: string
+      storyLinkPostedAt:
+        description: |-
+          StoryLinkPostedAt tracks a manual step: Instagram never allows a
+          clickable link on a feed/Reel post, and Meta's API doesn't support
+          adding a Story Link Sticker programmatically either — only a human
+          tapping "add link" inside the Instagram app can attach one. Set once
+          staff confirm they've posted this campaign's link as a Story.
+        type: string
       studioId:
         type: string
       updatedAt:
@@ -1077,6 +1111,23 @@ definitions:
       socialPlannerEnabled:
         type: boolean
     type: object
+  internal_studios.patchAIModelOrderReq:
+    properties:
+      modelIds:
+        items:
+          type: string
+        type: array
+    type: object
+  internal_studios.patchAIModelReq:
+    properties:
+      enabled:
+        type: boolean
+    type: object
+  internal_studios.postAIModelReq:
+    properties:
+      modelName:
+        type: string
+    type: object
   internal_studios.publicRes:
     properties:
       availabilitySlots: {}
@@ -1098,6 +1149,11 @@ definitions:
         type: string
       trialAmountSgd:
         type: integer
+    type: object
+  internal_studios.putAIProviderKeyReq:
+    properties:
+      apiKey:
+        type: string
     type: object
   internal_studios.putAIReplyDelayReq:
     properties:
@@ -1127,6 +1183,8 @@ definitions:
         type: string
       campaignCount:
         type: integer
+      communicationStyleProfile:
+        type: string
       contactEmail:
         type: string
       contactPhone:
@@ -1184,6 +1242,10 @@ definitions:
         type: string
       stripePublishableKey:
         type: string
+      styleProfileUpdatedAt:
+        type: string
+      styleRefreshIntervalMinutes:
+        type: integer
       subscriptionTier:
         type: string
       trialAmountSgd:
@@ -3125,10 +3187,10 @@ paths:
     post:
       consumes:
       - application/json
-      description: Public endpoint for a lead to submit their name, gender, and date
-        of birth while checking out for a trial. Payment itself happens on the same
-        page via embedded Stripe Elements; this only saves the collected details.
-        No auth required.
+      description: Public endpoint for a lead to submit their name, email, gender,
+        and date of birth while checking out for a trial. Payment itself happens on
+        the same page via embedded Stripe Elements; this only saves the collected
+        details. No auth required.
       parameters:
       - description: Lead ID
         in: path
@@ -3150,7 +3212,7 @@ paths:
             additionalProperties: true
             type: object
         "400":
-          description: invalid lead id or missing fullName
+          description: invalid lead id, missing fullName, or invalid email
           schema:
             $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
         "500":
@@ -3618,7 +3680,7 @@ paths:
       description: Public, unauthenticated endpoint for a visitor to sign up for a
         trial directly against a studio (not tied to a specific campaign slug in the
         URL). Captures referrer, user agent, and client IP server-side. Field lengths
-        are validated (fullName <=255, phone <=30).
+        are validated (fullName <=255, email <=255, phone <=30).
       parameters:
       - description: Studio slug
         in: path
@@ -4716,6 +4778,53 @@ paths:
       summary: Set initial contact delay
       tags:
       - Messaging Settings
+  /api/v1/studios/{studioId}/knowledge-base/test-chat:
+    post:
+      consumes:
+      - application/json
+      description: Runs a one-off question through the studio's real knowledge-base
+        retrieval and LLM reply pipeline, without creating any conversation, message,
+        or lead record.
+      parameters:
+      - description: Studio ID (UUID)
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: Test message and prior turns in this session
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_messaging.TestChatRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_messaging.TestChatResponse'
+        "400":
+          description: invalid studioId or malformed body
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "403":
+          description: no studio bound to this user
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "422":
+          description: message is required
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Test the knowledge-base + AI reply pipeline
+      tags:
+      - Knowledge Base
   /api/v1/studios/{studioId}/leads:
     get:
       description: Lists leads for the resolved studio with extensive optional filtering
@@ -5893,8 +6002,8 @@ paths:
   /api/v1/studios/{studioId}/messaging/conversations:
     get:
       description: Returns the studio's inbox conversations across all channels, with
-        optional filtering by status, channel kind, and escalation state, and pagination
-        via limit/offset.
+        optional filtering by status, channel kind, escalation state, and unresponded
+        backlog, and pagination via limit/offset.
       parameters:
       - description: Studio ID
         in: path
@@ -5913,6 +6022,11 @@ paths:
       - description: Filter to only escalated (or non-escalated) conversations
         in: query
         name: escalated
+        type: boolean
+      - description: Filter to conversations whose last message is still unanswered
+          (customer sent last); sorts oldest-waiting first instead of most-recent-first
+        in: query
+        name: unresponded
         type: boolean
       - description: Max results to return
         in: query
@@ -7087,22 +7201,62 @@ paths:
       summary: Update a social post
       tags:
       - Social Planner
-  /api/v1/studios/{studioId}/social-posts/upload-image:
+  /api/v1/studios/{studioId}/social-posts/{postId}/story-link-posted:
     post:
-      consumes:
-      - multipart/form-data
-      description: Uploads an image (max 10MB, JPEG/PNG/WebP/GIF) for use in the studio's
-        social planner. Stores the image in S3 when configured, otherwise falls back
-        to local disk storage, and returns the resulting media URL. Studio-admins
-        may only upload for their own studio; super-admins are forbidden from this
-        endpoint.
+      description: Instagram never allows a clickable link in a feed/Reel caption,
+        and Meta's Content Publishing API does not support adding a Story Link Sticker
+        programmatically — only a human tapping "add link" inside the Instagram app
+        can attach one. This marks that staff have manually posted the campaign link
+        as a Story with the link sticker for this post.
       parameters:
       - description: Studio ID
         in: path
         name: studioId
         required: true
         type: string
-      - description: Social post image file (JPEG, PNG, WebP, or GIF)
+      - description: Social post ID
+        in: path
+        name: postId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: invalid post ID
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Mark a post's Instagram Story link as posted
+      tags:
+      - Social Planner
+  /api/v1/studios/{studioId}/social-posts/upload-image:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Uploads an image or video (max 100MB — JPEG/PNG/WebP/GIF, or MP4/MOV
+        for Instagram Reels) for use in the studio's social planner. Stores the file
+        in S3 when configured, otherwise falls back to local disk storage, and returns
+        the resulting media URL. Studio-admins may only upload for their own studio;
+        super-admins may upload on behalf of any studio.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: Social post image or video file (JPEG, PNG, WebP, GIF, MP4, or
+          MOV)
         in: formData
         name: file
         required: true
@@ -7120,8 +7274,7 @@ paths:
           schema:
             $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
         "403":
-          description: super admins cannot upload social post images, or cannot access
-            this studio
+          description: cannot access this studio
           schema:
             $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
         "500":
@@ -7130,7 +7283,7 @@ paths:
             $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
       security:
       - CookieAuth: []
-      summary: Upload a social post image
+      summary: Upload a social post image or video
       tags:
       - Social Planner
   /api/v1/studios/{studioId}/stripe-oauth/login:
@@ -8028,6 +8181,297 @@ paths:
       summary: List studios with a WhatsApp Web channel
       tags:
       - Messaging - Internal
+  /studios/{studioId}/ai-models:
+    get:
+      description: Per-provider (groq/gemini/claude) API key status and model checklist
+        for this studio — persisted models the studio has added/tested, or the platform's
+        implicit default model(s) shown unchecked when the studio hasn't configured
+        any yet.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: List AI provider config
+      tags:
+      - AI Assistant Settings
+  /studios/{studioId}/ai-models/{provider}/key:
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: groq | gemini | claude
+        in: path
+        name: provider
+        required: true
+        type: string
+      - description: API key
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_studios.putAIProviderKeyReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Save an AI provider's API key
+      tags:
+      - AI Assistant Settings
+  /studios/{studioId}/ai-models/{provider}/models:
+    post:
+      consumes:
+      - application/json
+      description: Sends a trivial live request to the provider using the studio's
+        saved key. On success the model is persisted and enabled; on failure nothing
+        is written.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: groq | gemini | claude
+        in: path
+        name: provider
+        required: true
+        type: string
+      - description: Model name
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_studios.postAIModelReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "422":
+          description: the live test failed
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Add and live-test a model for a provider
+      tags:
+      - AI Assistant Settings
+  /studios/{studioId}/ai-models/{provider}/models/{modelId}:
+    delete:
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: groq | gemini | claude
+        in: path
+        name: provider
+        required: true
+        type: string
+      - description: Model ID
+        in: path
+        name: modelId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Remove a model a studio added
+      tags:
+      - AI Assistant Settings
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: groq | gemini | claude
+        in: path
+        name: provider
+        required: true
+        type: string
+      - description: Model ID
+        in: path
+        name: modelId
+        required: true
+        type: string
+      - description: Enabled state
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_studios.patchAIModelReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Enable or disable an already-tested model
+      tags:
+      - AI Assistant Settings
+  /studios/{studioId}/ai-models/{provider}/order:
+    patch:
+      consumes:
+      - application/json
+      description: Sets the try-order for provider's models — modelIds[0] is tried
+        first by the waterfall, modelIds[1] is the fallback, and so on.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: groq | gemini | claude
+        in: path
+        name: provider
+        required: true
+        type: string
+      - description: Model IDs in the desired try-order
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_studios.patchAIModelOrderReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Reorder a provider's models
+      tags:
+      - AI Assistant Settings
+  /studios/{studioId}/ai-models/{provider}/test-key:
+    post:
+      consumes:
+      - application/json
+      description: Saves apiKey (if provided) and sends one trivial live request using
+        an already-enabled model for this provider, or the platform default if none
+        is enabled yet — verifies the key works without requiring the admin to add
+        a specific model first.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: groq | gemini | claude
+        in: path
+        name: provider
+        required: true
+        type: string
+      - description: API key (omit to test the already-saved key)
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_studios.putAIProviderKeyReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "422":
+          description: the live test failed
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Test an AI provider's API key
+      tags:
+      - AI Assistant Settings
 schemes:
 - http
 - https

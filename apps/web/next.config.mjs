@@ -20,6 +20,17 @@ const nextConfig = {
 
   serverExternalPackages: ['officeparser', 'pdfjs-dist'],
 
+  // Next.js caps Server Action request bodies at 1MB by default — too small
+  // for Knowledge Base file uploads (parseDocument/updateKnowledgeBase in
+  // admin/studios/[studioId]/knowledge-base/actions.ts). Raised to cover
+  // large documents; local dev only — production's nginx still caps uploads
+  // at 50MB (deploy/nginx/nginx/nginx.conf), independent of this.
+  experimental: {
+    serverActions: {
+      bodySizeLimit: '200mb',
+    },
+  },
+
   // Disable source maps in production for security
   // (prevent frontend code exposure in DevTools)
   productionBrowserSourceMaps: false,

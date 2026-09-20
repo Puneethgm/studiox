@@ -1884,6 +1884,22 @@ func (s *Service) MarkRead(ctx context.Context, studioID, conversationID uuid.UU
 	return nil
 }
 
+// SetStarred toggles the shared, studio-wide starred flag and publishes an
+// update event so every staff member's inbox reflects the change live,
+// instead of each browser tracking its own (previously localStorage-only)
+// starred state.
+func (s *Service) SetStarred(ctx context.Context, studioID, conversationID uuid.UUID, starred bool) error {
+	if err := s.repo.SetConversationStarred(ctx, studioID, conversationID, starred); err != nil {
+		return err
+	}
+	s.bus.Publish(ctx, Event{
+		Kind:           EvtConversationUpdated,
+		StudioID:       studioID,
+		ConversationID: conversationID,
+	})
+	return nil
+}
+
 func (s *Service) CloseConversation(ctx context.Context, studioID, conversationID uuid.UUID) error {
 	if err := s.repo.CloseConversation(ctx, studioID, conversationID); err != nil {
 		return err
@@ -2797,10 +2813,10 @@ func (s *Service) GetTrialCheckoutLeadInfo(ctx context.Context, leadID uuid.UUID
 	return &info, nil
 }
 
-// SaveTrialCheckoutDetails saves the full name/gender/date-of-birth
+// SaveTrialCheckoutDetails saves the full name/email/gender/date-of-birth
 // collected on the pre-payment trial-details page, right before the Stripe
 // Checkout Session gets created.
-func (s *Service) SaveTrialCheckoutDetails(ctx context.Context, leadID uuid.UUID, fullName, gender, dob string) error {
+func (s *Service) SaveTrialCheckoutDetails(ctx context.Context, leadID uuid.UUID, fullName, email, gender, dob string) error {
 	fullName = strings.TrimSpace(fullName)
 	parts := strings.SplitN(fullName, " ", 2)
 	firstName := parts[0]
@@ -2813,9 +2829,9 @@ func (s *Service) SaveTrialCheckoutDetails(ctx context.Context, leadID uuid.UUID
 		dobArg = dob
 	}
 	_, err := s.repo.pool.Exec(ctx, `
-		UPDATE leads SET name = $2, first_name = $3, last_name = $4, gender = $5, date_of_birth = $6, updated_at = now()
+		UPDATE leads SET name = $2, first_name = $3, last_name = $4, email = $5, gender = $6, date_of_birth = $7, updated_at = now()
 		WHERE id = $1
-	`, leadID, fullName, firstName, lastName, gender, dobArg)
+	`, leadID, fullName, firstName, lastName, email, gender, dobArg)
 	if err != nil {
 		return fmt.Errorf("save trial checkout details: %w", err)
 	}

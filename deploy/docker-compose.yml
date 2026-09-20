@@ -42,6 +42,7 @@ x-api-env: &api_env
   META_GRAPH_API_VERSION: ${META_GRAPH_API_VERSION:-v21.0}
   WA_WEB_SERVICE_URL: http://wa-web:3100
   TG_WEB_SERVICE_URL: http://tg-web:3101
+  EMBEDDINGS_SERVICE_URL: http://embeddings:8001
   INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY must be set}
   PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:-${PUBLIC_FORM_BASE_URL}}
   STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
@@ -172,6 +173,20 @@ services:
     networks:
       - backend
 
+  embeddings:
+    build:
+      context: ..
+      dockerfile: deploy/embeddings.Dockerfile
+    image: projectx-embeddings:local
+    restart: always
+    environment:
+      PORT: "8001"
+      MODEL_NAME: ${EMBEDDINGS_MODEL_NAME:-intfloat/multilingual-e5-base}
+    volumes:
+      - embeddings_cache:/cache/huggingface
+    networks:
+      - backend
+
   web:
     build:
       context: ..
@@ -212,6 +227,7 @@ volumes:
   pg_data:
   uploads_data:
   wa_auth_data:
+  embeddings_cache:
 
 networks:
   backend:

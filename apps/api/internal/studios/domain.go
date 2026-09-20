@@ -35,6 +35,7 @@ type Studio struct {
 	AvailabilityTimezone string              `json:"availabilityTimezone"`
 	GeminiAPIKey         string              `json:"geminiApiKey"`
 	GroqAPIKey           string              `json:"groqApiKey"`
+	ClaudeAPIKey         string              `json:"claudeApiKey"`
 	MetaAppID            string              `json:"metaAppId"`
 	MetaAppSecret        string              `json:"metaAppSecret"`
 	GoogleClientID       string              `json:"googleClientId"`
@@ -69,6 +70,11 @@ type Studio struct {
 	// by the studio admin, same as the rest of the Knowledge Base page.
 	CommunicationStyleProfile string     `json:"communicationStyleProfile"`
 	StyleProfileUpdatedAt     *time.Time `json:"styleProfileUpdatedAt,omitempty"`
+	// StyleRefreshIntervalMinutes is how often (at minimum) the style worker
+	// re-learns this studio's profile, editable on the Knowledge Base page —
+	// see studios.Repo.ListStudiosNeedingStyleRefresh for how it combines
+	// with the new-replies threshold.
+	StyleRefreshIntervalMinutes int `json:"styleRefreshIntervalMinutes"`
 
 	// Optional summary fields used by list endpoints.
 	CampaignCount int `json:"campaignCount,omitempty"`

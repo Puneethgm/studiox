@@ -243,6 +243,7 @@ func (s *Service) SubmitPublicLead(ctx context.Context, in SubmitLeadInput) (*Le
 type TrialSignupInput struct {
 	StudioSlug  string
 	FullName    string
+	Email       string
 	Phone       string
 	Gender      string
 	DateOfBirth string // "YYYY-MM-DD", optional
@@ -262,11 +263,15 @@ func (s *Service) SubmitTrialSignup(ctx context.Context, in TrialSignupInput) (*
 	}
 
 	fullName := strings.TrimSpace(in.FullName)
+	email := strings.ToLower(strings.TrimSpace(in.Email))
 	phone := strings.TrimSpace(in.Phone)
 
 	errs := map[string]string{}
 	if fullName == "" {
 		errs["fullName"] = "required"
+	}
+	if _, err := mail.ParseAddress(email); err != nil {
+		errs["email"] = "invalid email"
 	}
 	if !phoneRe.MatchString(phone) {
 		errs["phone"] = "invalid phone number"
@@ -307,6 +312,7 @@ func (s *Service) SubmitTrialSignup(ctx context.Context, in TrialSignupInput) (*
 		Name:         fullName,
 		FirstName:    firstName,
 		LastName:     lastName,
+		Email:        email,
 		Phone:        phone,
 		FitnessPlan:  fitnessPlan,
 		Source:       "trial_link",

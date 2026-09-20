@@ -145,6 +145,10 @@ type Conversation struct {
 	// root match. Nil means start from the tree root. See
 	// decisiontree.Service.TraverseActiveTree and Repo.SetConversationTreeNode.
 	CurrentTreeNodeID *uuid.UUID `json:"currentTreeNodeId,omitempty"`
+	// IsStarred is shared across the whole studio, not per-staff-member —
+	// starring is meant to flag a conversation for the team, so everyone who
+	// opens the inbox sees the same starred state. See Repo.SetConversationStarred.
+	IsStarred bool `json:"isStarred"`
 }
 
 // ----- message -----

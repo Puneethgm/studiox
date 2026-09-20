@@ -21,6 +21,8 @@ interface ListResp {
 interface SearchParams {
   campaignId?: string;
   status?: string;
+  statuses?: string;
+  maxAttempts?: string;
   page?: string;
   search?: string;
   source?: string;
@@ -74,9 +76,16 @@ export default async function LeadsPage({
   const page = Math.max(1, Number(sp.page) || 1);
   const offset = (page - 1) * PAGE_SIZE;
 
+  const filterStatuses = sp.statuses
+    ? sp.statuses.split(',').filter((s) => (LEAD_STATUSES as string[]).includes(s))
+    : [];
+  const filterMaxAttempts = sp.maxAttempts && /^\d+$/.test(sp.maxAttempts) ? Number(sp.maxAttempts) : undefined;
+
   const qs = new URLSearchParams();
   if (sp.campaignId) qs.set('campaignId', sp.campaignId);
   if (sp.status && (LEAD_STATUSES as string[]).includes(sp.status)) qs.set('status', sp.status);
+  if (filterStatuses.length > 0) qs.set('statuses', filterStatuses.join(','));
+  if (filterMaxAttempts !== undefined) qs.set('maxAttempts', String(filterMaxAttempts));
   if (sp.search) qs.set('search', sp.search);
   if (sp.source) qs.set('source', sp.source);
   if (sp.duration) qs.set('duration', sp.duration);
@@ -119,6 +128,21 @@ export default async function LeadsPage({
       <div className="text-[11px] font-semibold text-zinc-400 dark:text-zinc-500 px-2">
         {data.total} submissions captured
       </div>
+
+      {(filterStatuses.length > 0 || filterMaxAttempts !== undefined) && (
+        <div className="flex items-center justify-between rounded-2xl border border-amber-300/40 bg-amber-50/40 px-4 py-2.5 text-xs font-bold text-amber-800 dark:border-amber-900/30 dark:bg-amber-950/10 dark:text-amber-300">
+          <span>
+            Filtered from dashboard:{' '}
+            {filterStatuses.length > 0 &&
+              `status ${filterStatuses.map((s) => LEAD_STATUS_LABELS[s as LeadStatus]).join(', ')}`}
+            {filterStatuses.length > 0 && filterMaxAttempts !== undefined && ' · '}
+            {filterMaxAttempts !== undefined && `fewer than ${filterMaxAttempts} contact attempts`}
+          </span>
+          <Link href={`/admin/studios/${studioId}/leads`} className="underline hover:no-underline">
+            Clear
+          </Link>
+        </div>
+      )}
 
       {/* Filters */}
       <LeadFilters

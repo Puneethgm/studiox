@@ -1,12 +1,13 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { Database, FileText, Trash2, Upload, AlertCircle, CheckCircle, ChevronDown, Sparkles } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { useRouter, usePathname, useSearchParams } from 'next/navigation';
+import { Database, FileText, Trash2, Upload, AlertCircle, CheckCircle, ChevronDown, Sparkles, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Label, FieldHint } from '@/components/ui/Label';
 import type { Studio } from '@/lib/types';
-import { parseDocument, updateKnowledgeBase, updateCommunicationStyle } from './actions';
+import { parseDocument, updateKnowledgeBase, updateCommunicationStyle, updateStyleRefreshInterval } from './actions';
+import { TestChatDrawer } from './TestChatDrawer';
 
 type KBFile = { name: string; url: string; text: string; platform: string };
 
@@ -59,8 +60,52 @@ function PlatformSelect({
   );
 }
 
+// Replaces an explicit Save button for auto-saving fields — a quiet status
+// next to the field instead of a big banner, since it fires on every edit.
+function AutosaveIndicator({ status }: { status: 'idle' | 'saving' | 'saved' | 'error' }) {
+  if (status === 'idle') return null;
+  if (status === 'saving') {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-400">
+        <Loader2 className="h-3 w-3 animate-spin" />
+        Saving…
+      </span>
+    );
+  }
+  if (status === 'saved') {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+        <CheckCircle className="h-3 w-3" />
+        Saved
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-600 dark:text-rose-400">
+      <AlertCircle className="h-3 w-3" />
+      Failed to save
+    </span>
+  );
+}
+
+type KBSection = 'instructions' | 'style';
+const VALID_SECTIONS: KBSection[] = ['instructions', 'style'];
+
 export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const initialSection = (VALID_SECTIONS.includes(searchParams.get('tab') as KBSection)
+    ? searchParams.get('tab')
+    : 'instructions') as KBSection;
+  const [activeSection, _setActiveSection] = useState<KBSection>(initialSection);
+  const setActiveSection = (section: KBSection) => {
+    _setActiveSection(section);
+    const p = new URLSearchParams(searchParams.toString());
+    p.set('tab', section);
+    router.replace(`${pathname}?${p.toString()}`, { scroll: false });
+  };
+
   const [text, setText] = useState(studio.knowledgeBase || '');
   const [greeting, setGreeting] = useState(studio.greetingMessage || '');
   const [files, setFiles] = useState<KBFile[]>(
@@ -68,9 +113,47 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
   );
 
   const [uploading, setUploading] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  // Auto-save: Knowledge Base (greeting, text instructions, documents) —
+  // debounced so a save fires ~900ms after the admin stops typing/uploading
+  // instead of requiring an explicit button click. Skips the very first
+  // effect run (mount), which would otherwise "save" the untouched initial
+  // values loaded from the server.
+  const [kbStatus, setKbStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [kbStatusError, setKbStatusError] = useState<string | null>(null);
+  const kbFirstRun = useRef(true);
+
+  useEffect(() => {
+    if (kbFirstRun.current) {
+      kbFirstRun.current = false;
+      return;
+    }
+    setKbStatus('saving');
+    const timer = setTimeout(async () => {
+      try {
+        const res = await updateKnowledgeBase(studio.id, studio.slug, text, 'all', files, greeting);
+        if (!res.ok) throw new Error(res.error || 'Failed to save changes');
+        setKbStatus('saved');
+        setKbStatusError(null);
+        router.refresh();
+      } catch (err: any) {
+        setKbStatus('error');
+        setKbStatusError(err.message || 'An error occurred while saving.');
+      }
+    }, 900);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text, greeting, files]);
+
+  // "Saved" is a transient confirmation, not a permanent state — fade it
+  // back to idle so the indicator doesn't sit there forever.
+  useEffect(() => {
+    if (kbStatus !== 'saved') return;
+    const t = setTimeout(() => setKbStatus('idle'), 2500);
+    return () => clearTimeout(t);
+  }, [kbStatus]);
 
   const [styleProfile, setStyleProfile] = useState(studio.communicationStyleProfile || '');
   const [savingStyle, setSavingStyle] = useState(false);
@@ -94,6 +177,52 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
       setSavingStyle(false);
     }
   }
+
+  // Relearn interval — how often (at minimum) the style worker re-learns
+  // this studio's profile. Stored server-side in minutes; shown here in
+  // whichever unit divides evenly, defaulting to hours (the server default
+  // is 240min = 4h).
+  const initialIntervalMinutes = studio.styleRefreshIntervalMinutes ?? 240;
+  const [intervalUnit, setIntervalUnit] = useState<'minutes' | 'hours'>(
+    initialIntervalMinutes % 60 === 0 ? 'hours' : 'minutes',
+  );
+  const [intervalValue, setIntervalValue] = useState(
+    initialIntervalMinutes % 60 === 0 ? initialIntervalMinutes / 60 : initialIntervalMinutes,
+  );
+  const [intervalStatus, setIntervalStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [intervalError, setIntervalError] = useState<string | null>(null);
+  const intervalFirstRun = useRef(true);
+
+  // Auto-save, same debounced pattern as the Knowledge Base fields above —
+  // no separate Save button for this control either.
+  useEffect(() => {
+    if (intervalFirstRun.current) {
+      intervalFirstRun.current = false;
+      return;
+    }
+    setIntervalStatus('saving');
+    const timer = setTimeout(async () => {
+      try {
+        const minutes = intervalUnit === 'hours' ? intervalValue * 60 : intervalValue;
+        const res = await updateStyleRefreshInterval(studio.id, minutes);
+        if (!res.ok) throw new Error(res.error || 'Failed to save changes');
+        setIntervalStatus('saved');
+        setIntervalError(null);
+        router.refresh();
+      } catch (err: any) {
+        setIntervalStatus('error');
+        setIntervalError(err.message || 'An error occurred while saving.');
+      }
+    }, 800);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [intervalValue, intervalUnit]);
+
+  useEffect(() => {
+    if (intervalStatus !== 'saved') return;
+    const t = setTimeout(() => setIntervalStatus('idle'), 2500);
+    return () => clearTimeout(t);
+  }, [intervalStatus]);
 
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const filesList = e.target.files;
@@ -150,50 +279,64 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
     setFiles((prev) => prev.map((f, i) => i === index ? { ...f, platform } : f));
   }
 
-  async function handleSave() {
-    setError(null);
-    setSuccess(null);
-    setSaving(true);
-
-    // Encode the text-block platform as a prefix tag so the backend can store it.
-    // The backend uses the KnowledgeBaseFile.Platform field for files; for the main
-    // text we pass it as the first file-like entry with a synthetic name.
-    try {
-      const res = await updateKnowledgeBase(studio.id, studio.slug, text, 'all', files, greeting);
-      if (!res.ok) {
-        throw new Error(res.error || 'Failed to save changes');
-      }
-      setSuccess('Knowledge base updated successfully!');
-      router.refresh();
-    } catch (err: any) {
-      setError(err.message || 'An error occurred while saving.');
-    } finally {
-      setSaving(false);
-    }
-  }
-
   return (
     <div className="space-y-6">
-      {success && (
-        <div className="flex items-center gap-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
-          <CheckCircle className="h-5 w-5 shrink-0" />
-          <span>{success}</span>
-        </div>
-      )}
-      {error && (
-        <div className="flex items-center gap-3 rounded-2xl border border-rose-500/20 bg-rose-500/5 p-4 text-sm font-semibold text-rose-600 dark:text-rose-400">
-          <AlertCircle className="h-5 w-5 shrink-0" />
-          <span>{error}</span>
-        </div>
+      {/* Tab nav */}
+      <div className="flex gap-2 border-b border-zinc-200 pb-px dark:border-zinc-800">
+        {(
+          [
+            { id: 'instructions', label: 'Instructions & Documents', icon: Database },
+            { id: 'style', label: 'Communication Style', icon: Sparkles },
+          ] as const
+        ).map((item) => {
+          const Icon = item.icon;
+          const isActive = activeSection === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => setActiveSection(item.id)}
+              className={`flex items-center gap-2 rounded-t-lg border-b-2 px-4 py-2.5 text-xs font-bold uppercase tracking-wider transition-colors ${
+                isActive
+                  ? 'border-[var(--brand,#7c3aed)] text-[color:var(--brand,#7c3aed)]'
+                  : 'border-transparent text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300'
+              }`}
+            >
+              <Icon className="h-4 w-4" />
+              {item.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {activeSection === 'instructions' && (success || error) && (
+        <>
+          {success && (
+            <div className="flex items-center gap-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+              <CheckCircle className="h-5 w-5 shrink-0" />
+              <span>{success}</span>
+            </div>
+          )}
+          {error && (
+            <div className="flex items-center gap-3 rounded-2xl border border-rose-500/20 bg-rose-500/5 p-4 text-sm font-semibold text-rose-600 dark:text-rose-400">
+              <AlertCircle className="h-5 w-5 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+        </>
       )}
 
+      {activeSection === 'instructions' && (
       <div className="grid gap-6 md:grid-cols-3">
         {/* Left column */}
         <div className="md:col-span-2 space-y-6">
-          <div className="overflow-hidden rounded-[24px] border border-white/30 bg-white/30 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30" style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 4px 16px rgba(0,0,0,0.05)' }}>
-            <div className="border-b border-white/20 px-6 py-4 dark:border-white/5 flex items-center gap-2">
-              <Database className="h-4 w-4 text-zinc-400" />
-              <h3 className="text-sm font-black uppercase tracking-[0.15em] text-zinc-400">Text Instructions</h3>
+          <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+            <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Database className="h-4 w-4 text-zinc-400" />
+                <h3 className="text-sm font-bold text-zinc-900 dark:text-white">Text Instructions</h3>
+              </div>
+              <AutosaveIndicator status={kbStatus} />
             </div>
             <div className="p-6 space-y-4">
               <div>
@@ -217,52 +360,16 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
                   onChange={(e) => setText(e.target.value)}
                 />
                 <FieldHint>Direct textual instructions shown on all channels. Use the document list below to restrict content to specific platforms.</FieldHint>
+                {kbStatus === 'error' && kbStatusError && (
+                  <p className="mt-1.5 text-xs font-semibold text-rose-600 dark:text-rose-400">{kbStatusError}</p>
+                )}
               </div>
             </div>
           </div>
 
-          <div className="overflow-hidden rounded-[24px] border border-white/30 bg-white/30 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30" style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 4px 16px rgba(0,0,0,0.05)' }}>
-            <div className="border-b border-white/20 px-6 py-4 dark:border-white/5 flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-zinc-400" />
-              <h3 className="text-sm font-black uppercase tracking-[0.15em] text-zinc-400">Communication Style (learned)</h3>
-            </div>
-            <div className="p-6 space-y-4">
-              {styleSuccess && (
-                <div className="flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
-                  <CheckCircle className="h-4 w-4 shrink-0" />
-                  <span>{styleSuccess}</span>
-                </div>
-              )}
-              {styleError && (
-                <div className="flex items-center gap-2 rounded-xl border border-rose-500/20 bg-rose-500/5 p-3 text-sm font-semibold text-rose-600 dark:text-rose-400">
-                  <AlertCircle className="h-4 w-4 shrink-0" />
-                  <span>{styleError}</span>
-                </div>
-              )}
-              <div>
-                <Label htmlFor="styleProfile">How your team talks to customers</Label>
-                <textarea
-                  id="styleProfile"
-                  className="flex w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:placeholder:text-slate-500 min-h-[140px]"
-                  placeholder="Once your team has sent enough WhatsApp/Instagram replies, this fills in automatically — a short summary of your tone, phrasing, and how you handle pricing questions, learned from your own conversations. Edit it any time; your edit sticks until enough new replies come in to justify a fresh rebuild."
-                  value={styleProfile}
-                  onChange={(e) => setStyleProfile(e.target.value)}
-                />
-                <FieldHint>
-                  {studio.styleProfileUpdatedAt
-                    ? `Last learned ${new Date(studio.styleProfileUpdatedAt).toLocaleDateString()}. Automatically rebuilt as your team sends more replies — the AI also pulls real past replies as examples on top of this summary.`
-                    : 'Not learned yet — needs a batch of staff-sent replies first. You can also write this yourself in the meantime.'}
-                </FieldHint>
-              </div>
-              <Button onClick={handleSaveStyle} loading={savingStyle} className="w-full sm:w-auto">
-                Save Communication Style
-              </Button>
-            </div>
-          </div>
-
-          <div className="overflow-hidden rounded-[24px] border border-white/30 bg-white/30 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30" style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 4px 16px rgba(0,0,0,0.05)' }}>
-            <div className="border-b border-white/20 px-6 py-4 dark:border-white/5">
-              <h3 className="text-sm font-black uppercase tracking-[0.15em] text-zinc-400">Uploaded Documents</h3>
+          <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+            <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
+              <h3 className="text-sm font-bold text-zinc-900 dark:text-white">Uploaded Documents</h3>
             </div>
             <div className="p-6">
               {files.length === 0 ? (
@@ -272,7 +379,7 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
                   <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">Upload files to feed details directly into the AI.</p>
                 </div>
               ) : (
-                <div className="divide-y divide-white/10 dark:divide-white/5">
+                <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
                   {files.map((file, i) => (
                     <div key={i} className="flex items-center justify-between py-3 gap-3">
                       <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -321,9 +428,9 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
         {/* Right column */}
         <div className="space-y-6">
           {/* Platform legend */}
-          <div className="overflow-hidden rounded-[24px] border border-white/30 bg-white/30 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30" style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 4px 16px rgba(0,0,0,0.05)' }}>
-            <div className="border-b border-white/20 px-6 py-4 dark:border-white/5">
-              <h3 className="text-sm font-black uppercase tracking-[0.15em] text-zinc-400">Domain Guide</h3>
+          <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+            <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
+              <h3 className="text-sm font-bold text-zinc-900 dark:text-white">Domain Guide</h3>
             </div>
             <div className="p-4 space-y-2">
               {DOMAINS.map((p) => (
@@ -339,9 +446,9 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
             </div>
           </div>
 
-          <div className="overflow-hidden rounded-[24px] border border-white/30 bg-white/30 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30" style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 4px 16px rgba(0,0,0,0.05)' }}>
-            <div className="border-b border-white/20 px-6 py-4 dark:border-white/5">
-              <h3 className="text-sm font-black uppercase tracking-[0.15em] text-zinc-400">Add Documents</h3>
+          <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+            <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
+              <h3 className="text-sm font-bold text-zinc-900 dark:text-white">Add Documents</h3>
             </div>
             <div className="p-6 space-y-4">
               <div className="relative flex flex-col items-center justify-center border-2 border-dashed border-zinc-300 dark:border-zinc-700 rounded-2xl p-6 text-center hover:bg-zinc-50/50 dark:hover:bg-zinc-950/20 transition cursor-pointer">
@@ -367,25 +474,101 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
               </FieldHint>
             </div>
           </div>
-
-          <div className="flex flex-col gap-2">
-            <Button
-              onClick={handleSave}
-              loading={saving}
-              className="w-full text-center py-3 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white font-black uppercase tracking-wider text-xs shadow-lg shadow-violet-500/15 active:scale-[0.98] hover:scale-[1.02] hover:-translate-y-0.5 transition-all rounded-xl border-0"
-            >
-              Save Knowledge Base
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={() => router.back()}
-              className="w-full text-center"
-            >
-              Cancel
-            </Button>
-          </div>
         </div>
       </div>
+      )}
+
+      {activeSection === 'style' && (
+        <div className="max-w-2xl">
+          <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+            <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800 flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-zinc-400" />
+              <h3 className="text-sm font-bold text-zinc-900 dark:text-white">Communication Style (learned)</h3>
+            </div>
+            <div className="p-6 space-y-4">
+              {styleSuccess && (
+                <div className="flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+                  <CheckCircle className="h-4 w-4 shrink-0" />
+                  <span>{styleSuccess}</span>
+                </div>
+              )}
+              {styleError && (
+                <div className="flex items-center gap-2 rounded-xl border border-rose-500/20 bg-rose-500/5 p-3 text-sm font-semibold text-rose-600 dark:text-rose-400">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  <span>{styleError}</span>
+                </div>
+              )}
+              <div>
+                <Label htmlFor="styleProfile">How your team talks to customers</Label>
+                <textarea
+                  id="styleProfile"
+                  className="flex w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:placeholder:text-slate-500 min-h-[140px]"
+                  placeholder="Once your team has sent enough WhatsApp/Instagram replies, this fills in automatically — a short summary of your tone, phrasing, and how you handle pricing questions, learned from your own conversations. Edit it any time; your edit sticks until enough new replies come in to justify a fresh rebuild."
+                  value={styleProfile}
+                  onChange={(e) => setStyleProfile(e.target.value)}
+                />
+                <FieldHint>
+                  {studio.styleProfileUpdatedAt
+                    ? `Last learned ${new Date(studio.styleProfileUpdatedAt).toLocaleDateString()}. Automatically rebuilt as your team sends more replies — the AI also pulls real past replies as examples on top of this summary.`
+                    : 'Not learned yet — needs a batch of staff-sent replies first. You can also write this yourself in the meantime.'}
+                </FieldHint>
+              </div>
+              <Button onClick={handleSaveStyle} loading={savingStyle} className="w-full sm:w-auto">
+                Save Communication Style
+              </Button>
+
+              <div className="border-t border-zinc-200 pt-4 dark:border-zinc-800">
+                <div className="flex items-center justify-between gap-2">
+                  <Label htmlFor="styleRefreshValue">Relearn at least every</Label>
+                  <AutosaveIndicator status={intervalStatus} />
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    id="styleRefreshValue"
+                    type="number"
+                    min={intervalUnit === 'hours' ? 1 : 30}
+                    max={intervalUnit === 'hours' ? 720 : 43200}
+                    value={intervalValue}
+                    onChange={(e) => setIntervalValue(Math.max(0, Number(e.target.value) || 0))}
+                    className="w-24 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-slate-700 dark:bg-slate-900"
+                  />
+                  <select
+                    value={intervalUnit}
+                    onChange={(e) => setIntervalUnit(e.target.value as 'minutes' | 'hours')}
+                    className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-slate-700 dark:bg-slate-900"
+                  >
+                    <option value="minutes">Minutes</option>
+                    <option value="hours">Hours</option>
+                  </select>
+                </div>
+                <FieldHint>
+                  How often the system checks whether enough new replies have come in to relearn your style —
+                  e.g. 4 hours = at most one relearn every 4 hours, only if there&apos;s new material. It never
+                  relearns from nothing, no matter how short this is set.
+                </FieldHint>
+                {intervalStatus === 'error' && intervalError && (
+                  <p className="mt-1.5 text-xs font-semibold text-rose-600 dark:text-rose-400">{intervalError}</p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-col items-center gap-2">
+        <p className="text-xs font-semibold text-zinc-400 dark:text-zinc-500">
+          Changes save automatically
+        </p>
+        <Button
+          variant="ghost"
+          onClick={() => router.back()}
+          className="mx-auto w-full max-w-xs text-center"
+        >
+          Back
+        </Button>
+      </div>
+
+      <TestChatDrawer studioId={studio.id} />
     </div>
   );
 }

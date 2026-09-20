@@ -48,7 +48,7 @@ func New() *Client {
 func (c *Client) GenerateReply(ctx context.Context, apiKey, prompt string) (Reply, error) {
 	var lastErr error
 	for _, model := range Models {
-		r, err := c.tryModel(ctx, apiKey, model, prompt)
+		r, err := c.GenerateReplyForModel(ctx, apiKey, model, prompt)
 		if err == nil {
 			return r, nil
 		}
@@ -57,7 +57,11 @@ func (c *Client) GenerateReply(ctx context.Context, apiKey, prompt string) (Repl
 	return Reply{}, fmt.Errorf("all Gemini models failed: %w", lastErr)
 }
 
-func (c *Client) tryModel(ctx context.Context, apiKey, model, prompt string) (Reply, error) {
+// GenerateReplyForModel calls one specific model — used by callers that
+// resolve which model(s) to try per-studio
+// (internal/integrations/llm.EnabledModelsForStudio) rather than always
+// looping the fixed Models fallback order.
+func (c *Client) GenerateReplyForModel(ctx context.Context, apiKey, model, prompt string) (Reply, error) {
 	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, apiKey)
 
 	reqBody, err := json.Marshal(map[string]any{

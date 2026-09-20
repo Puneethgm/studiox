@@ -162,7 +162,7 @@ export function PlansManagement({
     <div className="space-y-6">
       <div className="flex items-end justify-between">
         <div>
-          <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400 mb-1">
+          <h3 className="text-sm font-black text-zinc-950 dark:text-white mb-1">
             Membership Plans
           </h3>
           <p className="text-[10px] text-zinc-500">
@@ -171,7 +171,7 @@ export function PlansManagement({
         </div>
         <Button
           onClick={() => { setShowAdd(true); setEditingId(null); }}
-          className="flex items-center gap-1.5 bg-gradient-to-r from-brand-500 to-violet-600 text-white rounded-xl text-xs font-bold px-3 py-2"
+          className="flex items-center gap-1.5 bg-[var(--brand,#7c3aed)] text-white rounded-xl text-xs font-bold px-3 py-2"
         >
           <Plus className="h-3.5 w-3.5" />
           Add Plan
@@ -180,7 +180,7 @@ export function PlansManagement({
 
       {/* Add Plan Form */}
       {showAdd && (
-        <div className="rounded-[24px] border border-brand-500/30 bg-white/20 dark:bg-brand-950/20 backdrop-blur-2xl p-6 space-y-4">
+        <div className="rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 p-6 space-y-4">
           <h4 className="text-sm font-black text-zinc-900 dark:text-white">New Plan</h4>
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
@@ -189,7 +189,7 @@ export function PlansManagement({
                 value={newPlan.planName}
                 onChange={(e) => setNewPlan({ ...newPlan, planName: e.target.value })}
                 placeholder="e.g. Premium"
-                className="mt-1 bg-white/50 dark:bg-black/50"
+                className="mt-1"
               />
             </div>
             <div>
@@ -199,7 +199,7 @@ export function PlansManagement({
                 value={newPlan.priceSgd}
                 onChange={(e) => setNewPlan({ ...newPlan, priceSgd: e.target.value })}
                 placeholder="0.00"
-                className="mt-1 bg-white/50 dark:bg-black/50"
+                className="mt-1"
               />
             </div>
             <div>
@@ -207,7 +207,7 @@ export function PlansManagement({
               <select
                 value={newPlan.billingCycle}
                 onChange={(e) => setNewPlan({ ...newPlan, billingCycle: e.target.value })}
-                className="mt-1 w-full rounded-xl border border-white/20 bg-white/50 dark:bg-black/50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
               >
                 {BILLING_CYCLES.map((c) => (
                   <option key={c.value} value={c.value}>{c.label}</option>
@@ -231,14 +231,14 @@ export function PlansManagement({
               value={newPlan.features}
               onChange={(e) => setNewPlan({ ...newPlan, features: e.target.value })}
               placeholder="Unlimited classes&#10;Personal trainer&#10;Locker access"
-              className="mt-1 w-full h-28 rounded-xl border border-white/20 bg-white/50 dark:bg-black/50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="mt-1 w-full h-28 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
             />
           </div>
           <div className="flex gap-2 pt-2">
             <Button
               onClick={addPlan}
               loading={addLoading}
-              className="flex-1 bg-gradient-to-r from-brand-500 to-violet-600 text-white rounded-xl text-xs font-bold"
+              className="flex-1 bg-[var(--brand,#7c3aed)] text-white rounded-xl text-xs font-bold"
             >
               Create Plan
             </Button>
@@ -261,11 +261,11 @@ export function PlansManagement({
           return (
             <div
               key={plan.id}
-              className={`relative overflow-hidden rounded-[24px] border ${
+              className={`relative overflow-hidden rounded-xl border p-6 transition-all duration-300 ${
                 plan.isActive
-                  ? 'border-brand-500/30 shadow-lg shadow-brand-500/10 bg-white/20 dark:bg-brand-950/20'
-                  : 'border-white/10 bg-white/5 dark:bg-white/5 opacity-80'
-              } backdrop-blur-2xl p-6 transition-all duration-300`}
+                  ? 'border-brand-500/40 bg-white shadow-sm dark:bg-zinc-950'
+                  : 'border-zinc-200 bg-white opacity-70 dark:border-zinc-800 dark:bg-zinc-950'
+              }`}
             >
               <div className="flex justify-between items-start mb-4">
                 <div>
@@ -307,7 +307,7 @@ export function PlansManagement({
                       <Input
                         value={editState.planName}
                         onChange={(e) => setEditState({ ...editState, planName: e.target.value })}
-                        className="mt-1 bg-white/50 dark:bg-black/50"
+                        className="mt-1"
                       />
                     </div>
                     <div>
@@ -316,7 +316,7 @@ export function PlansManagement({
                         type="number"
                         value={editState.priceSgd}
                         onChange={(e) => setEditState({ ...editState, priceSgd: e.target.value })}
-                        className="mt-1 bg-white/50 dark:bg-black/50"
+                        className="mt-1"
                       />
                     </div>
                   </div>
@@ -325,7 +325,7 @@ export function PlansManagement({
                     <select
                       value={editState.billingCycle}
                       onChange={(e) => setEditState({ ...editState, billingCycle: e.target.value })}
-                      className="mt-1 w-full rounded-xl border border-white/20 bg-white/50 dark:bg-black/50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
                     >
                       {BILLING_CYCLES.map((c) => (
                         <option key={c.value} value={c.value}>{c.label}</option>
@@ -337,14 +337,14 @@ export function PlansManagement({
                     <textarea
                       value={editState.features}
                       onChange={(e) => setEditState({ ...editState, features: e.target.value })}
-                      className="mt-1 w-full h-32 rounded-xl border border-white/20 bg-white/50 dark:bg-black/50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      className="mt-1 w-full h-32 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
                     />
                   </div>
                   <div className="flex items-center gap-2 pt-2">
                     <Button
                       onClick={() => saveEdit(plan)}
                       loading={loadingId === plan.id}
-                      className="flex-1 bg-gradient-to-r from-brand-500 to-violet-600 text-white rounded-xl text-xs font-bold"
+                      className="flex-1 bg-[var(--brand,#7c3aed)] text-white rounded-xl text-xs font-bold"
                     >
                       Save
                     </Button>
@@ -379,7 +379,7 @@ export function PlansManagement({
                   <Button
                     variant="outline"
                     onClick={() => startEdit(plan)}
-                    className="w-full mt-4 rounded-xl border-white/20 hover:bg-white/10 text-xs font-bold uppercase tracking-wider"
+                    className="w-full mt-4 text-xs font-bold uppercase tracking-wider"
                   >
                     Edit Plan
                   </Button>

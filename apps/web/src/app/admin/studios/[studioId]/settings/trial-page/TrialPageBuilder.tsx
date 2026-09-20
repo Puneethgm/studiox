@@ -3,7 +3,7 @@
 import { useRef, useState } from 'react';
 import { DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import {
-  Plus, Save, CheckCircle2, X, Trash2, Type, Image as ImageIcon, Video, User, Calendar, DollarSign,
+  Plus, Save, CheckCircle2, X, Trash2, Type, Image as ImageIcon, Video, User, Mail, Calendar, DollarSign,
   CreditCard, MousePointerClick, Upload, Loader2, AlignLeft, AlignCenter, AlignRight, Eye, Link2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
@@ -48,6 +48,8 @@ function newBlockDefaults(type: PageBlockType, zIndex: number): Omit<PageBlock, 
       return { type, x: 20, y: 20, width: 300, height: 180, zIndex, content: { url: '' } satisfies VideoBlockContent };
     case 'name_field':
       return { type, x: 20, y: 20, width: 300, height: 58, zIndex, content: { label: 'Full Name', backgroundColor: '#ffffff', textColor: '#1f2937', labelColor: '#9ca3af' } satisfies FieldBlockContent };
+    case 'email_field':
+      return { type, x: 20, y: 20, width: 300, height: 58, zIndex, content: { label: 'Email', backgroundColor: '#ffffff', textColor: '#1f2937', labelColor: '#9ca3af' } satisfies FieldBlockContent };
     case 'gender_field':
       return { type, x: 20, y: 20, width: 300, height: 58, zIndex, content: { label: 'Gender', backgroundColor: '#ffffff', textColor: '#1f2937', labelColor: '#9ca3af' } satisfies FieldBlockContent };
     case 'dob_field':
@@ -66,6 +68,7 @@ const BLOCK_PALETTE: { type: PageBlockType; label: string; icon: React.ElementTy
   { type: 'image', label: 'Image', icon: ImageIcon, singleton: false },
   { type: 'video', label: 'Video', icon: Video, singleton: false },
   { type: 'name_field', label: 'Name field', icon: User, singleton: true },
+  { type: 'email_field', label: 'Email field', icon: Mail, singleton: true },
   { type: 'gender_field', label: 'Gender field', icon: User, singleton: true },
   { type: 'dob_field', label: 'Date of birth field', icon: Calendar, singleton: true },
   { type: 'amount_display', label: 'Amount', icon: DollarSign, singleton: true },
@@ -276,7 +279,7 @@ export function TrialPageBuilder({
             {selected.type === 'video' && (
               <VideoProps studioId={studioId} content={selected.content as VideoBlockContent} onChange={(c) => updateContent(selected.id, c)} />
             )}
-            {(selected.type === 'name_field' || selected.type === 'gender_field' || selected.type === 'dob_field') && (
+            {(selected.type === 'name_field' || selected.type === 'email_field' || selected.type === 'gender_field' || selected.type === 'dob_field') && (
               <FieldProps content={selected.content as FieldBlockContent} onChange={(c) => updateContent(selected.id, c)} />
             )}
             {selected.type === 'amount_display' && (

@@ -869,6 +869,7 @@ func (h *Handler) publicSubmit(w http.ResponseWriter, r *http.Request) {
 
 type publicTrialSignupReq struct {
 	FullName    string `json:"fullName"`
+	Email       string `json:"email"`
 	Phone       string `json:"phone"`
 	Gender      string `json:"gender"`
 	DateOfBirth string `json:"dateOfBirth"`
@@ -877,7 +878,7 @@ type publicTrialSignupReq struct {
 // publicTrialSignup godoc
 //
 //	@Summary		Submit a public trial signup
-//	@Description	Public, unauthenticated endpoint for a visitor to sign up for a trial directly against a studio (not tied to a specific campaign slug in the URL). Captures referrer, user agent, and client IP server-side. Field lengths are validated (fullName <=255, phone <=30).
+//	@Description	Public, unauthenticated endpoint for a visitor to sign up for a trial directly against a studio (not tied to a specific campaign slug in the URL). Captures referrer, user agent, and client IP server-side. Field lengths are validated (fullName <=255, email <=255, phone <=30).
 //	@Tags			Leads (Public)
 //	@Accept			json
 //	@Produce		json
@@ -898,6 +899,9 @@ func (h *Handler) publicTrialSignup(w http.ResponseWriter, r *http.Request) {
 	if len(req.FullName) > 255 {
 		valErrs["fullName"] = "must be 255 characters or less"
 	}
+	if len(req.Email) > 255 {
+		valErrs["email"] = "must be 255 characters or less"
+	}
 	if len(req.Phone) > 30 {
 		valErrs["phone"] = "must be 30 characters or less"
 	}
@@ -908,6 +912,7 @@ func (h *Handler) publicTrialSignup(w http.ResponseWriter, r *http.Request) {
 	lead, errs, err := h.svc.SubmitTrialSignup(r.Context(), TrialSignupInput{
 		StudioSlug:  studioSlug,
 		FullName:    req.FullName,
+		Email:       req.Email,
 		Phone:       req.Phone,
 		Gender:      req.Gender,
 		DateOfBirth: req.DateOfBirth,

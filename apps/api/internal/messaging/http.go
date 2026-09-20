@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -65,6 +66,7 @@ func (h *Handler) getTrialCheckoutInfo(w http.ResponseWriter, r *http.Request) {
 
 type submitTrialCheckoutReq struct {
 	FullName    string `json:"fullName"`
+	Email       string `json:"email"`
 	Gender      string `json:"gender"`
 	DateOfBirth string `json:"dateOfBirth"` // "YYYY-MM-DD", optional
 }
@@ -72,14 +74,14 @@ type submitTrialCheckoutReq struct {
 // submitTrialCheckout godoc
 //
 //	@Summary		Submit trial checkout details
-//	@Description	Public endpoint for a lead to submit their name, gender, and date of birth while checking out for a trial. Payment itself happens on the same page via embedded Stripe Elements; this only saves the collected details. No auth required.
+//	@Description	Public endpoint for a lead to submit their name, email, gender, and date of birth while checking out for a trial. Payment itself happens on the same page via embedded Stripe Elements; this only saves the collected details. No auth required.
 //	@Tags			Messaging (Public)
 //	@Accept			json
 //	@Produce		json
 //	@Param			leadId	path		string					true	"Lead ID"
 //	@Param			body	body		submitTrialCheckoutReq	true	"Checkout details"
 //	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	httpx.ErrorResponse	"invalid lead id or missing fullName"
+//	@Failure		400		{object}	httpx.ErrorResponse	"invalid lead id, missing fullName, or invalid email"
 //	@Failure		500		{object}	httpx.ErrorResponse
 //	@Router			/api/v1/public/leads/{leadId}/trial-checkout [post]
 func (h *Handler) submitTrialCheckout(w http.ResponseWriter, r *http.Request) {
@@ -93,11 +95,21 @@ func (h *Handler) submitTrialCheckout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.FullName = strings.TrimSpace(req.FullName)
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	valErrs := map[string]string{}
 	if req.FullName == "" {
-		httpx.WriteValidationError(w, map[string]string{"fullName": "required"})
+		valErrs["fullName"] = "required"
+	}
+	if len(req.Email) > 255 {
+		valErrs["email"] = "must be 255 characters or less"
+	} else if _, err := mail.ParseAddress(req.Email); err != nil {
+		valErrs["email"] = "invalid email"
+	}
+	if len(valErrs) > 0 {
+		httpx.WriteValidationError(w, valErrs)
 		return
 	}
-	if err := h.svc.SaveTrialCheckoutDetails(r.Context(), leadID, req.FullName, req.Gender, req.DateOfBirth); err != nil {
+	if err := h.svc.SaveTrialCheckoutDetails(r.Context(), leadID, req.FullName, req.Email, req.Gender, req.DateOfBirth); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return
 	}
@@ -133,6 +145,7 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Post("/conversations/{id}/read", h.markRead)
 	r.Post("/conversations/{id}/ai", h.setConversationAI)
 	r.Post("/conversations/{id}/dnd", h.setConversationDND)
+	r.Post("/conversations/{id}/star", h.setConversationStarred)
 	r.Post("/conversations/{id}/resolve-escalation", h.resolveConversationEscalation)
 	r.Delete("/conversations/{id}", h.deleteConversation)
 
@@ -941,6 +954,44 @@ func (h *Handler) setConversationDND(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]bool{"enabled": body.Enabled})
+}
+
+// setConversationStarred godoc
+//
+//	@Summary		Toggle starred on a conversation
+//	@Description	Sets the shared, studio-wide starred flag on a conversation. Starring is visible to every staff member on the studio, not just the person who starred it.
+//	@Tags			Messaging - Conversations
+//	@Security		CookieAuth
+//	@Accept			json
+//	@Produce		json
+//	@Param			studioId	path		string					true	"Studio ID"
+//	@Param			id			path		string					true	"Conversation ID"
+//	@Param			body		body		map[string]interface{}	true	"Starred flag: starred"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		400			{object}	httpx.ErrorResponse	"invalid id"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/conversations/{id}/star [post]
+func (h *Handler) setConversationStarred(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	var body struct {
+		Starred bool `json:"starred"`
+	}
+	if !httpx.DecodeJSON(w, r, &body) {
+		return
+	}
+	if err := h.svc.SetStarred(r.Context(), studioID, id, body.Starred); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]bool{"starred": body.Starred})
 }
 
 // resolveConversationEscalation clears a decision-tree escalation, restoring
@@ -1939,7 +1990,7 @@ Generate the message content based on this instruction: ` + req.Prompt
 //	@Failure		500			{object}	httpx.ErrorResponse
 //	@Router			/api/v1/studios/{studioId}/messaging/upload [post]
 func (h *Handler) uploadMedia(w http.ResponseWriter, r *http.Request) {
-	const maxSize = 20 << 20 // 20 MB
+	const maxSize = 200 << 20 // 200 MB
 	if err := r.ParseMultipartForm(maxSize); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "file too large or bad multipart form")
 		return

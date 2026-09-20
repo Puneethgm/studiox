@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/projectx/api/internal/identity"
+	"github.com/projectx/api/internal/integrations/llm"
 	"github.com/projectx/api/internal/platform/httpx"
 	"github.com/projectx/api/internal/platform/s3"
 
@@ -28,10 +29,12 @@ type Handler struct {
 	svc             *Service
 	credentialsPath string
 	s3Uploader      *s3.Uploader
+	llmRepo         *llm.Repo
+	claudeAPIURL    string
 }
 
-func NewHandler(svc *Service, credentialsPath string, s3Uploader *s3.Uploader) *Handler {
-	return &Handler{svc: svc, credentialsPath: credentialsPath, s3Uploader: s3Uploader}
+func NewHandler(svc *Service, credentialsPath string, s3Uploader *s3.Uploader, llmRepo *llm.Repo, claudeAPIURL string) *Handler {
+	return &Handler{svc: svc, credentialsPath: credentialsPath, s3Uploader: s3Uploader, llmRepo: llmRepo, claudeAPIURL: claudeAPIURL}
 }
 
 // studioResponse is the safe API shape for Studio — never returns raw secret values.
@@ -69,6 +72,7 @@ type studioResponse struct {
 	MembershipGlofoxPlanCode      string              `json:"membershipGlofoxPlanCode"`
 	CommunicationStyleProfile     string              `json:"communicationStyleProfile"`
 	StyleProfileUpdatedAt         *time.Time          `json:"styleProfileUpdatedAt,omitempty"`
+	StyleRefreshIntervalMinutes   int                 `json:"styleRefreshIntervalMinutes"`
 	CampaignCount                 int                 `json:"campaignCount,omitempty"`
 	LeadCount                     int                 `json:"leadCount,omitempty"`
 	// Presence indicators — actual secret values are never returned.
@@ -116,6 +120,7 @@ func toStudioResponse(s *Studio) studioResponse {
 		MembershipGlofoxPlanCode:      s.MembershipGlofoxPlanCode,
 		CommunicationStyleProfile:     s.CommunicationStyleProfile,
 		StyleProfileUpdatedAt:         s.StyleProfileUpdatedAt,
+		StyleRefreshIntervalMinutes:   s.StyleRefreshIntervalMinutes,
 		CampaignCount:                 s.CampaignCount,
 		LeadCount:                     s.LeadCount,
 		HasGeminiApiKey:               s.GeminiAPIKey != "",
@@ -1908,6 +1913,40 @@ func (h *Handler) PutCommunicationStyle(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"communicationStyleProfile": req.CommunicationStyleProfile})
+}
+
+type putStyleRefreshIntervalReq struct {
+	StyleRefreshIntervalMinutes int `json:"styleRefreshIntervalMinutes"`
+}
+
+// PutStyleRefreshInterval lets a studio admin control how often (at
+// minimum) the style worker re-learns their communication style profile —
+// see messaging.StyleWorker and studios.Repo.ListStudiosNeedingStyleRefresh
+// for how this combines with the new-staff-replies threshold. Clamped
+// between 30 minutes and 30 days so a mistyped value can't spin the worker
+// or silently disable learning for a year.
+func (h *Handler) PutStyleRefreshInterval(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "studioId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	var req putStyleRefreshIntervalReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	minutes := req.StyleRefreshIntervalMinutes
+	if minutes < 30 {
+		minutes = 30
+	}
+	if minutes > 43200 {
+		minutes = 43200
+	}
+	if err := h.svc.repo.SetStyleRefreshIntervalMinutes(r.Context(), id, minutes); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"styleRefreshIntervalMinutes": minutes})
 }
 
 // publicGetTrialPageLayout is the customer-facing read — no auth, just the

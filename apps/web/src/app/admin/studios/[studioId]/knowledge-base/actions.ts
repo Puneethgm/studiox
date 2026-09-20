@@ -131,3 +131,32 @@ export async function updateCommunicationStyle(studioId: string, communicationSt
   revalidatePath(`/admin/studios/${studioId}/knowledge-base`);
   return { ok: true };
 }
+
+export async function updateStyleRefreshInterval(studioId: string, styleRefreshIntervalMinutes: number) {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
+  const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/style-refresh-interval`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+    },
+    body: JSON.stringify({ styleRefreshIntervalMinutes }),
+    cache: 'no-store',
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    return {
+      ok: false,
+      error: body?.error ?? `HTTP ${res.status}`,
+    };
+  }
+
+  revalidatePath(`/admin/studios/${studioId}/knowledge-base`);
+  return { ok: true };
+}

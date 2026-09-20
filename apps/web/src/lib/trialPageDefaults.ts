@@ -26,23 +26,27 @@ export function defaultTrialPageBlocks(): PageBlock[] {
       content: { label: 'Full Name' },
     },
     {
-      id: 'default-gender', type: 'gender_field', x: 20, y: 196, width: 350, height: 58, zIndex: 1,
+      id: 'default-email', type: 'email_field', x: 20, y: 196, width: 350, height: 58, zIndex: 1,
+      content: { label: 'Email' },
+    },
+    {
+      id: 'default-gender', type: 'gender_field', x: 20, y: 264, width: 350, height: 58, zIndex: 1,
       content: { label: 'Gender (optional)' },
     },
     {
-      id: 'default-dob', type: 'dob_field', x: 20, y: 264, width: 350, height: 58, zIndex: 1,
+      id: 'default-dob', type: 'dob_field', x: 20, y: 332, width: 350, height: 58, zIndex: 1,
       content: { label: 'Date of Birth (optional)' },
     },
     {
-      id: 'default-amount', type: 'amount_display', x: 20, y: 332, width: 350, height: 36, zIndex: 1,
+      id: 'default-amount', type: 'amount_display', x: 20, y: 400, width: 350, height: 36, zIndex: 1,
       content: { label: 'Total due today' },
     },
     {
-      id: 'default-card', type: 'card_fields', x: 20, y: 380, width: 350, height: 130, zIndex: 1,
+      id: 'default-card', type: 'card_fields', x: 20, y: 448, width: 350, height: 130, zIndex: 1,
       content: {},
     },
     {
-      id: 'default-pay', type: 'pay_button', x: 20, y: 522, width: 350, height: 50, zIndex: 1,
+      id: 'default-pay', type: 'pay_button', x: 20, y: 590, width: 350, height: 50, zIndex: 1,
       content: { label: 'Continue to Payment', color: '#7c3aed' },
     },
   ];

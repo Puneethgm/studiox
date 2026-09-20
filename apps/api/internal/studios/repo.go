@@ -45,10 +45,10 @@ func (r *Repo) Create(ctx context.Context, tx pgx.Tx, s *Studio) error {
 	}
 	kbFilesJSON, _ := json.Marshal(s.KnowledgeBaseFiles)
 	row := tx.QueryRow(ctx, `
-		INSERT INTO studios (slug, name, brand_color, logo_url, contact_email, contact_phone, active, gemini_api_key, groq_api_key, meta_app_id, meta_app_secret, google_client_id, google_client_secret, google_developer_token, stripe_account_id, stripe_secret_key, stripe_publishable_key, stripe_webhook_secret, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files, trial_amount_sgd, managed_by_1hero)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+		INSERT INTO studios (slug, name, brand_color, logo_url, contact_email, contact_phone, active, gemini_api_key, groq_api_key, claude_api_key, meta_app_id, meta_app_secret, google_client_id, google_client_secret, google_developer_token, stripe_account_id, stripe_secret_key, stripe_publishable_key, stripe_webhook_secret, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files, trial_amount_sgd, managed_by_1hero)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
 		RETURNING id, created_at, updated_at
-	`, s.Slug, s.Name, s.BrandColor, s.LogoURL, s.ContactEmail, s.ContactPhone, s.Active, s.GeminiAPIKey, s.GroqAPIKey, s.MetaAppID, s.MetaAppSecret, s.GoogleClientID, s.GoogleClientSecret, s.GoogleDeveloperToken, s.StripeAccountID, s.StripeSecretKey, s.StripePublishableKey, encWebhookSecret, s.SubscriptionTier, s.SocialPlannerEnabled, s.KnowledgeBase, string(kbFilesJSON), s.TrialAmountSGD, s.ManagedBy1Hero)
+	`, s.Slug, s.Name, s.BrandColor, s.LogoURL, s.ContactEmail, s.ContactPhone, s.Active, s.GeminiAPIKey, s.GroqAPIKey, s.ClaudeAPIKey, s.MetaAppID, s.MetaAppSecret, s.GoogleClientID, s.GoogleClientSecret, s.GoogleDeveloperToken, s.StripeAccountID, s.StripeSecretKey, s.StripePublishableKey, encWebhookSecret, s.SubscriptionTier, s.SocialPlannerEnabled, s.KnowledgeBase, string(kbFilesJSON), s.TrialAmountSGD, s.ManagedBy1Hero)
 	if err := row.Scan(&s.ID, &s.CreatedAt, &s.UpdatedAt); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -115,13 +115,13 @@ func (r *Repo) GetByID(ctx context.Context, id uuid.UUID) (*Studio, error) {
 
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, slug, name, brand_color, logo_url, contact_email, contact_phone, active, created_at, updated_at,
-		       availability_slots, availability_timezone, gemini_api_key, groq_api_key, meta_app_id, meta_app_secret,
+		       availability_slots, availability_timezone, gemini_api_key, groq_api_key, claude_api_key, meta_app_id, meta_app_secret,
 		       google_client_id, google_client_secret, google_developer_token,
 		       stripe_account_id, stripe_secret_key, stripe_publishable_key, stripe_webhook_secret, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files,
 		       greeting_message, trial_amount_sgd, managed_by_1hero, booking_hero_image_url, booking_hero_video_url,
 		       trial_confirmation_message, membership_confirmation_message,
 		       trial_glofox_membership_id, trial_glofox_plan_code, membership_glofox_membership_id, membership_glofox_plan_code,
-		       communication_style_profile, style_profile_updated_at
+		       communication_style_profile, style_profile_updated_at, style_refresh_interval_minutes
 		FROM studios WHERE id = $1
 	`, id)
 	s, err := scanStudio(row, r.cipher)
@@ -142,13 +142,13 @@ func (r *Repo) GetBySlug(ctx context.Context, slug string) (*Studio, error) {
 
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, slug, name, brand_color, logo_url, contact_email, contact_phone, active, created_at, updated_at,
-		       availability_slots, availability_timezone, gemini_api_key, groq_api_key, meta_app_id, meta_app_secret,
+		       availability_slots, availability_timezone, gemini_api_key, groq_api_key, claude_api_key, meta_app_id, meta_app_secret,
 		       google_client_id, google_client_secret, google_developer_token,
 		       stripe_account_id, stripe_secret_key, stripe_publishable_key, stripe_webhook_secret, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files,
 		       greeting_message, trial_amount_sgd, managed_by_1hero, booking_hero_image_url, booking_hero_video_url,
 		       trial_confirmation_message, membership_confirmation_message,
 		       trial_glofox_membership_id, trial_glofox_plan_code, membership_glofox_membership_id, membership_glofox_plan_code,
-		       communication_style_profile, style_profile_updated_at
+		       communication_style_profile, style_profile_updated_at, style_refresh_interval_minutes
 		FROM studios WHERE slug = $1
 	`, slug)
 	s, err := scanStudio(row, r.cipher)
@@ -290,13 +290,44 @@ func (r *Repo) SetStaffReplyCountTotal(ctx context.Context, studioID uuid.UUID, 
 	return err
 }
 
-// ListStudiosNeedingStyleRefresh returns studio IDs that have accumulated at
-// least `threshold` new staff replies since their communication style
-// profile was last built (or have never had one built at all).
+// SetStyleRefreshIntervalMinutes saves how often (at minimum) a studio
+// wants its communication style profile re-learned — see
+// ListStudiosNeedingStyleRefresh for how this combines with the
+// new-replies threshold. No dedicated getter: the value already comes back
+// in the general studio response (studioResponse), same as
+// communicationStyleProfile.
+func (r *Repo) SetStyleRefreshIntervalMinutes(ctx context.Context, studioID uuid.UUID, minutes int) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE studios SET style_refresh_interval_minutes = $2, updated_at = now() WHERE id = $1
+	`, studioID, minutes)
+	if err != nil {
+		return err
+	}
+	// Unlike initial_contact_delay_minutes (deliberately outside the cached
+	// Studio struct), this column IS part of GetByID/GetBySlug's SELECT —
+	// evict so a save reflects immediately instead of waiting out the
+	// 10-minute cache TTL.
+	r.evict(studioID)
+	return nil
+}
+
+// ListStudiosNeedingStyleRefresh returns studio IDs due for a communication
+// style rebuild — either because they've accumulated at least `threshold`
+// new staff replies since the profile was last built (the original,
+// volume-based trigger), OR because their own configurable
+// style_refresh_interval_minutes has elapsed since the last build AND at
+// least one new reply has arrived (so a quiet studio with zero new
+// material never wastes an LLM call re-producing the same profile on a
+// timer).
 func (r *Repo) ListStudiosNeedingStyleRefresh(ctx context.Context, threshold int) ([]uuid.UUID, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id FROM studios
 		WHERE staff_reply_count_total - style_profile_source_count >= $1
+		   OR (
+		        staff_reply_count_total - style_profile_source_count > 0
+		        AND now() - COALESCE(style_profile_updated_at, created_at)
+		            >= (style_refresh_interval_minutes || ' minutes')::interval
+		      )
 	`, threshold)
 	if err != nil {
 		return nil, fmt.Errorf("list studios needing style refresh: %w", err)
@@ -335,16 +366,45 @@ func (r *Repo) SetCommunicationStyleProfile(ctx context.Context, studioID uuid.U
 	return nil
 }
 
+// aiProviderKeyColumns whitelists which column UpdateAIProviderKey may write
+// to — provider comes from a URL path segment, so it's validated against
+// this map rather than interpolated into SQL directly.
+var aiProviderKeyColumns = map[string]string{
+	"gemini": "gemini_api_key",
+	"groq":   "groq_api_key",
+	"claude": "claude_api_key",
+}
+
+// UpdateAIProviderKey saves a studio's API key for one AI provider. A small
+// dedicated setter (like SetCommunicationStyleProfile/SetTrialPageLayout
+// above) rather than another parameter on the already-large Update, since
+// the AI Assistant settings page saves one provider's key at a time.
+func (r *Repo) UpdateAIProviderKey(ctx context.Context, studioID uuid.UUID, provider, key string) error {
+	col, ok := aiProviderKeyColumns[provider]
+	if !ok {
+		return fmt.Errorf("unsupported ai provider %q", provider)
+	}
+	tag, err := r.pool.Exec(ctx, fmt.Sprintf(`UPDATE studios SET %s = $2, updated_at = now() WHERE id = $1`, col), studioID, key)
+	if err != nil {
+		return fmt.Errorf("update ai provider key: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	r.evict(studioID)
+	return nil
+}
+
 func scanStudio(row pgx.Row, cipher *secrets.Cipher) (*Studio, error) {
 	var s Studio
 	if err := row.Scan(&s.ID, &s.Slug, &s.Name, &s.BrandColor, &s.LogoURL, &s.ContactEmail, &s.ContactPhone,
-		&s.Active, &s.CreatedAt, &s.UpdatedAt, &s.AvailabilitySlots, &s.AvailabilityTimezone, &s.GeminiAPIKey, &s.GroqAPIKey, &s.MetaAppID, &s.MetaAppSecret,
+		&s.Active, &s.CreatedAt, &s.UpdatedAt, &s.AvailabilitySlots, &s.AvailabilityTimezone, &s.GeminiAPIKey, &s.GroqAPIKey, &s.ClaudeAPIKey, &s.MetaAppID, &s.MetaAppSecret,
 		&s.GoogleClientID, &s.GoogleClientSecret, &s.GoogleDeveloperToken,
 		&s.StripeAccountID, &s.StripeSecretKey, &s.StripePublishableKey, &s.StripeWebhookSecret, &s.SubscriptionTier, &s.SocialPlannerEnabled, &s.KnowledgeBase, &s.KnowledgeBaseFiles,
 		&s.GreetingMessage, &s.TrialAmountSGD, &s.ManagedBy1Hero, &s.BookingHeroImageURL, &s.BookingHeroVideoURL,
 		&s.TrialConfirmationMessage, &s.MembershipConfirmationMessage,
 		&s.TrialGlofoxMembershipID, &s.TrialGlofoxPlanCode, &s.MembershipGlofoxMembershipID, &s.MembershipGlofoxPlanCode,
-		&s.CommunicationStyleProfile, &s.StyleProfileUpdatedAt); err != nil {
+		&s.CommunicationStyleProfile, &s.StyleProfileUpdatedAt, &s.StyleRefreshIntervalMinutes); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -520,8 +580,9 @@ func (r *Repo) SearchKnowledgeChunks(ctx context.Context, studioID uuid.UUID, qu
 				SELECT content, 1.0 / (60 + rank) AS rrf FROM fts_ranked
 			) f USING (content)
 		)
+		-- content ASC tiebreaker — see SearchKnowledgeChunksHybrid's comment.
 		SELECT content FROM fused
-		ORDER BY score DESC
+		ORDER BY score DESC, content ASC
 		LIMIT $6
 	`, studioID, embStr, platform, "", candidateN, limit)
 
@@ -593,8 +654,12 @@ func (r *Repo) SearchKnowledgeChunksHybrid(ctx context.Context, studioID uuid.UU
 				SELECT content, 1.0 / (60 + rank) AS rrf FROM fts_ranked
 			) f USING (content)
 		)
+		-- content ASC breaks exact score ties deterministically: without it,
+		-- Postgres doesn't guarantee a stable order among tied rows, so the
+		-- same query could hand RerankChunks a different candidate set
+		-- (and drop a relevant chunk) from one request to the next.
 		SELECT content FROM fused
-		ORDER BY score DESC
+		ORDER BY score DESC, content ASC
 		LIMIT $6
 	`, studioID, embStr, platform, queryText, candidateN, limit)
 

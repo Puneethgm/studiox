@@ -179,31 +179,28 @@ export function InboxLive({
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [escalatedConversations, setEscalatedConversations] = useState<Conversation[]>([]);
   const [inboxTab, setInboxTab] = useState<'all' | 'unread' | 'recents' | 'starred'>('all');
-  const [starredIds, setStarredIds] = useState<string[]>([]);
 
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem('projectx_starred_conversations');
-      if (stored) {
-        setStarredIds(JSON.parse(stored));
-      }
-    } catch (e) {
-      console.error('Failed to load starred conversations', e);
-    }
+  // Starred is a shared, studio-wide flag stored on the conversation row in
+  // Postgres (conversations.is_starred) — not per-browser localStorage. That
+  // way it survives cache clears and every staff member on the studio sees
+  // the same starred state instead of each person tracking their own.
+  const setConversationStarred = useCallback((id: string, starred: boolean) => {
+    setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, isStarred: starred } : c)));
+    setEscalatedConversations((prev) => prev.map((c) => (c.id === id ? { ...c, isStarred: starred } : c)));
   }, []);
 
-  const toggleStar = useCallback((e: React.MouseEvent, id: string) => {
+  const toggleStar = useCallback((e: React.MouseEvent, id: string, currentlyStarred: boolean) => {
     e.stopPropagation();
-    setStarredIds((prev) => {
-      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
-      try {
-        localStorage.setItem('projectx_starred_conversations', JSON.stringify(next));
-      } catch (err) {
-        console.error('Failed to save starred conversations', err);
-      }
-      return next;
+    const next = !currentlyStarred;
+    setConversationStarred(id, next);
+    api(`/api/v1/studios/${studioId}/messaging/conversations/${id}/star`, {
+      method: 'POST',
+      json: { starred: next },
+    }).catch((err) => {
+      console.error('Failed to save starred conversation', err);
+      setConversationStarred(id, currentlyStarred);
     });
-  }, []);
+  }, [studioId, setConversationStarred]);
   const [selectedId, _setSelectedId] = useState<string | null>(null);
   // Defaults closed so it doesn't pop open full-screen on mobile; desktop
   // opens it automatically once mounted, since there it's a static sidebar.
@@ -399,7 +396,7 @@ export function InboxLive({
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
         filtered = filtered.filter(c => new Date(c.lastMessageAt) >= sevenDaysAgo);
       } else if (inboxTab === 'starred') {
-        filtered = filtered.filter(c => starredIds.includes(c.id));
+        filtered = filtered.filter(c => c.isStarred);
       }
 
       // Filter by awaiting reply (if checked)
@@ -409,7 +406,7 @@ export function InboxLive({
 
       setConversations(filtered);
     }
-  }, [mounted, initialConversations, activeChannel, unrespondedOnly, inboxTab, starredIds]);
+  }, [mounted, initialConversations, activeChannel, unrespondedOnly, inboxTab]);
 
   useEffect(() => {
     // Auto-select the first conversation so desktop's three-pane layout
@@ -453,7 +450,7 @@ export function InboxLive({
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
         filtered = filtered.filter(c => new Date(c.lastMessageAt) >= sevenDaysAgo);
       } else if (inboxTab === 'starred') {
-        filtered = filtered.filter(c => starredIds.includes(c.id));
+        filtered = filtered.filter(c => c.isStarred);
       }
 
       if (unrespondedOnly) {
@@ -467,7 +464,7 @@ export function InboxLive({
       }
       throw error;
     }
-  }, [studioId, activeChannel, unrespondedOnly, inboxTab, starredIds, handleAuthError]);
+  }, [studioId, activeChannel, unrespondedOnly, inboxTab, handleAuthError]);
 
   const refreshEscalatedConversations = useCallback(async () => {
     try {
@@ -1281,29 +1278,34 @@ export function InboxLive({
                     <button
                       type="button"
                       onClick={() => {
-                        setStarredIds((prev) => {
-                          const toStar = selectedConvIds.filter(id => !prev.includes(id));
-                          const next = toStar.length > 0
-                            ? [...prev, ...toStar]
-                            : prev.filter(id => !selectedConvIds.includes(id));
-                          try {
-                            localStorage.setItem('projectx_starred_conversations', JSON.stringify(next));
-                          } catch (err) {
-                            console.error('Failed to save starred conversations', err);
-                          }
-                          return next;
-                        });
+                        const allStarred = selectedConvIds.every(
+                          (id) => conversations.find((c) => c.id === id)?.isStarred
+                        );
+                        const next = !allStarred;
+                        const ids = selectedConvIds;
+                        ids.forEach((id) => setConversationStarred(id, next));
                         // Don't clear selection — user may want to unstar immediately
+                        Promise.all(
+                          ids.map((id) =>
+                            api(`/api/v1/studios/${studioId}/messaging/conversations/${id}/star`, {
+                              method: 'POST',
+                              json: { starred: next },
+                            })
+                          )
+                        ).catch((err) => {
+                          console.error('Failed to save starred conversations', err);
+                          ids.forEach((id) => setConversationStarred(id, allStarred));
+                        });
                       }}
                       className={cn(
                         "p-1 rounded transition-colors",
-                        selectedConvIds.every(id => starredIds.includes(id))
+                        selectedConvIds.every((id) => conversations.find((c) => c.id === id)?.isStarred)
                           ? "text-amber-500 hover:text-zinc-400"
                           : "text-zinc-400 hover:text-amber-500"
                       )}
-                      title={selectedConvIds.every(id => starredIds.includes(id)) ? "Unstar selected" : "Star selected"}
+                      title={selectedConvIds.every((id) => conversations.find((c) => c.id === id)?.isStarred) ? "Unstar selected" : "Star selected"}
                     >
-                      <Star className={cn("h-3.5 w-3.5", selectedConvIds.every(id => starredIds.includes(id)) ? "fill-current" : "fill-none")} />
+                      <Star className={cn("h-3.5 w-3.5", selectedConvIds.every((id) => conversations.find((c) => c.id === id)?.isStarred) ? "fill-current" : "fill-none")} />
                     </button>
                     <button
                       type="button"
@@ -1476,15 +1478,15 @@ export function InboxLive({
                                 )}
                                 <button
                                   type="button"
-                                  onClick={(e) => toggleStar(e, c.id)}
+                                  onClick={(e) => toggleStar(e, c.id, c.isStarred)}
                                   className={cn(
                                     "p-0.5 rounded transition-all hover:scale-110 active:scale-90",
-                                    starredIds.includes(c.id)
+                                    c.isStarred
                                       ? "text-amber-500"
                                       : "text-zinc-300 hover:text-zinc-500 dark:text-zinc-600 dark:hover:text-zinc-400"
                                   )}
                                 >
-                                  <Star className={cn("h-3.5 w-3.5", starredIds.includes(c.id) ? "fill-current" : "fill-none")} />
+                                  <Star className={cn("h-3.5 w-3.5", c.isStarred ? "fill-current" : "fill-none")} />
                                 </button>
                               </div>
                             </div>
@@ -1567,14 +1569,14 @@ export function InboxLive({
                         <Video className="h-4 w-4" />
                       </button>
                       <button
-                        onClick={(e) => toggleStar(e, selected.id)}
+                        onClick={(e) => toggleStar(e, selected.id, selected.isStarred)}
                         className={cn(
                           "p-2 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-all",
-                          starredIds.includes(selected.id) ? "text-amber-500" : "text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+                          selected.isStarred ? "text-amber-500" : "text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
                         )}
-                        title={starredIds.includes(selected.id) ? "Unstar conversation" : "Star conversation"}
+                        title={selected.isStarred ? "Unstar conversation" : "Star conversation"}
                       >
-                        <Star className={cn("h-4 w-4", starredIds.includes(selected.id) ? "fill-current" : "fill-none")} />
+                        <Star className={cn("h-4 w-4", selected.isStarred ? "fill-current" : "fill-none")} />
                       </button>
                       <button className="p-2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors" title="Tags">
                         <Tag className="h-4 w-4" />

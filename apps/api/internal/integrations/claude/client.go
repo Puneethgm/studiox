@@ -14,6 +14,10 @@ import (
 const defaultAPIURL = "https://api.anthropic.com/v1/messages"
 const defaultModel = "claude-haiku-4-5-20251001"
 
+// DefaultModel is the model GenerateReply uses when no per-studio/per-task
+// override is configured (internal/integrations/llm).
+const DefaultModel = defaultModel
+
 type Client struct {
 	url  string
 	key  string
@@ -42,7 +46,20 @@ type Reply struct {
 // unchanged so every existing call site (internal/messaging/ai_worker.go)
 // keeps behaving exactly as before.
 func (c *Client) GenerateReply(ctx context.Context, prompt string) (Reply, error) {
-	return c.do(ctx, "", prompt, 512, defaultModel)
+	return c.GenerateReplyForModel(ctx, prompt, defaultModel)
+}
+
+// GenerateReplyForModel is GenerateReply with an explicit model — used by
+// callers that resolve which model to use per-studio
+// (internal/integrations/llm.EnabledModelsForStudio) rather than always
+// using defaultModel. Same 512-token chat-reply budget as GenerateReply;
+// deliberately not Analyze's 4096-token document budget, which is the wrong
+// shape for a short chat reply.
+func (c *Client) GenerateReplyForModel(ctx context.Context, prompt, model string) (Reply, error) {
+	if model == "" {
+		model = defaultModel
+	}
+	return c.do(ctx, "", prompt, 512, model)
 }
 
 // Analyze sends a system prompt + document to Claude with a token budget

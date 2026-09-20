@@ -34,8 +34,6 @@ export interface Studio {
   availabilityTimezone?: string;
   metaAppId?: string;
   googleClientId?: string;
-  hasGeminiApiKey?: boolean;
-  hasGroqApiKey?: boolean;
   hasMetaAppSecret?: boolean;
   hasGoogleClientSecret?: boolean;
   hasGoogleDeveloperToken?: boolean;
@@ -48,6 +46,7 @@ export interface Studio {
   greetingMessage?: string;
   communicationStyleProfile?: string;
   styleProfileUpdatedAt?: string;
+  styleRefreshIntervalMinutes?: number;
   bookingHeroImageUrl?: string;
   bookingHeroVideoUrl?: string;
   trialAmountSgd?: number;
@@ -208,6 +207,7 @@ export interface Conversation {
   updatedAt: string;
   escalatedAt?: string;
   escalatedReason?: string;
+  isStarred: boolean;
 }
 
 export interface Attachment {
@@ -285,6 +285,7 @@ export type PageBlockType =
   | 'image'
   | 'video'
   | 'name_field'
+  | 'email_field'
   | 'gender_field'
   | 'dob_field'
   | 'amount_display'

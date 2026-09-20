@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useState, useRef, type CSSProperties, type ReactNode } from 'react';
 import { Button } from '@/components/ui/Button';
+import { SettingsModal } from '@/app/admin/studios/[studioId]/settings/SettingsModal';
 import { api } from '@/lib/api';
 import { brandInitials, withAlpha } from '@/lib/color';
 import { cn } from '@/lib/cn';
@@ -44,9 +45,12 @@ interface NavItem {
   label: string;
   icon: ReactNode;
   match?: (pathname: string) => boolean;
+  // When set, clicking this item opens the Settings modal instead of
+  // navigating — href is kept as a fallback (e.g. "open in new tab").
+  onClick?: () => void;
 }
 
-function navItemsFor(me: Me, currentPath: string): NavItem[] {
+function navItemsFor(me: Me, currentPath: string, onOpenSettings: () => void): NavItem[] {
   // Check if currently viewing a studio (both super_admin and studio_admin can do this)
   const studioMatch = currentPath.match(/\/admin\/studios\/([^/]+)/);
   const currentStudioId = studioMatch?.[1];
@@ -67,7 +71,7 @@ function navItemsFor(me: Me, currentPath: string): NavItem[] {
         { href: `${base}/knowledge-base`,  label: 'Knowledge Base', icon: <Database className="h-[18px] w-[18px]" />,      match: (p) => p.startsWith(`${base}/knowledge-base`) },
         { href: `${base}/decision-trees`, label: 'Decision Trees', icon: <Network className="h-[18px] w-[18px]" />,       match: (p) => p.startsWith(`${base}/decision-trees`) },
         { href: `${base}/templates`,      label: 'Templates',      icon: <MessageSquareText className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/templates`) },
-        { href: `${base}/settings`,       label: 'Settings',       icon: <Settings className="h-[18px] w-[18px]" />,      match: (p) => p.startsWith(`${base}/settings`) },
+        { href: `${base}/settings`,       label: 'Settings',       icon: <Settings className="h-[18px] w-[18px]" />,      match: (p) => p.startsWith(`${base}/settings`), onClick: onOpenSettings },
       ];
     }
 
@@ -127,7 +131,7 @@ function navItemsFor(me: Me, currentPath: string): NavItem[] {
     { href: `${base}/knowledge-base`,  label: 'Knowledge Base', icon: <Database className="h-[18px] w-[18px]" />,  match: (p) => p.startsWith(`${base}/knowledge-base`) },
     { href: `${base}/decision-trees`, label: 'Decision Trees', icon: <Network className="h-[18px] w-[18px]" />,  match: (p) => p.startsWith(`${base}/decision-trees`) },
     { href: `${base}/templates`,      label: 'Templates',      icon: <MessageSquareText className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/templates`) },
-    { href: `${base}/settings`,       label: 'Settings',       icon: <Settings className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/settings`) },
+    { href: `${base}/settings`,       label: 'Settings',       icon: <Settings className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/settings`), onClick: onOpenSettings },
   );
 
   return links;
@@ -142,6 +146,10 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [globalToast, setGlobalToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // Studio-admin is always scoped to their own studio; super-admin only has
+  // one when they're currently browsing into a specific studio's pages.
+  const activeStudioId = isStudio ? me.studioId! : pathname.match(/\/admin\/studios\/([^/]+)/)?.[1];
 
   const checkToast = () => {
     const raw = sessionStorage.getItem('studiox_toast');
@@ -253,6 +261,8 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
           onClose={() => setMobileOpen(false)}
           isCollapsed={isCollapsed}
           onToggle={handleToggleSidebar}
+          onOpenSettings={() => setSettingsOpen(true)}
+          settingsOpen={settingsOpen}
         />
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-white dark:bg-zinc-950">
           <Topbar me={me} scrolled={scrolled} onMenuClick={() => setMobileOpen(true)} />
@@ -268,6 +278,10 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
           </main>
         </div>
       </div>
+
+      {activeStudioId && (
+        <SettingsModal studioId={activeStudioId} open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      )}
 
       {/* Custom Floating Toast Notification */}
       {globalToast && (
@@ -306,6 +320,8 @@ function Sidebar({
   onClose,
   isCollapsed,
   onToggle,
+  onOpenSettings,
+  settingsOpen,
 }: {
   me: Me;
   pathname: string;
@@ -313,8 +329,10 @@ function Sidebar({
   onClose: () => void;
   isCollapsed: boolean;
   onToggle: () => void;
+  onOpenSettings: () => void;
+  settingsOpen: boolean;
 }) {
-  const items = navItemsFor(me, pathname);
+  const items = navItemsFor(me, pathname, onOpenSettings);
   const isStudio = me.role === 'studio_admin' && !!me.studio;
   const studio = isStudio ? me.studio! : null;
   const isSuperAdminInStudio = me.role === 'super_admin' && /\/admin\/studios\/[^/]+/.test(pathname);
@@ -419,23 +437,20 @@ function Sidebar({
           </Link>
         )}
         {items.map((item, idx) => {
-          const active = item.match ? item.match(pathname) : pathname === item.href;
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                'group flex animate-in items-center gap-3 rounded px-3 py-2 text-sm font-semibold transition-colors duration-200',
-                active
-                  ? 'text-white'
-                  : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100',
-                isCollapsed ? 'lg:justify-center' : 'lg:justify-start',
-              )}
-              style={{
-                animationDelay: `${150 + idx * 50}ms`,
-                ...(active ? { background: 'var(--brand)' } : {}),
-              }}
-            >
+          const active = item.onClick ? settingsOpen : item.match ? item.match(pathname) : pathname === item.href;
+          const itemClassName = cn(
+            'group flex w-full animate-in items-center gap-3 rounded px-3 py-2 text-sm font-semibold transition-colors duration-200',
+            active
+              ? 'text-white'
+              : 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100',
+            isCollapsed ? 'lg:justify-center' : 'lg:justify-start',
+          );
+          const itemStyle = {
+            animationDelay: `${150 + idx * 50}ms`,
+            ...(active ? { background: 'var(--brand)' } : {}),
+          };
+          const content = (
+            <>
               <span className={cn('shrink-0 transition-transform duration-300 group-hover:scale-110', active && '[&>svg]:stroke-[2.5]')}>
                 {item.icon}
               </span>
@@ -445,6 +460,18 @@ function Sidebar({
               )}>
                 {item.label}
               </span>
+            </>
+          );
+          if (item.onClick) {
+            return (
+              <button key={item.href} type="button" onClick={item.onClick} className={itemClassName} style={itemStyle}>
+                {content}
+              </button>
+            );
+          }
+          return (
+            <Link key={item.href} href={item.href} className={itemClassName} style={itemStyle}>
+              {content}
             </Link>
           );
         })}

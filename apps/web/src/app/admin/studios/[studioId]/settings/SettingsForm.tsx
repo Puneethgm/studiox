@@ -2,7 +2,7 @@
 
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { useState, useEffect } from 'react';
-import { Eye, EyeOff, Database, Building, Calendar, Cpu, Lock, Save, CheckCircle2, X, DollarSign, Upload, Loader2, Timer } from 'lucide-react';
+import { Eye, EyeOff, Database, Building, Calendar, Cpu, Lock, Save, CheckCircle2, X, DollarSign, Upload, Loader2, Timer, Bot } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { FieldError, FieldHint, Label } from '@/components/ui/Label';
@@ -23,6 +23,7 @@ import {
 } from './actions';
 import { AvailabilitySettings } from './AvailabilitySettings';
 import { PlansManagement } from './PlansManagement';
+import { AIProviderSettings } from './AIProviderSettings';
 
 const COUNTRY_CODES = [
   { code: '+65', name: 'Singapore (+65)' },
@@ -47,10 +48,26 @@ function parsePhone(fullPhone: string) {
   return { countryCode: '+65', phoneNumber: fullPhone };
 }
 
-type SettingsSection = 'general' | 'plans' | 'availability' | 'booking' | 'sheets' | 'integrations' | 'security' | 'billing';
-const VALID_SECTIONS: SettingsSection[] = ['general', 'plans', 'availability', 'booking', 'sheets', 'integrations', 'security', 'billing'];
+type SettingsSection = 'general' | 'plans' | 'availability' | 'booking' | 'sheets' | 'integrations' | 'ai-assistant' | 'security' | 'billing';
+const VALID_SECTIONS: SettingsSection[] = ['general', 'plans', 'availability', 'booking', 'sheets', 'integrations', 'ai-assistant', 'security', 'billing'];
 
-export function SettingsForm({ studio, previewHref, initialPlans }: { studio: Studio; previewHref: string | null; initialPlans: any[] }) {
+export function SettingsForm({
+  studio,
+  previewHref,
+  initialPlans,
+  forcedSection,
+  hideNav,
+}: {
+  studio: Studio;
+  previewHref: string | null;
+  initialPlans: any[];
+  // Lets an embedder (e.g. SettingsModal, reusing just one tab's form logic)
+  // pin the visible section and hide this component's own nav, instead of
+  // driving it from the `?tab=` URL param — used when this component is
+  // rendered somewhere other than its own page route.
+  forcedSection?: SettingsSection;
+  hideNav?: boolean;
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -70,8 +87,6 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
   const initialPhone = parsePhone(studio.contactPhone || '');
   const [contactPhoneCountryCode, setContactPhoneCountryCode] = useState(initialPhone.countryCode);
   const [contactPhone, setContactPhone] = useState(initialPhone.phoneNumber);
-  const [geminiApiKey, setGeminiApiKey] = useState('');
-  const [groqApiKey, setGroqApiKey] = useState('');
   const [metaAppId, setMetaAppId] = useState(studio.metaAppId || '');
   const [metaAppSecret, setMetaAppSecret] = useState('');
   const [googleClientId, setGoogleClientId] = useState(studio.googleClientId || '');
@@ -81,7 +96,8 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   
-  const [activeSection, _setActiveSection] = useState<SettingsSection>(initialSection);
+  const [_activeSection, _setActiveSection] = useState<SettingsSection>(initialSection);
+  const activeSection = forcedSection ?? _activeSection;
   const setActiveSection = (section: SettingsSection) => {
     _setActiveSection(section);
     const p = new URLSearchParams(searchParams.toString());
@@ -150,9 +166,6 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
   const [metaSaving, setMetaSaving] = useState(false);
   const [googleSaving, setGoogleSaving] = useState(false);
   const [showGoogleClientSecret, setShowGoogleClientSecret] = useState(false);
-  const [geminiSaving, setGeminiSaving] = useState(false);
-  const [groqSaving, setGroqSaving] = useState(false);
-  const [showGroqApiKey, setShowGroqApiKey] = useState(false);
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
@@ -160,7 +173,6 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
     setToast({ message, type });
   };
 
-  const [showGeminiApiKey, setShowGeminiApiKey] = useState(false);
   const [showMetaAppSecret, setShowMetaAppSecret] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
 
@@ -356,42 +368,6 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
     }
   }
 
-  async function onSaveGeminiKey(e: React.FormEvent) {
-    e.preventDefault();
-    setErrors({});
-    setGeminiSaving(true);
-    try {
-      const result = await updateStudioSettings(studio.id, studio.slug, {
-        geminiApiKey,
-      });
-      if (!result.ok) {
-        setErrors(result.details ?? { _: result.error });
-        return;
-      }
-      showToast('Gemini API Key saved successfully.');
-    } finally {
-      setGeminiSaving(false);
-    }
-  }
-
-  async function onSaveGroqKey(e: React.FormEvent) {
-    e.preventDefault();
-    setErrors({});
-    setGroqSaving(true);
-    try {
-      const result = await updateStudioSettings(studio.id, studio.slug, {
-        groqApiKey,
-      });
-      if (!result.ok) {
-        setErrors(result.details ?? { _: result.error });
-        return;
-      }
-      showToast('Groq API Key saved successfully.');
-    } finally {
-      setGroqSaving(false);
-    }
-  }
-
   async function onSaveMetaConfig(e: React.FormEvent) {
     e.preventDefault();
     setErrors({});
@@ -499,7 +475,8 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
   return (
     <div className="flex flex-col gap-8 lg:flex-row lg:items-start">
       {/* Left Sidebar Navigation */}
-      <div className="w-full lg:w-64 shrink-0 flex flex-row lg:flex-col gap-1 overflow-x-auto lg:overflow-visible pb-2 lg:pb-0 border-b lg:border-b-0 lg:border-r border-white/10 lg:pr-6 scrollbar-none">
+      {!hideNav && (
+      <div className="w-full lg:w-64 shrink-0 flex flex-row lg:flex-col gap-1 overflow-x-auto lg:overflow-visible pb-2 lg:pb-0 border-b lg:border-b-0 lg:border-r border-zinc-200 dark:border-zinc-800 lg:pr-6 scrollbar-none">
         {[
           { id: 'general', label: 'General Info', icon: Building },
           { id: 'plans', label: 'Plans', icon: DollarSign },
@@ -507,6 +484,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
           { id: 'booking', label: 'Booking Page', icon: Eye },
           { id: 'sheets', label: 'Google Sheets', icon: Database },
           { id: 'integrations', label: 'Integrations', icon: Cpu },
+          { id: 'ai-assistant', label: 'AI Assistant', icon: Bot },
           { id: 'security', label: 'Security', icon: Lock },
           { id: 'billing', label: 'Platform Billing', icon: DollarSign },
         ].map((item) => {
@@ -517,10 +495,10 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
               key={item.id}
               type="button"
               onClick={() => setActiveSection(item.id as any)}
-              className={`flex items-center gap-3 rounded px-4 py-3 text-xs font-black uppercase tracking-wider transition-all duration-200 shrink-0 whitespace-nowrap ${
+              className={`flex items-center gap-3 rounded-xl px-4 py-3 text-xs font-black uppercase tracking-wider transition-all duration-200 shrink-0 whitespace-nowrap ${
                 isActive
-                  ? 'bg-gradient-to-r from-brand-500 to-violet-600 text-white shadow-lg shadow-brand-500/20'
-                  : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-white/10 dark:hover:bg-neutral-800/30'
+                  ? 'bg-[var(--brand,#7c3aed)] text-white shadow-sm'
+                  : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900'
               }`}
             >
               <Icon className="h-4 w-4 shrink-0" />
@@ -529,13 +507,18 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
           );
         })}
       </div>
+      )}
 
       {/* Right Content Pane */}
       <div className="flex-1 min-w-0">
         {activeSection === 'general' && (
           <div className="grid gap-6 lg:grid-cols-3">
             <div className="lg:col-span-2">
-              <form onSubmit={onSubmit} className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 p-6 space-y-5">
+              <form onSubmit={onSubmit} className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 p-6 space-y-5">
+                <div>
+                  <h3 className="text-sm font-black text-zinc-950 dark:text-white">General Info</h3>
+                  <p className="mt-1 text-xs text-zinc-400">Name, brand color, and logo shown across the admin and public pages.</p>
+                </div>
                 <div>
                   <Label htmlFor="name">Studio name</Label>
                   <Input
@@ -551,7 +534,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                 <div>
                   <Label htmlFor="brandColor">Brand color</Label>
                   <div className="flex items-center gap-2 mt-1">
-                    <div className="relative h-10 w-12 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-white/5">
+                    <div className="relative h-10 w-12 shrink-0 overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">
                       <input
                         type="color"
                         id="brandColor"
@@ -617,7 +600,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                     <select
                       value={contactPhoneCountryCode}
                       onChange={(e) => setContactPhoneCountryCode(e.target.value)}
-                      className="h-10 rounded-xl border border-white/20 bg-white/5 dark:bg-slate-950 dark:border-slate-800 text-slate-900 dark:text-slate-100 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 w-[110px] shrink-0"
+                      className="h-10 rounded-xl border border-zinc-200 bg-white dark:bg-zinc-900 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 w-[110px] shrink-0"
                     >
                       {COUNTRY_CODES.map((c) => (
                         <option key={c.code} value={c.code}>
@@ -685,7 +668,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
 
                 <FieldError message={errors._} />
 
-                <div className="flex items-center justify-end gap-2 border-t border-white/10 pt-5">
+                <div className="flex items-center justify-end gap-2 border-t border-zinc-200 dark:border-zinc-800 pt-5">
                   <Button variant="ghost" type="button" onClick={() => router.back()}>
                     Cancel
                   </Button>
@@ -702,9 +685,9 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
 
             {/* Live Preview Column */}
             <div className="lg:col-span-1">
-              <div className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+              <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
                 <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
-                  <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Live Preview</h3>
+                  <h3 className="text-sm font-black text-zinc-950 dark:text-white">Live Preview</h3>
                 </div>
                 <div className="p-6 space-y-4">
                   <div className="rounded border border-zinc-100 bg-zinc-50 p-4 dark:bg-neutral-800/20">
@@ -769,7 +752,7 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
 
         {activeSection === 'booking' && (
           <div className="space-y-6">
-            <div className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 p-6 space-y-5">
+            <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 p-6 space-y-5">
               <div>
                 <h3 className="text-sm font-black text-zinc-950 dark:text-white">Booking Page Media</h3>
                 <p className="text-xs text-zinc-400 mt-1">Add a hero image or background video shown to leads on your public booking/checkout page.</p>
@@ -869,10 +852,10 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
         {activeSection === 'sheets' && (
           <div className="grid gap-6 lg:grid-cols-2 items-start">
             {/* Google Sheets Card */}
-            <div className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+            <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
               <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800 flex items-center gap-2">
                 <Database className="h-4 w-4 text-brand-500" />
-                <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Google Sheets Sync</h3>
+                <h3 className="text-sm font-black text-zinc-950 dark:text-white">Google Sheets Sync</h3>
               </div>
               <form onSubmit={onSaveSheetsSettings} className="space-y-4 p-6">
                 <div>
@@ -927,10 +910,10 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
             </div>
 
             {/* External Leads Sheet Card — read-only import from a third-party company's sheet */}
-            <div className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+            <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
               <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800 flex items-center gap-2">
                 <Database className="h-4 w-4 text-brand-500" />
-                <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">External Leads Sheet (Import)</h3>
+                <h3 className="text-sm font-black text-zinc-950 dark:text-white">External Leads Sheet (Import)</h3>
               </div>
               <form onSubmit={onSaveExternalLeadsSheetSettings} className="space-y-4 p-6">
                 <p className="text-[10px] text-zinc-400">
@@ -1111,9 +1094,9 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
         {activeSection === 'integrations' && (
           <div className="grid gap-6 lg:grid-cols-2 items-start">
               {/* Meta App Settings Card */}
-              <form onSubmit={onSaveMetaConfig} className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 p-6 space-y-5">
+              <form onSubmit={onSaveMetaConfig} className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 p-6 space-y-5">
                 <div>
-                  <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Meta App Settings</h3>
+                  <h3 className="text-sm font-black text-zinc-950 dark:text-white">Meta App Settings</h3>
                 </div>
 
                 <div>
@@ -1168,9 +1151,9 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
               </form>
 
               {/* Google Ads Integration Card */}
-              <form onSubmit={onSaveGoogleConfig} className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 p-6 space-y-5">
+              <form onSubmit={onSaveGoogleConfig} className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 p-6 space-y-5">
                 <div>
-                  <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Google Ads Integration</h3>
+                  <h3 className="text-sm font-black text-zinc-950 dark:text-white">Google Ads Integration</h3>
                 </div>
 
                 <div>
@@ -1224,97 +1207,11 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
                 </div>
               </form>
 
-              {/* Gemini AI Integration Card */}
-              <form onSubmit={onSaveGeminiKey} className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 p-6 space-y-5">
-                <div>
-                  <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Gemini AI Integration</h3>
-                </div>
-
-                <div>
-                  <Label htmlFor="geminiApiKey">Gemini API Key</Label>
-                  <div className="relative mt-1">
-                    <Input
-                      id="geminiApiKey"
-                      type={showGeminiApiKey ? 'text' : 'password'}
-                      placeholder={studio.hasGeminiApiKey ? '••••••••••••••••' : 'AIzaSy...'}
-                      invalid={!!errors.geminiApiKey}
-                      value={geminiApiKey}
-                      onChange={(e) => setGeminiApiKey(e.target.value)}
-                      className="pr-12"
-                    />
-                    <button
-                      type="button"
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 transition hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
-                      onClick={() => setShowGeminiApiKey(!showGeminiApiKey)}
-                    >
-                      {showGeminiApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                  <FieldHint>Configure the Gemini API Key to enable AI-driven template and post generation.</FieldHint>
-                  <FieldError message={errors.geminiApiKey} />
-                </div>
-
-                <FieldError message={errors._} />
-
-                <div className="flex items-center justify-end border-t border-zinc-200 dark:border-zinc-800 pt-4">
-                  <Button 
-                    type="submit" 
-                    loading={geminiSaving}
-                    className="bg-brand-500 hover:bg-brand-600 text-white text-xs font-black uppercase tracking-widest rounded h-10 px-6"
-                  >
-                    Save Gemini Key
-                  </Button>
-                </div>
-              </form>
-
-              {/* Groq AI Integration Card */}
-              <form onSubmit={onSaveGroqKey} className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950 p-6 space-y-5">
-                <div>
-                  <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Groq AI Integration</h3>
-                </div>
-
-                <div>
-                  <Label htmlFor="groqApiKey">Groq API Key</Label>
-                  <div className="relative mt-1">
-                    <Input
-                      id="groqApiKey"
-                      type={showGroqApiKey ? 'text' : 'password'}
-                      placeholder={studio.hasGroqApiKey ? '••••••••••••••••' : 'gsk_...'}
-                      invalid={!!errors.groqApiKey}
-                      value={groqApiKey}
-                      onChange={(e) => setGroqApiKey(e.target.value)}
-                      className="pr-12"
-                    />
-                    <button
-                      type="button"
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 transition hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
-                      onClick={() => setShowGroqApiKey(!showGroqApiKey)}
-                    >
-                      {showGroqApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                  <FieldHint>Groq key enables Llama 3.1 8B (primary) and Llama 3.3 70B (fallback) for fast, cheap AI replies.</FieldHint>
-                  <FieldError message={errors.groqApiKey} />
-                </div>
-
-                <FieldError message={errors._} />
-
-                <div className="flex items-center justify-end border-t border-zinc-200 dark:border-zinc-800 pt-4">
-                  <Button
-                    type="submit"
-                    loading={groqSaving}
-                    className="bg-brand-500 hover:bg-brand-600 text-white text-xs font-black uppercase tracking-widest rounded h-10 px-6"
-                  >
-                    Save Groq Key
-                  </Button>
-                </div>
-              </form>
-
             {/* WhatsApp Message Pacing — throttle between consecutive sends */}
-            <div className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+            <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
               <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800 flex items-center gap-2">
                 <Timer className="h-4 w-4 text-brand-500" />
-                <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">WhatsApp Message Pacing</h3>
+                <h3 className="text-sm font-black text-zinc-950 dark:text-white">WhatsApp Message Pacing</h3>
               </div>
               <form onSubmit={onSaveSendSpacing} className="space-y-4 p-6">
                 <p className="text-[10px] text-zinc-400">
@@ -1354,10 +1251,10 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
             </div>
 
             {/* Initial Message Delay — wait before the very first auto-contact send */}
-            <div className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+            <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
               <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800 flex items-center gap-2">
                 <Timer className="h-4 w-4 text-brand-500" />
-                <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Message Timing</h3>
+                <h3 className="text-sm font-black text-zinc-950 dark:text-white">Message Timing</h3>
               </div>
               <form onSubmit={onSaveInitialDelay} className="space-y-4 p-6">
                 <p className="text-[10px] text-zinc-400">
@@ -1427,11 +1324,17 @@ export function SettingsForm({ studio, previewHref, initialPlans }: { studio: St
         </div>
         )}
 
+        {activeSection === 'ai-assistant' && (
+          <div className="max-w-2xl">
+            <AIProviderSettings studioId={studio.id} />
+          </div>
+        )}
+
         {activeSection === 'security' && (
           <div className="max-w-xl">
-            <div className="overflow-hidden rounded border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+            <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
               <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
-                <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400">Change Password</h3>
+                <h3 className="text-sm font-black text-zinc-950 dark:text-white">Change Password</h3>
               </div>
               <form onSubmit={onChangePassword} className="space-y-4 p-6">
                 <div>
@@ -1604,9 +1507,9 @@ function DeleteAccountForm({ studioId, studioName }: { studioId: string; studioN
   return (
     <>
       <div className="mt-6 max-w-xl">
-        <div className="overflow-hidden rounded-[24px] border border-red-500/30 bg-red-500/5 backdrop-blur-2xl dark:border-red-900/30 dark:bg-red-950/10">
+        <div className="overflow-hidden rounded-xl border border-red-200 bg-red-50 dark:border-red-900/40 dark:bg-red-950/10">
           <div className="border-b border-red-500/20 px-6 py-4 dark:border-red-900/20">
-            <h3 className="text-xs font-black uppercase tracking-wider text-red-600 dark:text-red-400">Delete Account</h3>
+            <h3 className="text-sm font-black text-red-600 dark:text-red-400">Delete Account</h3>
             <p className="text-[10px] text-red-600/70 dark:text-red-400/70 mt-1">Permanently delete your account and all data</p>
           </div>
 
@@ -1828,19 +1731,17 @@ function PlatformBillingManager({ studio }: { studio: Studio }) {
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-xs font-black uppercase tracking-wider text-zinc-400 mb-1">
-          Platform Billing
-        </h3>
-        <p className="text-[10px] text-zinc-500">
-          Manage your studio's platform subscription. Upgrade or downgrade your plan to unlock more features.
+        <h3 className="text-base font-bold text-zinc-900 dark:text-white">Platform Billing</h3>
+        <p className="text-sm text-zinc-400">
+          Manage your studio&rsquo;s platform subscription. Upgrade or downgrade your plan to unlock more features.
         </p>
       </div>
 
-      <div className={`relative overflow-hidden rounded border border-brand-500 bg-brand-50/50 dark:bg-brand-950/20 p-6 transition-all duration-300 shadow-sm`}>
+      <div className="relative overflow-hidden rounded-xl border border-[var(--brand,#7c3aed)]/40 bg-[var(--brand,#7c3aed)]/5 p-6 shadow-sm transition-all duration-300 dark:bg-[var(--brand,#7c3aed)]/10">
         <div className="flex justify-between items-start mb-2">
           <div>
-            <h4 className="text-xl font-black text-zinc-900 dark:text-white">Current Plan</h4>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mt-1">
+            <h4 className="text-base font-bold text-zinc-900 dark:text-white">Current Plan</h4>
+            <p className="mt-1 text-[10px] font-bold uppercase tracking-widest text-zinc-500">
               {isCanceledOrPastDue ? 'Subscription Paused' : 'Currently Active'}
             </p>
           </div>
@@ -1854,11 +1755,11 @@ function PlatformBillingManager({ studio }: { studio: Studio }) {
           </div>
         )}
         {hasSubscription && (
-          <div className="mt-6 border-t border-brand-500/20 pt-4">
+          <div className="mt-6 border-t border-[var(--brand,#7c3aed)]/20 pt-4">
             <Button
               variant="outline"
               size="sm"
-              className="w-full text-xs font-bold"
+              className="w-full rounded-xl text-xs font-bold"
               onClick={async () => {
                 const res = await fetch(`/api/v1/me/studios/${studio.id}/billing/portal`, { method: 'POST' });
                 const data = await res.json();
@@ -1880,20 +1781,18 @@ function PlatformBillingManager({ studio }: { studio: Studio }) {
             <div
               key={plan.name || idx}
               style={{ borderTopColor: accentHex }}
-              className={`group relative flex flex-col rounded border-t-4 overflow-hidden transition-all duration-200 cursor-default ${
+              className={`group relative flex flex-col overflow-hidden rounded-xl border-t-4 transition-all duration-200 ${
                 isCurrent
-                  ? 'border border-brand-500 bg-brand-50 dark:bg-brand-950/30 shadow-md'
-                  : 'border border-zinc-200 bg-white dark:bg-zinc-900 dark:border-zinc-700 hover:border-brand-400 hover:shadow-md hover:shadow-brand-500/10'
+                  ? 'border border-[var(--brand,#7c3aed)]/50 bg-[var(--brand,#7c3aed)]/5 shadow-md dark:bg-[var(--brand,#7c3aed)]/10'
+                  : 'border border-zinc-200 bg-white hover:shadow-md dark:border-zinc-700 dark:bg-zinc-900'
               }`}
             >
               {/* Card Header */}
-              <div className={`px-5 py-4 ${isCurrent ? 'bg-brand-50 dark:bg-brand-950/20' : 'bg-zinc-50 dark:bg-zinc-900'}`}>
+              <div className="px-5 py-4">
                 <div className="flex items-center justify-between">
-                  <h4 className="text-sm font-black uppercase tracking-widest text-zinc-800 dark:text-zinc-100">
-                    {plan.name}
-                  </h4>
+                  <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">{plan.name}</h4>
                   {isCurrent && (
-                    <span className="inline-flex items-center gap-1 rounded bg-brand-500 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-white">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-[var(--brand,#7c3aed)] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">
                       <CheckCircle2 className="h-3 w-3" /> Active
                     </span>
                   )}
@@ -1908,11 +1807,11 @@ function PlatformBillingManager({ studio }: { studio: Studio }) {
                     <span className="text-xs font-semibold text-zinc-400">one-time</span>
                   )}
                 </div>
-                <p className="mt-1 text-[11px] text-zinc-500 leading-relaxed">{plan.description}</p>
+                <p className="mt-1.5 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">{plan.description}</p>
               </div>
 
               {/* Feature List */}
-              <div className="flex-1 space-y-2 border-t border-zinc-200 dark:border-zinc-800 px-5 py-4">
+              <div className="flex-1 space-y-2 border-t border-zinc-100 px-5 py-4 dark:border-zinc-800">
                 {plan.features?.map((f: string, i: number) => (
                   <div key={i} className="flex items-start gap-2">
                     <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500 mt-0.5" />
@@ -1922,15 +1821,15 @@ function PlatformBillingManager({ studio }: { studio: Studio }) {
               </div>
 
               {/* Action Button */}
-              <div className="border-t border-zinc-200 dark:border-zinc-800 px-5 py-4">
+              <div className="border-t border-zinc-100 px-5 py-4 dark:border-zinc-800">
                 <Button
                   variant={isCurrent ? 'secondary' : 'primary'}
                   onClick={() => handleAction(plan.name, hasSubscription)}
                   loading={actionLoading === plan.name}
                   disabled={isCurrent}
-                  className="w-full text-xs font-black uppercase tracking-wider rounded h-9"
+                  className="h-9 w-full rounded-xl text-xs font-bold"
                 >
-                  {isCurrent ? '✓ Current Plan' : (hasSubscription ? 'Switch to This Plan' : 'Select Plan')}
+                  {isCurrent ? 'Current Plan' : hasSubscription ? 'Switch to This Plan' : 'Select Plan'}
                 </Button>
               </div>
             </div>

@@ -13,8 +13,8 @@ import (
 const baseURL = "https://api.groq.com/openai/v1/chat/completions"
 
 const (
-	Model8B  = "llama-3.1-8b-instant"
-	Model70B = "llama-3.3-70b-versatile"
+	Model8B  = "qwen/qwen3.8-27b"
+	Model70B = "openai/gpt-oss-120b"
 )
 
 type Client struct {

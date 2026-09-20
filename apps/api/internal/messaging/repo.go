@@ -616,7 +616,7 @@ func (r *Repo) ListConversations(ctx context.Context, studioID uuid.UUID, f List
 		       c.lead_id, c.status, c.assigned_to, c.unread_count,
 		       c.last_message_at, c.last_message_preview, c.last_message_direction,
 		       c.created_at, c.updated_at, l.status, c.ai_enabled, c.dnd_enabled,
-		       c.escalated_at, c.escalated_reason, c.current_tree_node_id
+		       c.escalated_at, c.escalated_reason, c.current_tree_node_id, c.is_starred
 		FROM conversations c
 		JOIN channel_accounts ch ON ch.id = c.channel_account_id
 		JOIN contact_identities ci ON ci.id = c.contact_identity_id
@@ -649,7 +649,7 @@ func (r *Repo) GetConversation(ctx context.Context, studioID, id uuid.UUID) (*Co
 		       c.lead_id, c.status, c.assigned_to, c.unread_count,
 		       c.last_message_at, c.last_message_preview, c.last_message_direction,
 		       c.created_at, c.updated_at, l.status, c.ai_enabled, c.dnd_enabled,
-		       c.escalated_at, c.escalated_reason, c.current_tree_node_id
+		       c.escalated_at, c.escalated_reason, c.current_tree_node_id, c.is_starred
 		FROM conversations c
 		JOIN channel_accounts ch ON ch.id = c.channel_account_id
 		JOIN contact_identities ci ON ci.id = c.contact_identity_id
@@ -668,7 +668,7 @@ func scanConversationRow(row pgx.Row) (*Conversation, error) {
 		&c.LeadID, &c.Status, &c.AssignedTo, &c.UnreadCount,
 		&c.LastMessageAt, &c.LastMessagePreview, &dir,
 		&c.CreatedAt, &c.UpdatedAt, &c.LeadStatus, &c.AIEnabled, &c.DNDEnabled,
-		&c.EscalatedAt, &escalatedReason, &c.CurrentTreeNodeID); err != nil {
+		&c.EscalatedAt, &escalatedReason, &c.CurrentTreeNodeID, &c.IsStarred); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -792,6 +792,18 @@ func (r *Repo) SetConversationDNDEnabled(ctx context.Context, studioID, convID u
 		UPDATE conversations SET dnd_enabled = $3, updated_at = now()
 		WHERE studio_id = $1 AND id = $2
 	`, studioID, convID, enabled)
+	return err
+}
+
+// SetConversationStarred toggles the shared "starred" flag on a conversation.
+// It's a studio-wide flag, not per-staff-member — anyone on the studio who
+// stars a conversation makes it starred for every staff member viewing that
+// studio's inbox, not just themselves.
+func (r *Repo) SetConversationStarred(ctx context.Context, studioID, convID uuid.UUID, starred bool) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE conversations SET is_starred = $3, updated_at = now()
+		WHERE studio_id = $1 AND id = $2
+	`, studioID, convID, starred)
 	return err
 }
 

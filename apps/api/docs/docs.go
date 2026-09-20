@@ -2630,7 +2630,7 @@ const docTemplate = `{
                 }
             },
             "post": {
-                "description": "Public endpoint for a lead to submit their name, gender, and date of birth while checking out for a trial. Payment itself happens on the same page via embedded Stripe Elements; this only saves the collected details. No auth required.",
+                "description": "Public endpoint for a lead to submit their name, email, gender, and date of birth while checking out for a trial. Payment itself happens on the same page via embedded Stripe Elements; this only saves the collected details. No auth required.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2668,7 +2668,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "invalid lead id or missing fullName",
+                        "description": "invalid lead id, missing fullName, or invalid email",
                         "schema": {
                             "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
                         }
@@ -3307,7 +3307,7 @@ const docTemplate = `{
         },
         "/api/v1/public/studios/{studioSlug}/trial-signup": {
             "post": {
-                "description": "Public, unauthenticated endpoint for a visitor to sign up for a trial directly against a studio (not tied to a specific campaign slug in the URL). Captures referrer, user agent, and client IP server-side. Field lengths are validated (fullName \u003c=255, phone \u003c=30).",
+                "description": "Public, unauthenticated endpoint for a visitor to sign up for a trial directly against a studio (not tied to a specific campaign slug in the URL). Captures referrer, user agent, and client IP server-side. Field lengths are validated (fullName \u003c=255, email \u003c=255, phone \u003c=30).",
                 "consumes": [
                     "application/json"
                 ],
@@ -4911,6 +4911,76 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "invalid id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/studios/{studioId}/knowledge-base/test-chat": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Runs a one-off question through the studio's real knowledge-base retrieval and LLM reply pipeline, without creating any conversation, message, or lead record.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Knowledge Base"
+                ],
+                "summary": "Test the knowledge-base + AI reply pipeline",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID (UUID)",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Test message and prior turns in this session",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_messaging.TestChatRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_messaging.TestChatResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid studioId or malformed body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "no studio bound to this user",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "message is required",
                         "schema": {
                             "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
                         }
@@ -6626,7 +6696,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Returns the studio's inbox conversations across all channels, with optional filtering by status, channel kind, and escalation state, and pagination via limit/offset.",
+                "description": "Returns the studio's inbox conversations across all channels, with optional filtering by status, channel kind, escalation state, and unresponded backlog, and pagination via limit/offset.",
                 "produces": [
                     "application/json"
                 ],
@@ -6658,6 +6728,12 @@ const docTemplate = `{
                         "type": "boolean",
                         "description": "Filter to only escalated (or non-escalated) conversations",
                         "name": "escalated",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Filter to conversations whose last message is still unanswered (customer sent last); sorts oldest-waiting first instead of most-recent-first",
+                        "name": "unresponded",
                         "in": "query"
                     },
                     {
@@ -8297,7 +8373,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Uploads an image (max 10MB, JPEG/PNG/WebP/GIF) for use in the studio's social planner. Stores the image in S3 when configured, otherwise falls back to local disk storage, and returns the resulting media URL. Studio-admins may only upload for their own studio; super-admins are forbidden from this endpoint.",
+                "description": "Uploads an image or video (max 100MB — JPEG/PNG/WebP/GIF, or MP4/MOV for Instagram Reels) for use in the studio's social planner. Stores the file in S3 when configured, otherwise falls back to local disk storage, and returns the resulting media URL. Studio-admins may only upload for their own studio; super-admins may upload on behalf of any studio.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -8307,7 +8383,7 @@ const docTemplate = `{
                 "tags": [
                     "Social Planner"
                 ],
-                "summary": "Upload a social post image",
+                "summary": "Upload a social post image or video",
                 "parameters": [
                     {
                         "type": "string",
@@ -8318,7 +8394,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "file",
-                        "description": "Social post image file (JPEG, PNG, WebP, or GIF)",
+                        "description": "Social post image or video file (JPEG, PNG, WebP, GIF, MP4, or MOV)",
                         "name": "file",
                         "in": "formData",
                         "required": true
@@ -8339,7 +8415,7 @@ const docTemplate = `{
                         }
                     },
                     "403": {
-                        "description": "super admins cannot upload social post images, or cannot access this studio",
+                        "description": "cannot access this studio",
                         "schema": {
                             "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
                         }
@@ -8422,6 +8498,60 @@ const docTemplate = `{
                     "Social Planner"
                 ],
                 "summary": "Delete a social post",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Social post ID",
+                        "name": "postId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "invalid post ID",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/studios/{studioId}/social-posts/{postId}/story-link-posted": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Instagram never allows a clickable link in a feed/Reel caption, and Meta's Content Publishing API does not support adding a Story Link Sticker programmatically — only a human tapping \"add link\" inside the Instagram app can attach one. This marks that staff have manually posted the campaign link as a Story with the link sticker for this post.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Social Planner"
+                ],
+                "summary": "Mark a post's Instagram Story link as posted",
                 "parameters": [
                     {
                         "type": "string",
@@ -9588,6 +9718,440 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/studios/{studioId}/ai-models": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Per-provider (groq/gemini/claude) API key status and model checklist for this studio — persisted models the studio has added/tested, or the platform's implicit default model(s) shown unchecked when the studio hasn't configured any yet.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "AI Assistant Settings"
+                ],
+                "summary": "List AI provider config",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/studios/{studioId}/ai-models/{provider}/key": {
+            "put": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "AI Assistant Settings"
+                ],
+                "summary": "Save an AI provider's API key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "groq | gemini | claude",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "API key",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_studios.putAIProviderKeyReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/studios/{studioId}/ai-models/{provider}/models": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Sends a trivial live request to the provider using the studio's saved key. On success the model is persisted and enabled; on failure nothing is written.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "AI Assistant Settings"
+                ],
+                "summary": "Add and live-test a model for a provider",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "groq | gemini | claude",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Model name",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_studios.postAIModelReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "the live test failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/studios/{studioId}/ai-models/{provider}/models/{modelId}": {
+            "delete": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "AI Assistant Settings"
+                ],
+                "summary": "Remove a model a studio added",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "groq | gemini | claude",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Model ID",
+                        "name": "modelId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "AI Assistant Settings"
+                ],
+                "summary": "Enable or disable an already-tested model",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "groq | gemini | claude",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Model ID",
+                        "name": "modelId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Enabled state",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_studios.patchAIModelReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/studios/{studioId}/ai-models/{provider}/order": {
+            "patch": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Sets the try-order for provider's models — modelIds[0] is tried first by the waterfall, modelIds[1] is the fallback, and so on.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "AI Assistant Settings"
+                ],
+                "summary": "Reorder a provider's models",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "groq | gemini | claude",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Model IDs in the desired try-order",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_studios.patchAIModelOrderReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/studios/{studioId}/ai-models/{provider}/test-key": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Saves apiKey (if provided) and sends one trivial live request using an already-enabled model for this provider, or the platform default if none is enabled yet — verifies the key works without requiring the admin to add a specific model first.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "AI Assistant Settings"
+                ],
+                "summary": "Test an AI provider's API key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "groq | gemini | claude",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "API key (omit to test the already-saved key)",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_studios.putAIProviderKeyReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "the live test failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -10493,6 +11057,9 @@ const docTemplate = `{
                 "dateOfBirth": {
                     "type": "string"
                 },
+                "email": {
+                    "type": "string"
+                },
                 "fullName": {
                     "type": "string"
                 },
@@ -10848,6 +11415,40 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_messaging.TestChatRequest": {
+            "type": "object",
+            "properties": {
+                "history": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_messaging.TestChatTurn"
+                    }
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_messaging.TestChatResponse": {
+            "type": "object",
+            "properties": {
+                "reply": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_messaging.TestChatTurn": {
+            "type": "object",
+            "properties": {
+                "role": {
+                    "description": "\"user\" | \"assistant\"",
+                    "type": "string"
+                },
+                "text": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_messaging.TrialCheckoutLeadInfo": {
             "type": "object",
             "properties": {
@@ -10968,6 +11569,9 @@ const docTemplate = `{
             "properties": {
                 "dateOfBirth": {
                     "description": "\"YYYY-MM-DD\", optional",
+                    "type": "string"
+                },
+                "email": {
                     "type": "string"
                 },
                 "fullName": {
@@ -11092,6 +11696,10 @@ const docTemplate = `{
                     "description": "draft, scheduled, published, failed",
                     "type": "string"
                 },
+                "storyLinkPostedAt": {
+                    "description": "StoryLinkPostedAt tracks a manual step: Instagram never allows a\nclickable link on a feed/Reel post, and Meta's API doesn't support\nadding a Story Link Sticker programmatically either — only a human\ntapping \"add link\" inside the Instagram app can attach one. Set once\nstaff confirm they've posted this campaign's link as a Story.",
+                    "type": "string"
+                },
                 "studioId": {
                     "type": "string"
                 },
@@ -11155,6 +11763,33 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_studios.patchAIModelOrderReq": {
+            "type": "object",
+            "properties": {
+                "modelIds": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "internal_studios.patchAIModelReq": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_studios.postAIModelReq": {
+            "type": "object",
+            "properties": {
+                "modelName": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_studios.publicRes": {
             "type": "object",
             "properties": {
@@ -11185,6 +11820,14 @@ const docTemplate = `{
                 },
                 "trialAmountSgd": {
                     "type": "integer"
+                }
+            }
+        },
+        "internal_studios.putAIProviderKeyReq": {
+            "type": "object",
+            "properties": {
+                "apiKey": {
+                    "type": "string"
                 }
             }
         },
@@ -11230,6 +11873,9 @@ const docTemplate = `{
                 },
                 "campaignCount": {
                     "type": "integer"
+                },
+                "communicationStyleProfile": {
+                    "type": "string"
                 },
                 "contactEmail": {
                     "type": "string"
@@ -11315,6 +11961,12 @@ const docTemplate = `{
                 },
                 "stripePublishableKey": {
                     "type": "string"
+                },
+                "styleProfileUpdatedAt": {
+                    "type": "string"
+                },
+                "styleRefreshIntervalMinutes": {
+                    "type": "integer"
                 },
                 "subscriptionTier": {
                     "type": "string"

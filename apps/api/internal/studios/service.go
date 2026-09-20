@@ -15,6 +15,7 @@ import (
 
 	"github.com/projectx/api/internal/identity"
 	"github.com/projectx/api/internal/integrations/crm"
+	"github.com/projectx/api/internal/integrations/embeddings"
 	"github.com/projectx/api/internal/integrations/glofox"
 )
 
@@ -23,10 +24,11 @@ type Service struct {
 	identity    *identity.Repo
 	glofox      *glofox.Client
 	crmExecutor *crm.Executor
+	embeddings  *embeddings.Client
 }
 
-func NewService(repo *Repo, id *identity.Repo, gf *glofox.Client, crmExecutor *crm.Executor) *Service {
-	return &Service{repo: repo, identity: id, glofox: gf, crmExecutor: crmExecutor}
+func NewService(repo *Repo, id *identity.Repo, gf *glofox.Client, crmExecutor *crm.Executor, embClient *embeddings.Client) *Service {
+	return &Service{repo: repo, identity: id, glofox: gf, crmExecutor: crmExecutor, embeddings: embClient}
 }
 
 // SyncLeadToGlofoxByID pushes a lead to Glofox CRM as trial/member. Used by
@@ -506,7 +508,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput
 	}
 
 	if kbChanged {
-		s.asyncSyncKnowledgeChunks(id, in.KnowledgeBase, in.KnowledgeBaseFiles, in.GeminiAPIKey)
+		s.asyncSyncKnowledgeChunks(id, in.KnowledgeBase, in.KnowledgeBaseFiles)
 	}
 
 	return nil, nil
@@ -514,19 +516,18 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput
 
 // asyncSyncKnowledgeChunks runs in a background goroutine so the HTTP
 // response is not blocked by embedding API calls.
-func (s *Service) asyncSyncKnowledgeChunks(studioID uuid.UUID, kbText string, kbFiles []KnowledgeBaseFile, geminiAPIKey string) {
+func (s *Service) asyncSyncKnowledgeChunks(studioID uuid.UUID, kbText string, kbFiles []KnowledgeBaseFile) {
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		// Raised from 5min to 30min to cover very large documents (up to
+		// 200MB uploads) — a heavily text-dense file can chunk into tens of
+		// thousands of pieces, each embedded sequentially with a rate-limit
+		// sleep (see the loop below); 5 minutes wasn't enough headroom and
+		// chunks past the deadline were silently dropped rather than synced.
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
 
-		apiKey := geminiAPIKey
-		if apiKey == "" {
-			if pk, err := s.repo.GetPlatformSetting(ctx, "gemini_api_key"); err == nil && pk != "" {
-				apiKey = pk
-			}
-		}
-		if apiKey == "" {
-			slog.Warn("knowledge sync skipped: no Gemini API key", "studio_id", studioID)
+		if s.embeddings == nil {
+			slog.Warn("knowledge sync skipped: embeddings service not configured", "studio_id", studioID)
 			return
 		}
 
@@ -556,7 +557,7 @@ func (s *Service) asyncSyncKnowledgeChunks(studioID uuid.UUID, kbText string, kb
 
 		var chunks []ChunkData
 		for i, rc := range raw {
-			vec, err := GetGeminiEmbedding(ctx, apiKey, rc.content)
+			vec, err := s.embeddings.EmbedPassage(ctx, rc.content)
 			if err != nil {
 				slog.Warn("embedding failed for chunk", "studio_id", studioID, "chunk", i, "err", err)
 				continue

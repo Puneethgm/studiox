@@ -4,21 +4,26 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/projectx/api/internal/integrations/claude"
+	"github.com/projectx/api/internal/integrations/embeddings"
+	"github.com/projectx/api/internal/integrations/llm"
 	"github.com/projectx/api/internal/studios"
 )
 
 const (
-	// stylePollInterval is intentionally much longer than the outbox workers'
-	// 5s polls — rebuilding a style profile isn't latency-sensitive, and a
-	// missed tick just retries next cycle with no data loss.
-	stylePollInterval = 30 * time.Minute
+	// stylePollInterval is how often this worker checks whether any studio is
+	// due for a rebuild — intentionally much shorter than the actual rebuild
+	// cadence itself (that's per-studio and configurable via
+	// style_refresh_interval_minutes, edited on the Knowledge Base page), so
+	// a studio's chosen interval is honored promptly rather than only being
+	// checked every 30 minutes regardless of what they configured. Just one
+	// cheap query when nothing is due.
+	stylePollInterval = 5 * time.Minute
 	// styleRefreshThreshold is how many NEW staff replies (since the last
 	// build) a studio needs before its profile is worth rebuilding.
 	styleRefreshThreshold = 20
@@ -47,14 +52,17 @@ const (
 // per-reply few-shot retrieval: a stable style anchor injected into every AI
 // prompt, distilled once per refresh instead of retrieved fresh each time.
 type StyleWorker struct {
-	studiosRepo *studios.Repo
-	msgRepo     *Repo
-	claude      *claude.Client
-	log         *slog.Logger
+	studiosRepo  *studios.Repo
+	msgRepo      *Repo
+	claude       *claude.Client
+	claudeAPIURL string
+	embeddings   *embeddings.Client
+	llmRepo      *llm.Repo
+	log          *slog.Logger
 }
 
-func NewStyleWorker(studiosRepo *studios.Repo, msgRepo *Repo, claudeClient *claude.Client, logger *slog.Logger) *StyleWorker {
-	return &StyleWorker{studiosRepo: studiosRepo, msgRepo: msgRepo, claude: claudeClient, log: logger}
+func NewStyleWorker(studiosRepo *studios.Repo, msgRepo *Repo, claudeClient *claude.Client, claudeAPIURL string, embClient *embeddings.Client, llmRepo *llm.Repo, logger *slog.Logger) *StyleWorker {
+	return &StyleWorker{studiosRepo: studiosRepo, msgRepo: msgRepo, claude: claudeClient, claudeAPIURL: claudeAPIURL, embeddings: embClient, llmRepo: llmRepo, log: logger}
 }
 
 func (w *StyleWorker) Run(ctx context.Context) {
@@ -190,6 +198,11 @@ func (w *StyleWorker) retryUnembeddedStaffReplies(ctx context.Context) {
 // up front, rather than per message — a studio with no key configured yet
 // should cost one cheap lookup here, not `limit` wasted round-trips.
 func (w *StyleWorker) embedUnembeddedStaffReplies(ctx context.Context, studioID uuid.UUID, limit int) {
+	// Gate on Gemini-key configuration, not on the embeddings client itself:
+	// a studio with no Gemini key can't use ClassifyIntent/ExpandQuery/
+	// RerankChunks either, so it wouldn't benefit from style examples being
+	// embedded. This preserves today's "AI features configured at all"
+	// behavior rather than embedding staff replies unconditionally.
 	apiKey, err := w.resolveGeminiAPIKey(ctx, studioID)
 	if err != nil {
 		w.log.Warn("style learning: fetch studio failed", "studio_id", studioID, "err", err)
@@ -209,7 +222,7 @@ func (w *StyleWorker) embedUnembeddedStaffReplies(ctx context.Context, studioID 
 	}
 	w.log.Info("embedding staff replies", "studio_id", studioID, "count", len(unembedded))
 	for _, msg := range unembedded {
-		vec, err := studios.GetGeminiEmbedding(ctx, apiKey, msg.Body)
+		vec, err := w.embeddings.EmbedPassage(ctx, msg.Body)
 		if err != nil {
 			w.log.Warn("style learning: embed staff reply failed", "message_id", msg.ID, "err", err)
 			continue
@@ -240,6 +253,7 @@ func (w *StyleWorker) resolveGeminiAPIKey(ctx context.Context, studioID uuid.UUI
 // single staff-authored message — used by the live per-send path, where
 // resolving the key inline for one message is cheap.
 func (w *StyleWorker) embedStaffReply(ctx context.Context, studioID, messageID uuid.UUID, body string) {
+	// Same Gemini-key gate as embedUnembeddedStaffReplies — see comment there.
 	apiKey, err := w.resolveGeminiAPIKey(ctx, studioID)
 	if err != nil {
 		w.log.Warn("style learning: fetch studio failed", "studio_id", studioID, "err", err)
@@ -248,7 +262,7 @@ func (w *StyleWorker) embedStaffReply(ctx context.Context, studioID, messageID u
 	if apiKey == "" {
 		return
 	}
-	vec, err := studios.GetGeminiEmbedding(ctx, apiKey, body)
+	vec, err := w.embeddings.EmbedPassage(ctx, body)
 	if err != nil {
 		w.log.Warn("style learning: embed staff reply failed", "message_id", messageID, "err", err)
 		return
@@ -322,7 +336,7 @@ func (w *StyleWorker) rebuildProfile(ctx context.Context, studioID uuid.UUID) er
 	// Same Groq → Gemini → Claude waterfall the AI reply pipeline uses — this
 	// worker can't assume Claude is configured, since it's a single
 	// platform-wide key while Groq/Gemini keys are set per studio.
-	replyText, sourceRef := llmWaterfall(ctx, http.DefaultClient, w.studiosRepo, w.msgRepo, w.claude, w.log, studioID, studio, prompt)
+	replyText, sourceRef := llmWaterfall(ctx, w.studiosRepo, w.llmRepo, w.msgRepo, w.claude, w.claudeAPIURL, w.log, studioID, studio, prompt)
 	profile := strings.TrimSpace(replyText)
 	if profile == "" {
 		return fmt.Errorf("no LLM provider configured or all providers failed")

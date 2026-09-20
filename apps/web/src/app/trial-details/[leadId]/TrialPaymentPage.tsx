@@ -24,6 +24,8 @@ const STRIPE_STYLE = {
 
 const fieldCls = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm placeholder:text-gray-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500';
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 function FieldInput({ label, value, onChange, type = 'text', required, content }: {
   label: string; value: string; onChange: (v: string) => void; type?: string; required?: boolean; content: FieldBlockContent;
 }) {
@@ -87,6 +89,7 @@ function CanvasForm({ blocks, background, leadInfo, amount, leadId, studioSlug, 
   const elements = useElements();
   const scale = useResponsiveScale(CANVAS_WIDTH);
   const [fullName, setFullName] = useState(leadInfo.leadName || '');
+  const [email, setEmail] = useState('');
   const [gender, setGender] = useState('');
   const [dateOfBirth, setDateOfBirth] = useState('');
   const [phone, setPhone] = useState('');
@@ -103,6 +106,10 @@ function CanvasForm({ blocks, background, leadInfo, amount, leadId, studioSlug, 
     }
     if (!fullName.trim()) {
       setError('Please enter your full name.');
+      return;
+    }
+    if (!EMAIL_RE.test(email.trim())) {
+      setError('Please enter a valid email address.');
       return;
     }
     if (!standalone && !leadId) {
@@ -143,7 +150,7 @@ function CanvasForm({ blocks, background, leadInfo, amount, leadId, studioSlug, 
         const signupRes = await fetch(`/api/v1/public/studios/${encodeURIComponent(studioSlug || '')}/trial-signup`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fullName: fullName.trim(), phone: phone.trim(), gender, dateOfBirth }),
+          body: JSON.stringify({ fullName: fullName.trim(), email: email.trim(), phone: phone.trim(), gender, dateOfBirth }),
         });
         if (!signupRes.ok) {
           const b = await signupRes.json().catch(() => null);
@@ -155,7 +162,7 @@ function CanvasForm({ blocks, background, leadInfo, amount, leadId, studioSlug, 
         await fetch(`/api/v1/public/leads/${encodeURIComponent(activeLeadId!)}/trial-checkout`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fullName: fullName.trim(), gender, dateOfBirth }),
+          body: JSON.stringify({ fullName: fullName.trim(), email: email.trim(), gender, dateOfBirth }),
         });
       }
       const piRes = await fetch(`/api/v1/public/leads/${encodeURIComponent(activeLeadId!)}/trial-payment-intent`, { method: 'POST' });
@@ -241,6 +248,9 @@ function CanvasForm({ blocks, background, leadInfo, amount, leadId, studioSlug, 
 
             {block.type === 'name_field' && (
               <FieldInput content={block.content as FieldBlockContent} label={(block.content as FieldBlockContent).label} value={fullName} onChange={setFullName} required />
+            )}
+            {block.type === 'email_field' && (
+              <FieldInput content={block.content as FieldBlockContent} label={(block.content as FieldBlockContent).label} value={email} onChange={setEmail} type="email" required />
             )}
             {block.type === 'gender_field' && (
               <GenderInput content={block.content as FieldBlockContent} label={(block.content as FieldBlockContent).label} value={gender} onChange={setGender} />

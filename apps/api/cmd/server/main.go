@@ -21,6 +21,7 @@ import (
 	"github.com/projectx/api/internal/identity"
 	"github.com/projectx/api/internal/integrations/claude"
 	"github.com/projectx/api/internal/integrations/crm"
+	"github.com/projectx/api/internal/integrations/embeddings"
 	"github.com/projectx/api/internal/integrations/glofox"
 	"github.com/projectx/api/internal/integrations/glofox/firstsession"
 	"github.com/projectx/api/internal/integrations/google"
@@ -110,7 +111,13 @@ func main() {
 	// worker, sheet import) sync too, not just the manual "edit lead" flow.
 	leadsRepo.SetGlofoxClient(glofoxClient)
 
-	studiosSvc := studios.NewService(studiosRepo, identityRepo, glofoxClient, crmExecutor)
+	// Local embedding service (apps/embeddings) — replaces Gemini's embedContent
+	// API for the RAG/knowledge-base and semantic-search pipelines. No API key;
+	// identified purely by base URL, matching the wa-web/tg-web sidecar pattern.
+	embeddingsClient := embeddings.New(embeddingsServiceURL())
+	log.Info("embeddings config", "enabled", embeddingsClient != nil, "url", embeddingsServiceURL())
+
+	studiosSvc := studios.NewService(studiosRepo, identityRepo, glofoxClient, crmExecutor, embeddingsClient)
 	reviewsHandler := reviews.NewHandler(reviewsRepo)
 
 	// Initialize S3 uploader if configured
@@ -134,7 +141,7 @@ func main() {
 		log.Info("S3 not configured (using disk for uploads)")
 	}
 
-	studiosHandler := studios.NewHandler(studiosSvc, cfg.Sheets.CredentialsPath, s3Uploader)
+	studiosHandler := studios.NewHandler(studiosSvc, cfg.Sheets.CredentialsPath, s3Uploader, llmRepo, cfg.Claude.APIURL)
 
 	// Identity needs to enrich /me + /login responses with the user's studio
 	// brand info. Wire studios in via a callback to keep the import direction one-way.
@@ -224,7 +231,7 @@ func main() {
 		log.Error("init claude client", "err", err)
 	}
 	log.Info("claude config", "enabled", claudeClient != nil)
-	aiWorker := messaging.NewAIWorker(msgBus, msgRepo, msgSvc, studiosRepo, leadsRepo, dtSvc, claudeClient, log.With("component", "ai_worker"))
+	aiWorker := messaging.NewAIWorker(msgBus, msgRepo, msgSvc, studiosRepo, leadsRepo, dtSvc, claudeClient, cfg.Claude.APIURL, embeddingsClient, llmRepo, log.With("component", "ai_worker"))
 	go aiWorker.Run(rootCtx)
 
 	// llm.Resolver: which LLM handles which AI-driven admin task (starting
@@ -238,7 +245,7 @@ func main() {
 	// Style worker: periodically distills each studio's own staff-authored
 	// replies into a short "communication style" writeup, shown/editable on
 	// the Knowledge Base page and injected into the AI prompt.
-	styleWorker := messaging.NewStyleWorker(studiosRepo, msgRepo, claudeClient, log.With("component", "style_worker"))
+	styleWorker := messaging.NewStyleWorker(studiosRepo, msgRepo, claudeClient, cfg.Claude.APIURL, embeddingsClient, llmRepo, log.With("component", "style_worker"))
 	go styleWorker.Run(rootCtx)
 	go styleWorker.ListenForNewReplies(rootCtx, msgBus)
 
@@ -363,6 +370,7 @@ func main() {
 			r.Route("/studios/{studioId}", func(r chi.Router) {
 				r.Use(studiosHandler.RequireActiveStudio)
 				dtHandler.AdminRoutes(r)
+				r.Post("/knowledge-base/test-chat", aiWorker.TestChatHandler)
 				r.Get("/google-oauth/login", googleOAuth.LoginHandler)
 				r.Get("/stripe-oauth/login", studiosHandler.StripeConnectRedirect)
 				r.Get("/initial-contact-delay", studiosHandler.GetInitialContactDelay)
@@ -370,6 +378,16 @@ func main() {
 				r.Get("/ai-reply-delay", studiosHandler.GetAIReplyDelay)
 				r.Put("/ai-reply-delay", studiosHandler.PutAIReplyDelay)
 				r.Put("/communication-style", studiosHandler.PutCommunicationStyle)
+				r.Put("/style-refresh-interval", studiosHandler.PutStyleRefreshInterval)
+				r.Route("/ai-models", func(r chi.Router) {
+					r.Get("/", studiosHandler.GetAIModels)
+					r.Put("/{provider}/key", studiosHandler.PutAIProviderKey)
+					r.Post("/{provider}/test-key", studiosHandler.PostAITestKey)
+					r.Post("/{provider}/models", studiosHandler.PostAIModel)
+					r.Patch("/{provider}/order", studiosHandler.PatchAIModelOrder)
+					r.Patch("/{provider}/models/{modelId}", studiosHandler.PatchAIModel)
+					r.Delete("/{provider}/models/{modelId}", studiosHandler.DeleteAIModel)
+				})
 				leadsHandler.AdminRoutes(r)
 				r.Get("/social-posts", studiosHandler.ListSocialPosts)
 				r.Post("/social-posts", studiosHandler.CreateSocialPost)
@@ -389,9 +407,15 @@ func main() {
 		Addr:              cfg.HTTPAddr,
 		Handler:           r,
 		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       120 * time.Second,
+		// Raised from 30s to accommodate large Knowledge Base file uploads
+		// (up to 200MB, see messaging/http.go's uploadMedia maxSize) on slow
+		// connections. Applies server-wide, not just this one route — in
+		// production nginx still caps uploads at 50MB before they reach here,
+		// so this mainly matters for local dev where Next.js talks to the Go
+		// API directly.
+		ReadTimeout:  5 * time.Minute,
+		WriteTimeout: 5 * time.Minute,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	go func() {
@@ -410,4 +434,18 @@ func main() {
 		log.Error("shutdown", "err", err)
 	}
 	log.Info("bye")
+}
+
+// embeddingsServiceURL resolves the base URL of the local embedding
+// sidecar (apps/embeddings), mirroring the tgWebServiceURL()/
+// waWebServiceURL() pattern used for the other local sidecars: a plain env
+// read with a hardcoded default, not routed through config.Config, since
+// this is an internal sidecar URL with no secret material. The default
+// assumes a bare local process (make dev / make embeddings), not a Docker
+// Compose hostname — this service has no deploy/ wiring yet.
+func embeddingsServiceURL() string {
+	if u := os.Getenv("EMBEDDINGS_SERVICE_URL"); u != "" {
+		return u
+	}
+	return "http://localhost:8001"
 }

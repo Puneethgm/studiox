@@ -534,7 +534,7 @@ export default function DashboardClient({
                   title={<span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Open Follow-ups</span>}
                   className="bg-amber-50/20 border-amber-100 dark:border-amber-950/20 dark:bg-amber-950/5 hover:border-amber-200 transition-colors"
                 >
-                  <Link href={studio.id === 'global' ? `/admin/leads?status=new` : `/admin/studios/${studio.id}/leads?statuses=new,contacted&maxAttempts=3`}>
+                  <Link href={studio.id === 'global' ? `/admin/leads?statuses=new,contacted&maxAttempts=3` : `/admin/studios/${studio.id}/leads?statuses=new,contacted&maxAttempts=3`}>
                     <div className="flex items-baseline gap-2 cursor-pointer group">
                       <span className="text-3xl font-black text-zinc-900 dark:text-white group-hover:underline">
                         {analytics.followupsRequired}

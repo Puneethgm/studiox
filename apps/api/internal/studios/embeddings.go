@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/projectx/api/internal/integrations/gemini"
 )
 
 // ChunkTextSemantic splits text on semantic boundaries (paragraphs → sentences)
@@ -103,11 +105,17 @@ func ChunkText(text string, maxChars int, overlap int) []string {
 
 // ClassifyIntent calls Gemini to classify the intent and sentiment of a message.
 // Returns intent label, sentiment (-1/0/1), confidence (0.0–1.0).
-// Falls back to neutral/unknown on error so the pipeline never blocks.
-func ClassifyIntent(ctx context.Context, apiKey, message string) (intent string, sentiment int, confidence float64) {
+// Falls back to neutral/unknown on error so the pipeline never blocks. model
+// is the caller's choice — resolved per-studio via
+// internal/integrations/llm.EnabledModelsForStudio, empty falls back to
+// gemini.Models[0].
+func ClassifyIntent(ctx context.Context, apiKey, model, message string) (intent string, sentiment int, confidence float64) {
 	intent = "unknown"
 	sentiment = 0
 	confidence = 0.5
+	if model == "" {
+		model = gemini.Models[0]
+	}
 
 	prompt := fmt.Sprintf(`You are a fitness studio CRM classifier. Classify this customer message.
 
@@ -120,7 +128,7 @@ Reply with ONLY valid JSON — no markdown, no explanation:
   "confidence": <float 0.0 to 1.0>
 }`, message)
 
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=%s", apiKey)
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, apiKey)
 
 	reqBody, err := json.Marshal(map[string]any{
 		"contents": []map[string]any{
@@ -186,13 +194,17 @@ Reply with ONLY valid JSON — no markdown, no explanation:
 }
 
 // RerankChunks uses Gemini to rerank retrieved chunks by actual relevance
-// to the query. Returns chunks sorted best-first (up to topK).
-func RerankChunks(ctx context.Context, apiKey, query string, chunks []string, topK int) []string {
+// to the query. Returns chunks sorted best-first (up to topK). model is the
+// caller's choice (see ClassifyIntent), empty falls back to gemini.Models[0].
+func RerankChunks(ctx context.Context, apiKey, model, query string, chunks []string, topK int) []string {
 	if len(chunks) == 0 {
 		return chunks
 	}
 	if len(chunks) <= 1 {
 		return chunks
+	}
+	if model == "" {
+		model = gemini.Models[0]
 	}
 
 	var chunkList strings.Builder
@@ -210,7 +222,7 @@ Candidate passages:
 Return ONLY a JSON array of passage indices sorted by relevance (most relevant first), e.g. [2,0,1].
 Include only the top %d most relevant. No explanation.`, query, chunkList.String(), topK)
 
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=%s", apiKey)
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, apiKey)
 
 	reqBody, _ := json.Marshal(map[string]any{
 		"contents": []map[string]any{
@@ -287,59 +299,6 @@ Include only the top %d most relevant. No explanation.`, query, chunkList.String
 	return reranked
 }
 
-// GetGeminiEmbedding calls Gemini gemini-embedding-2 and returns a 768-dim vector.
-func GetGeminiEmbedding(ctx context.Context, apiKey string, text string) ([]float32, error) {
-	url := fmt.Sprintf(
-		"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key=%s",
-		apiKey,
-	)
-
-	reqBody, err := json.Marshal(map[string]any{
-		"model": "models/gemini-embedding-2",
-		"content": map[string]any{
-			"parts": []map[string]any{{"text": text}},
-		},
-		"outputDimensionality": 768,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	client := &http.Client{Timeout: 15 * time.Second}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(reqBody))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	respBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("gemini embedding API error (HTTP %d): %s", resp.StatusCode, string(respBytes))
-	}
-
-	var res struct {
-		Embedding struct {
-			Values []float32 `json:"values"`
-		} `json:"embedding"`
-	}
-	if err := json.Unmarshal(respBytes, &res); err != nil {
-		return nil, err
-	}
-	if len(res.Embedding.Values) == 0 {
-		return nil, fmt.Errorf("empty embedding response from Gemini API")
-	}
-	return res.Embedding.Values, nil
-}
-
 // FormatVectorAsString converts []float32 → "[v1,v2,...]" for pgvector text input.
 func FormatVectorAsString(vec []float32) string {
 	var sb strings.Builder
@@ -354,13 +313,17 @@ func FormatVectorAsString(vec []float32) string {
 	return sb.String()
 }
 
-// ExpandQuery calls Gemini 2.5 Flash to generate 3 alternative phrasings of the
+// ExpandQuery calls Gemini to generate 3 alternative phrasings of the
 // query, then prepends the original query and returns all 4 joined by a space.
-// On any error the original query is returned unchanged.
-func ExpandQuery(ctx context.Context, apiKey, query string) string {
+// On any error the original query is returned unchanged. model is the
+// caller's choice (see ClassifyIntent), empty falls back to gemini.Models[0].
+func ExpandQuery(ctx context.Context, apiKey, model, query string) string {
+	if model == "" {
+		model = gemini.Models[0]
+	}
 	prompt := fmt.Sprintf(`You are a search query optimizer for a fitness studio. Generate 3 alternative phrasings of this customer query that capture the same intent but use different vocabulary. Return ONLY a JSON array of strings, no markdown. Query: "%s"`, query)
 
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=%s", apiKey)
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, apiKey)
 
 	reqBody, err := json.Marshal(map[string]any{
 		"contents": []map[string]any{

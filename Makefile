@@ -63,8 +63,13 @@ migrate-new: ## Create a new migration. Usage: make migrate-new name=add_somethi
 seed-admin: ## Seed the super-admin user from .env (idempotent)
 	cd apps/api && go run ./cmd/seed
 
+# ---------- backfill ----------
+.PHONY: backfill-embeddings
+backfill-embeddings: ## Re-embed all existing knowledge chunks + messages with the local embedding service (run once after switching from Gemini)
+	cd apps/api && go run ./cmd/backfill-embeddings
+
 # ---------- dev ----------
-.PHONY: api web dev
+.PHONY: api web dev embeddings
 api: ## Run the Go API (auto-reloads on code changes via air)
 	cd apps/api && $(HOME)/go/bin/air
 
@@ -77,9 +82,12 @@ wa-web: ## Run the WhatsApp Web QR service
 tg-web: ## Run the Telegram QR-login service (reports "not configured" without TELEGRAM_API_ID/HASH in .env)
 	cd apps/tg-web && node src/index.js
 
-dev: ## Run API + web + wa-web + tg-web concurrently (tg-web degrades to "not configured" without TELEGRAM_API_ID/HASH — see docs/SETUP_TELEGRAM_QR.md)
-	$(PNPM) dlx concurrently -n api,web,wa-web,tg-web -c blue,magenta,green,cyan \
-		"\"$(MAKE)\" api" "\"$(MAKE)\" web" "\"$(MAKE)\" wa-web" "\"$(MAKE)\" tg-web"
+embeddings: ## Run the local embedding service (FastAPI + sentence-transformers — see apps/embeddings/README.md for first-time venv setup)
+	cd apps/embeddings && ./venv/bin/python main.py
+
+dev: ## Run API + web + wa-web + tg-web + embeddings concurrently (tg-web degrades to "not configured" without TELEGRAM_API_ID/HASH — see docs/SETUP_TELEGRAM_QR.md)
+	$(PNPM) dlx concurrently -n api,web,wa-web,tg-web,embeddings -c blue,magenta,green,cyan,yellow \
+		"\"$(MAKE)\" api" "\"$(MAKE)\" web" "\"$(MAKE)\" wa-web" "\"$(MAKE)\" tg-web" "\"$(MAKE)\" embeddings"
 
 # ---------- quality ----------
 .PHONY: test lint fmt
