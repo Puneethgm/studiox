@@ -2,9 +2,10 @@
 # Build context: repo root.
 #   docker build -f deploy/api.Dockerfile -t projectx-api .
 #
-# Final image bundles three binaries: server (the API), seed (super-admin
-# bootstrap), and goose (DB migrations). The compose file invokes the
-# right entrypoint per service.
+# Final image bundles four binaries: server (the API), seed (super-admin
+# bootstrap), backfill-embeddings (one-off re-embed after switching
+# EMBEDDINGS_SERVICE_URL), and goose (DB migrations). The compose file
+# invokes the right entrypoint per service.
 
 # ---------- build ----------
 FROM golang:1.24-alpine AS build
@@ -19,8 +20,9 @@ COPY apps/api/ ./
 
 ENV CGO_ENABLED=0 GOOS=linux
 
-RUN go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server \
- && go build -trimpath -ldflags="-s -w" -o /out/seed   ./cmd/seed \
+RUN go build -trimpath -ldflags="-s -w" -o /out/server              ./cmd/server \
+ && go build -trimpath -ldflags="-s -w" -o /out/seed                ./cmd/seed \
+ && go build -trimpath -ldflags="-s -w" -o /out/backfill-embeddings ./cmd/backfill-embeddings \
  && GOBIN=/out go install github.com/pressly/goose/v3/cmd/goose@v3.22.0 \
  && mkdir -p /out/uploads
 
@@ -29,9 +31,10 @@ FROM alpine:3.19
 
 WORKDIR /app
 
-COPY --from=build /out/server /usr/local/bin/server
-COPY --from=build /out/seed   /usr/local/bin/seed
-COPY --from=build /out/goose  /usr/local/bin/goose
+COPY --from=build /out/server              /usr/local/bin/server
+COPY --from=build /out/seed                /usr/local/bin/seed
+COPY --from=build /out/backfill-embeddings /usr/local/bin/backfill-embeddings
+COPY --from=build /out/goose               /usr/local/bin/goose
 COPY --from=build /src/migrations /migrations
 COPY --chown=nonroot:nonroot --from=build /out/uploads /app/uploads
 

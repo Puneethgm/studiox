@@ -106,6 +106,24 @@ services:
     networks:
       - backend
 
+  # One-shot: re-embed existing studio_knowledge_chunks/messages rows with
+  # the local embedding service. Run once after this deploy brings the
+  # embeddings service online for the first time (or after ever changing
+  # EMBEDDINGS_MODEL_NAME) — old and new vectors aren't the same space, so
+  # leaving stale rows unembedded silently degrades search ranking rather
+  # than failing loudly. Safe to re-run; skips nothing already correct.
+  backfill-embeddings:
+    build:
+      context: ..
+      dockerfile: deploy/api.Dockerfile
+    image: projectx-api:local
+    profiles: ["tools"]
+    environment: *api_env
+    entrypoint: ["/usr/local/bin/backfill-embeddings"]
+    restart: "no"
+    networks:
+      - backend
+
   # One-shot: ensure correct volume permissions for distroless nonroot user
   init-uploads:
     image: alpine:3.19
