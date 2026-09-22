@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { MessageCircle, Send, X } from 'lucide-react';
+import { FileText, MessageCircle, Send, X } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { api, ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
@@ -9,10 +9,14 @@ import { cn } from '@/lib/cn';
 interface TestChatTurn {
   role: 'user' | 'assistant';
   text: string;
+  // Uploaded knowledge-base document name(s) that backed this answer —
+  // undefined/empty when no KB chunk was used (e.g. a greeting).
+  sources?: string[];
 }
 
 interface TestChatResponse {
   reply: string;
+  sources?: string[];
 }
 
 // A right-side slide-in "assistant" drawer for the Knowledge Base admin
@@ -21,7 +25,16 @@ interface TestChatResponse {
 // AIWorker.TestChat), without creating any real conversation/message/lead.
 // Multi-turn: the running transcript is kept client-side only and resent
 // as `history` on each new message — nothing is persisted server-side.
-export function TestChatDrawer({ studioId }: { studioId: string }) {
+export function TestChatDrawer({
+  studioId,
+  openSignal,
+}: {
+  studioId: string;
+  // Bump this number from a parent (e.g. the "Test it now" button on the
+  // embedding-complete popup) to force the drawer open — an uncontrolled
+  // component otherwise, so this only opens it, it never closes it.
+  openSignal?: number;
+}) {
   const [open, setOpen] = useState(false);
   const [turns, setTurns] = useState<TestChatTurn[]>([]);
   const [input, setInput] = useState('');
@@ -29,6 +42,11 @@ export function TestChatDrawer({ studioId }: { studioId: string }) {
   const [error, setError] = useState<string | null>(null);
   const endRef = useRef<HTMLLIElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (openSignal) setOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openSignal]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -59,7 +77,7 @@ export function TestChatDrawer({ studioId }: { studioId: string }) {
         `/api/v1/studios/${studioId}/knowledge-base/test-chat`,
         { method: 'POST', json: { message, history } },
       );
-      setTurns((prev) => [...prev, { role: 'assistant', text: res.reply }]);
+      setTurns((prev) => [...prev, { role: 'assistant', text: res.reply, sources: res.sources }]);
     } catch (err) {
       const msg = err instanceof ApiError ? err.message : 'Something went wrong — try again.';
       setError(msg);
@@ -215,6 +233,56 @@ function parseMarkdownish(text: string): Segment[] {
   return segments;
 }
 
+// A small "Sources (N)" badge under an AI reply — click to open a popover
+// listing the exact uploaded knowledge-base document name(s) that backed
+// that answer, so an admin can verify retrieval is pulling from the right
+// file before enabling live AI replies. Renders nothing when there are no
+// sources (e.g. a greeting, or a question the KB has no relevant content for).
+function SourcesBadge({ sources }: { sources: string[] }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onClickOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, [open]);
+
+  if (sources.length === 0) return null;
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-zinc-500 transition-colors hover:border-[var(--brand,#7c3aed)] hover:text-[var(--brand,#7c3aed)] dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400"
+      >
+        <FileText className="h-2.5 w-2.5" />
+        {sources.length === 1 ? 'Source' : `Sources (${sources.length})`}
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-10 mt-1 w-56 rounded-lg border border-zinc-200 bg-white p-2 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+          <p className="mb-1 px-1 text-[9px] font-black uppercase tracking-wider text-zinc-400">Answered using</p>
+          <ul className="space-y-1">
+            {sources.map((s, i) => (
+              <li
+                key={i}
+                className="flex items-center gap-1.5 rounded px-1 py-0.5 text-[11px] font-medium text-zinc-700 dark:text-zinc-200"
+              >
+                <FileText className="h-3 w-3 shrink-0 text-zinc-400" />
+                <span className="truncate">{s}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TestChatBubble({ turn }: { turn: TestChatTurn }) {
   const isUser = turn.role === 'user';
   const segments = isUser ? null : parseMarkdownish(turn.text);
@@ -274,6 +342,7 @@ function TestChatBubble({ turn }: { turn: TestChatTurn }) {
           </div>
         )}
       </div>
+      {!isUser && turn.sources && turn.sources.length > 0 && <SourcesBadge sources={turn.sources} />}
     </li>
   );
 }

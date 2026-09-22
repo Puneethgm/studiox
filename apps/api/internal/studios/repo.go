@@ -121,7 +121,7 @@ func (r *Repo) GetByID(ctx context.Context, id uuid.UUID) (*Studio, error) {
 		       greeting_message, trial_amount_sgd, managed_by_1hero, booking_hero_image_url, booking_hero_video_url,
 		       trial_confirmation_message, membership_confirmation_message,
 		       trial_glofox_membership_id, trial_glofox_plan_code, membership_glofox_membership_id, membership_glofox_plan_code,
-		       communication_style_profile, style_profile_updated_at, style_refresh_interval_minutes
+		       communication_style_profile, style_profile_updated_at, style_refresh_interval_minutes, program_start_date
 		FROM studios WHERE id = $1
 	`, id)
 	s, err := scanStudio(row, r.cipher)
@@ -148,7 +148,7 @@ func (r *Repo) GetBySlug(ctx context.Context, slug string) (*Studio, error) {
 		       greeting_message, trial_amount_sgd, managed_by_1hero, booking_hero_image_url, booking_hero_video_url,
 		       trial_confirmation_message, membership_confirmation_message,
 		       trial_glofox_membership_id, trial_glofox_plan_code, membership_glofox_membership_id, membership_glofox_plan_code,
-		       communication_style_profile, style_profile_updated_at, style_refresh_interval_minutes
+		       communication_style_profile, style_profile_updated_at, style_refresh_interval_minutes, program_start_date
 		FROM studios WHERE slug = $1
 	`, slug)
 	s, err := scanStudio(row, r.cipher)
@@ -311,6 +311,82 @@ func (r *Repo) SetStyleRefreshIntervalMinutes(ctx context.Context, studioID uuid
 	return nil
 }
 
+// SetProgramStartDate anchors a parsed week-by-week program document (see
+// ParseProgramSchedule) to a real calendar date — Week 1's first day.
+func (r *Repo) SetProgramStartDate(ctx context.Context, studioID uuid.UUID, date time.Time) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE studios SET program_start_date = $2, updated_at = now() WHERE id = $1
+	`, studioID, date)
+	if err != nil {
+		return err
+	}
+	r.evict(studioID)
+	return nil
+}
+
+// ClearProgramStartDate unsets the program anchor date — the AI worker's
+// deterministic lookup (see buildPrompt) is then simply skipped, falling
+// back to the general week-arithmetic instruction.
+func (r *Repo) ClearProgramStartDate(ctx context.Context, studioID uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE studios SET program_start_date = NULL, updated_at = now() WHERE id = $1
+	`, studioID)
+	if err != nil {
+		return err
+	}
+	r.evict(studioID)
+	return nil
+}
+
+// SaveProgramSessions atomically replaces every parsed program-schedule
+// entry for a studio — same replace-all-on-resync pattern as
+// SaveKnowledgeChunks, so a re-upload/edit of the source document can't
+// leave stale sessions from a previous version mixed in.
+func (r *Repo) SaveProgramSessions(ctx context.Context, studioID uuid.UUID, entries []ProgramSessionEntry) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `DELETE FROM studio_program_sessions WHERE studio_id = $1`, studioID); err != nil {
+		return fmt.Errorf("delete old program sessions: %w", err)
+	}
+	for _, e := range entries {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO studio_program_sessions
+				(studio_id, week_number, day_of_week, day_name, session_name, progression, key_focus)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`, studioID, e.WeekNumber, e.DayOfWeek, e.DayName, e.SessionName, e.Progression, e.KeyFocus); err != nil {
+			return fmt.Errorf("insert program session: %w", err)
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// GetProgramSession looks up the exact parsed entry for a given week/day —
+// a real database lookup, not a semantic-search guess, so it can't return
+// the wrong week the way RAG retrieval did (see ParseProgramSchedule's
+// doc comment). Returns nil, nil if nothing is on file for that day (e.g.
+// dayOfWeek is a rest day the program doesn't list, or no schedule document
+// has been parsed for this studio at all).
+func (r *Repo) GetProgramSession(ctx context.Context, studioID uuid.UUID, weekNumber, dayOfWeek int) (*ProgramSessionEntry, error) {
+	var e ProgramSessionEntry
+	err := r.pool.QueryRow(ctx, `
+		SELECT week_number, day_of_week, day_name, session_name, progression, key_focus
+		FROM studio_program_sessions
+		WHERE studio_id = $1 AND week_number = $2 AND day_of_week = $3
+	`, studioID, weekNumber, dayOfWeek).Scan(
+		&e.WeekNumber, &e.DayOfWeek, &e.DayName, &e.SessionName, &e.Progression, &e.KeyFocus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get program session: %w", err)
+	}
+	return &e, nil
+}
+
 // ListStudiosNeedingStyleRefresh returns studio IDs due for a communication
 // style rebuild — either because they've accumulated at least `threshold`
 // new staff replies since the profile was last built (the original,
@@ -404,7 +480,7 @@ func scanStudio(row pgx.Row, cipher *secrets.Cipher) (*Studio, error) {
 		&s.GreetingMessage, &s.TrialAmountSGD, &s.ManagedBy1Hero, &s.BookingHeroImageURL, &s.BookingHeroVideoURL,
 		&s.TrialConfirmationMessage, &s.MembershipConfirmationMessage,
 		&s.TrialGlofoxMembershipID, &s.TrialGlofoxPlanCode, &s.MembershipGlofoxMembershipID, &s.MembershipGlofoxPlanCode,
-		&s.CommunicationStyleProfile, &s.StyleProfileUpdatedAt, &s.StyleRefreshIntervalMinutes); err != nil {
+		&s.CommunicationStyleProfile, &s.StyleProfileUpdatedAt, &s.StyleRefreshIntervalMinutes, &s.ProgramStartDate); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -541,11 +617,43 @@ func (r *Repo) SaveKnowledgeChunks(ctx context.Context, studioID uuid.UUID, chun
 	return tx.Commit(ctx)
 }
 
+// SetKnowledgeSyncStatus records the background embedding sync's progress —
+// "syncing" when asyncSyncKnowledgeChunks starts, "complete"/"error" when it
+// finishes — so the admin UI can poll and tell the admin when it's actually
+// safe to test a just-uploaded document, instead of the misleading
+// impression that saving the file means it's already searchable.
+func (r *Repo) SetKnowledgeSyncStatus(ctx context.Context, studioID uuid.UUID, status string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE studios SET knowledge_sync_status = $2, knowledge_sync_updated_at = now()
+		WHERE id = $1
+	`, studioID, status)
+	return err
+}
+
+// GetKnowledgeSyncStatus returns the current status ("idle"/"syncing"/
+// "complete"/"error") and when it last changed.
+func (r *Repo) GetKnowledgeSyncStatus(ctx context.Context, studioID uuid.UUID) (string, *time.Time, error) {
+	var status string
+	var updatedAt *time.Time
+	err := r.pool.QueryRow(ctx, `
+		SELECT knowledge_sync_status, knowledge_sync_updated_at FROM studios WHERE id = $1
+	`, studioID).Scan(&status, &updatedAt)
+	return status, updatedAt, err
+}
+
+// KnowledgeChunkMatch is one retrieved chunk plus the uploaded source it came
+// from. SourceName round-trips to the Test Chat UI so an admin can see which
+// document actually backed a given answer — see messaging.TestChat.
+type KnowledgeChunkMatch struct {
+	Content    string
+	SourceName string
+}
+
 // SearchKnowledgeChunks performs hybrid retrieval: vector similarity + BM25 full-text search,
 // fused with Reciprocal Rank Fusion (RRF). Returns top-K deduplicated chunks.
 // Falls back to pure vector search if the FTS column is not yet available.
 // platform filters to chunks tagged for that channel plus "all" chunks; pass "" or "all" to skip filtering.
-func (r *Repo) SearchKnowledgeChunks(ctx context.Context, studioID uuid.UUID, queryEmbedding []float32, platform string, limit int) ([]string, error) {
+func (r *Repo) SearchKnowledgeChunks(ctx context.Context, studioID uuid.UUID, queryEmbedding []float32, platform string, limit int) ([]KnowledgeChunkMatch, error) {
 	embStr := FormatVectorAsString(queryEmbedding)
 	candidateN := limit * 5
 	if platform == "" {
@@ -554,7 +662,7 @@ func (r *Repo) SearchKnowledgeChunks(ctx context.Context, studioID uuid.UUID, qu
 
 	rows, err := r.pool.Query(ctx, `
 		WITH vector_ranked AS (
-			SELECT content, ROW_NUMBER() OVER () AS rank
+			SELECT content, source_name, ROW_NUMBER() OVER () AS rank
 			FROM studio_knowledge_chunks
 			WHERE studio_id = $1
 			  AND ($3 = 'all' OR platform IN ('all', $3))
@@ -562,7 +670,7 @@ func (r *Repo) SearchKnowledgeChunks(ctx context.Context, studioID uuid.UUID, qu
 			LIMIT $5
 		),
 		fts_ranked AS (
-			SELECT content, ROW_NUMBER() OVER () AS rank
+			SELECT content, source_name, ROW_NUMBER() OVER () AS rank
 			FROM studio_knowledge_chunks
 			WHERE studio_id = $1
 			  AND ($3 = 'all' OR platform IN ('all', $3))
@@ -572,23 +680,24 @@ func (r *Repo) SearchKnowledgeChunks(ctx context.Context, studioID uuid.UUID, qu
 		),
 		fused AS (
 			SELECT content,
+				COALESCE(v.source_name, f.source_name) AS source_name,
 				COALESCE(v.rrf, 0) + COALESCE(f.rrf, 0) AS score
 			FROM (
-				SELECT content, 1.0 / (60 + rank) AS rrf FROM vector_ranked
+				SELECT content, source_name, 1.0 / (60 + rank) AS rrf FROM vector_ranked
 			) v
 			FULL OUTER JOIN (
-				SELECT content, 1.0 / (60 + rank) AS rrf FROM fts_ranked
+				SELECT content, source_name, 1.0 / (60 + rank) AS rrf FROM fts_ranked
 			) f USING (content)
 		)
 		-- content ASC tiebreaker — see SearchKnowledgeChunksHybrid's comment.
-		SELECT content FROM fused
+		SELECT content, source_name FROM fused
 		ORDER BY score DESC, content ASC
 		LIMIT $6
 	`, studioID, embStr, platform, "", candidateN, limit)
 
 	if err != nil {
 		rows, err = r.pool.Query(ctx, `
-			SELECT content
+			SELECT content, source_name
 			FROM studio_knowledge_chunks
 			WHERE studio_id = $1
 			  AND ($3 = 'all' OR platform IN ('all', $3))
@@ -602,15 +711,15 @@ func (r *Repo) SearchKnowledgeChunks(ctx context.Context, studioID uuid.UUID, qu
 	defer rows.Close()
 
 	seen := make(map[string]bool)
-	var results []string
+	var results []KnowledgeChunkMatch
 	for rows.Next() {
-		var content string
-		if err := rows.Scan(&content); err != nil {
+		var content, sourceName string
+		if err := rows.Scan(&content, &sourceName); err != nil {
 			return nil, fmt.Errorf("scan chunk: %w", err)
 		}
 		if !seen[content] {
 			seen[content] = true
-			results = append(results, content)
+			results = append(results, KnowledgeChunkMatch{Content: content, SourceName: sourceName})
 		}
 	}
 	return results, rows.Err()
@@ -619,7 +728,7 @@ func (r *Repo) SearchKnowledgeChunks(ctx context.Context, studioID uuid.UUID, qu
 // SearchKnowledgeChunksHybrid is the same as SearchKnowledgeChunks but accepts
 // an explicit query string for BM25 (used when the caller has a plain-text query).
 // platform filters chunks for the conversation's channel; "all" returns everything.
-func (r *Repo) SearchKnowledgeChunksHybrid(ctx context.Context, studioID uuid.UUID, queryEmbedding []float32, queryText string, platform string, limit int) ([]string, error) {
+func (r *Repo) SearchKnowledgeChunksHybrid(ctx context.Context, studioID uuid.UUID, queryEmbedding []float32, queryText string, platform string, limit int) ([]KnowledgeChunkMatch, error) {
 	embStr := FormatVectorAsString(queryEmbedding)
 	candidateN := limit * 5
 	if platform == "" {
@@ -628,7 +737,7 @@ func (r *Repo) SearchKnowledgeChunksHybrid(ctx context.Context, studioID uuid.UU
 
 	rows, err := r.pool.Query(ctx, `
 		WITH vector_ranked AS (
-			SELECT content, ROW_NUMBER() OVER () AS rank
+			SELECT content, source_name, ROW_NUMBER() OVER () AS rank
 			FROM studio_knowledge_chunks
 			WHERE studio_id = $1
 			  AND ($3 = 'all' OR platform IN ('all', $3))
@@ -636,7 +745,7 @@ func (r *Repo) SearchKnowledgeChunksHybrid(ctx context.Context, studioID uuid.UU
 			LIMIT $5
 		),
 		fts_ranked AS (
-			SELECT content, ROW_NUMBER() OVER () AS rank
+			SELECT content, source_name, ROW_NUMBER() OVER () AS rank
 			FROM studio_knowledge_chunks
 			WHERE studio_id = $1
 			  AND ($3 = 'all' OR platform IN ('all', $3))
@@ -646,19 +755,20 @@ func (r *Repo) SearchKnowledgeChunksHybrid(ctx context.Context, studioID uuid.UU
 		),
 		fused AS (
 			SELECT content,
+				COALESCE(v.source_name, f.source_name) AS source_name,
 				COALESCE(v.rrf, 0) + COALESCE(f.rrf, 0) AS score
 			FROM (
-				SELECT content, 1.0 / (60 + rank) AS rrf FROM vector_ranked
+				SELECT content, source_name, 1.0 / (60 + rank) AS rrf FROM vector_ranked
 			) v
 			FULL OUTER JOIN (
-				SELECT content, 1.0 / (60 + rank) AS rrf FROM fts_ranked
+				SELECT content, source_name, 1.0 / (60 + rank) AS rrf FROM fts_ranked
 			) f USING (content)
 		)
 		-- content ASC breaks exact score ties deterministically: without it,
 		-- Postgres doesn't guarantee a stable order among tied rows, so the
 		-- same query could hand RerankChunks a different candidate set
 		-- (and drop a relevant chunk) from one request to the next.
-		SELECT content FROM fused
+		SELECT content, source_name FROM fused
 		ORDER BY score DESC, content ASC
 		LIMIT $6
 	`, studioID, embStr, platform, queryText, candidateN, limit)
@@ -669,15 +779,15 @@ func (r *Repo) SearchKnowledgeChunksHybrid(ctx context.Context, studioID uuid.UU
 	defer rows.Close()
 
 	seen := make(map[string]bool)
-	var results []string
+	var results []KnowledgeChunkMatch
 	for rows.Next() {
-		var content string
-		if err := rows.Scan(&content); err != nil {
+		var content, sourceName string
+		if err := rows.Scan(&content, &sourceName); err != nil {
 			return nil, fmt.Errorf("scan chunk hybrid: %w", err)
 		}
 		if !seen[content] {
 			seen[content] = true
-			results = append(results, content)
+			results = append(results, KnowledgeChunkMatch{Content: content, SourceName: sourceName})
 		}
 	}
 	return results, rows.Err()

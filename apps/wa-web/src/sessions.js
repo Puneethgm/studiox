@@ -329,6 +329,30 @@ export class SessionManager {
     }
   }
 
+  // Resolves a WhatsApp group's subject (its actual group name) for the live
+  // messages.upsert handler below. Without this, a group conversation shows
+  // whichever individual member's own pushName happened to arrive on the
+  // first message the system ever recorded for that group, since group and
+  // 1:1 messages otherwise carry the same shape (see messages.upsert) — the
+  // subject only comes from a separate Baileys call, sock.groupMetadata(),
+  // never from the message itself. Cached per session (see groupNameCache)
+  // so a busy group chat doesn't hit this on every single message.
+  async _resolveGroupSubject(sock, entry, jid) {
+    const cached = entry.groupNameCache.get(jid);
+    if (cached) return cached;
+    try {
+      const meta = await sock.groupMetadata(jid);
+      const subject = meta?.subject?.trim();
+      if (subject) {
+        entry.groupNameCache.set(jid, subject);
+        return subject;
+      }
+    } catch (err) {
+      this.log.warn({ err: err.message, jid }, 'wa-web: groupMetadata lookup failed, falling back to sender name');
+    }
+    return undefined;
+  }
+
   // Restarts the "conclude the import" countdown — called on every
   // history-sync chunk (see messaging-history.set), including empty ones,
   // so the import only concludes once the chunk stream actually goes quiet.
@@ -394,6 +418,12 @@ export class SessionManager {
       // populated), so a @lid chat only gets a display phone number once
       // WhatsApp shares it — not immediately for every contact.
       lidToPhone: new Map(),
+      // Group JID (@g.us) -> resolved subject, so the live message handler
+      // doesn't hit sock.groupMetadata() (a network round-trip) on every
+      // single incoming group message — see _resolveGroupSubject below.
+      // Group renames are rare enough that a per-session cache (cleared on
+      // reconnect) is an acceptable staleness window.
+      groupNameCache: new Map(),
       reconnectAttempts,
     };
     this.sessions.set(studioId, entry);
@@ -512,8 +542,23 @@ export class SessionManager {
           'wa-web: message received',
         );
         if (!text) continue;
+
+        const remoteJid = msg.key?.remoteJid || '';
+        const isGroup = remoteJid.endsWith('@g.us');
+        // For a group, the name that matters is the GROUP's, not whichever
+        // member happens to have sent this particular message — pushName is
+        // always that individual member's own name, never the group's.
+        // Resolve the real group subject via a separate Baileys call; if
+        // that lookup fails for any reason, fall back to the old (wrong but
+        // non-empty) behavior rather than sending no name at all.
+        let displayName = !msg.key?.fromMe ? (msg.pushName || undefined) : undefined;
+        if (isGroup) {
+          const subject = await this._resolveGroupSubject(sock, entry, remoteJid);
+          displayName = subject || displayName;
+        }
+
         await this._forwardInbound(studioId, {
-          from: await resolveJid(sock, msg.key.remoteJid, entry.lidToPhone, this.log),
+          from: await resolveJid(sock, remoteJid, entry.lidToPhone, this.log),
           text,
           messageId: msg.key.id,
           timestamp: Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000),
@@ -526,7 +571,9 @@ export class SessionManager {
           // the customer's, and must never be used as their display name
           // (this got a real contact's identity permanently locked to the
           // studio's own name on their first-ever, studio-sent message).
-          pushName: !msg.key?.fromMe ? (msg.pushName || undefined) : undefined,
+          // For a group, this is the resolved group subject instead (see
+          // isGroup above), not any individual member's name.
+          pushName: displayName,
         });
       }
     });

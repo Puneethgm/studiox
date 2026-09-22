@@ -371,6 +371,7 @@ func main() {
 				r.Use(studiosHandler.RequireActiveStudio)
 				dtHandler.AdminRoutes(r)
 				r.Post("/knowledge-base/test-chat", aiWorker.TestChatHandler)
+				r.Get("/knowledge-base/sync-status", studiosHandler.GetKnowledgeSyncStatus)
 				r.Get("/google-oauth/login", googleOAuth.LoginHandler)
 				r.Get("/stripe-oauth/login", studiosHandler.StripeConnectRedirect)
 				r.Get("/initial-contact-delay", studiosHandler.GetInitialContactDelay)
@@ -379,6 +380,7 @@ func main() {
 				r.Put("/ai-reply-delay", studiosHandler.PutAIReplyDelay)
 				r.Put("/communication-style", studiosHandler.PutCommunicationStyle)
 				r.Put("/style-refresh-interval", studiosHandler.PutStyleRefreshInterval)
+				r.Put("/program-start-date", studiosHandler.PutProgramStartDate)
 				r.Route("/ai-models", func(r chi.Router) {
 					r.Get("/", studiosHandler.GetAIModels)
 					r.Put("/{provider}/key", studiosHandler.PutAIProviderKey)

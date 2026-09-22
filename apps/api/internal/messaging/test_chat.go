@@ -33,6 +33,12 @@ type TestChatRequest struct {
 
 type TestChatResponse struct {
 	Reply string `json:"reply"`
+	// Sources lists the uploaded knowledge-base document names (deduplicated,
+	// in relevance order) that actually contributed to Reply — lets an admin
+	// verify retrieval is pulling from the right document before enabling
+	// live AI replies. Empty when no knowledge-base chunk was used (e.g. a
+	// greeting, or a question the KB has no relevant content for).
+	Sources []string `json:"sources,omitempty"`
 }
 
 // TestChat runs the studio's real knowledge-base + LLM pipeline for a
@@ -45,10 +51,10 @@ type TestChatResponse struct {
 // llmWaterfall) rather than handleMessage, which is tightly coupled to real
 // Message/Conversation/Lead records and has side effects (DB writes, job
 // enqueuing) that would be wrong here.
-func (w *AIWorker) TestChat(ctx context.Context, studioID uuid.UUID, req TestChatRequest) (string, error) {
+func (w *AIWorker) TestChat(ctx context.Context, studioID uuid.UUID, req TestChatRequest) (string, []string, error) {
 	studio, err := w.studiosRepo.GetByID(ctx, studioID)
 	if err != nil {
-		return "", fmt.Errorf("fetch studio: %w", err)
+		return "", nil, fmt.Errorf("fetch studio: %w", err)
 	}
 
 	apiKey := studio.GeminiAPIKey
@@ -61,6 +67,7 @@ func (w *AIWorker) TestChat(ctx context.Context, studioID uuid.UUID, req TestCha
 	intent := "general_question"
 	sentiment := 0
 	var kbChunks []string
+	var sources []string
 	var styleExamples []StyleExample
 
 	geminiModel := ""
@@ -75,7 +82,23 @@ func (w *AIWorker) TestChat(ctx context.Context, studioID uuid.UUID, req TestCha
 
 		if queryVec, err := w.embeddings.EmbedQuery(ctx, expandedQuery); err == nil {
 			if matched, err := w.studiosRepo.SearchKnowledgeChunksHybrid(ctx, studioID, queryVec, expandedQuery, "all", 8); err == nil && len(matched) > 0 {
-				kbChunks = studios.RerankChunks(ctx, apiKey, geminiModel, req.Message, matched, 4)
+				contents := make([]string, len(matched))
+				sourceByContent := make(map[string]string, len(matched))
+				for idx, m := range matched {
+					contents[idx] = m.Content
+					sourceByContent[m.Content] = m.SourceName
+				}
+				kbChunks = studios.RerankChunks(ctx, apiKey, geminiModel, req.Message, contents, 4)
+
+				seenSource := make(map[string]bool)
+				for _, c := range kbChunks {
+					name := sourceByContent[c]
+					if name == "" || seenSource[name] {
+						continue
+					}
+					seenSource[name] = true
+					sources = append(sources, name)
+				}
 			}
 			if examples, err := w.msgRepo.SearchStyleExamples(ctx, studioID, queryVec, 3); err == nil {
 				styleExamples = examples
@@ -110,13 +133,13 @@ func (w *AIWorker) TestChat(ctx context.Context, studioID uuid.UUID, req TestCha
 	// answering the question just asked.
 	history = append(history, Message{Direction: DirectionInbound, Body: req.Message, SentAt: now})
 
-	prompt := w.buildPrompt(history, nil, styleExamples, nil, nil, studio, plans, sentiment, nil, kbChunks, intent, len(kbChunks) >= 2, "")
+	prompt := w.buildPrompt(ctx, history, nil, styleExamples, nil, nil, studio, plans, sentiment, nil, kbChunks, intent, len(kbChunks) >= 2, "")
 
 	reply, _ := llmWaterfall(ctx, w.studiosRepo, w.llmRepo, w.msgRepo, w.claude, w.claudeAPIURL, w.log, studioID, studio, prompt)
 	if reply == "" {
-		return "", ErrNoProviderConfigured
+		return "", nil, ErrNoProviderConfigured
 	}
-	return reply, nil
+	return reply, sources, nil
 }
 
 // TestChatHandler godoc
@@ -148,7 +171,7 @@ func (w *AIWorker) TestChatHandler(rw http.ResponseWriter, r *http.Request) {
 		httpx.WriteValidationError(rw, map[string]string{"message": "required"})
 		return
 	}
-	reply, err := w.TestChat(r.Context(), studioID, req)
+	reply, sources, err := w.TestChat(r.Context(), studioID, req)
 	if err != nil {
 		if errors.Is(err, ErrNoProviderConfigured) {
 			httpx.WriteError(rw, http.StatusUnprocessableEntity, "no_provider", err.Error())
@@ -158,5 +181,5 @@ func (w *AIWorker) TestChatHandler(rw http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(rw, http.StatusInternalServerError, "internal", "internal server error")
 		return
 	}
-	httpx.JSON(rw, http.StatusOK, TestChatResponse{Reply: reply})
+	httpx.JSON(rw, http.StatusOK, TestChatResponse{Reply: reply, Sources: sources})
 }

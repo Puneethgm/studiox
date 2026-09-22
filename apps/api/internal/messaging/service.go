@@ -1203,6 +1203,21 @@ func (s *Service) HandleInboundWAWeb(ctx context.Context, studioID uuid.UUID, fr
 	if err != nil {
 		return err
 	}
+	// A WhatsApp group's "display name" is the group subject, not a human's
+	// freeform nickname — it's authoritative and can legitimately change
+	// (e.g. an admin renames the group), unlike an individual contact's
+	// name, which is deliberately locked on first write above. wa-web
+	// resolves and sends the actual group subject as pushName for @g.us
+	// messages (see sessions.js), so keep the identity in sync with it on
+	// every message instead of getting stuck on whichever individual
+	// participant happened to send the group's first-ever recorded message.
+	isGroup := strings.HasSuffix(from, "@g.us")
+	if isGroup {
+		if err := s.repo.SetIdentityDisplayName(ctx, tx, studioID, IdentityPhone, identityKey, displayName); err != nil {
+			return err
+		}
+		identity.DisplayName = displayName
+	}
 
 	// 3. Conversation — keyed by identity key so LID and phone merge to same thread.
 	conv, err := s.repo.FindOrCreateConversation(ctx, tx, studioID, channel.ID, identity.ID, identityKey)
@@ -1298,12 +1313,21 @@ func (s *Service) HandleInboundWAWeb(ctx context.Context, studioID uuid.UUID, fr
 			_, _ = tx.Exec(ctx, `UPDATE conversations SET lead_id=$2 WHERE id=$1`, conv.ID, *activeLeadID)
 			conv.LeadID = activeLeadID
 		}
-		// A lead that already existed (found by phone lookup above, or linked
-		// on a prior message) may still be carrying its auto-create placeholder
-		// name (the bare phone digits) if this is the first time we've heard a
-		// real pushName for it — fix that up now instead of leaving it stuck.
-		if err := s.repo.UpdateLeadNameIfPlaceholder(ctx, tx, *activeLeadID, displayName); err != nil {
-			return fmt.Errorf("sync wa-web lead name: %w", err)
+		if isGroup {
+			// See the identity display-name comment above — the group subject
+			// is authoritative, so always sync it rather than only filling a
+			// placeholder.
+			if err := s.repo.UpdateLeadName(ctx, tx, *activeLeadID, displayName); err != nil {
+				return fmt.Errorf("sync wa-web group lead name: %w", err)
+			}
+		} else {
+			// A lead that already existed (found by phone lookup above, or linked
+			// on a prior message) may still be carrying its auto-create placeholder
+			// name (the bare phone digits) if this is the first time we've heard a
+			// real pushName for it — fix that up now instead of leaving it stuck.
+			if err := s.repo.UpdateLeadNameIfPlaceholder(ctx, tx, *activeLeadID, displayName); err != nil {
+				return fmt.Errorf("sync wa-web lead name: %w", err)
+			}
 		}
 	}
 

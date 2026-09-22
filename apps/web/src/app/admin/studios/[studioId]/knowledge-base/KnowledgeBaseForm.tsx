@@ -2,11 +2,13 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
-import { Database, FileText, Trash2, Upload, AlertCircle, CheckCircle, ChevronDown, Sparkles, Loader2 } from 'lucide-react';
+import { Database, FileText, Trash2, Upload, AlertCircle, CheckCircle, ChevronDown, Sparkles, Loader2, MessageCircle } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Label, FieldHint } from '@/components/ui/Label';
+import { Dialog, DialogHeader } from '@/components/ui/Dialog';
+import { api } from '@/lib/api';
 import type { Studio } from '@/lib/types';
-import { parseDocument, updateKnowledgeBase, updateCommunicationStyle, updateStyleRefreshInterval } from './actions';
+import { parseDocument, updateKnowledgeBase, updateCommunicationStyle, updateStyleRefreshInterval, updateProgramStartDate } from './actions';
 import { TestChatDrawer } from './TestChatDrawer';
 
 type KBFile = { name: string; url: string; text: string; platform: string };
@@ -154,6 +156,97 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
     const t = setTimeout(() => setKbStatus('idle'), 2500);
     return () => clearTimeout(t);
   }, [kbStatus]);
+
+  // Saving the knowledge base only persists the text/file list — the actual
+  // chunking + embedding happens afterward in a background job on the API
+  // (see asyncSyncKnowledgeChunks), which can take anywhere from a couple
+  // seconds to a couple minutes for a large document. Poll the sync status
+  // after every successful save and pop up a real "it's done, go test it"
+  // notice once that background job actually finishes, instead of letting
+  // the "Successfully uploaded" message imply it's already searchable.
+  const [syncOutcome, setSyncOutcome] = useState<'complete' | 'error' | null>(null);
+  const [testChatSignal, setTestChatSignal] = useState(0);
+
+  useEffect(() => {
+    if (kbStatus !== 'saved') return;
+    let cancelled = false;
+    let attempts = 0;
+    // Small buffer for clock skew between browser and server — only treat a
+    // "complete"/"error" status as belonging to THIS save if its timestamp
+    // is at/after this point, so an unrelated field edit (e.g. just the
+    // greeting, which doesn't re-trigger a sync) doesn't replay a stale
+    // popup from a previous, unrelated sync.
+    const baseline = Date.now() - 5000;
+
+    async function poll() {
+      if (cancelled) return;
+      try {
+        const res = await api<{ status: string; updatedAt: string | null }>(
+          `/api/v1/studios/${studio.id}/knowledge-base/sync-status`,
+        );
+        const updatedAtMs = res.updatedAt ? new Date(res.updatedAt).getTime() : 0;
+        if (updatedAtMs >= baseline && (res.status === 'complete' || res.status === 'error')) {
+          setSyncOutcome(res.status);
+          return;
+        }
+      } catch {
+        // Transient network hiccup — keep polling rather than giving up.
+      }
+      attempts += 1;
+      // Cap at ~2 minutes of polling so an edit that never triggers a real
+      // sync (or a genuinely stuck one) doesn't poll forever.
+      if (attempts < 60 && !cancelled) {
+        setTimeout(poll, 2000);
+      }
+    }
+
+    const t = setTimeout(poll, 1200);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [kbStatus, studio.id]);
+
+  // Program start date — anchors a parsed week-by-week program document
+  // (e.g. an "8 Week Challenge" PDF) to a real calendar date, so the AI can
+  // compute exactly which week/day today falls on with real date math
+  // instead of guessing via semantic search across many near-identical
+  // weekly entries. studio.programStartDate comes back as a full ISO
+  // timestamp; the date input only wants the "YYYY-MM-DD" portion.
+  const [programStartDate, setProgramStartDate] = useState(
+    studio.programStartDate ? studio.programStartDate.slice(0, 10) : ''
+  );
+  const [programDateStatus, setProgramDateStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [programDateError, setProgramDateError] = useState<string | null>(null);
+  const programDateFirstRun = useRef(true);
+
+  useEffect(() => {
+    if (programDateFirstRun.current) {
+      programDateFirstRun.current = false;
+      return;
+    }
+    setProgramDateStatus('saving');
+    const timer = setTimeout(async () => {
+      try {
+        const res = await updateProgramStartDate(studio.id, programStartDate);
+        if (!res.ok) throw new Error(res.error || 'Failed to save changes');
+        setProgramDateStatus('saved');
+        setProgramDateError(null);
+        router.refresh();
+      } catch (err: any) {
+        setProgramDateStatus('error');
+        setProgramDateError(err.message || 'An error occurred while saving.');
+      }
+    }, 800);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [programStartDate]);
+
+  useEffect(() => {
+    if (programDateStatus !== 'saved') return;
+    const t = setTimeout(() => setProgramDateStatus('idle'), 2500);
+    return () => clearTimeout(t);
+  }, [programDateStatus]);
 
   const [styleProfile, setStyleProfile] = useState(studio.communicationStyleProfile || '');
   const [savingStyle, setSavingStyle] = useState(false);
@@ -423,6 +516,32 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
               )}
             </div>
           </div>
+
+          <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+            <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
+              <h3 className="text-sm font-bold text-zinc-900 dark:text-white">Program Schedule Start Date</h3>
+              <AutosaveIndicator status={programDateStatus} />
+            </div>
+            <div className="p-6">
+              <Label htmlFor="programStartDate">Week 1, Day 1 date</Label>
+              <input
+                id="programStartDate"
+                type="date"
+                value={programStartDate}
+                onChange={(e) => setProgramStartDate(e.target.value)}
+                className="mt-1.5 block w-full max-w-xs rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-slate-700 dark:bg-slate-900"
+              />
+              <FieldHint>
+                Only needed if you've uploaded a week-by-week program document (e.g. an "8 Week Challenge" plan).
+                Set this to the exact calendar date Week 1's first listed day starts — the AI uses it to work out
+                exactly which week/session is "today" instead of guessing. Leave blank if you don't have a
+                dated, week-by-week program.
+              </FieldHint>
+              {programDateStatus === 'error' && programDateError && (
+                <p className="mt-1.5 text-xs font-semibold text-rose-600 dark:text-rose-400">{programDateError}</p>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Right column */}
@@ -568,7 +687,44 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
         </Button>
       </div>
 
-      <TestChatDrawer studioId={studio.id} />
+      <TestChatDrawer studioId={studio.id} openSignal={testChatSignal} />
+
+      <Dialog open={syncOutcome !== null} onClose={() => setSyncOutcome(null)} widthClassName="max-w-sm">
+        <DialogHeader
+          icon={
+            syncOutcome === 'error' ? (
+              <AlertCircle className="h-5 w-5 text-rose-500" />
+            ) : (
+              <CheckCircle className="h-5 w-5 text-emerald-500" />
+            )
+          }
+          title={syncOutcome === 'error' ? 'Embedding failed' : 'Embedding complete'}
+          onClose={() => setSyncOutcome(null)}
+        />
+        <div className="space-y-4 px-5 py-4">
+          <p className="text-sm text-zinc-600 dark:text-zinc-300">
+            {syncOutcome === 'error'
+              ? "The knowledge base didn't finish embedding — check that the embeddings service is running, then try saving again."
+              : 'Your knowledge base has finished processing and is now searchable. You can test how the AI answers using it.'}
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setSyncOutcome(null)}>
+              Close
+            </Button>
+            {syncOutcome === 'complete' && (
+              <Button
+                leftIcon={<MessageCircle className="h-3.5 w-3.5" />}
+                onClick={() => {
+                  setSyncOutcome(null);
+                  setTestChatSignal((n) => n + 1);
+                }}
+              >
+                Test it now
+              </Button>
+            )}
+          </div>
+        </div>
+      </Dialog>
     </div>
   );
 }

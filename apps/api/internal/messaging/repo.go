@@ -515,6 +515,23 @@ func (r *Repo) FindOrCreateIdentity(ctx context.Context, tx pgx.Tx, studioID uui
 	return out, nil
 }
 
+// SetIdentityDisplayName always overwrites an identity's display name,
+// unlike FindOrCreateIdentity's write-once-then-lock behavior. Write-once is
+// correct for a human contact (a freeform nickname shouldn't flip-flop
+// between messages), but wrong for a WhatsApp group: the "name" there is the
+// group subject, which is authoritative and can legitimately change (an
+// admin renaming the group) — see HandleInboundWAWeb's isGroup branch.
+func (r *Repo) SetIdentityDisplayName(ctx context.Context, tx pgx.Tx, studioID uuid.UUID, kind IdentityKind, value, displayName string) error {
+	if displayName == "" {
+		return nil
+	}
+	_, err := tx.Exec(ctx, `
+		UPDATE contact_identities SET display_name = $4, updated_at = now()
+		WHERE studio_id = $1 AND kind = $2 AND value = $3
+	`, studioID, kind, value, displayName)
+	return err
+}
+
 // UpdateLeadNameIfPlaceholder replaces a lead's name/first_name with a real
 // display name learned later (e.g. from a wa-web/tg-web contact sync), but
 // only if the name currently on file is still the auto-create placeholder
@@ -534,6 +551,23 @@ func (r *Repo) UpdateLeadNameIfPlaceholder(ctx context.Context, tx pgx.Tx, leadI
 	`, leadID, displayName)
 	if err != nil {
 		return fmt.Errorf("update lead name if placeholder: %w", err)
+	}
+	return nil
+}
+
+// UpdateLeadName always overwrites a lead's name/first_name — the group
+// counterpart to UpdateLeadNameIfPlaceholder's placeholder-only guard. Used
+// only for the lead record auto-created for a WhatsApp group thread, whose
+// "name" is really the group subject rather than an editable human name.
+func (r *Repo) UpdateLeadName(ctx context.Context, tx pgx.Tx, leadID uuid.UUID, displayName string) error {
+	if displayName == "" {
+		return nil
+	}
+	_, err := tx.Exec(ctx, `
+		UPDATE leads SET name = $2, first_name = $2, updated_at = now() WHERE id = $1
+	`, leadID, displayName)
+	if err != nil {
+		return fmt.Errorf("update lead name: %w", err)
 	}
 	return nil
 }

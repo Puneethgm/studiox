@@ -4825,17 +4825,29 @@ const docTemplate = `{
                 "security": [
                     {
                         "CookieAuth": []
+                    },
+                    {
+                        "CookieAuth": []
                     }
                 ],
-                "description": "Returns how many minutes the system waits before sending the first outreach message to a new lead for this studio.",
+                "description": "Returns how many minutes the system waits before sending the first outreach message to a new lead for this studio.\nReturns whether the background job that chunks and embeds this studio's knowledge base (text + uploaded files) is idle, syncing, complete, or errored — polled by the admin UI to know when a just-uploaded document is actually searchable.",
                 "produces": [
+                    "application/json",
                     "application/json"
                 ],
                 "tags": [
-                    "Messaging Settings"
+                    "Messaging Settings",
+                    "Knowledge Base"
                 ],
-                "summary": "Get initial contact delay",
+                "summary": "Get knowledge-base embedding sync status",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
                     {
                         "type": "string",
                         "description": "Studio ID",
@@ -4899,6 +4911,65 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/internal_studios.putInitialContactDelayReq"
                         }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "invalid id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/studios/{studioId}/knowledge-base/sync-status": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    },
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Returns how many minutes the system waits before sending the first outreach message to a new lead for this studio.\nReturns whether the background job that chunks and embeds this studio's knowledge base (text + uploaded files) is idle, syncing, complete, or errored — polled by the admin UI to know when a just-uploaded document is actually searchable.",
+                "produces": [
+                    "application/json",
+                    "application/json"
+                ],
+                "tags": [
+                    "Messaging Settings",
+                    "Knowledge Base"
+                ],
+                "summary": "Get knowledge-base embedding sync status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
                     }
                 ],
                 "responses": {
@@ -6696,7 +6767,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Returns the studio's inbox conversations across all channels, with optional filtering by status, channel kind, escalation state, and unresponded backlog, and pagination via limit/offset.",
+                "description": "Returns the studio's inbox conversations across all channels, with optional filtering by status, channel kind, and escalation state, and pagination via limit/offset.",
                 "produces": [
                     "application/json"
                 ],
@@ -6728,12 +6799,6 @@ const docTemplate = `{
                         "type": "boolean",
                         "description": "Filter to only escalated (or non-escalated) conversations",
                         "name": "escalated",
-                        "in": "query"
-                    },
-                    {
-                        "type": "boolean",
-                        "description": "Filter to conversations whose last message is still unanswered (customer sent last); sorts oldest-waiting first instead of most-recent-first",
-                        "name": "unresponded",
                         "in": "query"
                     },
                     {
@@ -7304,6 +7369,73 @@ const docTemplate = `{
                 "responses": {
                     "204": {
                         "description": "No Content"
+                    },
+                    "400": {
+                        "description": "invalid id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/studios/{studioId}/messaging/conversations/{id}/star": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Sets the shared, studio-wide starred flag on a conversation. Starring is visible to every staff member on the studio, not just the person who starred it.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Messaging - Conversations"
+                ],
+                "summary": "Toggle starred on a conversation",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Conversation ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Starred flag: starred",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
                     },
                     "400": {
                         "description": "invalid id",
@@ -8263,6 +8395,65 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "file too large, bad multipart form, missing file, or unsupported file type",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/studios/{studioId}/program-start-date": {
+            "put": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Anchors a parsed week-by-week program document (see the Knowledge Base's Uploaded Documents) to a real calendar date, so the AI can compute exactly which week/day today falls on instead of guessing via semantic search. Pass an empty string to clear it.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Knowledge Base"
+                ],
+                "summary": "Set the program schedule's start date",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Start date, YYYY-MM-DD, or empty to clear",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_studios.putProgramStartDateReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "invalid id or date",
                         "schema": {
                             "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
                         }
@@ -11334,6 +11525,10 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "isStarred": {
+                    "description": "IsStarred is shared across the whole studio, not per-staff-member —\nstarring is meant to flag a conversation for the team, so everyone who\nopens the inbox sees the same starred state. See Repo.SetConversationStarred.",
+                    "type": "boolean"
+                },
                 "lastMessageAt": {
                     "type": "string"
                 },
@@ -11434,6 +11629,13 @@ const docTemplate = `{
             "properties": {
                 "reply": {
                     "type": "string"
+                },
+                "sources": {
+                    "description": "Sources lists the uploaded knowledge-base document names (deduplicated,\nin relevance order) that actually contributed to Reply — lets an admin\nverify retrieval is pulling from the right document before enabling\nlive AI replies. Empty when no knowledge-base chunk was used (e.g. a\ngreeting, or a question the KB has no relevant content for).",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -11847,6 +12049,15 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_studios.putProgramStartDateReq": {
+            "type": "object",
+            "properties": {
+                "programStartDate": {
+                    "description": "ProgramStartDate is \"YYYY-MM-DD\" — Week 1's first day of a week-by-week\nprogram document (see ParseProgramSchedule). Should be the same weekday\nas the document's own \"Monday\"/first-listed day so week/day-of-week\narithmetic lines up; the AI worker assumes this without re-validating it.",
+                    "type": "string"
+                }
+            }
+        },
         "internal_studios.studioResponse": {
             "type": "object",
             "properties": {
@@ -11948,6 +12159,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "name": {
+                    "type": "string"
+                },
+                "programStartDate": {
                     "type": "string"
                 },
                 "slug": {

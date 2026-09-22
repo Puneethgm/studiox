@@ -526,8 +526,36 @@ func (s *Service) asyncSyncKnowledgeChunks(studioID uuid.UUID, kbText string, kb
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
 
+		// Status is polled by the Knowledge Base admin page so it can tell the
+		// admin when a just-uploaded document is actually searchable, instead
+		// of the misleading impression that saving the file means it's done —
+		// this goroutine can run for a while after the HTTP response returns.
+		if err := s.repo.SetKnowledgeSyncStatus(ctx, studioID, "syncing"); err != nil {
+			slog.Warn("set knowledge sync status failed", "studio_id", studioID, "err", err)
+		}
+
+		// Program-schedule parsing is independent of the embeddings service
+		// (it's a plain-text regex match, not a vector search) and of the
+		// KB-text chunking below — run it first so a studio without
+		// embeddings configured still gets exact "today's session" lookups.
+		// Runs across the main KB text and every uploaded file; a document
+		// that doesn't match the week-by-week format just yields nothing
+		// (see ParseProgramSchedule's doc comment), so this is a no-op for
+		// the vast majority of knowledge base uploads.
+		var programEntries []ProgramSessionEntry
+		programEntries = append(programEntries, ParseProgramSchedule(kbText)...)
+		for _, f := range kbFiles {
+			programEntries = append(programEntries, ParseProgramSchedule(f.Text)...)
+		}
+		if err := s.repo.SaveProgramSessions(ctx, studioID, programEntries); err != nil {
+			slog.Error("save program sessions failed", "studio_id", studioID, "err", err)
+		} else if len(programEntries) > 0 {
+			slog.Info("parsed program schedule", "studio_id", studioID, "sessions", len(programEntries))
+		}
+
 		if s.embeddings == nil {
 			slog.Warn("knowledge sync skipped: embeddings service not configured", "studio_id", studioID)
+			_ = s.repo.SetKnowledgeSyncStatus(ctx, studioID, "error")
 			return
 		}
 
@@ -551,7 +579,10 @@ func (s *Service) asyncSyncKnowledgeChunks(studioID uuid.UUID, kbText string, kb
 		if len(raw) == 0 {
 			if err := s.repo.SaveKnowledgeChunks(ctx, studioID, nil); err != nil {
 				slog.Error("knowledge chunks clear failed", "studio_id", studioID, "err", err)
+				_ = s.repo.SetKnowledgeSyncStatus(ctx, studioID, "error")
+				return
 			}
+			_ = s.repo.SetKnowledgeSyncStatus(ctx, studioID, "complete")
 			return
 		}
 
@@ -573,13 +604,19 @@ func (s *Service) asyncSyncKnowledgeChunks(studioID uuid.UUID, kbText string, kb
 			time.Sleep(100 * time.Millisecond)
 		}
 
-		if len(chunks) > 0 {
-			if err := s.repo.SaveKnowledgeChunks(ctx, studioID, chunks); err != nil {
-				slog.Error("knowledge chunks save failed", "studio_id", studioID, "err", err)
-			} else {
-				slog.Info("knowledge sync complete", "studio_id", studioID, "chunks", len(chunks))
-			}
+		if len(chunks) == 0 {
+			slog.Error("knowledge sync produced no chunks", "studio_id", studioID, "attempted", len(raw))
+			_ = s.repo.SetKnowledgeSyncStatus(ctx, studioID, "error")
+			return
 		}
+
+		if err := s.repo.SaveKnowledgeChunks(ctx, studioID, chunks); err != nil {
+			slog.Error("knowledge chunks save failed", "studio_id", studioID, "err", err)
+			_ = s.repo.SetKnowledgeSyncStatus(ctx, studioID, "error")
+			return
+		}
+		slog.Info("knowledge sync complete", "studio_id", studioID, "chunks", len(chunks))
+		_ = s.repo.SetKnowledgeSyncStatus(ctx, studioID, "complete")
 	}()
 }
 

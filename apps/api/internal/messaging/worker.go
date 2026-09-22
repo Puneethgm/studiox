@@ -128,6 +128,73 @@ func (w *OutboundWorker) tick(ctx context.Context) {
 	}
 }
 
+// formatMarkdownTablesAsPlainText rewrites any markdown pipe-table in body
+// into a plain, line-per-row format. buildPrompt asks the model for a
+// markdown table on schedule/timetable questions (see the "format that part
+// of your answer as a markdown table" instruction) because Test Chat renders
+// it as a real HTML table — but that's the only surface that does. Real
+// channels (WhatsApp, Telegram, SMS, Instagram, Messenger) have no table
+// rendering, so without this the customer would receive literal `|` and
+// `---` characters. This keeps the same "visually grouped by line" goal,
+// just with readable separators instead of unrendered markdown syntax.
+func formatMarkdownTablesAsPlainText(body string) string {
+	lines := strings.Split(body, "\n")
+	out := make([]string, 0, len(lines))
+
+	isTableRow := func(line string) bool {
+		t := strings.TrimSpace(line)
+		return len(t) > 1 && strings.HasPrefix(t, "|") && strings.HasSuffix(t, "|")
+	}
+	isSeparatorRow := func(line string) bool {
+		t := strings.TrimSpace(line)
+		if !strings.Contains(t, "-") {
+			return false
+		}
+		for _, r := range t {
+			switch r {
+			case '|', '-', ':', ' ':
+			default:
+				return false
+			}
+		}
+		return true
+	}
+	splitRow := func(line string) []string {
+		t := strings.TrimSpace(line)
+		t = strings.TrimPrefix(t, "|")
+		t = strings.TrimSuffix(t, "|")
+		parts := strings.Split(t, "|")
+		cells := make([]string, len(parts))
+		for i, p := range parts {
+			cells[i] = strings.TrimSpace(p)
+		}
+		return cells
+	}
+
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		if i+1 < len(lines) && isTableRow(line) && isSeparatorRow(lines[i+1]) {
+			headers := splitRow(line)
+			j := i + 2
+			var rows [][]string
+			for j < len(lines) && isTableRow(lines[j]) {
+				rows = append(rows, splitRow(lines[j]))
+				j++
+			}
+			if len(rows) > 0 {
+				out = append(out, strings.Join(headers, " / ")+":")
+				for _, row := range rows {
+					out = append(out, strings.Join(row, " — "))
+				}
+				i = j - 1
+				continue
+			}
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
 func (w *OutboundWorker) dispatch(ctx context.Context, j OutboundJob) {
 	// 1. Resolve the conversation → channel + recipient.
 	conv, err := w.repo.GetConversation(ctx, j.StudioID, j.ConversationID)
@@ -178,6 +245,7 @@ func (w *OutboundWorker) dispatch(ctx context.Context, j OutboundJob) {
 	j.Body = strings.ReplaceAll(j.Body, "{{contact.first_name}}", contactFirstName)
 	j.Body = strings.ReplaceAll(j.Body, "{{studio.name}}", studioName)
 	j.Body = strings.ReplaceAll(j.Body, "{{campaign.name}}", campaignName)
+	j.Body = formatMarkdownTablesAsPlainText(j.Body)
 	// In local/dev mode, allow error status channels for testing.
 	isLocalDev := os.Getenv("API_ENV") == "local"
 	if channel.Status != StatusActive {

@@ -701,7 +701,11 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 					kbCh <- kbResult{}
 					return
 				}
-				reranked := studios.RerankChunks(ctx, apiKey, geminiModel, msg.Body, matched, 4)
+				contents := make([]string, len(matched))
+				for i, m := range matched {
+					contents[i] = m.Content
+				}
+				reranked := studios.RerankChunks(ctx, apiKey, geminiModel, msg.Body, contents, 4)
 				kbCh <- kbResult{chunks: reranked, confident: len(reranked) >= 2}
 			}()
 
@@ -1158,7 +1162,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		w.log.Warn("fetch conversation ai summary failed", "err", err)
 		aiContextSummary = ""
 	}
-	prompt := w.buildPrompt(history, semanticHistory, styleExamples, conv, lead, studio, plans, sentiment, keywords, kbChunks, intent, kbConfident, aiContextSummary)
+	prompt := w.buildPrompt(ctx, history, semanticHistory, styleExamples, conv, lead, studio, plans, sentiment, keywords, kbChunks, intent, kbConfident, aiContextSummary)
 
 	// Waterfall: Groq → Gemini → Claude. Which model(s) each provider tries
 	// is read from studio_ai_models (studio's AI Assistant settings page),
@@ -1290,7 +1294,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	return nil
 }
 
-func (w *AIWorker) buildPrompt(history []Message, semanticHistory []SemanticMatch, styleExamples []StyleExample, conv *Conversation, lead *leads.Lead, studio *studios.Studio, plans []Plan, sentiment int, keywords []string, kbChunks []string, intent string, kbConfident bool, aiContextSummary string) string {
+func (w *AIWorker) buildPrompt(ctx context.Context, history []Message, semanticHistory []SemanticMatch, styleExamples []StyleExample, conv *Conversation, lead *leads.Lead, studio *studios.Studio, plans []Plan, sentiment int, keywords []string, kbChunks []string, intent string, kbConfident bool, aiContextSummary string) string {
 	var sb strings.Builder
 
 	// ── System role ──────────────────────────────────────────────────────────
@@ -1321,12 +1325,54 @@ func (w *AIWorker) buildPrompt(history []Message, semanticHistory []SemanticMatc
 	sb.WriteString(fmt.Sprintf("Today is %s, %s (studio local time, timezone: %s). Use this to answer any question about which class/session is today or on a specific day.\n\n",
 		localNow.Format("Monday"), localNow.Format("January 2, 2006"), loc.String()))
 
+	// Deterministic program-session lookup — real date math done here in
+	// code plus an exact database row, not the LLM guessing among many
+	// near-identical weekly entries via semantic search (which reliably
+	// picked the wrong week — the "Week 4 Tuesday" investigation this was
+	// built from). Only fires when a studio has both set program_start_date
+	// AND has a parsed program-schedule document on file (see
+	// ParseProgramSchedule); does nothing otherwise, and the week-arithmetic
+	// fallback instruction below still covers that case.
+	if studio != nil && studio.ProgramStartDate != nil {
+		// Extract the stored date's own Y/M/D (not the studio timezone's
+		// reinterpretation of it — program_start_date is a plain calendar
+		// date with no time-of-day, so converting it through .In(loc) first
+		// could shift it a day in either direction depending on the
+		// timezone offset) and re-anchor at local midnight for the
+		// elapsed-days calculation below.
+		sy, smo, sd := studio.ProgramStartDate.Date()
+		startDay := time.Date(sy, smo, sd, 0, 0, 0, 0, loc)
+		today := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, loc)
+		elapsedDays := int(today.Sub(startDay).Hours() / 24)
+		if elapsedDays >= 0 {
+			weekNumber := elapsedDays/7 + 1
+			dayOfWeek := int(localNow.Weekday())
+			if dayOfWeek == 0 {
+				dayOfWeek = 7 // ISO: Monday=1..Sunday=7, time.Weekday() has Sunday=0
+			}
+			if session, err := w.studiosRepo.GetProgramSession(ctx, studio.ID, weekNumber, dayOfWeek); err == nil && session != nil {
+				sb.WriteString(fmt.Sprintf(
+					"TODAY'S VERIFIED PROGRAM SESSION (Week %d, %s) — looked up directly from the schedule, not a guess. For ANY question about today's session, program day, or current week, use ONLY this — ignore any other week's session mentioned elsewhere in the knowledge base:\nSession: %s\nProgression & changes: %s\n%s\n\n",
+					session.WeekNumber, session.DayName, session.SessionName, session.Progression, session.KeyFocus))
+			}
+		}
+	}
+
+	// Grounding "today" as a fact (above) is enough for day-of-week lookups
+	// ("which class is today"), but a question like "which WEEK of the
+	// program is this" needs actual arithmetic — counting elapsed weeks from
+	// a program's stated start date to today — which the model is prone to
+	// getting wrong when it does that math silently/informally. This forces
+	// it to show the arithmetic instead of pattern-matching to a plausible-
+	// sounding week number.
+	sb.WriteString("If the customer asks which week, day number, or phase of a multi-week program (e.g. a \"100-day program\") today falls in: find that program's stated start date in the knowledge base below, then explicitly work out the number of days between that start date and today's date (grounded above) — count carefully, don't estimate — and only then state the week/day number, showing that count (e.g. \"that's day 22, so Week 4\") so the arithmetic is checkable. If the knowledge base doesn't state a start date for that program at all, say you don't have the program's start date on file rather than guessing a week number.\n\n")
+
 	// Schedules/timetables read far better as a table than as prose — do
 	// this for every channel that asks. On channels without table rendering
 	// (WhatsApp/SMS), the markdown pipe syntax still shows up as plain text,
 	// but keeps day/session/time visually grouped by line, which is more
 	// scannable than a paragraph even unrendered.
-	sb.WriteString("If the customer asks about a schedule, timetable, or weekly class/session plan, format that part of your answer as a markdown table (e.g. `| Day | Session | Time |`) instead of prose.\n\n")
+	sb.WriteString("If the customer asks about a schedule, timetable, or weekly class/session plan: first check whether the knowledge base below actually contains real schedule information — specific days, session names, or times. Only if it does, format that part of your answer as a markdown table (e.g. `| Day | Session | Time |`) instead of prose, using ONLY the days/sessions/times explicitly stated there — never invent or assume a class exists on a day, or at a time, that isn't mentioned. If a day/session IS listed but one specific detail about it (e.g. the time) isn't stated, just leave that detail out of the table rather than inventing it or refusing the whole answer — show what's actually known. Reserve \"I don't have that on file\" for when there is NO real schedule information at all to work with, or the customer asks about a day/class that's genuinely not covered anywhere.\n\n")
 
 	// Only greet if this is the first message or there has been a gap of 1+ hour
 	var lastOutboundAt time.Time
@@ -1370,7 +1416,7 @@ func (w *AIWorker) buildPrompt(history []Message, semanticHistory []SemanticMatc
 		sb.WriteString("KNOWLEDGE BASE:\n\"\"\"\n")
 		sb.WriteString(kbText)
 		sb.WriteString("\n\"\"\"\n")
-		sb.WriteString("Use the knowledge base above to answer factual questions. If it doesn't cover the exact question, use what context you have and answer helpfully anyway — do NOT say you don't know or that someone will follow up. ")
+		sb.WriteString("Use the knowledge base above to answer factual questions. If it doesn't fully cover the exact question, answer helpfully using what IS there — but never invent a specific fact (a day, time, price, date, or policy) that isn't actually stated above. If the knowledge base above is unrelated to what the customer is asking (e.g. it's about something else entirely, not this topic), treat that the same as having no information — do not use it as a basis to construct a plausible-sounding invented answer. If a specific detail truly isn't in the knowledge base, say so plainly (e.g. \"I don't have that on file\") rather than guessing or making one up — that's more useful to the customer than a confident wrong answer, and better than a blanket \"someone will follow up\" for something you could otherwise answer. ")
 		sb.WriteString("You can see your own earlier replies in RECENT CONVERSATION below — do NOT restate pricing, promotions, or programme details you've already told the customer in this conversation; assume they remember it and only repeat something if they explicitly ask again. Keep replies short and move the conversation forward instead of re-explaining what's already covered.\n\n")
 	}
 

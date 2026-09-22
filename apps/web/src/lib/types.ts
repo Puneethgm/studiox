@@ -47,6 +47,9 @@ export interface Studio {
   communicationStyleProfile?: string;
   styleProfileUpdatedAt?: string;
   styleRefreshIntervalMinutes?: number;
+  // "YYYY-MM-DD" — Week 1's first day of a parsed week-by-week program
+  // document, so the AI can compute exactly which week/day today falls on.
+  programStartDate?: string;
   bookingHeroImageUrl?: string;
   bookingHeroVideoUrl?: string;
   trialAmountSgd?: number;

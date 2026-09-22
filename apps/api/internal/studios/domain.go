@@ -76,6 +76,15 @@ type Studio struct {
 	// with the new-replies threshold.
 	StyleRefreshIntervalMinutes int `json:"styleRefreshIntervalMinutes"`
 
+	// ProgramStartDate anchors a week-by-week program document (see
+	// ParseProgramSchedule/studio_program_sessions) to real calendar dates,
+	// so the AI worker can compute "today = Week X, [day]" itself with real
+	// date math instead of asking an LLM to find the right day among many
+	// near-identical weekly entries via semantic search — see
+	// Repo.GetProgramSession. Nil until a studio admin sets it (or until a
+	// program-schedule-shaped document is uploaded with no date set yet).
+	ProgramStartDate *time.Time `json:"programStartDate,omitempty"`
+
 	// Optional summary fields used by list endpoints.
 	CampaignCount int `json:"campaignCount,omitempty"`
 	LeadCount     int `json:"leadCount,omitempty"`

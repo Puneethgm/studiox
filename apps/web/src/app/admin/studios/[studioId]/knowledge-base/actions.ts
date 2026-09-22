@@ -160,3 +160,35 @@ export async function updateStyleRefreshInterval(studioId: string, styleRefreshI
   revalidatePath(`/admin/studios/${studioId}/knowledge-base`);
   return { ok: true };
 }
+
+// programStartDate is "YYYY-MM-DD" (Week 1's first day of a parsed
+// week-by-week program document), or "" to clear it — see
+// apps/api/internal/studios/program_schedule.go for how it's used.
+export async function updateProgramStartDate(studioId: string, programStartDate: string) {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
+  const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/program-start-date`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+    },
+    body: JSON.stringify({ programStartDate }),
+    cache: 'no-store',
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    return {
+      ok: false,
+      error: body?.error ?? `HTTP ${res.status}`,
+    };
+  }
+
+  revalidatePath(`/admin/studios/${studioId}/knowledge-base`);
+  return { ok: true };
+}

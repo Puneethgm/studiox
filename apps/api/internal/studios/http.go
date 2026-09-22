@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -73,6 +74,7 @@ type studioResponse struct {
 	CommunicationStyleProfile     string              `json:"communicationStyleProfile"`
 	StyleProfileUpdatedAt         *time.Time          `json:"styleProfileUpdatedAt,omitempty"`
 	StyleRefreshIntervalMinutes   int                 `json:"styleRefreshIntervalMinutes"`
+	ProgramStartDate              *time.Time          `json:"programStartDate,omitempty"`
 	CampaignCount                 int                 `json:"campaignCount,omitempty"`
 	LeadCount                     int                 `json:"leadCount,omitempty"`
 	// Presence indicators — actual secret values are never returned.
@@ -121,6 +123,7 @@ func toStudioResponse(s *Studio) studioResponse {
 		CommunicationStyleProfile:     s.CommunicationStyleProfile,
 		StyleProfileUpdatedAt:         s.StyleProfileUpdatedAt,
 		StyleRefreshIntervalMinutes:   s.StyleRefreshIntervalMinutes,
+		ProgramStartDate:              s.ProgramStartDate,
 		CampaignCount:                 s.CampaignCount,
 		LeadCount:                     s.LeadCount,
 		HasGeminiApiKey:               s.GeminiAPIKey != "",
@@ -1756,6 +1759,32 @@ func (h *Handler) putTrialPageLayout(w http.ResponseWriter, r *http.Request) {
 //	@Failure		400			{object}	httpx.ErrorResponse	"invalid id"
 //	@Failure		500			{object}	httpx.ErrorResponse
 //	@Router			/api/v1/studios/{studioId}/initial-contact-delay [get]
+// GetKnowledgeSyncStatus godoc
+//
+//	@Summary		Get knowledge-base embedding sync status
+//	@Description	Returns whether the background job that chunks and embeds this studio's knowledge base (text + uploaded files) is idle, syncing, complete, or errored — polled by the admin UI to know when a just-uploaded document is actually searchable.
+//	@Tags			Knowledge Base
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		400			{object}	httpx.ErrorResponse	"invalid id"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/knowledge-base/sync-status [get]
+func (h *Handler) GetKnowledgeSyncStatus(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "studioId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	status, updatedAt, err := h.svc.repo.GetKnowledgeSyncStatus(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"status": status, "updatedAt": updatedAt})
+}
+
 func (h *Handler) GetInitialContactDelay(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "studioId"))
 	if err != nil {
@@ -1947,6 +1976,73 @@ func (h *Handler) PutStyleRefreshInterval(w http.ResponseWriter, r *http.Request
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"styleRefreshIntervalMinutes": minutes})
+}
+
+type putProgramStartDateReq struct {
+	// ProgramStartDate is "YYYY-MM-DD" — Week 1's first day of a week-by-week
+	// program document (see ParseProgramSchedule). Should be the same weekday
+	// as the document's own "Monday"/first-listed day so week/day-of-week
+	// arithmetic lines up; the AI worker assumes this without re-validating it.
+	ProgramStartDate string `json:"programStartDate"`
+}
+
+// PutProgramStartDate godoc
+//
+//	@Summary		Set the program schedule's start date
+//	@Description	Anchors a parsed week-by-week program document (see the Knowledge Base's Uploaded Documents) to a real calendar date, so the AI can compute exactly which week/day today falls on instead of guessing via semantic search. Pass an empty string to clear it.
+//	@Tags			Knowledge Base
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			studioId	path		string					true	"Studio ID"
+//	@Param			body		body		putProgramStartDateReq	true	"Start date, YYYY-MM-DD, or empty to clear"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		400			{object}	httpx.ErrorResponse	"invalid id or date"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/program-start-date [put]
+func (h *Handler) PutProgramStartDate(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "studioId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	var req putProgramStartDateReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	raw := strings.TrimSpace(req.ProgramStartDate)
+	if raw == "" {
+		if err := h.svc.repo.ClearProgramStartDate(r.Context(), id); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+			return
+		}
+		httpx.JSON(w, http.StatusOK, map[string]any{"programStartDate": nil})
+		return
+	}
+	date, err := time.Parse("2006-01-02", raw)
+	if err != nil {
+		httpx.WriteValidationError(w, map[string]string{"programStartDate": "must be YYYY-MM-DD"})
+		return
+	}
+	if err := h.svc.repo.SetProgramStartDate(r.Context(), id, date); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	// Parse whatever knowledge base content already exists right now — an
+	// admin's natural flow is "upload the document, then later set the
+	// date," and without this they'd also have to re-save/re-upload the
+	// document just to get studio_program_sessions populated.
+	if studio, err := h.svc.repo.GetByID(r.Context(), id); err == nil && studio != nil {
+		var entries []ProgramSessionEntry
+		entries = append(entries, ParseProgramSchedule(studio.KnowledgeBase)...)
+		for _, f := range studio.KnowledgeBaseFiles {
+			entries = append(entries, ParseProgramSchedule(f.Text)...)
+		}
+		if err := h.svc.repo.SaveProgramSessions(r.Context(), id, entries); err != nil {
+			slog.Warn("save program sessions after start-date set failed", "studio_id", id, "err", err)
+		}
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"programStartDate": raw})
 }
 
 // publicGetTrialPageLayout is the customer-facing read — no auth, just the
