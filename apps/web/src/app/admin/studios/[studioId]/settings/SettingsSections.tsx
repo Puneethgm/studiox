@@ -658,7 +658,31 @@ export function SheetsSection({ studio }: { studio: Studio }) {
 
   async function saveExt(patch: Partial<ExternalLeadsSheetSettingsData>) {
     const next = { ...ext, ...patch };
-    const res = await saveExternalLeadsSheetSettings(studio.id, next);
+    // Send only the fields the API's saveExternalLeadsSheetSettingsReq
+    // struct actually declares — not `next` itself, which also carries
+    // whatever extra fields the GET response included (e.g. `id`,
+    // `studioId`) that aren't part of ExternalLeadsSheetSettingsData's own
+    // type. The API's JSON decoder rejects unknown fields outright, so
+    // spreading the raw fetched object into the request body 400'd on
+    // every save — an explicit whitelist can't leak fields like that again.
+    const body: ExternalLeadsSheetSettingsData = {
+      spreadsheetId: next.spreadsheetId,
+      tabName: next.tabName,
+      nameColumn: next.nameColumn,
+      firstNameColumn: next.firstNameColumn,
+      lastNameColumn: next.lastNameColumn,
+      emailColumn: next.emailColumn,
+      phoneColumn: next.phoneColumn,
+      sourceColumn: next.sourceColumn,
+      notesColumn: next.notesColumn,
+      dateColumn: next.dateColumn,
+      hotLeadColumn: next.hotLeadColumn,
+      trialPurchasedColumn: next.trialPurchasedColumn,
+      continueAiAfterGreeting: next.continueAiAfterGreeting,
+      autoContactEnabled: next.autoContactEnabled,
+      active: next.active,
+    };
+    const res = await saveExternalLeadsSheetSettings(studio.id, body);
     if (res.ok) {
       setExt(next);
       return { ok: true };
