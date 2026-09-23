@@ -11,6 +11,8 @@ import {
   changeMyPassword,
   getWhatsAppSendSpacing,
   saveWhatsAppSendSpacing,
+  getWhatsAppDailyMessageLimit,
+  saveWhatsAppDailyMessageLimit,
   getInitialContactDelay,
   saveInitialContactDelay,
   getAIReplyDelay,
@@ -477,19 +479,22 @@ function EditableNumberRow({
 export function IntegrationsSection({ studio, onChange }: { studio: Studio; onChange: (patch: Partial<Studio>) => void }) {
   const [loading, setLoading] = useState(true);
   const [sendSpacing, setSendSpacing] = useState(20);
+  const [dailyMessageLimit, setDailyMessageLimit] = useState(48);
   const [initialDelayMinutes, setInitialDelayMinutes] = useState(0);
   const [aiReplyDelay, setAiReplyDelay] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [spacingRes, delayRes, aiDelayRes] = await Promise.all([
+      const [spacingRes, dailyLimitRes, delayRes, aiDelayRes] = await Promise.all([
         getWhatsAppSendSpacing(studio.id),
+        getWhatsAppDailyMessageLimit(studio.id),
         getInitialContactDelay(studio.id),
         getAIReplyDelay(studio.id),
       ]);
       if (cancelled) return;
       if (spacingRes.ok && spacingRes.data) setSendSpacing(spacingRes.data.whatsappSendSpacingSeconds);
+      if (dailyLimitRes.ok && dailyLimitRes.data) setDailyMessageLimit(dailyLimitRes.data.whatsappDailyMessageLimit);
       if (delayRes.ok && delayRes.data) setInitialDelayMinutes(delayRes.data.initialContactDelayMinutes);
       if (aiDelayRes.ok && aiDelayRes.data) setAiReplyDelay(aiDelayRes.data.aiReplyDelaySeconds);
       setLoading(false);
@@ -570,6 +575,17 @@ export function IntegrationsSection({ studio, onChange }: { studio: Studio; onCh
               onSave={async (n) => {
                 const res = await saveWhatsAppSendSpacing(studio.id, n);
                 if (res.ok) setSendSpacing(n);
+                return res;
+              }}
+            />
+            <EditableNumberRow
+              label="WhatsApp Daily Message Limit"
+              description="Max automated/AI/Manual Actions WhatsApp messages per day, Singapore time (0 = unlimited). Live typed replies aren't counted."
+              value={dailyMessageLimit}
+              suffix="/day"
+              onSave={async (n) => {
+                const res = await saveWhatsAppDailyMessageLimit(studio.id, n);
+                if (res.ok) setDailyMessageLimit(n);
                 return res;
               }}
             />

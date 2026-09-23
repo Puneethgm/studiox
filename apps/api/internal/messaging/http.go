@@ -127,6 +127,8 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Get("/channels", h.listChannels)
 	r.Get("/settings/send-spacing", h.getSendSpacing)
 	r.Put("/settings/send-spacing", h.setSendSpacing)
+	r.Get("/settings/daily-message-limit", h.getDailyMessageLimit)
+	r.Put("/settings/daily-message-limit", h.setDailyMessageLimit)
 	r.Post("/channels/whatsapp", h.connectWhatsApp)
 	r.Post("/channels/instagram", h.connectInstagram)
 	r.Post("/channels/messenger", h.connectMessenger)
@@ -300,6 +302,63 @@ func (h *Handler) setSendSpacing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"whatsappSendSpacingSeconds": req.WhatsAppSendSpacingSeconds})
+}
+
+// getDailyMessageLimit godoc
+//
+//	@Summary		Get WhatsApp daily automated message limit
+//	@Description	Returns the max number of automation/AI/Manual-Actions-sourced WhatsApp messages this studio may send per Singapore-time day. 0 means unlimited. A live reply typed directly in a conversation never counts against this.
+//	@Tags			Messaging - Channels
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/settings/daily-message-limit [get]
+func (h *Handler) getDailyMessageLimit(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	limit, err := h.svc.GetWhatsAppDailyMessageLimit(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"whatsappDailyMessageLimit": limit})
+}
+
+type setDailyMessageLimitReq struct {
+	WhatsAppDailyMessageLimit int `json:"whatsappDailyMessageLimit"`
+}
+
+// setDailyMessageLimit godoc
+//
+//	@Summary		Set WhatsApp daily automated message limit
+//	@Description	Updates the max number of automation/AI/Manual-Actions-sourced WhatsApp messages this studio may send per Singapore-time day. 0 means unlimited.
+//	@Tags			Messaging - Channels
+//	@Security		CookieAuth
+//	@Accept			json
+//	@Produce		json
+//	@Param			studioId	path		string					true	"Studio ID"
+//	@Param			body		body		setDailyMessageLimitReq	true	"Daily message limit"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/settings/daily-message-limit [put]
+func (h *Handler) setDailyMessageLimit(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	var req setDailyMessageLimitReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if err := h.svc.SetWhatsAppDailyMessageLimit(r.Context(), studioID, req.WhatsAppDailyMessageLimit); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"whatsappDailyMessageLimit": req.WhatsAppDailyMessageLimit})
 }
 
 type connectMetaReq struct {

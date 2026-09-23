@@ -248,6 +248,61 @@ export async function saveInitialContactDelay(studioId: string, minutes: number)
   return { ok: true };
 }
 
+export interface DailyMessageLimitResult {
+  ok: boolean;
+  error?: string;
+  data?: { whatsappDailyMessageLimit: number };
+}
+
+export async function getWhatsAppDailyMessageLimit(studioId: string): Promise<DailyMessageLimitResult> {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/messaging/settings/daily-message-limit`, {
+      method: 'GET',
+      headers: {
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      },
+      cache: 'no-store',
+    });
+    if (!res.ok) {
+      return { ok: false, error: `HTTP ${res.status}` };
+    }
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (err: any) {
+    return { ok: false, error: err.message };
+  }
+}
+
+export async function saveWhatsAppDailyMessageLimit(studioId: string, limit: number): Promise<UpdateStudioResult> {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
+  const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/messaging/settings/daily-message-limit`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+    },
+    body: JSON.stringify({ whatsappDailyMessageLimit: limit }),
+    cache: 'no-store',
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    return { ok: false, error: body?.error || `HTTP ${res.status}` };
+  }
+  return { ok: true };
+}
+
 export interface SendSpacingResult {
   ok: boolean;
   error?: string;

@@ -1653,18 +1653,29 @@ type PendingJobInfo struct {
 	ScheduledFor       time.Time    `json:"scheduledFor"`
 	Attempts           int          `json:"attempts"`
 	Status             string       `json:"status"`
+	LastError          string       `json:"lastError"`
 }
 
+// ListPendingJobs returns a studio's queued Manual Actions jobs plus any that
+// were blocked (status='dead') in the last 7 days — e.g. by the WhatsApp
+// daily message limit — so a blocked send stays visible with its failure
+// reason instead of silently vanishing from the panel. Admins can retry a
+// blocked job via SetJobScheduledForNow/UpdateJob, both of which accept
+// status='dead' for exactly this reason.
 func (r *Repo) ListPendingJobs(ctx context.Context, studioID uuid.UUID) ([]PendingJobInfo, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT o.id, o.studio_id, o.conversation_id, ci.display_name, ci.value, ch.kind,
-		       o.body, o.attachments, o.scheduled_for, o.attempts, o.status
+		       o.body, o.attachments, o.scheduled_for, o.attempts, o.status, o.last_error
 		FROM outbound_jobs o
 		JOIN conversations c ON c.id = o.conversation_id
 		JOIN channel_accounts ch ON ch.id = c.channel_account_id
 		JOIN contact_identities ci ON ci.id = c.contact_identity_id
-		WHERE o.studio_id = $1 AND o.status = 'pending'
-		ORDER BY o.scheduled_for ASC
+		WHERE o.studio_id = $1
+		  AND (o.status = 'pending' OR (o.status = 'dead' AND o.created_at >= now() - INTERVAL '7 days'))
+		ORDER BY
+		  CASE WHEN o.status = 'pending' THEN 0 ELSE 1 END,
+		  CASE WHEN o.status = 'pending' THEN o.scheduled_for END ASC,
+		  o.created_at DESC
 	`, studioID)
 	if err != nil {
 		return nil, fmt.Errorf("list pending jobs: %w", err)
@@ -1677,7 +1688,7 @@ func (r *Repo) ListPendingJobs(ctx context.Context, studioID uuid.UUID) ([]Pendi
 		var atts []byte
 		if err := rows.Scan(&ji.ID, &ji.StudioID, &ji.ConversationID, &ji.ContactDisplayName,
 			&ji.ContactValue, &ji.ChannelKind, &ji.Body, &atts, &ji.ScheduledFor,
-			&ji.Attempts, &ji.Status); err != nil {
+			&ji.Attempts, &ji.Status, &ji.LastError); err != nil {
 			return nil, fmt.Errorf("scan pending job: %w", err)
 		}
 		if len(atts) > 0 {
@@ -1797,13 +1808,18 @@ func (r *Repo) DeleteJob(ctx context.Context, studioID uuid.UUID, id int64) erro
 	return nil
 }
 
+// UpdateJob edits a Manual Actions job. Also accepts status='dead' (e.g. a
+// job blocked by the WhatsApp daily limit) and revives it back to 'pending'
+// with a cleared last_error — editing and saving is how staff retry a
+// blocked job, rather than it staying stuck forever.
 func (r *Repo) UpdateJob(ctx context.Context, studioID uuid.UUID, id int64, body string, scheduledFor time.Time, attachments []Attachment) error {
 	attsBytes, _ := json.Marshal(attachments)
 	atts := string(attsBytes)
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE outbound_jobs
-		SET body = $3, scheduled_for = $4, next_attempt_at = $4, attachments = $5
-		WHERE studio_id = $1 AND id = $2 AND status = 'pending'
+		SET body = $3, scheduled_for = $4, next_attempt_at = $4, attachments = $5,
+		    status = 'pending', last_error = ''
+		WHERE studio_id = $1 AND id = $2 AND status IN ('pending', 'dead')
 	`, studioID, id, body, scheduledFor, atts)
 	if err != nil {
 		return err
@@ -1814,11 +1830,15 @@ func (r *Repo) UpdateJob(ctx context.Context, studioID uuid.UUID, id int64, body
 	return nil
 }
 
+// SetJobScheduledForNow is "Send Now" in the Manual Actions panel. Also
+// accepts status='dead' so a job blocked by the WhatsApp daily limit can be
+// retried immediately (e.g. after the studio raised its limit) instead of
+// only being retriable by editing it.
 func (r *Repo) SetJobScheduledForNow(ctx context.Context, studioID uuid.UUID, id int64) error {
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE outbound_jobs
-		SET scheduled_for = now(), next_attempt_at = now()
-		WHERE studio_id = $1 AND id = $2 AND status = 'pending'
+		SET scheduled_for = now(), next_attempt_at = now(), status = 'pending', last_error = ''
+		WHERE studio_id = $1 AND id = $2 AND status IN ('pending', 'dead')
 	`, studioID, id)
 	if err != nil {
 		return err
@@ -1859,6 +1879,66 @@ func (r *Repo) SetWhatsAppSendSpacing(ctx context.Context, studioID uuid.UUID, s
 		UPDATE studios SET whatsapp_send_spacing_seconds = $2, updated_at = now() WHERE id = $1
 	`, studioID, seconds)
 	return err
+}
+
+// sgtZone is Singapore Standard Time (UTC+8, no DST). The daily WhatsApp
+// automated-send cap resets on this fixed boundary regardless of the
+// studio's own availability_timezone, per how the cap was scoped.
+var sgtZone = time.FixedZone("SGT", 8*60*60)
+
+// sgtDayBounds returns the [start, end) instants of the Singapore-time
+// calendar day containing t.
+func sgtDayBounds(t time.Time) (start, end time.Time) {
+	sgt := t.In(sgtZone)
+	start = time.Date(sgt.Year(), sgt.Month(), sgt.Day(), 0, 0, 0, 0, sgtZone)
+	return start, start.Add(24 * time.Hour)
+}
+
+// GetWhatsAppDailyMessageLimit returns the max number of automation/AI-sourced
+// WhatsApp messages this studio may send per Singapore-time day. 0 means
+// unlimited. Manual agent replies (source_kind = studio_user) never count
+// against this and are never blocked by it.
+func (r *Repo) GetWhatsAppDailyMessageLimit(ctx context.Context, studioID uuid.UUID) (int, error) {
+	var limit int
+	err := r.pool.QueryRow(ctx, `
+		SELECT whatsapp_daily_message_limit FROM studios WHERE id = $1
+	`, studioID).Scan(&limit)
+	if err != nil {
+		return 0, err
+	}
+	return limit, nil
+}
+
+func (r *Repo) SetWhatsAppDailyMessageLimit(ctx context.Context, studioID uuid.UUID, limit int) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE studios SET whatsapp_daily_message_limit = $2, updated_at = now() WHERE id = $1
+	`, studioID, limit)
+	return err
+}
+
+// CountAutomatedWhatsAppSentToday counts automation/AI-sourced WhatsApp
+// messages this studio has already sent since the start of the current
+// Singapore-time day, across both WhatsApp channel kinds (Meta Cloud API and
+// WhatsApp Web).
+func (r *Repo) CountAutomatedWhatsAppSentToday(ctx context.Context, studioID uuid.UUID) (int, error) {
+	start, end := sgtDayBounds(time.Now())
+	var count int
+	err := r.pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM outbound_jobs o
+		JOIN conversations c ON c.id = o.conversation_id
+		JOIN channel_accounts ch ON ch.id = c.channel_account_id
+		WHERE o.studio_id = $1
+		  AND o.status = 'sent'
+		  AND o.source_kind IN ('automation', 'ai')
+		  AND ch.kind IN ('whatsapp_meta', 'whatsapp_web')
+		  AND o.sent_at >= $2
+		  AND o.sent_at < $3
+	`, studioID, start, end).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func (r *Repo) GetStripeConfig(ctx context.Context, studioID uuid.UUID) (secretKey string, amountSGD int, name string, slug string, err error) {

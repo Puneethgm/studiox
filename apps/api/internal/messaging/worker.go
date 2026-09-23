@@ -261,6 +261,26 @@ func (w *OutboundWorker) dispatch(ctx context.Context, j OutboundJob) {
 		// In local mode, continue even if no active channel found.
 	}
 
+	// Daily automated-send cap — automation/AI-sourced WhatsApp sends are
+	// counted and blocked, which also covers Manual Actions jobs (Service.
+	// CreateJob tags those SourceAutomation for exactly this reason). A live
+	// reply typed directly in a conversation (SourceStudioUser, EnqueueReply)
+	// always goes through uncapped. This exists to keep unverified WhatsApp
+	// numbers under Meta's low messaging-limit tier from getting
+	// flagged/banned by unattended bulk sending. A studio's cap is 0 =
+	// unlimited. Lookup failures fail open (send proceeds) rather than
+	// blocking messaging on a transient DB hiccup, matching the existing
+	// send-spacing fallback convention.
+	if (channel.Kind == KindWhatsAppMeta || channel.Kind == KindWhatsAppWeb) &&
+		(j.SourceKind == SourceAutomation || j.SourceKind == SourceAI) {
+		if limit, err := w.repo.GetWhatsAppDailyMessageLimit(ctx, j.StudioID); err == nil && limit > 0 {
+			if sentToday, err := w.repo.CountAutomatedWhatsAppSentToday(ctx, j.StudioID); err == nil && sentToday >= limit {
+				w.failJob(ctx, j, "daily_limit_exceeded", true)
+				return
+			}
+		}
+	}
+
 	var sender channels.Sender
 	switch channel.Kind {
 	case KindWhatsAppMeta:

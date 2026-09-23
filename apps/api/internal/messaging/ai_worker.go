@@ -1162,7 +1162,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		w.log.Warn("fetch conversation ai summary failed", "err", err)
 		aiContextSummary = ""
 	}
-	prompt := w.buildPrompt(ctx, history, semanticHistory, styleExamples, conv, lead, studio, plans, sentiment, keywords, kbChunks, intent, kbConfident, aiContextSummary)
+	prompt := w.buildPrompt(ctx, history, semanticHistory, styleExamples, conv, lead, studio, plans, sentiment, keywords, kbChunks, intent, kbConfident, aiContextSummary, "")
 
 	// Waterfall: Groq → Gemini → Claude. Which model(s) each provider tries
 	// is read from studio_ai_models (studio's AI Assistant settings page),
@@ -1294,7 +1294,11 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	return nil
 }
 
-func (w *AIWorker) buildPrompt(ctx context.Context, history []Message, semanticHistory []SemanticMatch, styleExamples []StyleExample, conv *Conversation, lead *leads.Lead, studio *studios.Studio, plans []Plan, sentiment int, keywords []string, kbChunks []string, intent string, kbConfident bool, aiContextSummary string) string {
+// greetingTZOverride is an IANA zone name that, when set, wins over both the
+// recipient's phone-derived timezone and the studio's own — see
+// resolveGreetingLocation. Only Test Chat sets it (to the admin's own
+// browser/system timezone); real conversations always pass "".
+func (w *AIWorker) buildPrompt(ctx context.Context, history []Message, semanticHistory []SemanticMatch, styleExamples []StyleExample, conv *Conversation, lead *leads.Lead, studio *studios.Studio, plans []Plan, sentiment int, keywords []string, kbChunks []string, intent string, kbConfident bool, aiContextSummary string, greetingTZOverride string) string {
 	var sb strings.Builder
 
 	// ── System role ──────────────────────────────────────────────────────────
@@ -1386,16 +1390,15 @@ func (w *AIWorker) buildPrompt(ctx context.Context, history []Message, semanticH
 	isLongGap := !lastOutboundAt.IsZero() && now.Sub(lastOutboundAt) > time.Hour
 
 	if isFirstContact || isLongGap {
-		hour := localNow.Hour()
-		greeting := "Good evening"
-		if hour < 12 {
-			greeting = "Good morning"
-		} else if hour < 17 {
-			greeting = "Good afternoon"
-		}
-		sb.WriteString(fmt.Sprintf("Open your reply with '%s'. ", greeting))
+		// The greeting's time-of-day is the recipient's local time (from
+		// their phone number's country) for a real conversation, or the
+		// admin's own browser/system time for Test Chat (greetingTZOverride)
+		// — see resolveGreetingLocation. Falls back to the studio's timezone
+		// (loc, above) when neither is available.
+		hour := now.In(resolveGreetingLocation(greetingTZOverride, conv, loc)).Hour()
+		sb.WriteString(fmt.Sprintf("Open your reply with '%s'. ", greetingWord(hour)))
 	} else {
-		sb.WriteString("Do NOT start with a greeting like Good morning/afternoon/evening — jump straight into the response. ")
+		sb.WriteString("Do NOT start with a greeting like Good morning/afternoon/evening/night — jump straight into the response. ")
 	}
 	sb.WriteString("\n\n")
 

@@ -7806,6 +7806,98 @@
                 }
             }
         },
+        "/api/v1/studios/{studioId}/messaging/settings/daily-message-limit": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Returns the max number of automation/AI/Manual-Actions-sourced WhatsApp messages this studio may send per Singapore-time day. 0 means unlimited. A live reply typed directly in a conversation never counts against this.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Messaging - Channels"
+                ],
+                "summary": "Get WhatsApp daily automated message limit",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Updates the max number of automation/AI/Manual-Actions-sourced WhatsApp messages this studio may send per Singapore-time day. 0 means unlimited.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Messaging - Channels"
+                ],
+                "summary": "Set WhatsApp daily automated message limit",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Daily message limit",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_messaging.setDailyMessageLimitReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/studios/{studioId}/messaging/settings/send-spacing": {
             "get": {
                 "security": [
@@ -11617,6 +11709,10 @@
                 },
                 "message": {
                     "type": "string"
+                },
+                "timezone": {
+                    "description": "Timezone is the admin's own browser/system IANA timezone (e.g.\n\"Asia/Kolkata\"), sent automatically by the client on every request —\nnot typed by the admin. buildPrompt's greeting instruction uses it\ninstead of the studio's AvailabilityTimezone, so the greeting an admin\nsees in Test Chat matches their own current time of day. There's no\nreal recipient in Test Chat to derive a timezone from a phone number,\nso this is the client's clock, not a phone lookup. Falls back to the\nstudio's timezone if empty or unrecognized.",
+                    "type": "string"
                 }
             }
         },
@@ -11751,6 +11847,14 @@
                 },
                 "body": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_messaging.setDailyMessageLimitReq": {
+            "type": "object",
+            "properties": {
+                "whatsappDailyMessageLimit": {
+                    "type": "integer"
                 }
             }
         },

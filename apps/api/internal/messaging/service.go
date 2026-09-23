@@ -171,6 +171,19 @@ func (s *Service) SetWhatsAppSendSpacing(ctx context.Context, studioID uuid.UUID
 	return s.repo.SetWhatsAppSendSpacing(ctx, studioID, seconds)
 }
 
+func (s *Service) GetWhatsAppDailyMessageLimit(ctx context.Context, studioID uuid.UUID) (int, error) {
+	return s.repo.GetWhatsAppDailyMessageLimit(ctx, studioID)
+}
+
+// SetWhatsAppDailyMessageLimit sets the max automated/AI WhatsApp sends
+// allowed per Singapore-time day. 0 means unlimited.
+func (s *Service) SetWhatsAppDailyMessageLimit(ctx context.Context, studioID uuid.UUID, limit int) error {
+	if limit < 0 {
+		limit = 0
+	}
+	return s.repo.SetWhatsAppDailyMessageLimit(ctx, studioID, limit)
+}
+
 func (s *Service) DisconnectChannel(ctx context.Context, studioID, id uuid.UUID) error {
 	// Look up the channel's kind before disconnecting so we know whether it
 	// needs a follow-up call to log out an external session (WhatsApp Web).
@@ -2078,12 +2091,19 @@ func (s *Service) CreateJob(ctx context.Context, studioID uuid.UUID, conversatio
 	if conversationID == uuid.Nil {
 		return 0, errors.New("recipient conversation is required")
 	}
+	// Tagged SourceAutomation (not SourceStudioUser) even though a staff
+	// member scheduled it: this is the "Manual Actions" bulk/scheduled-send
+	// panel, not a live typed reply, so it counts against and is blocked by
+	// the studio's WhatsApp daily automated-message cap the same as real
+	// automation/AI sends (see OutboundWorker.dispatch). A live reply typed
+	// directly in a conversation goes through EnqueueReply instead, which
+	// keeps SourceStudioUser and is never capped.
 	job := OutboundJob{
 		StudioID:       studioID,
 		ConversationID: conversationID,
 		Body:           body,
 		Attachments:    attachments,
-		SourceKind:     SourceStudioUser,
+		SourceKind:     SourceAutomation,
 		ScheduledFor:   scheduledFor,
 	}
 	return s.repo.EnqueueOutbound(ctx, job)

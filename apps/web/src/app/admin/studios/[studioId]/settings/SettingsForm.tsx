@@ -16,6 +16,8 @@ import {
   saveExternalLeadsSheetSettings,
   getWhatsAppSendSpacing,
   saveWhatsAppSendSpacing,
+  getWhatsAppDailyMessageLimit,
+  saveWhatsAppDailyMessageLimit,
   getInitialContactDelay,
   saveInitialContactDelay,
   getAIReplyDelay,
@@ -158,6 +160,9 @@ export function SettingsForm({
   const [sendSpacingSeconds, setSendSpacingSeconds] = useState(20);
   const [sendSpacingSaving, setSendSpacingSaving] = useState(false);
   const [sendSpacingError, setSendSpacingError] = useState<string | null>(null);
+  const [dailyMessageLimit, setDailyMessageLimit] = useState(48);
+  const [dailyMessageLimitSaving, setDailyMessageLimitSaving] = useState(false);
+  const [dailyMessageLimitError, setDailyMessageLimitError] = useState<string | null>(null);
   const [initialDelayValue, setInitialDelayValue] = useState(0);
   const [initialDelayUnit, setInitialDelayUnit] = useState<'minutes' | 'hours'>('minutes');
   const [aiReplyDelaySeconds, setAiReplyDelaySeconds] = useState(0);
@@ -219,6 +224,12 @@ export function SettingsForm({
       }
     })();
     void (async () => {
+      const res = await getWhatsAppDailyMessageLimit(studio.id);
+      if (res.ok && res.data) {
+        setDailyMessageLimit(res.data.whatsappDailyMessageLimit ?? 48);
+      }
+    })();
+    void (async () => {
       const res = await getInitialContactDelay(studio.id);
       if (res.ok && res.data) {
         const minutes = res.data.initialContactDelayMinutes ?? 0;
@@ -254,6 +265,24 @@ export function SettingsForm({
       setSendSpacingError(err.message || 'An error occurred.');
     } finally {
       setSendSpacingSaving(false);
+    }
+  }
+
+  async function onSaveDailyMessageLimit(e: React.FormEvent) {
+    e.preventDefault();
+    setDailyMessageLimitError(null);
+    setDailyMessageLimitSaving(true);
+    try {
+      const res = await saveWhatsAppDailyMessageLimit(studio.id, dailyMessageLimit);
+      if (res.ok) {
+        showToast('WhatsApp daily message limit saved successfully.');
+      } else {
+        setDailyMessageLimitError(res.error || 'Failed to save daily limit.');
+      }
+    } catch (err: any) {
+      setDailyMessageLimitError(err.message || 'An error occurred.');
+    } finally {
+      setDailyMessageLimitSaving(false);
     }
   }
 
@@ -1245,6 +1274,49 @@ export function SettingsForm({
                     className="bg-brand-500 hover:bg-brand-600 text-white text-xs font-black uppercase tracking-widest rounded h-10 px-6"
                   >
                     Save Pacing
+                  </Button>
+                </div>
+              </form>
+            </div>
+
+            {/* WhatsApp Daily Message Limit — cap on automated/AI sends per day, for unverified numbers */}
+            <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+              <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800 flex items-center gap-2">
+                <Timer className="h-4 w-4 text-brand-500" />
+                <h3 className="text-sm font-black text-zinc-950 dark:text-white">WhatsApp Daily Message Limit</h3>
+              </div>
+              <form onSubmit={onSaveDailyMessageLimit} className="space-y-4 p-6">
+                <p className="text-[10px] text-zinc-400">
+                  Caps how many automated/AI WhatsApp messages this studio can send per day (resets at midnight
+                  Singapore time). Covers automation, AI, and Manual Actions (scheduled sends) — only a reply a
+                  staff member types directly in a conversation is never blocked. Meta gives unverified WhatsApp
+                  Business numbers a low daily messaging tier, so keeping automated sends under this cap avoids
+                  the number getting flagged.
+                </p>
+
+                <div className="max-w-xs">
+                  <Label htmlFor="dailyMessageLimit">Automated Messages / Day</Label>
+                  <Input
+                    id="dailyMessageLimit"
+                    type="number"
+                    min={0}
+                    value={dailyMessageLimit}
+                    onChange={(e) => setDailyMessageLimit(Math.max(0, Number(e.target.value) || 0))}
+                  />
+                  <FieldHint>0 = unlimited. Default 48, matching Meta&apos;s unverified-number tier.</FieldHint>
+                </div>
+
+                {dailyMessageLimitError ? (
+                  <p className="text-xs font-black text-rose-500 uppercase tracking-wider">{dailyMessageLimitError}</p>
+                ) : null}
+
+                <div className="flex items-center justify-end border-t border-zinc-200 dark:border-zinc-800 pt-4">
+                  <Button
+                    type="submit"
+                    loading={dailyMessageLimitSaving}
+                    className="bg-brand-500 hover:bg-brand-600 text-white text-xs font-black uppercase tracking-widest rounded h-10 px-6"
+                  >
+                    Save Limit
                   </Button>
                 </div>
               </form>

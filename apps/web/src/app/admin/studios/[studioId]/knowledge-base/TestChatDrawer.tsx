@@ -19,6 +19,19 @@ interface TestChatResponse {
   sources?: string[];
 }
 
+// The AI's greeting ("Good morning/afternoon/evening") is normally timed to
+// the recipient's phone-number country, but there's no real recipient in
+// Test Chat — so instead it uses whoever's actually testing it: this admin's
+// own browser/system clock (apps/api's buildPrompt via TestChatRequest.timezone).
+// Sent automatically with every message, no admin input needed.
+function clientTimezone(): string | undefined {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } catch {
+    return undefined;
+  }
+}
+
 // A right-side slide-in "assistant" drawer for the Knowledge Base admin
 // page — lets an admin type test questions and see how the AI would
 // actually answer (real KB retrieval + LLM pipeline, apps/api's
@@ -75,7 +88,7 @@ export function TestChatDrawer({
     try {
       const res = await api<TestChatResponse>(
         `/api/v1/studios/${studioId}/knowledge-base/test-chat`,
-        { method: 'POST', json: { message, history } },
+        { method: 'POST', json: { message, history, timezone: clientTimezone() } },
       );
       setTurns((prev) => [...prev, { role: 'assistant', text: res.reply, sources: res.sources }]);
     } catch (err) {

@@ -889,6 +889,17 @@ definitions:
         type: array
       message:
         type: string
+      timezone:
+        description: |-
+          Timezone is the admin's own browser/system IANA timezone (e.g.
+          "Asia/Kolkata"), sent automatically by the client on every request —
+          not typed by the admin. buildPrompt's greeting instruction uses it
+          instead of the studio's AvailabilityTimezone, so the greeting an admin
+          sees in Test Chat matches their own current time of day. There's no
+          real recipient in Test Chat to derive a timezone from a phone number,
+          so this is the client's clock, not a phone lookup. Falls back to the
+          studio's timezone if empty or unrecognized.
+        type: string
     type: object
   internal_messaging.TestChatResponse:
     properties:
@@ -982,6 +993,11 @@ definitions:
         type: array
       body:
         type: string
+    type: object
+  internal_messaging.setDailyMessageLimitReq:
+    properties:
+      whatsappDailyMessageLimit:
+        type: integer
     type: object
   internal_messaging.setSendSpacingReq:
     properties:
@@ -6785,6 +6801,68 @@ paths:
       summary: Trigger a pending job immediately
       tags:
       - Messaging - Automation Jobs
+  /api/v1/studios/{studioId}/messaging/settings/daily-message-limit:
+    get:
+      description: Returns the max number of automation/AI/Manual-Actions-sourced
+        WhatsApp messages this studio may send per Singapore-time day. 0 means unlimited.
+        A live reply typed directly in a conversation never counts against this.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Get WhatsApp daily automated message limit
+      tags:
+      - Messaging - Channels
+    put:
+      consumes:
+      - application/json
+      description: Updates the max number of automation/AI/Manual-Actions-sourced
+        WhatsApp messages this studio may send per Singapore-time day. 0 means unlimited.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: Daily message limit
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_messaging.setDailyMessageLimitReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Set WhatsApp daily automated message limit
+      tags:
+      - Messaging - Channels
   /api/v1/studios/{studioId}/messaging/settings/send-spacing:
     get:
       description: Returns the configured delay, in seconds, enforced between consecutive

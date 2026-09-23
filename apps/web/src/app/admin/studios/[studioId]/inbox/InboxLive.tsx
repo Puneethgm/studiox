@@ -139,6 +139,14 @@ interface PendingJob {
   scheduledFor: string;
   attempts: number;
   status: string;
+  lastError?: string;
+}
+
+// Friendlier copy for known failure reasons; anything else falls back to the
+// raw last_error from the backend.
+function jobFailureReason(lastError?: string): string {
+  if (lastError === 'daily_limit_exceeded') return 'WhatsApp daily message limit reached';
+  return lastError || 'Send failed';
 }
 
 type InboxTab = 'conversations' | 'escalation' | 'automated_messages' | 'snippets' | 'trigger_links';
@@ -2302,7 +2310,7 @@ export function InboxLive({
                       <th className="p-4">Channel</th>
                       <th className="p-4">Message Preview</th>
                       <th className="p-4">Scheduled For</th>
-                      <th className="p-4">Attempts</th>
+                      <th className="p-4">Status</th>
                       <th className="p-4 text-right">Actions</th>
                     </tr>
                   </thead>
@@ -2339,7 +2347,23 @@ export function InboxLive({
                           })()}
                         </td>
                         <td className="p-4 font-semibold text-zinc-500 dark:text-zinc-400">{new Date(job.scheduledFor).toLocaleString()}</td>
-                        <td className="p-4 font-bold text-zinc-500">{job.attempts}</td>
+                        <td className="p-4">
+                          {job.status === 'dead' ? (
+                            <div>
+                              <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold text-white bg-red-500">
+                                Blocked
+                              </span>
+                              <div className="text-[10px] text-red-500/80 font-semibold mt-1 max-w-[160px]">
+                                {jobFailureReason(job.lastError)}
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold text-white bg-violet-400">
+                              Scheduled
+                            </span>
+                          )}
+                          <div className="text-[10px] text-zinc-400 font-medium mt-1">{job.attempts} attempt{job.attempts === 1 ? '' : 's'}</div>
+                        </td>
                         <td className="p-4 text-right space-x-2 whitespace-nowrap">
                           <button
                             onClick={() => {
@@ -2371,7 +2395,7 @@ export function InboxLive({
                             onClick={() => handleTriggerJob(job.id)}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500 text-[10px] font-bold text-white hover:bg-emerald-600 shadow-md hover:scale-105 transition-all"
                           >
-                            <Play className="h-3 w-3" /> Send Now
+                            <Play className="h-3 w-3" /> {job.status === 'dead' ? 'Retry' : 'Send Now'}
                           </button>
                           <button
                             onClick={() => handleCancelJob(job.id)}

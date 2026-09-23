@@ -29,6 +29,15 @@ type TestChatTurn struct {
 type TestChatRequest struct {
 	Message string         `json:"message"`
 	History []TestChatTurn `json:"history"`
+	// Timezone is the admin's own browser/system IANA timezone (e.g.
+	// "Asia/Kolkata"), sent automatically by the client on every request —
+	// not typed by the admin. buildPrompt's greeting instruction uses it
+	// instead of the studio's AvailabilityTimezone, so the greeting an admin
+	// sees in Test Chat matches their own current time of day. There's no
+	// real recipient in Test Chat to derive a timezone from a phone number,
+	// so this is the client's clock, not a phone lookup. Falls back to the
+	// studio's timezone if empty or unrecognized.
+	Timezone string `json:"timezone,omitempty"`
 }
 
 type TestChatResponse struct {
@@ -133,7 +142,7 @@ func (w *AIWorker) TestChat(ctx context.Context, studioID uuid.UUID, req TestCha
 	// answering the question just asked.
 	history = append(history, Message{Direction: DirectionInbound, Body: req.Message, SentAt: now})
 
-	prompt := w.buildPrompt(ctx, history, nil, styleExamples, nil, nil, studio, plans, sentiment, nil, kbChunks, intent, len(kbChunks) >= 2, "")
+	prompt := w.buildPrompt(ctx, history, nil, styleExamples, nil, nil, studio, plans, sentiment, nil, kbChunks, intent, len(kbChunks) >= 2, "", req.Timezone)
 
 	reply, _ := llmWaterfall(ctx, w.studiosRepo, w.llmRepo, w.msgRepo, w.claude, w.claudeAPIURL, w.log, studioID, studio, prompt)
 	if reply == "" {
