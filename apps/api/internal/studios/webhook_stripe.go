@@ -9,17 +9,52 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/projectx/api/internal/integrations/glofox"
+	"github.com/projectx/api/internal/platform/billing"
 	"github.com/projectx/api/internal/platform/httpx"
 	"github.com/stripe/stripe-go/v78"
 	"github.com/stripe/stripe-go/v78/client"
 	"github.com/stripe/stripe-go/v78/webhook"
 )
+
+// invoiceSubscriptionID extracts the subscription ID an invoice was
+// generated for. stripe-go v78's typed Invoice.Subscription field only
+// works for older Stripe API versions — this account is on a newer one
+// where Stripe moved that reference off the invoice entirely, into each
+// line item's lines.data[].parent.subscription_item_details.subscription.
+// The typed field comes back nil for every invoice on this account, so this
+// falls back to parsing that path from the raw event bytes.
+func invoiceSubscriptionID(invoice *stripe.Invoice, rawBytes []byte) string {
+	if invoice.Subscription != nil && invoice.Subscription.ID != "" {
+		return invoice.Subscription.ID
+	}
+	var raw struct {
+		Lines struct {
+			Data []struct {
+				Parent struct {
+					SubscriptionItemDetails struct {
+						Subscription string `json:"subscription"`
+					} `json:"subscription_item_details"`
+				} `json:"parent"`
+			} `json:"data"`
+		} `json:"lines"`
+	}
+	if err := json.Unmarshal(rawBytes, &raw); err != nil {
+		return ""
+	}
+	for _, line := range raw.Lines.Data {
+		if line.Parent.SubscriptionItemDetails.Subscription != "" {
+			return line.Parent.SubscriptionItemDetails.Subscription
+		}
+	}
+	return ""
+}
 
 // renderConfirmationTemplate substitutes the placeholders a studio can use in
 // its custom trial/membership payment confirmation message.
@@ -173,7 +208,20 @@ func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Requ
 			go h.handlePaymentIntentSucceeded(context.Background(), &pi)
 		}
 	case "invoice.paid":
-		// Existing invoice handling (platform billing)
+		// Existing invoice handling (platform billing) — plus member-subscription
+		// renewal tracking: bumps user_subscriptions.next_renewal_at, fires for
+		// both the first billing period (right after checkout) and every
+		// renewal after.
+		var invoice stripe.Invoice
+		rawBytes := event.Data.Raw
+		if len(rawBytes) == 0 {
+			rawBytes, _ = json.Marshal(event.Data.Object)
+		}
+		if err := json.Unmarshal(rawBytes, &invoice); err == nil {
+			if subID := invoiceSubscriptionID(&invoice, rawBytes); subID != "" {
+				go h.handleMemberInvoicePaid(context.Background(), studioIDStr, subID, &invoice)
+			}
+		}
 	case "invoice.payment_failed":
 		var invoice stripe.Invoice
 		rawBytes := event.Data.Raw
@@ -181,12 +229,12 @@ func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Requ
 			rawBytes, _ = json.Marshal(event.Data.Object)
 		}
 		if err := json.Unmarshal(rawBytes, &invoice); err == nil {
-			if invoice.Subscription != nil {
+			if subID := invoiceSubscriptionID(&invoice, rawBytes); subID != "" {
 				secretKey, _ := h.svc.GetPlatformSetting(context.Background(), "stripe_secret_key")
 				if secretKey != "" {
 					sc := &client.API{}
 					sc.Init(secretKey, nil)
-					sub, err := sc.Subscriptions.Get(invoice.Subscription.ID, nil)
+					sub, err := sc.Subscriptions.Get(subID, nil)
 					if err == nil && sub.Metadata["studio_id"] != "" {
 						id, err := uuid.Parse(sub.Metadata["studio_id"])
 						if err == nil {
@@ -196,6 +244,8 @@ func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Requ
 						}
 					}
 				}
+				// Member subscriptions (not studio-tier billing) also flag past_due here.
+				go h.handleMemberInvoiceFailed(context.Background(), subID, &invoice)
 			}
 		}
 	case "customer.subscription.updated", "customer.subscription.deleted":
@@ -218,6 +268,12 @@ func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Requ
 						// We can ignore updates that aren't cancellations to avoid overwriting state unnecessarily.
 					}
 				}
+			}
+			// Member subscriptions: only a real cancellation reverts the lead —
+			// a superseded old subscription from a plan-change is expected to
+			// cancel and must not revert a member who's now on a new plan.
+			if sub.Status == "canceled" || sub.CancelAtPeriodEnd {
+				go h.handleMemberSubscriptionCanceled(context.Background(), &sub)
 			}
 		}
 	default:
@@ -308,7 +364,12 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 		sc := &client.API{}
 		sc.Init(studio.StripeSecretKey, nil)
 		if session.Invoice != nil && session.Invoice.ID != "" {
-			// Subscription/membership — fetch hosted invoice URL
+			// Subscription/membership — fetch hosted invoice URL. Note: this
+			// invoice's own period_start/period_end are NOT a usable "next
+			// renewal" signal — Stripe sets both equal to the invoice's
+			// creation instant on a brand-new subscription's first invoice,
+			// not creation+interval. The real next-charge date is fetched
+			// from the Subscription object separately, below.
 			inv, errInv := sc.Invoices.Get(session.Invoice.ID, nil)
 			if errInv == nil && inv != nil {
 				if inv.HostedInvoiceURL != "" {
@@ -417,11 +478,6 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 		}
 
 		if isMembership {
-			monthlyFee := float64(session.AmountTotal) / 100.0
-
-			var planName string
-			_ = h.svc.repo.Pool().QueryRow(ctx, "SELECT plan_name FROM plans WHERE id = $1", planIDStr).Scan(&planName)
-
 			var subID, custID string
 			if session.Subscription != nil {
 				subID = session.Subscription.ID
@@ -429,51 +485,10 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 			if session.Customer != nil {
 				custID = session.Customer.ID
 			}
-
-			var err error
-			if planName != "" {
-				_, err = h.svc.repo.Pool().Exec(ctx, `
-					UPDATE leads
-					SET member_sold = true, status = 'member', monthly_fee = $1, fitness_plan = $2,
-					    stripe_subscription_id = $3, stripe_customer_id = $4, updated_at = now()
-					WHERE id = $5
-				`, monthlyFee, planName, subID, custID, *leadID)
-			} else {
-				_, err = h.svc.repo.Pool().Exec(ctx, `
-					UPDATE leads
-					SET member_sold = true, status = 'member', monthly_fee = $1,
-					    stripe_subscription_id = $2, stripe_customer_id = $3, updated_at = now()
-					WHERE id = $4
-				`, monthlyFee, subID, custID, *leadID)
-			}
-
-			if err != nil {
+			if _, err := h.applyMembershipConfirmed(ctx, studio, *leadID, planIDStr, session.AmountTotal, session.ID, subID, custID, session.Metadata["old_subscription_id"]); err != nil {
 				slog.Warn("stripe lead status update failed", "err", err)
 			} else {
 				slog.Info("stripe lead status updated to member", "phone", customerPhone)
-				h.svc.SyncLeadToGlofoxByID(ctx, *leadID, glofox.GlofoxStatusMember, session.AmountTotal)
-				h.svc.SyncLeadToMindbodyByID(ctx, *leadID, false, session.AmountTotal)
-
-				// Phase 5: Cancel any pending automated follow-ups since the lead became a member
-				_, _ = h.svc.repo.Pool().Exec(ctx, `
-					DELETE FROM outbound_jobs
-					WHERE studio_id = $1 AND conversation_id IN (
-						SELECT id FROM conversations WHERE lead_id = $2
-					) AND source_kind = 'automation' AND status = 'pending'
-				`, studio.ID, *leadID)
-
-				// Plan change: this checkout replaced an existing membership, so
-				// cancel the old subscription now that the new one is confirmed —
-				// otherwise the customer stays billed on both.
-				if oldSubID := session.Metadata["old_subscription_id"]; oldSubID != "" && oldSubID != subID && studio.StripeSecretKey != "" {
-					sc := &client.API{}
-					sc.Init(studio.StripeSecretKey, nil)
-					if _, cancelErr := sc.Subscriptions.Cancel(oldSubID, nil); cancelErr != nil {
-						slog.Warn("stripe: failed to cancel old subscription after plan change", "old_sub_id", oldSubID, "err", cancelErr)
-					} else {
-						slog.Info("stripe: canceled old subscription after plan change", "old_sub_id", oldSubID, "new_sub_id", subID)
-					}
-				}
 			}
 		} else {
 			_, updateErr := h.svc.repo.Pool().Exec(ctx, `
@@ -529,9 +544,90 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 // confirmCardPayment resolves) means a customer closing the tab right after
 // a successful charge still gets their status update / Glofox sync /
 // confirmation message — the client can't be trusted to always call back.
+// handleMembershipOneTimePaymentSucceeded confirms a one_time plan bought
+// through the embedded-Elements flow (publicCreatePlanPaymentIntent) — the
+// non-recurring counterpart to handleFirstMembershipInvoice, triggered
+// directly since a one-time PaymentIntent carries our metadata ourselves
+// (no Subscription object involved to fetch it from).
+func (h *StripeWebhookHandler) handleMembershipOneTimePaymentSucceeded(ctx context.Context, pi *stripe.PaymentIntent) {
+	studioIDStr := pi.Metadata["studio_id"]
+	leadID := pi.Metadata["lead_id"]
+	planID := pi.Metadata["plan_id"]
+	if studioIDStr == "" || leadID == "" || planID == "" {
+		slog.Warn("stripe membership_onetime payment_intent.succeeded missing metadata", "pi_id", pi.ID)
+		return
+	}
+	id, err := uuid.Parse(studioIDStr)
+	if err != nil {
+		return
+	}
+	studio, err := h.svc.GetByID(ctx, id)
+	if err != nil || studio == nil {
+		slog.Warn("stripe membership_onetime: studio not found", "studio_id", studioIDStr)
+		return
+	}
+
+	result, err := h.applyMembershipConfirmed(ctx, studio, leadID, planID, pi.Amount, pi.ID, "", "", "")
+	if err != nil {
+		slog.Warn("stripe: failed to apply one-time membership", "err", err, "lead_id", leadID)
+		return
+	}
+	slog.Info("stripe: one-time membership confirmed", "lead_id", leadID, "plan", result.PlanName)
+
+	var convID string
+	_ = h.svc.repo.Pool().QueryRow(ctx, `
+		SELECT id FROM conversations WHERE lead_id = $1 ORDER BY created_at DESC LIMIT 1
+	`, leadID).Scan(&convID)
+	if convID == "" {
+		return
+	}
+	var leadName string
+	_ = h.svc.repo.Pool().QueryRow(ctx, "SELECT name FROM leads WHERE id = $1", leadID).Scan(&leadName)
+	name := leadName
+	if name == "" {
+		name = "there"
+	}
+	receiptURL := ""
+	if studio.StripeSecretKey != "" {
+		sc := &client.API{}
+		sc.Init(studio.StripeSecretKey, nil)
+		if full, errPI := sc.PaymentIntents.Get(pi.ID, &stripe.PaymentIntentParams{
+			Params: stripe.Params{Expand: stripe.StringSlice([]string{"latest_charge"})},
+		}); errPI == nil && full != nil && full.LatestCharge != nil {
+			receiptURL = full.LatestCharge.ReceiptURL
+		}
+	}
+	receiptLine := ""
+	if receiptURL != "" {
+		receiptLine = fmt.Sprintf("\n\n📄 *Your Receipt:* %s", receiptURL)
+	}
+
+	amountStr := fmt.Sprintf("%.2f %s", float64(pi.Amount)/100.0, strings.ToUpper(string(pi.Currency)))
+	var message string
+	if studio.MembershipConfirmationMessage != "" {
+		message = renderConfirmationTemplate(studio.MembershipConfirmationMessage, name, studio.Name, amountStr, receiptURL)
+	} else {
+		message = fmt.Sprintf(
+			"🎉 Hi %s! Welcome to *%s*!\n\nYour payment of *%s* for the *%s* plan was received successfully. We are excited to have you on board! 💪%s\n\nSee you soon! — The %s Team",
+			name, studio.Name, amountStr, result.PlanName, receiptLine, studio.Name,
+		)
+	}
+	_, _ = h.svc.repo.Pool().Exec(ctx, `
+		INSERT INTO outbound_jobs (studio_id, conversation_id, source_kind, body, scheduled_for, next_attempt_at)
+		VALUES ($1, $2, 'automation', $3, now(), now())
+	`, studio.ID, convID, message)
+}
+
 func (h *StripeWebhookHandler) handlePaymentIntentSucceeded(ctx context.Context, pi *stripe.PaymentIntent) {
-	if pi == nil || pi.Metadata["kind"] != "trial" {
-		return // not ours — e.g. platform billing or a membership PaymentIntent
+	if pi == nil {
+		return
+	}
+	if pi.Metadata["kind"] == "membership_onetime" {
+		h.handleMembershipOneTimePaymentSucceeded(ctx, pi)
+		return
+	}
+	if pi.Metadata["kind"] != "trial" {
+		return // not ours — e.g. platform billing
 	}
 	studioIDStr := pi.Metadata["studio_id"]
 	leadIDStr := pi.Metadata["lead_id"]
@@ -715,6 +811,315 @@ func (h *StripeWebhookHandler) createConversationForCheckout(ctx context.Context
 	}
 
 	return convID, leadID, nil
+}
+
+// handleMemberInvoicePaid bumps a member subscription's next renewal date
+// when Stripe successfully charges a recurring invoice for it — fires both
+// for the first billing period (right after checkout) and every renewal
+// after. If no user_subscriptions row exists yet for this subscription, it's
+// either not one of ours, or it's a brand-new subscription from the
+// embedded-Elements plan-purchase flow (publicCreatePlanPaymentIntent) whose
+// first confirmation arrives here rather than via handleCheckoutComplete —
+// see handleFirstMembershipInvoice.
+func (h *StripeWebhookHandler) handleMemberInvoicePaid(ctx context.Context, studioIDStr, subID string, invoice *stripe.Invoice) {
+	var studioSecretKey string
+	err := h.svc.repo.Pool().QueryRow(ctx, `
+		SELECT s.stripe_secret_key FROM user_subscriptions us
+		JOIN studios s ON s.id = us.studio_id
+		WHERE us.stripe_subscription_id = $1
+	`, subID).Scan(&studioSecretKey)
+	if errors.Is(err, pgx.ErrNoRows) {
+		h.handleFirstMembershipInvoice(ctx, studioIDStr, subID, invoice)
+		return
+	}
+	if err != nil {
+		slog.Warn("stripe: failed to look up studio for member invoice", "err", err, "subscription_id", subID)
+		return
+	}
+
+	// The invoice's own period_end isn't a reliable "next renewal" signal —
+	// Stripe sets it equal to the invoice's creation instant on a brand-new
+	// subscription's first invoice. Fetch the Subscription object itself,
+	// whose current_period_end is the actual next-charge date.
+	var nextRenewalAt *time.Time
+	if studioSecretKey != "" {
+		sc := &client.API{}
+		sc.Init(studioSecretKey, nil)
+		if sub, errSub := sc.Subscriptions.Get(subID, nil); errSub == nil && sub != nil && sub.CurrentPeriodEnd > 0 {
+			t := time.Unix(sub.CurrentPeriodEnd, 0).UTC()
+			nextRenewalAt = &t
+		} else if errSub != nil {
+			slog.Warn("stripe: failed to fetch subscription for renewal date", "err", errSub, "subscription_id", subID)
+		}
+	}
+	if nextRenewalAt == nil {
+		if invoice.PeriodEnd == 0 {
+			return
+		}
+		t := time.Unix(invoice.PeriodEnd, 0).UTC()
+		nextRenewalAt = &t
+	}
+
+	tag, err := h.svc.repo.Pool().Exec(ctx, `
+		UPDATE user_subscriptions
+		SET next_renewal_at = $1, payment_status = 'paid', updated_at = now()
+		WHERE stripe_subscription_id = $2
+	`, nextRenewalAt, subID)
+	if err != nil {
+		slog.Warn("stripe: failed to update member subscription renewal", "err", err, "subscription_id", subID)
+		return
+	}
+	if tag.RowsAffected() > 0 {
+		slog.Info("stripe: member subscription renewed", "subscription_id", subID)
+	}
+}
+
+// handleFirstMembershipInvoice checks whether a subscription this webhook
+// hasn't recorded yet is a brand-new membership purchase from the embedded-
+// Elements flow (publicCreatePlanPaymentIntent — the studio's own branded
+// page, not a hosted Checkout Session) and, if so, applies the same
+// bookkeeping handleCheckoutComplete does for that flow. studioIDStr comes
+// from the webhook URL itself (see HandleInbound) — the invoice payload
+// doesn't carry our metadata directly, only the Subscription object does,
+// and fetching that needs a studio's secret key to call Stripe with.
+func (h *StripeWebhookHandler) handleFirstMembershipInvoice(ctx context.Context, studioIDStr, subID string, invoice *stripe.Invoice) {
+	if studioIDStr == "" {
+		return
+	}
+	id, err := uuid.Parse(studioIDStr)
+	if err != nil {
+		return
+	}
+	studio, err := h.svc.GetByID(ctx, id)
+	if err != nil || studio == nil || studio.StripeSecretKey == "" {
+		return
+	}
+
+	sc := &client.API{}
+	sc.Init(studio.StripeSecretKey, nil)
+	sub, errSub := sc.Subscriptions.Get(subID, nil)
+	if errSub != nil || sub == nil || sub.Metadata["kind"] != "membership" {
+		return // not one of ours — e.g. studio-tier platform billing
+	}
+	leadID := sub.Metadata["lead_id"]
+	planID := sub.Metadata["plan_id"]
+	if leadID == "" || planID == "" {
+		slog.Warn("stripe: membership subscription missing lead/plan metadata", "subscription_id", subID)
+		return
+	}
+	var custID string
+	if sub.Customer != nil {
+		custID = sub.Customer.ID
+	}
+
+	result, err := h.applyMembershipConfirmed(ctx, studio, leadID, planID, invoice.AmountPaid, invoice.ID, subID, custID, "")
+	if err != nil {
+		slog.Warn("stripe: failed to apply new embedded-flow membership", "err", err, "lead_id", leadID)
+		return
+	}
+	slog.Info("stripe: embedded-flow membership confirmed", "lead_id", leadID, "plan", result.PlanName)
+
+	var convID string
+	_ = h.svc.repo.Pool().QueryRow(ctx, `
+		SELECT id FROM conversations WHERE lead_id = $1 ORDER BY created_at DESC LIMIT 1
+	`, leadID).Scan(&convID)
+	if convID == "" {
+		return
+	}
+	var leadName string
+	_ = h.svc.repo.Pool().QueryRow(ctx, "SELECT name FROM leads WHERE id = $1", leadID).Scan(&leadName)
+	name := leadName
+	if name == "" {
+		name = "there"
+	}
+	receiptURL := ""
+	if inv, errInv := sc.Invoices.Get(invoice.ID, nil); errInv == nil && inv != nil {
+		if inv.HostedInvoiceURL != "" {
+			receiptURL = inv.HostedInvoiceURL
+		} else if inv.InvoicePDF != "" {
+			receiptURL = inv.InvoicePDF
+		}
+	}
+	receiptLine := ""
+	if receiptURL != "" {
+		receiptLine = fmt.Sprintf("\n\n📄 *Your Receipt:* %s", receiptURL)
+	}
+
+	amountStr := fmt.Sprintf("%.2f %s", float64(invoice.AmountPaid)/100.0, strings.ToUpper(string(invoice.Currency)))
+	var message string
+	if studio.MembershipConfirmationMessage != "" {
+		message = renderConfirmationTemplate(studio.MembershipConfirmationMessage, name, studio.Name, amountStr, receiptURL)
+	} else {
+		message = fmt.Sprintf(
+			"🎉 Hi %s! Welcome to *%s*!\n\nYour membership subscription of *%s* to the *%s* plan was received successfully. We are excited to have you on board! 💪%s\n\nSee you soon! — The %s Team",
+			name, studio.Name, amountStr, result.PlanName, receiptLine, studio.Name,
+		)
+	}
+	_, _ = h.svc.repo.Pool().Exec(ctx, `
+		INSERT INTO outbound_jobs (studio_id, conversation_id, source_kind, body, scheduled_for, next_attempt_at)
+		VALUES ($1, $2, 'automation', $3, now(), now())
+	`, studio.ID, convID, message)
+}
+
+// handleMemberInvoiceFailed flags a member subscription past_due when a
+// recurring charge fails. Doesn't touch the lead — Stripe keeps retrying per
+// the account's dunning settings before eventually canceling the
+// subscription, which handleMemberSubscriptionCanceled reacts to.
+func (h *StripeWebhookHandler) handleMemberInvoiceFailed(ctx context.Context, subID string, invoice *stripe.Invoice) {
+	tag, err := h.svc.repo.Pool().Exec(ctx, `
+		UPDATE user_subscriptions
+		SET payment_status = 'failed', subscription_status = 'past_due', updated_at = now()
+		WHERE stripe_subscription_id = $1
+	`, subID)
+	if err != nil {
+		slog.Warn("stripe: failed to flag member subscription past_due", "err", err, "subscription_id", subID)
+		return
+	}
+	if tag.RowsAffected() > 0 {
+		slog.Info("stripe: member subscription past_due", "subscription_id", subID)
+	}
+}
+
+// handleMemberSubscriptionCanceled marks a member subscription canceled and,
+// only if it's still the lead's CURRENT subscription, reverts the lead off
+// membership. The guard on leads.stripe_subscription_id matters: when a
+// member changes plans, the OLD subscription gets canceled deliberately
+// (see handleCheckoutComplete) and is already marked 'superseded' there, not
+// 'active' — so this update's WHERE clause won't touch it, and even if it
+// did, the leads UPDATE below is scoped to still require a stripe_subscription_id
+// match, which no longer holds once the lead has moved to the new subscription.
+func (h *StripeWebhookHandler) handleMemberSubscriptionCanceled(ctx context.Context, sub *stripe.Subscription) {
+	var leadID string
+	err := h.svc.repo.Pool().QueryRow(ctx, `
+		UPDATE user_subscriptions
+		SET subscription_status = 'canceled', canceled_at = now(), updated_at = now()
+		WHERE stripe_subscription_id = $1 AND subscription_status NOT IN ('canceled', 'superseded')
+		RETURNING lead_id
+	`, sub.ID).Scan(&leadID)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			slog.Warn("stripe: failed to mark member subscription canceled", "err", err, "subscription_id", sub.ID)
+		}
+		return
+	}
+	slog.Info("stripe: member subscription canceled", "subscription_id", sub.ID, "lead_id", leadID)
+
+	if _, err := h.svc.repo.Pool().Exec(ctx, `
+		UPDATE leads
+		SET member_sold = false, status = 'dropped', updated_at = now()
+		WHERE id = $1 AND stripe_subscription_id = $2
+	`, leadID, sub.ID); err != nil {
+		slog.Warn("stripe: failed to revert lead after subscription cancellation", "err", err, "lead_id", leadID)
+	}
+}
+
+// membershipConfirmed carries what a caller needs to compose its own
+// confirmation message after applyMembershipConfirmed's bookkeeping.
+type membershipConfirmed struct {
+	PlanName string
+}
+
+// applyMembershipConfirmed marks a lead a member and records the real
+// subscription (cadence/renewal/lifecycle) — the single place every path
+// that confirms "this lead just paid for this plan" converges, whether
+// that's the hosted-Checkout-Session flow (handleCheckoutComplete) or the
+// embedded-Elements flow on the studio's own branded page (a Subscription's
+// invoice.paid for a recurring plan, or payment_intent.succeeded for a
+// one-time plan — see publicCreatePlanPaymentIntent).
+func (h *StripeWebhookHandler) applyMembershipConfirmed(ctx context.Context, studio *Studio, leadID, planIDStr string, amountPaid int64, paymentID, subID, custID, oldSubscriptionID string) (membershipConfirmed, error) {
+	var planName, planBillingCycle, planBillingInterval string
+	var planBillingIntervalCount int
+	_ = h.svc.repo.Pool().QueryRow(ctx, "SELECT plan_name, billing_cycle, billing_interval, billing_interval_count FROM plans WHERE id = $1", planIDStr).
+		Scan(&planName, &planBillingCycle, &planBillingInterval, &planBillingIntervalCount)
+
+	monthlyFee := float64(amountPaid) / 100.0
+	var err error
+	if planName != "" {
+		_, err = h.svc.repo.Pool().Exec(ctx, `
+			UPDATE leads
+			SET member_sold = true, status = 'member', monthly_fee = $1, fitness_plan = $2,
+			    stripe_subscription_id = $3, stripe_customer_id = $4, updated_at = now()
+			WHERE id = $5
+		`, monthlyFee, planName, subID, custID, leadID)
+	} else {
+		_, err = h.svc.repo.Pool().Exec(ctx, `
+			UPDATE leads
+			SET member_sold = true, status = 'member', monthly_fee = $1,
+			    stripe_subscription_id = $2, stripe_customer_id = $3, updated_at = now()
+			WHERE id = $4
+		`, monthlyFee, subID, custID, leadID)
+	}
+	if err != nil {
+		return membershipConfirmed{}, fmt.Errorf("update lead: %w", err)
+	}
+
+	h.svc.SyncLeadToGlofoxByID(ctx, leadID, glofox.GlofoxStatusMember, amountPaid)
+	h.svc.SyncLeadToMindbodyByID(ctx, leadID, false, amountPaid)
+
+	// Record the real subscription (cadence, renewal, lifecycle) — the leads
+	// columns above are just the display summary the pipeline/lead-detail UI
+	// already reads.
+	interval, intervalCount, recurring := billing.Resolve(planBillingCycle, planBillingInterval, int64(planBillingIntervalCount))
+	subStatus := "completed"
+	if recurring {
+		subStatus = "active"
+	}
+	// Fetched fresh (not parsed from the webhook body) so the first
+	// user_subscriptions row can carry a correct next_renewal_at
+	// immediately — waiting for a later invoice.paid event to set it
+	// instead is a race: Stripe can (and does) deliver invoice.paid before
+	// or concurrently with this handler finishing its own INSERT, so that
+	// event's UPDATE can silently match zero rows.
+	var nextRenewalAt *time.Time
+	if recurring && subID != "" && studio.StripeSecretKey != "" {
+		sc := &client.API{}
+		sc.Init(studio.StripeSecretKey, nil)
+		if sub, errSub := sc.Subscriptions.Get(subID, nil); errSub == nil && sub != nil && sub.CurrentPeriodEnd > 0 {
+			t := time.Unix(sub.CurrentPeriodEnd, 0).UTC()
+			nextRenewalAt = &t
+		} else if errSub != nil {
+			slog.Warn("stripe: failed to fetch subscription for renewal date", "err", errSub, "subscription_id", subID)
+		}
+	}
+	if _, subErr := h.svc.repo.Pool().Exec(ctx, `
+		INSERT INTO user_subscriptions
+			(studio_id, lead_id, plan_id, plan_name, amount_paid, currency, payment_id,
+			 payment_status, subscription_status, stripe_subscription_id, stripe_customer_id,
+			 billing_interval, billing_interval_count, next_renewal_at)
+		VALUES ($1, $2, $3, $4, $5, 'SGD', $6, 'paid', $7, $8, $9, $10, $11, $12)
+	`, studio.ID, leadID, planIDStr, planName, amountPaid, paymentID, subStatus, subID, custID, interval, intervalCount, nextRenewalAt); subErr != nil {
+		slog.Warn("stripe: failed to record member subscription", "err", subErr, "lead_id", leadID)
+	}
+
+	// Cancel any pending automated follow-ups since the lead became a member.
+	_, _ = h.svc.repo.Pool().Exec(ctx, `
+		DELETE FROM outbound_jobs
+		WHERE studio_id = $1 AND conversation_id IN (
+			SELECT id FROM conversations WHERE lead_id = $2
+		) AND source_kind = 'automation' AND status = 'pending'
+	`, studio.ID, leadID)
+
+	// Plan change: this purchase replaced an existing membership, so cancel
+	// the old subscription now that the new one is confirmed — otherwise
+	// the customer stays billed on both.
+	if oldSubscriptionID != "" && oldSubscriptionID != subID && studio.StripeSecretKey != "" {
+		sc := &client.API{}
+		sc.Init(studio.StripeSecretKey, nil)
+		if _, cancelErr := sc.Subscriptions.Cancel(oldSubscriptionID, nil); cancelErr != nil {
+			slog.Warn("stripe: failed to cancel old subscription after plan change", "old_sub_id", oldSubscriptionID, "err", cancelErr)
+		} else {
+			slog.Info("stripe: canceled old subscription after plan change", "old_sub_id", oldSubscriptionID, "new_sub_id", subID)
+			if _, err := h.svc.repo.Pool().Exec(ctx, `
+				UPDATE user_subscriptions
+				SET subscription_status = 'superseded', canceled_at = now(), updated_at = now()
+				WHERE stripe_subscription_id = $1
+			`, oldSubscriptionID); err != nil {
+				slog.Warn("stripe: failed to mark old member subscription superseded", "err", err, "old_sub_id", oldSubscriptionID)
+			}
+		}
+	}
+
+	return membershipConfirmed{PlanName: planName}, nil
 }
 
 // Removed direct sendWhatsAppMessage in favor of outbound_jobs queue

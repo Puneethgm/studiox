@@ -16,6 +16,7 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Select } from '@/components/ui/Select';
+import MemberSubscriptionsTable from '@/components/MemberSubscriptionsTable';
 import { api } from '@/lib/api';
 
 interface Invoice {
@@ -829,6 +830,12 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
             )}
           </Card>
         </div>
+
+        {studioId !== 'global' && (
+          <div className="order-4 lg:order-4 lg:col-span-3">
+            <MemberSubscriptionsTable studioId={studioId} />
+          </div>
+        )}
     </div>
   );
 }

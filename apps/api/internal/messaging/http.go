@@ -56,7 +56,8 @@ func (h *Handler) getTrialCheckoutInfo(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid lead id")
 		return
 	}
-	info, err := h.svc.GetTrialCheckoutLeadInfo(r.Context(), leadID)
+	forMembership := r.URL.Query().Get("mode") == "plan"
+	info, err := h.svc.GetTrialCheckoutLeadInfo(r.Context(), leadID, forMembership)
 	if err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "not_found", "lead not found")
 		return

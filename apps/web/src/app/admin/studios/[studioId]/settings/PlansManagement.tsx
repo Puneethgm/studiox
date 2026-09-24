@@ -6,18 +6,15 @@ import { Input } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
 import type { Plan } from '@/lib/types';
 import { api } from '@/lib/api';
+import { BILLING_CYCLES, BILLING_INTERVAL_UNITS, cycleLabel, cycleShortSuffix } from '@/lib/billingCycles';
 import { Check, Plus, Trash2 } from 'lucide-react';
-
-const BILLING_CYCLES = [
-  { value: 'monthly', label: 'Monthly' },
-  { value: 'yearly', label: 'Yearly' },
-  { value: 'one_time', label: 'One-time' },
-];
 
 const emptyNew = () => ({
   planName: '',
   priceSgd: '',
   billingCycle: 'monthly',
+  billingInterval: 'week',
+  billingIntervalCount: '1',
   features: '',
   isActive: true,
 });
@@ -38,6 +35,8 @@ export function PlansManagement({
     planName: string;
     priceSgd: string;
     billingCycle: string;
+    billingInterval: string;
+    billingIntervalCount: string;
     features: string;
     isActive: boolean;
   } | null>(null);
@@ -53,6 +52,8 @@ export function PlansManagement({
       planName: plan.planName,
       priceSgd: (plan.priceSgd / 100).toString(),
       billingCycle: plan.billingCycle,
+      billingInterval: plan.billingInterval || 'week',
+      billingIntervalCount: (plan.billingIntervalCount || 1).toString(),
       features: plan.features.join('\n'),
       isActive: plan.isActive,
     });
@@ -65,6 +66,11 @@ export function PlansManagement({
 
   const saveEdit = async (plan: Plan) => {
     if (!editState) return;
+    const billingIntervalCount = parseInt(editState.billingIntervalCount, 10) || 1;
+    if (editState.billingCycle === 'custom' && billingIntervalCount < 1) {
+      alert('Enter how many days/weeks/months/years between charges');
+      return;
+    }
     setLoadingId(plan.id);
     try {
       const priceSgd = Math.round(parseFloat(editState.priceSgd) * 100);
@@ -75,6 +81,8 @@ export function PlansManagement({
           planName: editState.planName,
           priceSgd,
           billingCycle: editState.billingCycle,
+          billingInterval: editState.billingInterval,
+          billingIntervalCount,
           features,
           isActive: editState.isActive,
         },
@@ -82,7 +90,16 @@ export function PlansManagement({
       setPlans((prev) =>
         prev.map((p) =>
           p.id === plan.id
-            ? { ...p, planName: editState.planName, priceSgd, billingCycle: editState.billingCycle, features, isActive: editState.isActive }
+            ? {
+                ...p,
+                planName: editState.planName,
+                priceSgd,
+                billingCycle: editState.billingCycle,
+                billingInterval: editState.billingInterval,
+                billingIntervalCount,
+                features,
+                isActive: editState.isActive,
+              }
             : p
         )
       );
@@ -118,6 +135,11 @@ export function PlansManagement({
       alert('Plan name is required');
       return;
     }
+    const billingIntervalCount = parseInt(newPlan.billingIntervalCount, 10) || 1;
+    if (newPlan.billingCycle === 'custom' && billingIntervalCount < 1) {
+      alert('Enter how many days/weeks/months/years between charges');
+      return;
+    }
     setAddLoading(true);
     try {
       const priceSgd = Math.round(parseFloat(newPlan.priceSgd || '0') * 100);
@@ -128,6 +150,8 @@ export function PlansManagement({
           planName: newPlan.planName.trim(),
           priceSgd,
           billingCycle: newPlan.billingCycle,
+          billingInterval: newPlan.billingInterval,
+          billingIntervalCount,
           features,
           isActive: newPlan.isActive,
         },
@@ -214,6 +238,29 @@ export function PlansManagement({
                 ))}
               </select>
             </div>
+            {newPlan.billingCycle === 'custom' && (
+              <div>
+                <Label className="text-[10px]">Charge Every</Label>
+                <div className="mt-1 flex gap-2">
+                  <Input
+                    type="number"
+                    min={1}
+                    value={newPlan.billingIntervalCount}
+                    onChange={(e) => setNewPlan({ ...newPlan, billingIntervalCount: e.target.value })}
+                    className="w-20"
+                  />
+                  <select
+                    value={newPlan.billingInterval}
+                    onChange={(e) => setNewPlan({ ...newPlan, billingInterval: e.target.value })}
+                    className="flex-1 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                  >
+                    {BILLING_INTERVAL_UNITS.map((u) => (
+                      <option key={u.value} value={u.value}>{u.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
             <div className="flex items-center gap-2 pt-5">
               <input
                 type="checkbox"
@@ -273,7 +320,7 @@ export function PlansManagement({
                     {plan.planName}
                   </h4>
                   <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mt-1">
-                    {plan.billingCycle}
+                    {cycleLabel(plan.billingCycle, plan.billingInterval, plan.billingIntervalCount)}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -332,6 +379,29 @@ export function PlansManagement({
                       ))}
                     </select>
                   </div>
+                  {editState.billingCycle === 'custom' && (
+                    <div>
+                      <Label className="text-[10px]">Charge Every</Label>
+                      <div className="mt-1 flex gap-2">
+                        <Input
+                          type="number"
+                          min={1}
+                          value={editState.billingIntervalCount}
+                          onChange={(e) => setEditState({ ...editState, billingIntervalCount: e.target.value })}
+                          className="w-20"
+                        />
+                        <select
+                          value={editState.billingInterval}
+                          onChange={(e) => setEditState({ ...editState, billingInterval: e.target.value })}
+                          className="flex-1 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                        >
+                          {BILLING_INTERVAL_UNITS.map((u) => (
+                            <option key={u.value} value={u.value}>{u.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  )}
                   <div>
                     <Label className="text-[10px]">Features (one per line)</Label>
                     <textarea
@@ -365,7 +435,9 @@ export function PlansManagement({
                       S$ {(plan.priceSgd / 100).toFixed(2)}
                     </span>
                     {plan.billingCycle !== 'one_time' && (
-                      <span className="text-sm font-semibold text-zinc-500">/mo</span>
+                      <span className="text-sm font-semibold text-zinc-500">
+                        {cycleShortSuffix(plan.billingCycle, plan.billingInterval, plan.billingIntervalCount)}
+                      </span>
                     )}
                   </div>
                   <div className="space-y-2">

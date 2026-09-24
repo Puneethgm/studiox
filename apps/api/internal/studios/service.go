@@ -718,6 +718,10 @@ func (s *Service) DeletePlan(ctx context.Context, studioID, planID uuid.UUID) er
 	return s.repo.DeletePlan(ctx, studioID, planID)
 }
 
+func (s *Service) ListMemberSubscriptions(ctx context.Context, studioID uuid.UUID) ([]MemberSubscription, error) {
+	return s.repo.ListMemberSubscriptions(ctx, studioID)
+}
+
 func (s *Service) GetPlatformSetting(ctx context.Context, key string) (string, error) {
 	return s.repo.GetPlatformSetting(ctx, key)
 }

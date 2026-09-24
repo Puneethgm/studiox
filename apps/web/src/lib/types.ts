@@ -68,10 +68,34 @@ export interface Plan {
   planName: string;
   priceSgd: number;
   billingCycle: string;
+  /** Only meaningful when billingCycle === 'custom': the Stripe interval unit ('day' | 'week' | 'month' | 'year'). */
+  billingInterval: string;
+  /** Only meaningful when billingCycle === 'custom': how many of billingInterval between charges. */
+  billingIntervalCount: number;
   features: string[];
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+/** A lead's real Stripe subscription record — who paid what, on what cadence, and when the next charge lands. */
+export interface MemberSubscription {
+  id: string;
+  leadId: string;
+  leadName: string;
+  leadPhone: string;
+  planName: string;
+  amountPaid: number;
+  currency: string;
+  paymentStatus: string;
+  /** 'active' | 'past_due' | 'canceled' | 'superseded' | 'completed' */
+  subscriptionStatus: string;
+  billingInterval: string;
+  billingIntervalCount: number;
+  startDate: string;
+  nextRenewalAt: string | null;
+  canceledAt: string | null;
+  createdAt: string;
 }
 
 export interface Campaign {

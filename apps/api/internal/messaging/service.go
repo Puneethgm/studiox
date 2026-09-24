@@ -23,6 +23,7 @@ import (
 
 	"github.com/projectx/api/internal/leads"
 	"github.com/projectx/api/internal/messaging/channels"
+	"github.com/projectx/api/internal/platform/billing"
 )
 
 // Service is the messaging use-case layer. Webhooks call HandleInboundWhatsApp,
@@ -2202,31 +2203,46 @@ func (s *Service) buildPlanCheckoutBody(ctx context.Context, tx pgx.Tx, studioID
 		frontendURL = "http://localhost:3000"
 	}
 
+	// New signups go to the studio's own branded page (same design as the
+	// trial page) instead of a hosted Stripe Checkout redirect — payment is
+	// confirmed inline via publicCreatePlanPaymentIntent. Existing members
+	// changing plans keep the Checkout Session path below, which already
+	// knows how to swap the old subscription out once the new one confirms.
+	if oldSubscriptionID == "" {
+		detailsURL := fmt.Sprintf("%s/plan-details/%s?studio=%s&planId=%s", frontendURL, leadID.String(), studioSlug, selectedPlan.ID.String())
+		tl := &TriggerLink{StudioID: studioID, Name: fmt.Sprintf("%s Plan - %s", selectedPlan.PlanName, leadNameStr), URL: detailsURL}
+		linkURL := detailsURL
+		if errLink := s.repo.CreateTriggerLink(ctx, tl); errLink == nil {
+			linkURL = fmt.Sprintf("%s/api/v1/links/%s", frontendURL, tl.ID.String())
+		}
+		return fmt.Sprintf("Great choice! You selected the %s Plan. Here's your secure payment link:\n\n%s\n\nJust a couple of quick details and payment to get started!", selectedPlan.PlanName, linkURL)
+	}
+
 	sc := &client.API{}
 	sc.Init(secretKey, nil)
+	interval, intervalCount, recurring := billing.Resolve(selectedPlan.BillingCycle, selectedPlan.BillingInterval, int64(selectedPlan.BillingIntervalCount))
+	lineItemPriceData := &stripe.CheckoutSessionLineItemPriceDataParams{
+		Currency:   stripe.String("sgd"),
+		UnitAmount: stripe.Int64(int64(selectedPlan.PriceSGD)),
+		ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
+			Name: stripe.String(fmt.Sprintf("%s - %s Plan", studioName, selectedPlan.PlanName)),
+		},
+	}
 	params := &stripe.CheckoutSessionParams{
 		PaymentMethodTypes: stripe.StringSlice([]string{"card"}),
-		Mode:               stripe.String("subscription"),
 		LineItems: []*stripe.CheckoutSessionLineItemParams{
 			{
-				PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{
-					Currency:   stripe.String("sgd"),
-					UnitAmount: stripe.Int64(int64(selectedPlan.PriceSGD)),
-					Recurring: &stripe.CheckoutSessionLineItemPriceDataRecurringParams{
-						Interval: stripe.String("month"),
-					},
-					ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
-						Name: stripe.String(fmt.Sprintf("%s - %s Plan", studioName, selectedPlan.PlanName)),
-					},
-				},
-				Quantity: stripe.Int64(1),
+				PriceData: lineItemPriceData,
+				Quantity:  stripe.Int64(1),
 			},
 		},
 		SuccessURL: stripe.String(fmt.Sprintf("%s/payment-success?studio=%s&session_id={CHECKOUT_SESSION_ID}", frontendURL, studioSlug)),
 		CancelURL:  stripe.String(fmt.Sprintf("%s/payment-cancelled?studio=%s", frontendURL, studioSlug)),
 	}
+	mode := "payment"
+	var metadata map[string]string
 	if leadPhone != "" {
-		metadata := map[string]string{
+		metadata = map[string]string{
 			"customer_phone": leadPhone,
 			"customer_name":  leadNameStr,
 			"studio_id":      studioID.String(),
@@ -2237,14 +2253,30 @@ func (s *Service) buildPlanCheckoutBody(ctx context.Context, tx pgx.Tx, studioID
 		}
 		params.Metadata = metadata
 	}
+	if recurring {
+		mode = "subscription"
+		lineItemPriceData.Recurring = &stripe.CheckoutSessionLineItemPriceDataRecurringParams{
+			Interval:      stripe.String(interval),
+			IntervalCount: stripe.Int64(intervalCount),
+		}
+		if metadata != nil {
+			params.SubscriptionData = &stripe.CheckoutSessionSubscriptionDataParams{Metadata: metadata}
+		}
+	}
+	params.Mode = stripe.String(mode)
 
 	session, errSess := sc.CheckoutSessions.New(params)
 	if errSess == nil && session != nil && session.URL != "" {
-		verb := "complete your membership"
-		if oldSubscriptionID != "" {
-			verb = "confirm your plan change"
+		verb := "confirm your plan change"
+		// Stripe's hosted Checkout URLs are extremely long (embedded, encoded
+		// session state) — wrap it the same way SendTrialPaymentLink does so
+		// WhatsApp shows a short, clean link instead.
+		checkoutURL := session.URL
+		tl := &TriggerLink{StudioID: studioID, Name: fmt.Sprintf("%s Plan - %s", selectedPlan.PlanName, leadNameStr), URL: checkoutURL}
+		if errLink := s.repo.CreateTriggerLink(ctx, tl); errLink == nil {
+			checkoutURL = fmt.Sprintf("%s/api/v1/links/%s", frontendURL, tl.ID.String())
 		}
-		return fmt.Sprintf("Great choice! You selected the %s Plan. To %s, please subscribe here:\n%s", selectedPlan.PlanName, verb, session.URL)
+		return fmt.Sprintf("Great choice! You selected the %s Plan. To %s, please subscribe here:\n%s", selectedPlan.PlanName, verb, checkoutURL)
 	}
 	return "Thank you! Our team will reach out to you shortly to finalize your membership."
 }
@@ -2389,8 +2421,18 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 			sentBody, _ := s.SendTrialPaymentLink(ctx, studioID, conv.ID, conv.LeadID, firstName)
 			alreadySent = sentBody != ""
 		} else if isMember && !isTrial {
-			targetStage = "completed"
-			outboundBody = "Awesome! Our team will reach out to you ASAP to discuss membership options."
+			// Show the actual plan list and move into awaiting_plan_selection
+			// instead of dead-ending on a "team will reach out" placeholder —
+			// the awaiting_plan_selection stage (below) already knows how to
+			// match a reply to a plan and send a real Stripe checkout link.
+			plans, errPlans := s.repo.ListActivePlans(ctx, studioID)
+			if errPlans == nil && len(plans) > 0 {
+				targetStage = "awaiting_plan_selection"
+				outboundBody = formatPlanReprompt("Awesome! Here are our membership plans — reply with the number of the one you'd like:", plans)
+			} else {
+				targetStage = "completed"
+				outboundBody = "Awesome! Our team will reach out to you ASAP to discuss membership options."
+			}
 		}
 		// Unrecognised message at awaiting_options — let the AI worker answer the question.
 		// The AI prompt already appends "1. Book a Trial / 2. Become a Member" for new/contacted leads.
@@ -2650,8 +2692,14 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 			strings.Contains(text, "premium") ||
 			strings.Contains(text, "package"))
 		if wantsMembership {
-			targetStage = "completed"
-			outboundBody = "Awesome! Our team will reach out to you ASAP to discuss membership options."
+			plans, errPlans := s.repo.ListActivePlans(ctx, studioID)
+			if errPlans == nil && len(plans) > 0 {
+				targetStage = "awaiting_plan_selection"
+				outboundBody = formatPlanReprompt("Awesome! Here are our membership plans — reply with the number of the one you'd like:", plans)
+			} else {
+				targetStage = "completed"
+				outboundBody = "Awesome! Our team will reach out to you ASAP to discuss membership options."
+			}
 		}
 	}
 
@@ -2844,13 +2892,20 @@ type TrialCheckoutLeadInfo struct {
 
 // GetTrialCheckoutLeadInfo loads what the pre-payment trial-details page
 // needs to render — no auth, the lead's own UUID is the only credential.
-func (s *Service) GetTrialCheckoutLeadInfo(ctx context.Context, leadID uuid.UUID) (*TrialCheckoutLeadInfo, error) {
+// forMembership toggles which "already paid" flag AlreadyPurchased reflects —
+// trial_purchased for the trial page, member_sold for the plan-purchase page
+// (same design, different purpose per publicCreatePlanPaymentIntent).
+func (s *Service) GetTrialCheckoutLeadInfo(ctx context.Context, leadID uuid.UUID, forMembership bool) (*TrialCheckoutLeadInfo, error) {
+	purchasedCol := "l.trial_purchased"
+	if forMembership {
+		purchasedCol = "l.member_sold"
+	}
 	var info TrialCheckoutLeadInfo
-	err := s.repo.pool.QueryRow(ctx, `
-		SELECT COALESCE(l.name, ''), s.name, l.trial_purchased
+	err := s.repo.pool.QueryRow(ctx, fmt.Sprintf(`
+		SELECT COALESCE(l.name, ''), s.name, %s
 		FROM leads l JOIN studios s ON s.id = l.studio_id
 		WHERE l.id = $1
-	`, leadID).Scan(&info.LeadName, &info.StudioName, &info.AlreadyPurchased)
+	`, purchasedCol), leadID).Scan(&info.LeadName, &info.StudioName, &info.AlreadyPurchased)
 	if err != nil {
 		return nil, fmt.Errorf("get trial checkout lead info: %w", err)
 	}

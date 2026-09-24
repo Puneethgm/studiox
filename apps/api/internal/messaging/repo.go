@@ -1959,12 +1959,14 @@ func (r *Repo) GetStripeConfig(ctx context.Context, studioID uuid.UUID) (secretK
 }
 
 type Plan struct {
-	ID           uuid.UUID
-	StudioID     uuid.UUID
-	PlanName     string
-	PriceSGD     int
-	BillingCycle string
-	Features     []string
+	ID                   uuid.UUID
+	StudioID             uuid.UUID
+	PlanName             string
+	PriceSGD             int
+	BillingCycle         string
+	BillingInterval      string
+	BillingIntervalCount int
+	Features             []string
 }
 
 func (r *Repo) ListActivePlans(ctx context.Context, studioID uuid.UUID) ([]Plan, error) {
@@ -1976,7 +1978,7 @@ func (r *Repo) ListActivePlans(ctx context.Context, studioID uuid.UUID) ([]Plan,
 	}
 
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, studio_id, plan_name, price_sgd, billing_cycle, features
+		SELECT id, studio_id, plan_name, price_sgd, billing_cycle, billing_interval, billing_interval_count, features
 		FROM plans
 		WHERE studio_id = $1 AND is_active = true AND plan_name != 'Trial'
 		ORDER BY price_sgd ASC
@@ -1989,7 +1991,7 @@ func (r *Repo) ListActivePlans(ctx context.Context, studioID uuid.UUID) ([]Plan,
 	var out []Plan
 	for rows.Next() {
 		var p Plan
-		if err := rows.Scan(&p.ID, &p.StudioID, &p.PlanName, &p.PriceSGD, &p.BillingCycle, &p.Features); err != nil {
+		if err := rows.Scan(&p.ID, &p.StudioID, &p.PlanName, &p.PriceSGD, &p.BillingCycle, &p.BillingInterval, &p.BillingIntervalCount, &p.Features); err != nil {
 			return nil, err
 		}
 		out = append(out, p)

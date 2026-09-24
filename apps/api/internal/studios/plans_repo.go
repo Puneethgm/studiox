@@ -9,20 +9,22 @@ import (
 )
 
 type Plan struct {
-	ID           uuid.UUID `json:"id"`
-	StudioID     uuid.UUID `json:"studioId"`
-	PlanName     string    `json:"planName"`
-	PriceSGD     int       `json:"priceSgd"`
-	BillingCycle string    `json:"billingCycle"`
-	Features     []string  `json:"features"`
-	IsActive     bool      `json:"isActive"`
-	CreatedAt    time.Time `json:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
+	ID                   uuid.UUID `json:"id"`
+	StudioID             uuid.UUID `json:"studioId"`
+	PlanName             string    `json:"planName"`
+	PriceSGD             int       `json:"priceSgd"`
+	BillingCycle         string    `json:"billingCycle"`
+	BillingInterval      string    `json:"billingInterval"`
+	BillingIntervalCount int       `json:"billingIntervalCount"`
+	Features             []string  `json:"features"`
+	IsActive             bool      `json:"isActive"`
+	CreatedAt            time.Time `json:"createdAt"`
+	UpdatedAt            time.Time `json:"updatedAt"`
 }
 
 func (r *Repo) ListPlans(ctx context.Context, studioID uuid.UUID) ([]Plan, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, studio_id, plan_name, price_sgd, billing_cycle, features, is_active, created_at, updated_at
+		SELECT id, studio_id, plan_name, price_sgd, billing_cycle, billing_interval, billing_interval_count, features, is_active, created_at, updated_at
 		FROM plans
 		WHERE studio_id = $1
 		ORDER BY price_sgd ASC
@@ -35,7 +37,7 @@ func (r *Repo) ListPlans(ctx context.Context, studioID uuid.UUID) ([]Plan, error
 	var out []Plan
 	for rows.Next() {
 		var p Plan
-		if err := rows.Scan(&p.ID, &p.StudioID, &p.PlanName, &p.PriceSGD, &p.BillingCycle, &p.Features, &p.IsActive, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.StudioID, &p.PlanName, &p.PriceSGD, &p.BillingCycle, &p.BillingInterval, &p.BillingIntervalCount, &p.Features, &p.IsActive, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("list plans scan: %w", err)
 		}
 		out = append(out, p)
@@ -44,11 +46,13 @@ func (r *Repo) ListPlans(ctx context.Context, studioID uuid.UUID) ([]Plan, error
 }
 
 type CreatePlanInput struct {
-	PlanName     string   `json:"planName"`
-	PriceSGD     int      `json:"priceSgd"`
-	BillingCycle string   `json:"billingCycle"`
-	Features     []string `json:"features"`
-	IsActive     bool     `json:"isActive"`
+	PlanName             string   `json:"planName"`
+	PriceSGD             int      `json:"priceSgd"`
+	BillingCycle         string   `json:"billingCycle"`
+	BillingInterval      string   `json:"billingInterval"`
+	BillingIntervalCount int      `json:"billingIntervalCount"`
+	Features             []string `json:"features"`
+	IsActive             bool     `json:"isActive"`
 }
 
 func (r *Repo) CreatePlan(ctx context.Context, studioID uuid.UUID, in CreatePlanInput) (Plan, error) {
@@ -58,13 +62,16 @@ func (r *Repo) CreatePlan(ctx context.Context, studioID uuid.UUID, in CreatePlan
 	if in.Features == nil {
 		in.Features = []string{}
 	}
+	if in.BillingIntervalCount == 0 {
+		in.BillingIntervalCount = 1
+	}
 	var p Plan
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO plans (studio_id, plan_name, price_sgd, billing_cycle, features, is_active)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id, studio_id, plan_name, price_sgd, billing_cycle, features, is_active, created_at, updated_at
-	`, studioID, in.PlanName, in.PriceSGD, in.BillingCycle, in.Features, in.IsActive).Scan(
-		&p.ID, &p.StudioID, &p.PlanName, &p.PriceSGD, &p.BillingCycle, &p.Features, &p.IsActive, &p.CreatedAt, &p.UpdatedAt,
+		INSERT INTO plans (studio_id, plan_name, price_sgd, billing_cycle, billing_interval, billing_interval_count, features, is_active)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id, studio_id, plan_name, price_sgd, billing_cycle, billing_interval, billing_interval_count, features, is_active, created_at, updated_at
+	`, studioID, in.PlanName, in.PriceSGD, in.BillingCycle, in.BillingInterval, in.BillingIntervalCount, in.Features, in.IsActive).Scan(
+		&p.ID, &p.StudioID, &p.PlanName, &p.PriceSGD, &p.BillingCycle, &p.BillingInterval, &p.BillingIntervalCount, &p.Features, &p.IsActive, &p.CreatedAt, &p.UpdatedAt,
 	)
 	if err != nil {
 		return Plan{}, fmt.Errorf("create plan: %w", err)
@@ -84,11 +91,13 @@ func (r *Repo) DeletePlan(ctx context.Context, studioID, planID uuid.UUID) error
 }
 
 type UpdatePlanInput struct {
-	PlanName     *string   `json:"planName"`
-	PriceSGD     *int      `json:"priceSgd"`
-	BillingCycle *string   `json:"billingCycle"`
-	Features     *[]string `json:"features"`
-	IsActive     *bool     `json:"isActive"`
+	PlanName             *string   `json:"planName"`
+	PriceSGD             *int      `json:"priceSgd"`
+	BillingCycle         *string   `json:"billingCycle"`
+	BillingInterval      *string   `json:"billingInterval"`
+	BillingIntervalCount *int      `json:"billingIntervalCount"`
+	Features             *[]string `json:"features"`
+	IsActive             *bool     `json:"isActive"`
 }
 
 func (r *Repo) UpdatePlan(ctx context.Context, studioID, planID uuid.UUID, in UpdatePlanInput) error {
@@ -102,6 +111,14 @@ func (r *Repo) UpdatePlan(ctx context.Context, studioID, planID uuid.UUID, in Up
 	if in.BillingCycle != nil {
 		args = append(args, *in.BillingCycle)
 		q += fmt.Sprintf(", billing_cycle = $%d", len(args))
+	}
+	if in.BillingInterval != nil {
+		args = append(args, *in.BillingInterval)
+		q += fmt.Sprintf(", billing_interval = $%d", len(args))
+	}
+	if in.BillingIntervalCount != nil {
+		args = append(args, *in.BillingIntervalCount)
+		q += fmt.Sprintf(", billing_interval_count = $%d", len(args))
 	}
 	if in.PriceSGD != nil {
 		args = append(args, *in.PriceSGD)

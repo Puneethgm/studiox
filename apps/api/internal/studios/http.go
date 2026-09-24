@@ -18,6 +18,7 @@ import (
 
 	"github.com/projectx/api/internal/identity"
 	"github.com/projectx/api/internal/integrations/llm"
+	"github.com/projectx/api/internal/platform/billing"
 	"github.com/projectx/api/internal/platform/httpx"
 	"github.com/projectx/api/internal/platform/s3"
 
@@ -160,6 +161,7 @@ func (h *Handler) SelfRoutes(r chi.Router) {
 	r.Delete("/studios/{id}/plans/{planId}", h.deletePlan)
 	r.Get("/studios/{id}/payments", h.getPayments)
 	r.Post("/studios/{id}/payments/stripe", h.linkStripe)
+	r.Get("/studios/{id}/member-subscriptions", h.listMemberSubscriptions)
 	// Platform Plans route
 	r.Put("/studios/global/plans", h.UpdatePlatformPlans)
 
@@ -185,6 +187,7 @@ func (h *Handler) PublicRoutes(r chi.Router) {
 	r.Get("/public/platform/plans", h.GetPlatformPlans)
 	r.Get("/public/studios/{slug}/trial-page-layout", h.publicGetTrialPageLayout)
 	r.Post("/public/leads/{leadId}/trial-payment-intent", h.publicCreateTrialPaymentIntent)
+	r.Post("/public/leads/{leadId}/plan-payment-intent", h.publicCreatePlanPaymentIntent)
 }
 
 func (h *Handler) RequireActiveStudio(next http.Handler) http.Handler {
@@ -1189,34 +1192,63 @@ func (h *Handler) publicCreateCheckout(w http.ResponseWriter, r *http.Request) {
 	// Find the campaign slug for the cancel URL via plans is not needed — use a generic return
 	cancelURL := fmt.Sprintf("%s/payment-cancelled?studio=%s", frontendURL, s.Slug)
 
+	interval, intervalCount, recurring := billing.Resolve(selected.BillingCycle, selected.BillingInterval, int64(selected.BillingIntervalCount))
 	mode := "payment"
+	lineItemPriceData := &stripe.CheckoutSessionLineItemPriceDataParams{
+		Currency:   stripe.String("sgd"),
+		UnitAmount: stripe.Int64(int64(selected.PriceSGD)),
+		ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
+			Name:        stripe.String(fmt.Sprintf("%s — %s", s.Name, selected.PlanName)),
+			Description: stripe.String(fmt.Sprintf("Billing: %s", selected.BillingCycle)),
+		},
+	}
+
+	// The webhook's membership branch (handleCheckoutComplete) resolves the
+	// paying lead by phone number via session.Metadata["customer_phone"] —
+	// without it, a completed payment through this endpoint silently does
+	// nothing (no lead update, no user_subscriptions row). Look the lead's
+	// phone/name up so this path updates state the same way the WhatsApp
+	// checkout flow (buildPlanCheckoutBody) already does.
+	var leadPhone, leadNameFromDB string
+	_ = h.svc.repo.Pool().QueryRow(r.Context(), "SELECT phone, name FROM leads WHERE id = $1", req.LeadID).Scan(&leadPhone, &leadNameFromDB)
+	leadName := req.LeadName
+	if leadName == "" {
+		leadName = leadNameFromDB
+	}
+
+	checkoutMetadata := map[string]string{
+		"studio_id":      s.ID.String(),
+		"lead_id":        req.LeadID,
+		"plan_id":        req.PlanID,
+		"lead_name":      leadName,
+		"plan_name":      selected.PlanName,
+		"studio_slug":    s.Slug,
+		"customer_phone": leadPhone,
+		"customer_name":  leadName,
+	}
 	params := &stripe.CheckoutSessionParams{
 		PaymentMethodTypes: stripe.StringSlice([]string{"card"}),
 		LineItems: []*stripe.CheckoutSessionLineItemParams{
 			{
-				PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{
-					Currency:   stripe.String("sgd"),
-					UnitAmount: stripe.Int64(int64(selected.PriceSGD)),
-					ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
-						Name:        stripe.String(fmt.Sprintf("%s — %s", s.Name, selected.PlanName)),
-						Description: stripe.String(fmt.Sprintf("Billing: %s", selected.BillingCycle)),
-					},
-				},
-				Quantity: stripe.Int64(1),
+				PriceData: lineItemPriceData,
+				Quantity:  stripe.Int64(1),
 			},
 		},
-		Mode:       stripe.String(mode),
 		SuccessURL: stripe.String(successURL),
 		CancelURL:  stripe.String(cancelURL),
-		Metadata: map[string]string{
-			"studio_id":   s.ID.String(),
-			"lead_id":     req.LeadID,
-			"plan_id":     req.PlanID,
-			"lead_name":   req.LeadName,
-			"plan_name":   selected.PlanName,
-			"studio_slug": s.Slug,
-		},
+		Metadata:   checkoutMetadata,
 	}
+	if recurring {
+		mode = "subscription"
+		lineItemPriceData.Recurring = &stripe.CheckoutSessionLineItemPriceDataRecurringParams{
+			Interval:      stripe.String(interval),
+			IntervalCount: stripe.Int64(intervalCount),
+		}
+		params.SubscriptionData = &stripe.CheckoutSessionSubscriptionDataParams{
+			Metadata: checkoutMetadata,
+		}
+	}
+	params.Mode = stripe.String(mode)
 
 	session, err := sc.CheckoutSessions.New(params)
 	if err != nil {
@@ -1275,6 +1307,10 @@ func (h *Handler) publicCreatePaymentIntent(w http.ResponseWriter, r *http.Reque
 	}
 	if selected == nil || selected.PriceSGD == 0 {
 		httpx.WriteError(w, http.StatusBadRequest, "plan_not_found", "plan not found, inactive, or free")
+		return
+	}
+	if _, _, recurring := billing.Resolve(selected.BillingCycle, selected.BillingInterval, int64(selected.BillingIntervalCount)); recurring {
+		httpx.WriteError(w, http.StatusBadRequest, "recurring_plan_requires_checkout", "this plan bills on a recurring schedule — use the hosted checkout flow instead")
 		return
 	}
 
@@ -1759,6 +1795,7 @@ func (h *Handler) putTrialPageLayout(w http.ResponseWriter, r *http.Request) {
 //	@Failure		400			{object}	httpx.ErrorResponse	"invalid id"
 //	@Failure		500			{object}	httpx.ErrorResponse
 //	@Router			/api/v1/studios/{studioId}/initial-contact-delay [get]
+//
 // GetKnowledgeSyncStatus godoc
 //
 //	@Summary		Get knowledge-base embedding sync status
@@ -2134,6 +2171,172 @@ func (h *Handler) publicCreateTrialPaymentIntent(w http.ResponseWriter, r *http.
 	httpx.JSON(w, http.StatusOK, map[string]any{
 		"clientSecret": pi.ClientSecret,
 		"amount":       amount,
+	})
+}
+
+// publicCreatePlanPaymentIntent godoc
+//
+//	@Summary		Create a public Stripe PaymentIntent (or subscription) for a membership plan
+//	@Description	Public endpoint that sets up payment for a lead's selected membership plan on the studio's own branded page (the same design as the trial page), mirroring publicCreateTrialPaymentIntent's embedded-Elements flow instead of a hosted Checkout Session redirect. Recurring plans create a Stripe Subscription (payment_behavior=default_incomplete) and return its first invoice's PaymentIntent client secret; a one_time plan creates a plain PaymentIntent. No auth required.
+//	@Tags			Studios (Public)
+//	@Accept			json
+//	@Produce		json
+//	@Param			leadId	path		string					true	"Lead ID"
+//	@Param			body	body		map[string]interface{}	true	"{planId}"
+//	@Success		200		{object}	map[string]interface{}
+//	@Failure		400		{object}	httpx.ErrorResponse	"invalid lead id, invalid JSON, plan not found, or Stripe not configured"
+//	@Failure		404		{object}	httpx.ErrorResponse	"lead not found"
+//	@Failure		500		{object}	httpx.ErrorResponse	"Stripe error"
+//	@Router			/api/v1/public/leads/{leadId}/plan-payment-intent [post]
+func (h *Handler) publicCreatePlanPaymentIntent(w http.ResponseWriter, r *http.Request) {
+	leadID, err := uuid.Parse(chi.URLParam(r, "leadId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid lead id")
+		return
+	}
+
+	var req struct {
+		PlanID string `json:"planId"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	var studioID uuid.UUID
+	var leadPhone, leadName, leadEmail, existingCustID string
+	if err := h.svc.repo.Pool().QueryRow(r.Context(),
+		"SELECT studio_id, phone, name, email, stripe_customer_id FROM leads WHERE id = $1", leadID,
+	).Scan(&studioID, &leadPhone, &leadName, &leadEmail, &existingCustID); err != nil {
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "lead not found")
+		return
+	}
+
+	s, err := h.svc.GetByID(r.Context(), studioID)
+	if err != nil || s.StripeSecretKey == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "stripe_not_configured", "Stripe not connected for this studio")
+		return
+	}
+
+	plans, err := h.svc.ListPlans(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not load plans")
+		return
+	}
+	var selected *Plan
+	for i := range plans {
+		if plans[i].ID.String() == req.PlanID && plans[i].IsActive {
+			selected = &plans[i]
+			break
+		}
+	}
+	if selected == nil || selected.PriceSGD == 0 {
+		httpx.WriteError(w, http.StatusBadRequest, "plan_not_found", "plan not found, inactive, or free")
+		return
+	}
+
+	sc := &client.API{}
+	sc.Init(s.StripeSecretKey, nil)
+
+	interval, intervalCount, recurring := billing.Resolve(selected.BillingCycle, selected.BillingInterval, int64(selected.BillingIntervalCount))
+
+	if !recurring {
+		pi, err := sc.PaymentIntents.New(&stripe.PaymentIntentParams{
+			Amount:      stripe.Int64(int64(selected.PriceSGD)),
+			Currency:    stripe.String("sgd"),
+			Description: stripe.String(fmt.Sprintf("%s — %s", s.Name, selected.PlanName)),
+			Metadata: map[string]string{
+				"studio_id": studioID.String(),
+				"lead_id":   leadID.String(),
+				"plan_id":   selected.ID.String(),
+				"kind":      "membership_onetime",
+			},
+		})
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "stripe_error", fmt.Sprintf("failed to create payment intent: %v", err))
+			return
+		}
+		httpx.JSON(w, http.StatusOK, map[string]any{
+			"clientSecret": pi.ClientSecret,
+			"amount":       selected.PriceSGD,
+			"planName":     selected.PlanName,
+			"billingCycle": selected.BillingCycle,
+		})
+		return
+	}
+
+	// Recurring plan — needs a real Customer + Subscription (Checkout
+	// Sessions handle customer creation implicitly; the Subscriptions API
+	// doesn't, since we're driving payment inline via Elements instead of a
+	// hosted redirect).
+	custID := existingCustID
+	if custID == "" {
+		cust, errCust := sc.Customers.New(&stripe.CustomerParams{
+			Name:  stripe.String(leadName),
+			Email: stripe.String(leadEmail),
+			Phone: stripe.String(leadPhone),
+			Metadata: map[string]string{
+				"studio_id": studioID.String(),
+				"lead_id":   leadID.String(),
+			},
+		})
+		if errCust != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "stripe_error", fmt.Sprintf("failed to create customer: %v", errCust))
+			return
+		}
+		custID = cust.ID
+	}
+
+	product, errProd := sc.Products.New(&stripe.ProductParams{
+		Name: stripe.String(fmt.Sprintf("%s — %s", s.Name, selected.PlanName)),
+	})
+	if errProd != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "stripe_error", fmt.Sprintf("failed to create product: %v", errProd))
+		return
+	}
+
+	sub, errSub := sc.Subscriptions.New(&stripe.SubscriptionParams{
+		Params: stripe.Params{
+			Expand: stripe.StringSlice([]string{"latest_invoice.payment_intent"}),
+		},
+		Customer: stripe.String(custID),
+		Items: []*stripe.SubscriptionItemsParams{
+			{
+				PriceData: &stripe.SubscriptionItemPriceDataParams{
+					Currency:   stripe.String("sgd"),
+					Product:    stripe.String(product.ID),
+					UnitAmount: stripe.Int64(int64(selected.PriceSGD)),
+					Recurring: &stripe.SubscriptionItemPriceDataRecurringParams{
+						Interval:      stripe.String(interval),
+						IntervalCount: stripe.Int64(intervalCount),
+					},
+				},
+			},
+		},
+		PaymentBehavior: stripe.String("default_incomplete"),
+		PaymentSettings: &stripe.SubscriptionPaymentSettingsParams{
+			SaveDefaultPaymentMethod: stripe.String("on_subscription"),
+		},
+		Metadata: map[string]string{
+			"studio_id": studioID.String(),
+			"lead_id":   leadID.String(),
+			"plan_id":   selected.ID.String(),
+			"kind":      "membership",
+		},
+	})
+	if errSub != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "stripe_error", fmt.Sprintf("failed to create subscription: %v", errSub))
+		return
+	}
+	if sub.LatestInvoice == nil || sub.LatestInvoice.PaymentIntent == nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "stripe_error", "subscription created without a payable invoice")
+		return
+	}
+
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"clientSecret": sub.LatestInvoice.PaymentIntent.ClientSecret,
+		"amount":       selected.PriceSGD,
+		"planName":     selected.PlanName,
+		"billingCycle": selected.BillingCycle,
 	})
 }
 
@@ -2681,12 +2884,40 @@ func (h *Handler) listPlans(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"plans": plans})
 }
 
+// listMemberSubscriptions godoc
+//
+//	@Summary		List member subscriptions
+//	@Description	Returns every membership-plan subscription (active, past_due, canceled, superseded, completed) for the studio's leads — who paid what, on what cadence, and when the next charge lands. Sourced from user_subscriptions (the record the Stripe webhook maintains), not a live Stripe API call.
+//	@Tags			Billing
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	path		string	true	"Studio ID"
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		400	{object}	httpx.ErrorResponse	"invalid studio id"
+//	@Failure		500	{object}	httpx.ErrorResponse
+//	@Router			/api/v1/me/studios/{id}/member-subscriptions [get]
+func (h *Handler) listMemberSubscriptions(w http.ResponseWriter, r *http.Request) {
+	studioID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid studio id")
+		return
+	}
+	subs, err := h.svc.ListMemberSubscriptions(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to list member subscriptions")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"subscriptions": subs})
+}
+
 type updatePlanReq struct {
-	PlanName     *string   `json:"planName"`
-	PriceSGD     *int      `json:"priceSgd"`
-	BillingCycle *string   `json:"billingCycle"`
-	Features     *[]string `json:"features"`
-	IsActive     *bool     `json:"isActive"`
+	PlanName             *string   `json:"planName"`
+	PriceSGD             *int      `json:"priceSgd"`
+	BillingCycle         *string   `json:"billingCycle"`
+	BillingInterval      *string   `json:"billingInterval"`
+	BillingIntervalCount *int      `json:"billingIntervalCount"`
+	Features             *[]string `json:"features"`
+	IsActive             *bool     `json:"isActive"`
 }
 
 // updatePlan godoc
@@ -2720,13 +2951,29 @@ func (h *Handler) updatePlan(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
+	if req.BillingCycle != nil && *req.BillingCycle != "" && !billing.ValidCycles[*req.BillingCycle] {
+		httpx.WriteError(w, http.StatusBadRequest, "validation", "billingCycle is not a recognized value")
+		return
+	}
+	if req.BillingCycle != nil && *req.BillingCycle == "custom" {
+		if req.BillingInterval == nil || req.BillingIntervalCount == nil {
+			httpx.WriteError(w, http.StatusBadRequest, "validation", "billingInterval and billingIntervalCount are required for a custom billing cycle")
+			return
+		}
+		if err := billing.ValidateCustomInterval(*req.BillingInterval, int64(*req.BillingIntervalCount)); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "validation", err.Error())
+			return
+		}
+	}
 
 	err = h.svc.UpdatePlan(r.Context(), studioID, planID, UpdatePlanInput{
-		PlanName:     req.PlanName,
-		PriceSGD:     req.PriceSGD,
-		BillingCycle: req.BillingCycle,
-		Features:     req.Features,
-		IsActive:     req.IsActive,
+		PlanName:             req.PlanName,
+		PriceSGD:             req.PriceSGD,
+		BillingCycle:         req.BillingCycle,
+		BillingInterval:      req.BillingInterval,
+		BillingIntervalCount: req.BillingIntervalCount,
+		Features:             req.Features,
+		IsActive:             req.IsActive,
 	})
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -2741,11 +2988,13 @@ func (h *Handler) updatePlan(w http.ResponseWriter, r *http.Request) {
 }
 
 type createPlanReq struct {
-	PlanName     string   `json:"planName"`
-	PriceSGD     int      `json:"priceSgd"`
-	BillingCycle string   `json:"billingCycle"`
-	Features     []string `json:"features"`
-	IsActive     bool     `json:"isActive"`
+	PlanName             string   `json:"planName"`
+	PriceSGD             int      `json:"priceSgd"`
+	BillingCycle         string   `json:"billingCycle"`
+	BillingInterval      string   `json:"billingInterval"`
+	BillingIntervalCount int      `json:"billingIntervalCount"`
+	Features             []string `json:"features"`
+	IsActive             bool     `json:"isActive"`
 }
 
 // createPlan godoc
@@ -2776,12 +3025,24 @@ func (h *Handler) createPlan(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "validation", "planName is required")
 		return
 	}
+	if req.BillingCycle != "" && !billing.ValidCycles[req.BillingCycle] {
+		httpx.WriteError(w, http.StatusBadRequest, "validation", "billingCycle is not a recognized value")
+		return
+	}
+	if req.BillingCycle == "custom" {
+		if err := billing.ValidateCustomInterval(req.BillingInterval, int64(req.BillingIntervalCount)); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "validation", err.Error())
+			return
+		}
+	}
 	plan, err := h.svc.CreatePlan(r.Context(), studioID, CreatePlanInput{
-		PlanName:     req.PlanName,
-		PriceSGD:     req.PriceSGD,
-		BillingCycle: req.BillingCycle,
-		Features:     req.Features,
-		IsActive:     req.IsActive,
+		PlanName:             req.PlanName,
+		PriceSGD:             req.PriceSGD,
+		BillingCycle:         req.BillingCycle,
+		BillingInterval:      req.BillingInterval,
+		BillingIntervalCount: req.BillingIntervalCount,
+		Features:             req.Features,
+		IsActive:             req.IsActive,
 	})
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to create plan")

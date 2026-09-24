@@ -625,6 +625,11 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		strings.Contains(lowerBody, "book trial") || strings.Contains(lowerBody, "book a trial") {
 		intent = "booking_inquiry"
 		w.log.Debug("intent set to booking_inquiry by keyword", "message_id", msg.ID)
+	} else if strings.Contains(lowerBody, "become a member") || strings.Contains(lowerBody, "become member") ||
+		strings.Contains(lowerBody, "want to join") || strings.Contains(lowerBody, "sign me up") ||
+		strings.Contains(lowerBody, "want membership") || strings.Contains(lowerBody, "get membership") {
+		intent = "ready_to_buy"
+		w.log.Debug("intent set to ready_to_buy by keyword", "message_id", msg.ID)
 	}
 
 	if apiKey != "" && msg.Body != "" {
@@ -656,6 +661,10 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		if strings.Contains(lowerBody, "trail") ||
 			strings.Contains(lowerBody, "book trial") || strings.Contains(lowerBody, "book a trial") {
 			intent = "booking_inquiry"
+		} else if strings.Contains(lowerBody, "become a member") || strings.Contains(lowerBody, "become member") ||
+			strings.Contains(lowerBody, "want to join") || strings.Contains(lowerBody, "sign me up") ||
+			strings.Contains(lowerBody, "want membership") || strings.Contains(lowerBody, "get membership") {
+			intent = "ready_to_buy"
 		}
 
 		expandedQuery := <-expandCh
@@ -1001,6 +1010,50 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 				ConversationID: conv.ID,
 			})
 			w.log.Info("booking shortcut triggered, skipping AI", "conv", conv.ID)
+			return nil
+		}
+	}
+
+	// Membership shortcut: when the classifier says the customer is ready to
+	// buy ("I want to become a member" etc.) and the bot isn't mid-flow,
+	// jump into the automation stage machine the same way the booking
+	// shortcut above does — otherwise the LLM free-generates its own
+	// membership pitch, including inventing a fake payment link and asking
+	// for a "transaction ID" (a flow that doesn't exist anywhere in this
+	// codebase), instead of sending the real Stripe checkout link.
+	if intent == "ready_to_buy" {
+		notInActiveFlow := true
+		if lead != nil {
+			stage := lead.AutoContactStage
+			notInActiveFlow = stage == "" || stage == "completed" || stage == "awaiting_interest" || stage == "awaiting_options"
+		}
+		if notInActiveFlow {
+			if lead != nil {
+				if err := w.leadsRepo.UpdateAutoContactStage(ctx, studioID, lead.ID, "awaiting_options"); err != nil {
+					w.log.Warn("membership shortcut: failed to set awaiting_options", "lead", lead.ID, "err", err)
+				}
+			}
+			sourceRef := "membership_shortcut"
+			if lead != nil {
+				sourceRef = fmt.Sprintf("lead:%s:membership_shortcut", lead.ID)
+			}
+			body := "Great! Please select an option:\n1. Book a Trial\n2. Become a Member"
+			if _, err := w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
+				StudioID:       studioID,
+				ConversationID: conv.ID,
+				Body:           body,
+				SourceKind:     SourceAutomation,
+				SourceRef:      sourceRef,
+				ScheduledFor:   time.Now().UTC().Add(replyDelay),
+			}); err != nil {
+				return fmt.Errorf("membership shortcut enqueue: %w", err)
+			}
+			w.bus.Publish(ctx, Event{
+				Kind:           EvtOutboundJobEnqueued,
+				StudioID:       studioID,
+				ConversationID: conv.ID,
+			})
+			w.log.Info("membership shortcut triggered, skipping AI", "conv", conv.ID)
 			return nil
 		}
 	}

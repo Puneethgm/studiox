@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Plus, Trash2, Check, X, Pencil, Loader2, CheckCircle2 } from 'lucide-react';
 import type { Plan } from '@/lib/types';
 import { api, ApiError } from '@/lib/api';
+import { BILLING_CYCLES, BILLING_INTERVAL_UNITS, cycleShortSuffix } from '@/lib/billingCycles';
 import { Button } from '@/components/ui/Button';
 import { Label } from '@/components/ui/Label';
 import { Input } from '@/components/ui/Input';
@@ -16,16 +17,18 @@ function bestApiError(e: unknown): string {
   return e instanceof Error ? e.message : 'Failed to save';
 }
 
-const BILLING_CYCLES = [
-  { value: 'monthly', label: 'Monthly' },
-  { value: 'yearly', label: 'Yearly' },
-  { value: 'one_time', label: 'One-time' },
-];
-
 // Same accent-per-card convention as the Platform Billing pricing grid.
 const ACCENTS = ['#a1a1aa', '#7c3aed', '#8b5cf6', '#10b981'];
 
-const emptyNew = () => ({ planName: '', priceSgd: '', billingCycle: 'monthly', features: '', isActive: true });
+const emptyNew = () => ({
+  planName: '',
+  priceSgd: '',
+  billingCycle: 'monthly',
+  billingInterval: 'week',
+  billingIntervalCount: '1',
+  features: '',
+  isActive: true,
+});
 
 // Plan cards styled to match the Platform Billing pricing grid (colored top
 // accent, big price, checkmark feature list) but editable in place — click
@@ -42,6 +45,11 @@ export function PlansRows({ studioId, initialPlans }: { studioId: string; initia
       setAddError('Plan name is required');
       return;
     }
+    const billingIntervalCount = parseInt(newPlan.billingIntervalCount, 10) || 1;
+    if (newPlan.billingCycle === 'custom' && billingIntervalCount < 1) {
+      setAddError('Enter how many days/weeks/months/years between charges');
+      return;
+    }
     setAddLoading(true);
     setAddError(null);
     try {
@@ -49,7 +57,15 @@ export function PlansRows({ studioId, initialPlans }: { studioId: string; initia
       const features = newPlan.features.split('\n').map((f) => f.trim()).filter(Boolean);
       const res = await api<{ plan: Plan }>(`/api/v1/me/studios/${studioId}/plans`, {
         method: 'POST',
-        json: { planName: newPlan.planName.trim(), priceSgd, billingCycle: newPlan.billingCycle, features, isActive: newPlan.isActive },
+        json: {
+          planName: newPlan.planName.trim(),
+          priceSgd,
+          billingCycle: newPlan.billingCycle,
+          billingInterval: newPlan.billingInterval,
+          billingIntervalCount,
+          features,
+          isActive: newPlan.isActive,
+        },
       });
       setPlans((prev) => [...prev, res.plan]);
       setShowAdd(false);
@@ -124,6 +140,31 @@ export function PlansRows({ studioId, initialPlans }: { studioId: string; initia
                 ))}
               </select>
             </div>
+            {newPlan.billingCycle === 'custom' && (
+              <div>
+                <Label className="text-xs">Charge Every</Label>
+                <div className="mt-1 flex gap-2">
+                  <Input
+                    type="number"
+                    min={1}
+                    value={newPlan.billingIntervalCount}
+                    onChange={(e) => setNewPlan({ ...newPlan, billingIntervalCount: e.target.value })}
+                    className="w-20"
+                  />
+                  <select
+                    value={newPlan.billingInterval}
+                    onChange={(e) => setNewPlan({ ...newPlan, billingInterval: e.target.value })}
+                    className="h-10 flex-1 rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-900 focus:outline-none focus:ring-1 focus:ring-brand-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100"
+                  >
+                    {BILLING_INTERVAL_UNITS.map((u) => (
+                      <option key={u.value} value={u.value}>
+                        {u.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
             <div className="flex items-center gap-2 pt-6">
               <input
                 type="checkbox"
@@ -189,6 +230,8 @@ function PlanCard({
   const [editingPrice, setEditingPrice] = useState(false);
   const [price, setPrice] = useState((plan.priceSgd / 100).toFixed(2));
   const [cycle, setCycle] = useState(plan.billingCycle);
+  const [billingInterval, setBillingInterval] = useState(plan.billingInterval || 'week');
+  const [billingIntervalCount, setBillingIntervalCount] = useState((plan.billingIntervalCount || 1).toString());
   const [priceSaving, setPriceSaving] = useState(false);
   const [priceError, setPriceError] = useState<string | null>(null);
 
@@ -197,12 +240,20 @@ function PlanCard({
   const [featuresSaving, setFeaturesSaving] = useState(false);
   const [featuresError, setFeaturesError] = useState<string | null>(null);
 
-  const cycleLabel = BILLING_CYCLES.find((c) => c.value === plan.billingCycle)?.label ?? plan.billingCycle;
-
   async function savePrice() {
+    const intervalCount = parseInt(billingIntervalCount, 10) || 1;
+    if (cycle === 'custom' && intervalCount < 1) {
+      setPriceError('Enter how many days/weeks/months/years between charges');
+      return;
+    }
     setPriceSaving(true);
     setPriceError(null);
-    const res = await onPatch({ priceSgd: Math.round((parseFloat(price) || 0) * 100), billingCycle: cycle });
+    const res = await onPatch({
+      priceSgd: Math.round((parseFloat(price) || 0) * 100),
+      billingCycle: cycle,
+      billingInterval,
+      billingIntervalCount: intervalCount,
+    });
     setPriceSaving(false);
     if (!res.ok) {
       setPriceError(res.error ?? 'Failed to save');
@@ -287,6 +338,29 @@ function PlanCard({
                 <X className="h-3.5 w-3.5" />
               </button>
             </div>
+            {cycle === 'custom' && (
+              <div className="mt-1.5 flex items-center gap-1.5">
+                <span className="text-xs text-zinc-500">Every</span>
+                <Input
+                  type="number"
+                  min={1}
+                  value={billingIntervalCount}
+                  onChange={(e) => setBillingIntervalCount(e.target.value)}
+                  className="h-8 w-16 text-sm"
+                />
+                <select
+                  value={billingInterval}
+                  onChange={(e) => setBillingInterval(e.target.value)}
+                  className="h-8 rounded-lg border border-zinc-200 bg-white px-2 text-xs font-semibold text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                >
+                  {BILLING_INTERVAL_UNITS.map((u) => (
+                    <option key={u.value} value={u.value}>
+                      {u.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             {priceError && <p className="mt-1 text-xs font-medium text-red-500">{priceError}</p>}
           </div>
         ) : (
@@ -294,7 +368,11 @@ function PlanCard({
             <span className="text-3xl font-black tracking-tight text-zinc-900 dark:text-white">
               S${(plan.priceSgd / 100).toFixed(2)}
             </span>
-            {plan.billingCycle !== 'one_time' && <span className="text-xs font-semibold text-zinc-400">/{cycleLabel}</span>}
+            {plan.billingCycle !== 'one_time' && (
+              <span className="text-xs font-semibold text-zinc-400">
+                {cycleShortSuffix(plan.billingCycle, plan.billingInterval, plan.billingIntervalCount)}
+              </span>
+            )}
             <button
               type="button"
               onClick={() => setEditingPrice(true)}

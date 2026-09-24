@@ -82,8 +82,8 @@ function useResponsiveScale(designWidth: number) {
   return scale;
 }
 
-function CanvasForm({ blocks, background, leadInfo, amount, leadId, studioSlug, preview, standalone, onSuccess }: {
-  blocks: PageBlock[]; background: PageBackground; leadInfo: LeadInfo; amount: number | null; leadId?: string; studioSlug?: string; preview?: boolean; standalone?: boolean; onSuccess: () => void;
+function CanvasForm({ blocks, background, leadInfo, amount, leadId, studioSlug, preview, standalone, planId, amountLabelOverride, onSuccess }: {
+  blocks: PageBlock[]; background: PageBackground; leadInfo: LeadInfo; amount: number | null; leadId?: string; studioSlug?: string; preview?: boolean; standalone?: boolean; planId?: string; amountLabelOverride?: string; onSuccess: () => void;
 }) {
   const stripe = useStripe();
   const elements = useElements();
@@ -165,7 +165,13 @@ function CanvasForm({ blocks, background, leadInfo, amount, leadId, studioSlug, 
           body: JSON.stringify({ fullName: fullName.trim(), email: email.trim(), gender, dateOfBirth }),
         });
       }
-      const piRes = await fetch(`/api/v1/public/leads/${encodeURIComponent(activeLeadId!)}/trial-payment-intent`, { method: 'POST' });
+      const piRes = planId
+        ? await fetch(`/api/v1/public/leads/${encodeURIComponent(activeLeadId!)}/plan-payment-intent`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ planId }),
+          })
+        : await fetch(`/api/v1/public/leads/${encodeURIComponent(activeLeadId!)}/trial-payment-intent`, { method: 'POST' });
       if (!piRes.ok) {
         const b = await piRes.json().catch(() => null);
         throw new Error(b?.error || 'Failed to set up payment.');
@@ -263,7 +269,7 @@ function CanvasForm({ blocks, background, leadInfo, amount, leadId, studioSlug, 
               const c = block.content as AmountBlockContent;
               return (
                 <div className="flex h-full items-center justify-between rounded-lg border border-gray-100 px-3" style={{ backgroundColor: c.backgroundColor ?? '#f9fafb' }}>
-                  <span className="text-xs font-semibold" style={{ color: c.labelColor ?? '#6b7280' }}>{c.label}</span>
+                  <span className="text-xs font-semibold" style={{ color: c.labelColor ?? '#6b7280' }}>{amountLabelOverride ?? c.label}</span>
                   <span className="text-sm font-black" style={{ color: c.textColor ?? '#111827' }}>{amount != null ? `S$${(amount / 100).toFixed(2)}` : '—'}</span>
                 </div>
               );
@@ -344,10 +350,15 @@ function CanvasForm({ blocks, background, leadInfo, amount, leadId, studioSlug, 
 export function TrialPaymentPage({ leadId, preview, standalone, studioSlug: studioSlugProp }: { leadId?: string; preview?: boolean; standalone?: boolean; studioSlug?: string }) {
   const searchParams = useSearchParams();
   const studioSlug = studioSlugProp || searchParams.get('studio') || '';
+  // Presence of planId switches this same page from "pay the trial fee" to
+  // "pay for this membership plan" — same design (blocks/background/fields),
+  // different amount and payment endpoint (publicCreatePlanPaymentIntent).
+  const planId = searchParams.get('planId') || undefined;
 
   const [leadInfo, setLeadInfo] = useState<LeadInfo | null>(null);
   const [studio, setStudio] = useState<StudioInfo | null>(null);
   const [amount, setAmount] = useState<number | null>(null);
+  const [planInfo, setPlanInfo] = useState<{ planName: string; billingCycle: string } | null>(null);
   const [blocks, setBlocks] = useState<PageBlock[] | null>(null);
   const [background, setBackground] = useState<PageBackground>(defaultTrialPageBackground());
   const [loadError, setLoadError] = useState(false);
@@ -366,7 +377,8 @@ export function TrialPaymentPage({ leadId, preview, standalone, studioSlug: stud
           // it's created on submit.
           setLeadInfo({ leadName: '', studioName: '', alreadyPurchased: false });
         } else {
-          const leadRes = await fetch(`/api/v1/public/leads/${encodeURIComponent(leadId)}/trial-checkout`);
+          const modeQuery = planId ? '?mode=plan' : '';
+          const leadRes = await fetch(`/api/v1/public/leads/${encodeURIComponent(leadId)}/trial-checkout${modeQuery}`);
           if (!leadRes.ok) {
             setLoadError(true);
             return;
@@ -379,16 +391,32 @@ export function TrialPaymentPage({ leadId, preview, standalone, studioSlug: stud
             fetch(`/api/v1/public/studios/${encodeURIComponent(studioSlug)}`),
             fetch(`/api/v1/public/studios/${encodeURIComponent(studioSlug)}/trial-page-layout`),
           ]);
+          let studioInfo: StudioInfo | null = null;
           if (studioRes.ok) {
-            const s: StudioInfo = await studioRes.json();
-            setStudio(s);
+            studioInfo = await studioRes.json();
+            setStudio(studioInfo);
+            if (studioInfo?.stripePublishableKey && !stripeRef.current) {
+              stripeRef.current = loadStripe(studioInfo.stripePublishableKey);
+            }
+          }
+          if (planId) {
+            const plansRes = await fetch(`/api/v1/public/studios/${encodeURIComponent(studioSlug)}/plans`);
+            if (plansRes.ok) {
+              const data = await plansRes.json();
+              const plan = (data.plans || []).find((p: { id: string }) => p.id === planId);
+              if (plan) {
+                setAmount(plan.priceSgd);
+                setPlanInfo({ planName: plan.planName, billingCycle: plan.billingCycle });
+              } else {
+                setLoadError(true);
+                return;
+              }
+            }
+          } else if (studioInfo) {
             // /public/studios/:slug already resolves this server-side (studio override
             // → lowest active Plan price → S$25 fallback) — same logic the actual Stripe
             // charge uses, so what's displayed here always matches what gets charged.
-            setAmount(s.trialAmountSgd && s.trialAmountSgd > 0 ? s.trialAmountSgd : 2500);
-            if (s.stripePublishableKey && !stripeRef.current) {
-              stripeRef.current = loadStripe(s.stripePublishableKey);
-            }
+            setAmount(studioInfo.trialAmountSgd && studioInfo.trialAmountSgd > 0 ? studioInfo.trialAmountSgd : 2500);
           }
           if (layoutRes.ok) {
             const data = await layoutRes.json();
@@ -404,7 +432,7 @@ export function TrialPaymentPage({ leadId, preview, standalone, studioSlug: stud
         setLoadError(true);
       }
     })();
-  }, [leadId, studioSlug, preview]);
+  }, [leadId, studioSlug, preview, planId]);
 
   const brand = studio?.brandColor || '#7c3aed';
 
@@ -423,7 +451,11 @@ export function TrialPaymentPage({ leadId, preview, standalone, studioSlug: stud
             </div>
             <h1 className="text-xl font-black text-gray-900">Payment Successful!</h1>
             <p className="text-sm text-gray-500">
-              Your trial at <span className="font-bold text-gray-900">{studio?.name || leadInfo?.studioName}</span> is confirmed. We&apos;ll reach out on WhatsApp shortly. 🚀
+              {planInfo ? (
+                <>Your <span className="font-bold text-gray-900">{planInfo.planName}</span> membership at <span className="font-bold text-gray-900">{studio?.name || leadInfo?.studioName}</span> is confirmed. We&apos;ll reach out on WhatsApp shortly. 🚀</>
+              ) : (
+                <>Your trial at <span className="font-bold text-gray-900">{studio?.name || leadInfo?.studioName}</span> is confirmed. We&apos;ll reach out on WhatsApp shortly. 🚀</>
+              )}
             </p>
           </div>
         ) : !leadInfo || !blocks ? (
@@ -437,13 +469,29 @@ export function TrialPaymentPage({ leadId, preview, standalone, studioSlug: stud
             </div>
             <h1 className="text-xl font-black text-gray-900">You&apos;re all set!</h1>
             <p className="text-sm text-gray-500">
-              Your trial at <span className="font-bold text-gray-900">{leadInfo.studioName}</span> is already confirmed.
+              {planId ? (
+                <>Your membership at <span className="font-bold text-gray-900">{leadInfo.studioName}</span> is already active.</>
+              ) : (
+                <>Your trial at <span className="font-bold text-gray-900">{leadInfo.studioName}</span> is already confirmed.</>
+              )}
             </p>
           </div>
         ) : stripeRef.current ? (
           <div className="sm:rounded-[28px] sm:bg-white sm:p-6 sm:shadow-2xl sm:shadow-black/5 sm:ring-1 sm:ring-black/5">
             <Elements stripe={stripeRef.current}>
-              <CanvasForm blocks={blocks} background={background} leadInfo={leadInfo} amount={amount} leadId={leadId} studioSlug={studioSlug} preview={preview} standalone={standalone} onSuccess={() => setDone(true)} />
+              <CanvasForm
+                blocks={blocks}
+                background={background}
+                leadInfo={leadInfo}
+                amount={amount}
+                leadId={leadId}
+                studioSlug={studioSlug}
+                preview={preview}
+                standalone={standalone}
+                planId={planId}
+                amountLabelOverride={planInfo ? `${planInfo.planName} Plan` : undefined}
+                onSuccess={() => setDone(true)}
+              />
             </Elements>
           </div>
         ) : (

@@ -19,14 +19,57 @@ import { Activity, CheckCircle2, ChevronLeft, ChevronRight, ChevronDown, Chevron
 
 const PAGE_SIZE = 10;
 
-// Cost per 1M tokens (USD) — update when pricing changes
+// Cost per 1M tokens (USD), standard (non-batch) tier — update when pricing
+// changes. Keyed by the exact model string as it's logged in llm_usage_logs,
+// which comes from studio_ai_models.model_name (free text, set per-studio in
+// AI Assistant settings) or a provider client's own DefaultModel/Models
+// constant when a studio hasn't configured one — see
+// apps/api/internal/integrations/{groq,gemini,claude}/client.go. A model
+// missing here silently shows "—" for cost (see fmtCost/computeCostUSD)
+// instead of a wrong number, so it's safer to have a stale/approximate entry
+// than none — but keep this in sync with what's actually configurable.
 const COST_PER_1M: Record<string, { in: number; out: number }> = {
+  // groq — apps/api/internal/integrations/groq/client.go DefaultModels
+  // (Model8B = qwen/qwen3.8-27b, Model70B = openai/gpt-oss-120b) are what
+  // actually ships today; llama-3.1-8b-instant/llama-3.3-70b-versatile are
+  // kept for studios that configured them manually before the defaults
+  // changed. Groq's console lists llama-3.3-70b-versatile as enterprise
+  // "contact sales" pricing as of Aug 2026 — this rate may no longer be
+  // self-serve billable; kept as the last known public rate.
   'llama-3.1-8b-instant':    { in: 0.05,  out: 0.08  },
   'llama-3.3-70b-versatile': { in: 0.59,  out: 0.79  },
-  'gemini-2.5-flash':        { in: 0.075, out: 0.30  },
-  'gemini-2.0-flash':        { in: 0.075, out: 0.30  },
-  'gemini-2.0-flash-lite':   { in: 0.075, out: 0.04  },
-  'claude-haiku-4-5':        { in: 0.80,  out: 4.00  },
+  'qwen/qwen3.8-27b':        { in: 0.80,  out: 4.00  },
+  'openai/gpt-oss-120b':     { in: 0.15,  out: 0.60  },
+  'openai/gpt-oss-20b':      { in: 0.075, out: 0.30  },
+
+  // gemini — apps/api/internal/integrations/gemini/client.go Models list
+  // (gemini-flash-latest, gemini-flash-lite-latest) is what actually ships
+  // today; those are Google's rolling aliases and currently resolve to the
+  // 2.5 Flash / 2.5 Flash-Lite generation, priced accordingly below — when
+  // Google repoints the alias to a newer generation the price may change
+  // without this map knowing. gemini-2.5-flash/-lite/-pro are kept for
+  // studios still pinned to a dated model name. Standard (non-batch) tier
+  // from ai.google.dev/gemini-api/docs/pricing; gemini-2.5-pro uses the
+  // ≤200k-token tier (this app's per-message prompts don't approach 200k).
+  'gemini-flash-latest':      { in: 0.30,  out: 2.50  },
+  'gemini-flash-lite-latest': { in: 0.10,  out: 0.40  },
+  'gemini-2.5-flash':         { in: 0.30,  out: 2.50  },
+  'gemini-2.5-flash-lite':    { in: 0.10,  out: 0.40  },
+  'gemini-2.5-pro':           { in: 1.25,  out: 10.00 },
+  // Retired/legacy — not on Google's current pricing page; kept as last
+  // known rate for old logged rows rather than showing "—".
+  'gemini-2.0-flash':         { in: 0.075, out: 0.30  },
+  'gemini-2.0-flash-lite':    { in: 0.075, out: 0.04  },
+
+  // claude — apps/api/internal/integrations/claude/client.go DefaultModel is
+  // the exact dated string "claude-haiku-4-5-20251001" (what's actually
+  // logged); the bare "claude-haiku-4-5" is kept too in case any row logs
+  // the undated form. Sonnet/Opus 5 added for studios that configure a
+  // stronger model via provider=claude in AI Assistant settings.
+  'claude-haiku-4-5-20251001': { in: 1.00, out: 5.00  },
+  'claude-haiku-4-5':          { in: 1.00, out: 5.00  },
+  'claude-sonnet-5':           { in: 2.00, out: 10.00 },
+  'claude-opus-5':             { in: 5.00, out: 25.00 },
 };
 
 function computeCostUSD(model: string, tokensIn: number, tokensOut: number): number {
@@ -331,6 +374,7 @@ export default function LLMMonitoringPage() {
           icon={<Cpu className="h-5 w-5 text-amber-600 dark:text-amber-400" />}
           label="Top model"
           value={summary.topModel}
+          sublabel="by 30-day total requests"
           color="amber"
         />
         <SummaryCard
@@ -746,11 +790,17 @@ function SummaryCard({
   icon,
   label,
   value,
+  sublabel,
   color,
 }: {
   icon: React.ReactNode;
   label: string;
   value: string;
+  // Small caption under the value — for a stat whose scope (time window,
+  // aggregation) isn't obvious from the number alone, e.g. "top model"
+  // sitting next to a table that's grouped/sorted differently (per-day, not
+  // 30-day total).
+  sublabel?: string;
   color: 'violet' | 'emerald' | 'blue' | 'amber' | 'rose';
 }) {
   const styles: Record<string, string> = {
@@ -767,6 +817,7 @@ function SummaryCard({
         <span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">{label}</span>
       </div>
       <div className="text-2xl font-black text-zinc-900 dark:text-white truncate">{value}</div>
+      {sublabel && <div className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500">{sublabel}</div>}
     </div>
   );
 }
