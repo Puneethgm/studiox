@@ -535,9 +535,9 @@ function ColdLeadCardVisual({
       />
       <div className="min-w-0 flex-1">
         <div className="truncate text-[12px] font-bold text-zinc-900 dark:text-zinc-100">
-          {lead.name || 'Unnamed contact'}
+          {lead.name || lead.phone || 'Unknown contact'}
         </div>
-        <div className="truncate text-[10px] text-zinc-400">{lead.phone}</div>
+        {lead.name && <div className="truncate text-[10px] text-zinc-400">{lead.phone}</div>}
         <div className="mt-1 flex flex-wrap items-center gap-1">
           {lead.status && (lead.status as LeadStatus) in LEAD_STATUS_LABELS && (
             <span
