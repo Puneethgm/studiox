@@ -82,3 +82,43 @@ export async function updatePipelineStatus(
     return { ok: false, error: err.message || 'An unknown error occurred.' };
   }
 }
+
+// Drag-and-drop target for the Pipeline's Cold Leads column — same effect
+// as updatePipelineStatus, but starting from a conversation instead of an
+// existing lead, since a backfilled (imported) contact may not have a lead
+// yet; the backend creates one on the spot if needed.
+export async function movePipelineColdLead(
+  studioId: string,
+  conversationId: string,
+  status: string,
+): Promise<UpdatePipelineStatusResult> {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/messaging/leads/cold/move`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      },
+      body: JSON.stringify({ conversationId, status }),
+      cache: 'no-store',
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      return { ok: false, error: data?.error || `HTTP ${res.status}` };
+    }
+
+    revalidatePath(`/admin/studios/${studioId}`);
+    revalidatePath(`/admin/studios/${studioId}/pipeline`);
+    revalidatePath(`/admin/studios/${studioId}/leads`);
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err.message || 'An unknown error occurred.' };
+  }
+}

@@ -40,6 +40,7 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Get("/leads", h.listLeads)
 	r.Get("/leads/stats", h.leadStats)
 	r.Get("/analytics", h.getAnalytics)
+	r.Get("/analytics/daily", h.getDailyAnalytics)
 	r.Get("/leads/sheets-settings", h.getSheetsSettings)
 	r.Post("/leads/sheets-settings", h.saveSheetsSettings)
 	r.Get("/leads/external-sheet-settings", h.getExternalLeadsSheetSettings)
@@ -68,12 +69,16 @@ func (h *Handler) PublicRoutes(r chi.Router) {
 func (h *Handler) resolveStudioID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 	c := identity.MustClaims(r.Context())
 
-	// Super admins can access any studio via URL param
+	// Super admins can access any studio via URL param. These handlers are
+	// mounted both under /studios/{studioId} (always has the param) and
+	// directly under /admin (never does — chi can't match an empty segment
+	// there, so an empty studioIDStr can only mean this route). At the
+	// latter mount, uuid.Nil means "all studios" — the repo layer (see
+	// leads.Repo.Stats/GetAnalytics) already branches on it for that.
 	if c.IsSuper() {
 		studioIDStr := chi.URLParam(r, "studioId")
 		if studioIDStr == "" {
-			httpx.WriteError(w, http.StatusBadRequest, "bad_request", "studioId parameter required")
-			return uuid.Nil, false
+			return uuid.Nil, true
 		}
 		studioID, err := uuid.Parse(studioIDStr)
 		if err != nil {
@@ -515,6 +520,48 @@ func (h *Handler) getAnalytics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, summary)
+}
+
+// getDailyAnalytics godoc
+//
+//	@Summary		Daily analytics trend
+//	@Description	Returns one point per day (outbound messages sent, newly-connected leads, newly-converted leads) for the resolved studio over the same time window getAnalytics accepts. An unbounded all-time request is capped at the last 90 days for chart legibility.
+//	@Tags			Leads
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Param			duration	query		string	false	"Time window, e.g. '30d' (default: last 90 days)"
+//	@Param			startDate	query		string	false	"Explicit range start date"
+//	@Param			endDate		query		string	false	"Explicit range end date"
+//	@Success		200			{array}		DailyAnalyticsPoint
+//	@Failure		400			{object}	httpx.ErrorResponse	"missing/invalid studioId"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/admin/analytics/daily [get]
+//	@Router			/api/v1/studios/{studioId}/analytics/daily [get]
+func (h *Handler) getDailyAnalytics(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := h.resolveStudioID(w, r)
+	if !ok {
+		return
+	}
+
+	durationStr := r.URL.Query().Get("duration")
+	startDate := r.URL.Query().Get("startDate")
+	endDate := r.URL.Query().Get("endDate")
+
+	var durationDays int
+	if strings.HasSuffix(durationStr, "d") {
+		days, err := strconv.Atoi(strings.TrimSuffix(durationStr, "d"))
+		if err == nil && days > 0 {
+			durationDays = days
+		}
+	}
+
+	points, err := h.svc.GetDailyAnalytics(r.Context(), studioID, durationDays, startDate, endDate)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"points": points})
 }
 
 // getLead godoc

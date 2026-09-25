@@ -24,6 +24,7 @@ import (
 	"github.com/projectx/api/internal/leads"
 	"github.com/projectx/api/internal/messaging/channels"
 	"github.com/projectx/api/internal/platform/billing"
+	"github.com/projectx/api/internal/studios"
 )
 
 // Service is the messaging use-case layer. Webhooks call HandleInboundWhatsApp,
@@ -2013,6 +2014,152 @@ func (s *Service) UpdateTemplate(ctx context.Context, studioID, id uuid.UUID, na
 
 func (s *Service) ListTriggerLinks(ctx context.Context, studioID uuid.UUID) ([]TriggerLink, error) {
 	return s.repo.ListTriggerLinks(ctx, studioID)
+}
+
+// ListColdLeads returns leads the automation contacted but who never
+// replied — see Repo.ListColdLeads for the exact "cold" definition.
+func (s *Service) ListColdLeads(ctx context.Context, studioID uuid.UUID) ([]ColdLead, error) {
+	return s.repo.ListColdLeads(ctx, studioID)
+}
+
+// ReEngageColdLeads resends the studio's opening greeting to each given
+// lead and resets their automation stage to awaiting_interest — the same
+// "reply 1 for trial / 2 for membership" entry point a brand-new lead gets,
+// mirroring autocontact_worker's initial-contact flow (greeting template +
+// follow-up cascade) rather than inventing a separate message. Best-effort
+// per lead: one lead failing (e.g. no conversation on record) doesn't stop
+// the rest. Returns how many were actually re-sent.
+func (s *Service) ReEngageColdLeads(ctx context.Context, studioID uuid.UUID, conversationIDs []uuid.UUID) (int, error) {
+	sent := 0
+	for _, convID := range conversationIDs {
+		cl, err := s.repo.GetColdLeadContext(ctx, studioID, convID)
+		if err != nil {
+			slog.Warn("re-engage: skipping conversation", "conversation_id", convID, "err", err)
+			continue
+		}
+
+		// Backfilled WhatsApp Web history has no lead at all (deliberate
+		// no-phantom-leads import contract — see HandleInboundWAWebBackfill)
+		// so it never shows up in the Pipeline. Actively re-engaging is a
+		// deliberate outreach decision, not passive import, so mint a real
+		// lead now — otherwise the message goes out but the contact stays
+		// invisible everywhere except the Cold column itself.
+		if cl.LeadID == nil {
+			newLeadID, err := s.repo.CreateLeadFromColdConversation(ctx, studioID, convID)
+			if err != nil {
+				slog.Warn("re-engage: failed to create lead for cold conversation", "conversation_id", convID, "err", err)
+			} else {
+				cl.LeadID = &newLeadID
+				cl.LeadStatus = "contacted"
+			}
+		}
+
+		// Backfilled WhatsApp Web history imports with ai_enabled=false by
+		// default (a deliberate safety default so the AI doesn't auto-reply
+		// to old history on connect) — re-engaging means we're actively
+		// starting a new conversation with them, so turn it on now, or any
+		// reply they send back would just sit there unanswered.
+		if err := s.repo.SetConversationAIEnabled(ctx, studioID, convID, true); err != nil {
+			slog.Warn("re-engage: failed to enable AI for conversation", "conversation_id", convID, "err", err)
+		}
+
+		studio := &studios.Studio{Name: cl.StudioName, GreetingMessage: cl.StudioGreeting}
+		lead := leads.Lead{Name: cl.ContactName, Status: leads.LeadStatus(cl.LeadStatus)}
+		template := studio.GreetingMessage
+		if template == "" {
+			template = defaultGreetingTemplate
+		}
+		body := renderGreeting(template, studio, lead)
+		refKey := "conv:" + convID.String()
+		if cl.LeadID != nil {
+			refKey = "lead:" + cl.LeadID.String()
+		}
+
+		if _, err := s.repo.EnqueueOutbound(ctx, OutboundJob{
+			StudioID:       studioID,
+			ConversationID: cl.ConversationID,
+			Body:           body,
+			SourceKind:     SourceAutomation,
+			SourceRef:      fmt.Sprintf("%s:re_engage", refKey),
+			ScheduledFor:   time.Now().UTC(),
+		}); err != nil {
+			slog.Warn("re-engage: enqueue failed", "conversation_id", convID, "err", err)
+			continue
+		}
+		// cl.LeadID is only still nil here if lead creation above failed.
+		if cl.LeadID != nil {
+			if err := s.repo.MarkLeadContacted(ctx, *cl.LeadID); err != nil {
+				slog.Warn("re-engage: mark contacted failed", "lead_id", *cl.LeadID, "err", err)
+			}
+		}
+
+		// Re-schedule the same no-reply follow-up cascade a fresh lead gets,
+		// so this isn't a one-off message with no further nudge if they stay
+		// quiet again.
+		steps, err := s.repo.ListFollowupSteps(ctx, studioID)
+		if err != nil {
+			slog.Warn("re-engage: load followup steps failed", "studio_id", studioID, "err", err)
+		}
+		for _, step := range steps {
+			stepBody := renderGreeting(step.MessageTemplate, studio, lead)
+			if _, err := s.repo.EnqueueOutbound(ctx, OutboundJob{
+				StudioID:       studioID,
+				ConversationID: cl.ConversationID,
+				Body:           stepBody,
+				SourceKind:     SourceAutomation,
+				SourceRef:      fmt.Sprintf("%s:re_engage_followup:%d", refKey, step.StepOrder),
+				ScheduledFor:   time.Now().UTC().Add(time.Duration(step.DelayMinutes) * time.Minute),
+			}); err != nil {
+				slog.Warn("re-engage: schedule followup failed", "conversation_id", convID, "step", step.StepOrder, "err", err)
+			}
+		}
+
+		// Clear the cold flag right away instead of waiting for the
+		// scanner's next tick — the admin just took the re-engage action, so
+		// the Pipeline should reflect it on the very next refresh.
+		if err := s.repo.ClearColdStatus(ctx, studioID, cl.ConversationID); err != nil {
+			slog.Warn("re-engage: clear cold status failed", "conversation_id", cl.ConversationID, "err", err)
+		}
+
+		sent++
+	}
+	return sent, nil
+}
+
+// MoveColdLeadToStatus handles a Cold Leads card being dragged into another
+// Pipeline column. Same lazy lead-creation as ReEngageColdLeads — a
+// backfilled conversation with no lead gets one minted on the spot (this is
+// an even more deliberate action than re-engaging: the admin is explicitly
+// placing them in the funnel), then the status update applies to that lead
+// like any normal drag-and-drop move.
+func (s *Service) MoveColdLeadToStatus(ctx context.Context, studioID, conversationID uuid.UUID, status string) (uuid.UUID, error) {
+	cl, err := s.repo.GetColdLeadContext(ctx, studioID, conversationID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	leadID := cl.LeadID
+	if leadID == nil {
+		newLeadID, err := s.repo.CreateLeadFromColdConversation(ctx, studioID, conversationID)
+		if err != nil {
+			return uuid.Nil, err
+		}
+		leadID = &newLeadID
+	}
+	if err := s.repo.SetLeadStatus(ctx, studioID, *leadID, status); err != nil {
+		return uuid.Nil, err
+	}
+	if err := s.repo.ClearColdStatus(ctx, studioID, conversationID); err != nil {
+		slog.Warn("move cold lead: clear cold status failed", "conversation_id", conversationID, "err", err)
+	}
+	return *leadID, nil
+}
+
+func (s *Service) GetColdLeadThresholds(ctx context.Context, studioID uuid.UUID) (neverRepliedDays, stalledDays int, err error) {
+	return s.repo.GetColdLeadThresholds(ctx, studioID)
+}
+
+func (s *Service) SetColdLeadThresholds(ctx context.Context, studioID uuid.UUID, neverRepliedDays, stalledDays int) error {
+	return s.repo.SetColdLeadThresholds(ctx, studioID, neverRepliedDays, stalledDays)
 }
 
 func (s *Service) CreateTriggerLink(ctx context.Context, studioID uuid.UUID, name, url string) (*TriggerLink, error) {

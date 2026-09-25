@@ -303,6 +303,65 @@ export async function saveWhatsAppDailyMessageLimit(studioId: string, limit: num
   return { ok: true };
 }
 
+export interface ColdLeadThresholdsResult {
+  ok: boolean;
+  error?: string;
+  data?: { coldNeverRepliedDays: number; coldStalledDays: number };
+}
+
+export async function getColdLeadThresholds(studioId: string): Promise<ColdLeadThresholdsResult> {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/messaging/settings/cold-lead-thresholds`, {
+      method: 'GET',
+      headers: {
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      },
+      cache: 'no-store',
+    });
+    if (!res.ok) {
+      return { ok: false, error: `HTTP ${res.status}` };
+    }
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (err: any) {
+    return { ok: false, error: err.message };
+  }
+}
+
+export async function saveColdLeadThresholds(
+  studioId: string,
+  neverRepliedDays: number,
+  stalledDays: number,
+): Promise<UpdateStudioResult> {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
+  const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/messaging/settings/cold-lead-thresholds`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+    },
+    body: JSON.stringify({ coldNeverRepliedDays: neverRepliedDays, coldStalledDays: stalledDays }),
+    cache: 'no-store',
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    return { ok: false, error: body?.error || `HTTP ${res.status}` };
+  }
+  return { ok: true };
+}
+
 export interface SendSpacingResult {
   ok: boolean;
   error?: string;

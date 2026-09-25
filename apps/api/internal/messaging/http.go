@@ -1,12 +1,10 @@
 package messaging
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/mail"
@@ -21,16 +19,35 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/projectx/api/internal/identity"
+	"github.com/projectx/api/internal/integrations/claude"
+	"github.com/projectx/api/internal/integrations/llm"
+	"github.com/projectx/api/internal/leads"
 	"github.com/projectx/api/internal/platform/httpx"
+	"github.com/projectx/api/internal/studios"
 )
 
 type Handler struct {
 	svc *Service
 	bus Bus
+
+	// Only used by aiGenerateTemplate (Social Planner / message-template AI
+	// copy), to run the same Groq->Gemini->Claude waterfall the chat AI
+	// worker uses instead of being hardcoded to one provider.
+	studiosRepo  *studios.Repo
+	llmRepo      *llm.Repo
+	claudeClient *claude.Client
+	claudeAPIURL string
 }
 
-func NewHandler(svc *Service, bus Bus) *Handler {
-	return &Handler{svc: svc, bus: bus}
+func NewHandler(svc *Service, bus Bus, studiosRepo *studios.Repo, llmRepo *llm.Repo, claudeClient *claude.Client, claudeAPIURL string) *Handler {
+	return &Handler{
+		svc:          svc,
+		bus:          bus,
+		studiosRepo:  studiosRepo,
+		llmRepo:      llmRepo,
+		claudeClient: claudeClient,
+		claudeAPIURL: claudeAPIURL,
+	}
 }
 
 func (h *Handler) PublicRoutes(r chi.Router) {
@@ -130,6 +147,11 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Put("/settings/send-spacing", h.setSendSpacing)
 	r.Get("/settings/daily-message-limit", h.getDailyMessageLimit)
 	r.Put("/settings/daily-message-limit", h.setDailyMessageLimit)
+	r.Get("/settings/cold-lead-thresholds", h.getColdLeadThresholds)
+	r.Put("/settings/cold-lead-thresholds", h.setColdLeadThresholds)
+	r.Get("/leads/cold", h.listColdLeads)
+	r.Post("/leads/cold/re-engage", h.reEngageColdLeads)
+	r.Post("/leads/cold/move", h.moveColdLead)
 	r.Post("/channels/whatsapp", h.connectWhatsApp)
 	r.Post("/channels/instagram", h.connectInstagram)
 	r.Post("/channels/messenger", h.connectMessenger)
@@ -360,6 +382,191 @@ func (h *Handler) setDailyMessageLimit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"whatsappDailyMessageLimit": req.WhatsAppDailyMessageLimit})
+}
+
+// getColdLeadThresholds godoc
+//
+//	@Summary		Get Cold Leads day thresholds
+//	@Description	Returns how many days of silence before a never-contacted-back lead, and a lead that replied then went quiet, are flagged Cold. Applied by the periodic Cold Leads scanner, not live per-request.
+//	@Tags			Messaging - Leads
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/settings/cold-lead-thresholds [get]
+func (h *Handler) getColdLeadThresholds(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	neverReplied, stalled, err := h.svc.GetColdLeadThresholds(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"coldNeverRepliedDays": neverReplied, "coldStalledDays": stalled})
+}
+
+type setColdLeadThresholdsReq struct {
+	ColdNeverRepliedDays int `json:"coldNeverRepliedDays"`
+	ColdStalledDays      int `json:"coldStalledDays"`
+}
+
+// setColdLeadThresholds godoc
+//
+//	@Summary		Set Cold Leads day thresholds
+//	@Description	Updates the never-replied and stalled day thresholds the Cold Leads scanner uses for this studio.
+//	@Tags			Messaging - Leads
+//	@Security		CookieAuth
+//	@Accept			json
+//	@Produce		json
+//	@Param			studioId	path		string						true	"Studio ID"
+//	@Param			body		body		setColdLeadThresholdsReq	true	"Cold lead thresholds"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		400			{object}	httpx.ErrorResponse
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/settings/cold-lead-thresholds [put]
+func (h *Handler) setColdLeadThresholds(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	var req setColdLeadThresholdsReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if req.ColdNeverRepliedDays < 1 || req.ColdStalledDays < 1 {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_threshold", "thresholds must be at least 1 day")
+		return
+	}
+	if err := h.svc.SetColdLeadThresholds(r.Context(), studioID, req.ColdNeverRepliedDays, req.ColdStalledDays); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"coldNeverRepliedDays": req.ColdNeverRepliedDays, "coldStalledDays": req.ColdStalledDays})
+}
+
+// listColdLeads godoc
+//
+//	@Summary		List cold (contacted, never replied) leads
+//	@Description	Returns leads the automation has messaged at least once but who have never sent a single inbound reply, for the Pipeline's cold-lead re-engagement view.
+//	@Tags			Messaging - Leads
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/leads/cold [get]
+func (h *Handler) listColdLeads(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	leads, err := h.svc.ListColdLeads(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"leads": leads})
+}
+
+type reEngageColdLeadsReq struct {
+	ConversationIDs []string `json:"conversationIds"`
+}
+
+// reEngageColdLeads godoc
+//
+//	@Summary		Re-engage selected cold conversations
+//	@Description	Resends the studio's opening greeting into each given conversation (resetting the lead's automation stage back to awaiting_interest when a lead is attached — the same entry point a brand-new lead gets) and re-schedules the no-reply follow-up cascade. Works for backfilled WhatsApp Web history too, which has a conversation but no lead.
+//	@Tags			Messaging - Leads
+//	@Security		CookieAuth
+//	@Accept			json
+//	@Produce		json
+//	@Param			studioId	path		string					true	"Studio ID"
+//	@Param			body		body		reEngageColdLeadsReq	true	"Conversation IDs to re-engage"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		400			{object}	httpx.ErrorResponse	"invalid JSON or conversation id"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/leads/cold/re-engage [post]
+func (h *Handler) reEngageColdLeads(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	var req reEngageColdLeadsReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if len(req.ConversationIDs) == 0 {
+		httpx.WriteError(w, http.StatusBadRequest, "validation", "conversationIds is required")
+		return
+	}
+	convIDs := make([]uuid.UUID, 0, len(req.ConversationIDs))
+	for _, s := range req.ConversationIDs {
+		id, err := uuid.Parse(s)
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "bad_id", fmt.Sprintf("invalid conversation id: %s", s))
+			return
+		}
+		convIDs = append(convIDs, id)
+	}
+	sent, err := h.svc.ReEngageColdLeads(r.Context(), studioID, convIDs)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"sent": sent})
+}
+
+type moveColdLeadReq struct {
+	ConversationID string `json:"conversationId"`
+	Status         string `json:"status"`
+}
+
+// moveColdLead godoc
+//
+//	@Summary		Move a cold conversation into a Pipeline status
+//	@Description	Drag-and-drop target for the Pipeline's Cold Leads column. If the conversation has no lead yet (backfilled WhatsApp Web history), one is created first, then its status is set — same effect as the normal Pipeline drag-and-drop, just starting from a conversation instead of an existing lead.
+//	@Tags			Messaging - Leads
+//	@Security		CookieAuth
+//	@Accept			json
+//	@Produce		json
+//	@Param			studioId	path		string				true	"Studio ID"
+//	@Param			body		body		moveColdLeadReq		true	"Conversation and target status"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		400			{object}	httpx.ErrorResponse	"invalid JSON, conversation id, or status"
+//	@Failure		404			{object}	httpx.ErrorResponse	"conversation not found"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/leads/cold/move [post]
+func (h *Handler) moveColdLead(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	var req moveColdLeadReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	convID, err := uuid.Parse(req.ConversationID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid conversation id")
+		return
+	}
+	if !leads.LeadStatus(req.Status).Valid() {
+		httpx.WriteError(w, http.StatusBadRequest, "validation", "invalid status")
+		return
+	}
+	leadID, err := h.svc.MoveColdLeadToStatus(r.Context(), studioID, convID, req.Status)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "conversation not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"leadId": leadID})
 }
 
 type connectMetaReq struct {
@@ -1864,112 +2071,75 @@ func (h *Handler) updateJob(w http.ResponseWriter, r *http.Request) {
 // AI assistant handlers
 // ============================================================
 
-func callGeminiAPI(ctx context.Context, apiKey string, prompt string) (string, error) {
-	// Try models in order; fall back when a model is unavailable or overloaded.
-	// "-latest" aliases, not pinned version numbers — Google retires dated
-	// model IDs outright (gemini-2.0-flash and gemini-2.0-flash-lite both now
-	// 404 "no longer available"), the alias keeps resolving to whatever the
-	// current equivalent model is instead of going stale the same way again.
-	models := []string{"gemini-flash-latest", "gemini-flash-lite-latest"}
+// parseHashtagResponse splits the CAPTION:/HASHTAGS: format requested in the
+// social-post prompt below. Falls back to treating the whole response as the
+// caption (no hashtags) if a provider doesn't follow the format exactly,
+// rather than failing the request outright.
+func parseHashtagResponse(raw string) (caption string, hashtags []string) {
+	const captionMarker = "CAPTION:"
+	const hashtagsMarker = "HASHTAGS:"
 
-	reqBody, err := json.Marshal(map[string]any{
-		"contents": []map[string]any{
-			{
-				"parts": []map[string]any{
-					{"text": prompt},
-				},
-			},
-		},
-	})
-	if err != nil {
-		return "", err
+	hIdx := strings.LastIndex(raw, hashtagsMarker)
+	if hIdx == -1 {
+		return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(raw), captionMarker)), nil
 	}
 
-	var lastErr error
-	for _, model := range models {
-		url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, apiKey)
+	captionPart := raw[:hIdx]
+	hashtagsPart := raw[hIdx+len(hashtagsMarker):]
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(reqBody))
-		if err != nil {
-			return "", err
-		}
-		req.Header.Set("Content-Type", "application/json")
+	captionPart = strings.TrimSpace(captionPart)
+	captionPart = strings.TrimPrefix(captionPart, captionMarker)
+	caption = strings.TrimSpace(captionPart)
 
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			lastErr = err
+	for _, tag := range strings.Fields(hashtagsPart) {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
 			continue
 		}
-
-		respBytes, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			lastErr = err
-			continue
+		if !strings.HasPrefix(tag, "#") {
+			tag = "#" + tag
 		}
-
-		if resp.StatusCode >= 400 {
-			// 503 (overloaded) or 429 (rate limit) — try next model
-			if resp.StatusCode == 503 || resp.StatusCode == 429 {
-				lastErr = fmt.Errorf("gemini API error (HTTP %d): %s", resp.StatusCode, string(respBytes))
-				continue
-			}
-			// 404 = model not found — try next model
-			if resp.StatusCode == 404 {
-				lastErr = fmt.Errorf("model %s not found", model)
-				continue
-			}
-			return "", fmt.Errorf("gemini API error (HTTP %d): %s", resp.StatusCode, string(respBytes))
-		}
-
-		var res struct {
-			Candidates []struct {
-				Content struct {
-					Parts []struct {
-						Text string `json:"text"`
-					} `json:"parts"`
-				} `json:"content"`
-			} `json:"candidates"`
-		}
-
-		if err := json.Unmarshal(respBytes, &res); err != nil {
-			lastErr = err
-			continue
-		}
-
-		if len(res.Candidates) == 0 || len(res.Candidates[0].Content.Parts) == 0 {
-			lastErr = fmt.Errorf("empty response from Gemini API")
-			continue
-		}
-
-		return res.Candidates[0].Content.Parts[0].Text, nil
+		hashtags = append(hashtags, tag)
 	}
+	return caption, hashtags
+}
 
-	if lastErr != nil {
-		return "", lastErr
+// platformHashtagGuidance nudges the model toward each platform's actual
+// hashtag convention instead of generating the same generic set regardless
+// of where the post is going.
+func platformHashtagGuidance(platform string) string {
+	switch strings.ToLower(platform) {
+	case "instagram":
+		return "8-12 relevant hashtags, mixing broad and niche fitness tags (Instagram rewards a dense tag block)."
+	case "x (twitter)", "x", "twitter":
+		return "1-2 short, high-signal hashtags only (X posts get buried by tag spam)."
+	case "facebook":
+		return "2-4 hashtags (Facebook engagement doesn't scale with tag count the way Instagram's does)."
+	default:
+		return "3-5 relevant hashtags."
 	}
-	return "", fmt.Errorf("all Gemini models failed")
 }
 
 // aiGenerateTemplate godoc
 //
 //	@Summary		Generate message/social copy with AI
-//	@Description	Uses the studio's configured Gemini API key to generate either a customer message template ("type" omitted/other) or social media post copy ("type":"social") from a free-text prompt. Requires a Gemini API key to be configured in Studio Settings.
+//	@Description	Generates either a customer message template ("type" omitted/other) or social media post copy + hashtags ("type":"social") from a free-text prompt, using whichever AI provider (Groq/Gemini/Claude) this studio has configured — the same provider waterfall the chat AI uses, not one hardcoded provider.
 //	@Tags			Messaging - AI
 //	@Security		CookieAuth
 //	@Accept			json
 //	@Produce		json
 //	@Param			studioId	path		string					true	"Studio ID"
-//	@Param			body		body		map[string]interface{}	true	"Generation request: prompt, type (\"social\" or omitted)"
+//	@Param			body		body		map[string]interface{}	true	"Generation request: prompt, type (\"social\" or omitted), platform (for \"social\")"
 //	@Success		200			{object}	map[string]interface{}
-//	@Failure		400			{object}	httpx.ErrorResponse	"missing Gemini API key"
+//	@Failure		400			{object}	httpx.ErrorResponse	"no AI provider configured"
 //	@Failure		500			{object}	httpx.ErrorResponse	"failed to load studio config"
 //	@Failure		502			{object}	httpx.ErrorResponse	"AI generation failed"
 //	@Router			/api/v1/studios/{studioId}/messaging/ai/generate [post]
 func (h *Handler) aiGenerateTemplate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Prompt string `json:"prompt"`
-		Type   string `json:"type"`
+		Prompt   string `json:"prompt"`
+		Type     string `json:"type"`
+		Platform string `json:"platform"`
 	}
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
@@ -1980,30 +2150,33 @@ func (h *Handler) aiGenerateTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var apiKey string
-	err := h.svc.repo.Pool().QueryRow(r.Context(), `
-		SELECT gemini_api_key FROM studios WHERE id = $1
-	`, studioID).Scan(&apiKey)
+	studio, err := h.studiosRepo.GetByID(r.Context(), studioID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to load studio config")
 		return
 	}
 
-	if apiKey == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "missing_api_key", "Please configure your Gemini API Key in the Studio Settings to write templates with AI.")
-		return
-	}
-
 	var systemInstruction string
-	if req.Type == "social" {
-		systemInstruction = `You are a social media manager for a fitness studio.
+	isSocial := req.Type == "social"
+	if isSocial {
+		platform := req.Platform
+		if platform == "" {
+			platform = "social media"
+		}
+		systemInstruction = fmt.Sprintf(`You are a social media manager for a fitness studio, writing a post for %s.
 Important:
 1. Do not use generic greetings or sign-offs.
-2. Keep it energetic, modern, and perfectly formatted for a social media post (X/Twitter, Facebook).
+2. Keep it energetic, modern, and perfectly formatted for a %s post.
 3. Use emojis where appropriate.
 4. Do not use template brackets or variables.
 
-Generate the social media copy based on this instruction: ` + req.Prompt
+Generate the social media copy based on this instruction: %s
+
+Then generate hashtags: %s
+
+Respond in EXACTLY this format, nothing else, no markdown:
+CAPTION: <the post caption>
+HASHTAGS: <space-separated hashtags, each starting with #>`, platform, platform, req.Prompt, platformHashtagGuidance(platform))
 	} else {
 		systemInstruction = `Generate a professional, friendly customer message template for a fitness studio.
 Important:
@@ -2015,20 +2188,24 @@ Important:
 Generate the message content based on this instruction: ` + req.Prompt
 	}
 
-	generatedText, err := callGeminiAPI(r.Context(), apiKey, systemInstruction)
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "gemini_error", fmt.Sprintf("AI Generation failed: %v", err))
+	generatedText, source := llmWaterfall(r.Context(), h.studiosRepo, h.llmRepo, h.svc.repo, h.claudeClient, h.claudeAPIURL, slog.Default(), studioID, studio, systemInstruction)
+	if generatedText == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "no_provider", "No AI provider is configured for this studio — set up Groq, Gemini, or Claude in Settings → AI Assistant.")
 		return
 	}
+	slog.Info("social planner ai generate", "studio_id", studioID, "source", source, "type", req.Type)
 
 	var body string
-	if req.Type == "social" {
-		body = strings.TrimSpace(generatedText)
+	var hashtags []string
+	if isSocial {
+		caption, tags := parseHashtagResponse(generatedText)
+		body = caption
+		hashtags = tags
 	} else {
 		body = fmt.Sprintf("Hi {{contact.first_name}},\n\n%s\n\nBest,\n{{studio.name}} Team", strings.TrimSpace(generatedText))
 	}
 
-	httpx.JSON(w, http.StatusOK, map[string]string{"body": body, "text": body})
+	httpx.JSON(w, http.StatusOK, map[string]any{"body": body, "text": body, "hashtags": hashtags})
 }
 
 // uploadMedia accepts a multipart/form-data upload (field "file"), saves it

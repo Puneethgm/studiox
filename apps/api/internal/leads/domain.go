@@ -148,8 +148,24 @@ type AnalyticsSummary struct {
 	AvgResponseTimeLapseSecs   float64             `json:"avgResponseTimeLapseSecs"`
 	LeadToTrialTimeLapseSecs   float64             `json:"leadToTrialTimeLapseSecs"`
 	TrialToMemberTimeLapseSecs float64             `json:"trialToMemberTimeLapseSecs"`
+	OutboundMessagesSent       int                 `json:"outboundMessagesSent"`
+	PurchasedLeads             int                 `json:"purchasedLeads"` // status in (trial_booked, member)
+	ConnectionRate             float64             `json:"connectionRate"` // % of contacted leads (contact_attempts > 0) who ever sent an inbound reply
+	ConversionRate             float64             `json:"conversionRate"` // % of all leads that reached trial_booked or member
 	ByCampaign                 []CampaignAnalytics `json:"byCampaign"`
 	ByPlatform                 []PlatformAnalytics `json:"byPlatform"`
+}
+
+// DailyAnalyticsPoint is one day's bucket for the Detailed Analytics trend
+// chart. ConnectedLeads counts leads whose first-ever inbound reply landed
+// on this day (i.e. newly connected, not every reply); ConvertedLeads counts
+// leads whose status reached trial_booked/member on this day (proxied by
+// updated_at, same convention GetAnalytics' trial-time metrics already use).
+type DailyAnalyticsPoint struct {
+	Date                 string `json:"date"`
+	OutboundMessagesSent int    `json:"outboundMessagesSent"`
+	ConnectedLeads       int    `json:"connectedLeads"`
+	ConvertedLeads       int    `json:"convertedLeads"`
 }
 
 type CampaignAnalytics struct {

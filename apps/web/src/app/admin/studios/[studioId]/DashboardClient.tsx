@@ -19,6 +19,10 @@ import {
   TrendingDown,
   Info,
   Calendar,
+  Send,
+  ShoppingCart,
+  Link2,
+  Target,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -29,8 +33,17 @@ import { FunnelStrip } from '@/components/widgets/FunnelStrip';
 import { StatusDonut } from '@/components/widgets/StatusDonut';
 import { brandInitials } from '@/lib/color';
 import { relativeTime } from '@/lib/datetime';
-import type { Campaign, Lead, LeadStatus, Studio, AnalyticsSummary } from '@/lib/types';
+import type { Campaign, Lead, LeadStatus, Studio, AnalyticsSummary, DailyAnalyticsPoint } from '@/lib/types';
 import { api } from '@/lib/api';
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from 'recharts';
 
 interface LeadStats {
   total: number;
@@ -43,6 +56,7 @@ interface DashboardClientProps {
   initialLeads: Lead[];
   initialLeadsTotal: number;
   initialStats: LeadStats;
+  defaultTab?: 'overview' | 'analytics';
 }
 
 const statusTone = {
@@ -76,13 +90,15 @@ export default function DashboardClient({
   initialLeads,
   initialLeadsTotal,
   initialStats,
+  defaultTab = 'overview',
 }: DashboardClientProps) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'analytics'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'analytics'>(defaultTab);
   const [duration, setDuration] = useState<'1d' | '7d' | '15d' | '30d' | '90d' | '365d' | 'all' | 'custom'>('30d');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [analytics, setAnalytics] = useState<AnalyticsSummary | null>(null);
   const [loadingAnalytics, setLoadingAnalytics] = useState(false);
+  const [dailyAnalytics, setDailyAnalytics] = useState<DailyAnalyticsPoint[]>([]);
   const [logoError, setLogoError] = useState(false);
 
   useEffect(() => {
@@ -101,16 +117,14 @@ export default function DashboardClient({
     async function loadAnalytics() {
       setLoadingAnalytics(true);
       try {
-        let url = studio.id === 'global'
-          ? `/api/v1/admin/analytics?duration=${duration}`
-          : `/api/v1/studios/${studio.id}/analytics?duration=${duration}`;
-        if (duration === 'custom') {
-          url = studio.id === 'global'
-            ? `/api/v1/admin/analytics?startDate=${startDate}&endDate=${endDate}`
-            : `/api/v1/studios/${studio.id}/analytics?startDate=${startDate}&endDate=${endDate}`;
-        }
-        const data = await api<AnalyticsSummary>(url);
+        const base = studio.id === 'global' ? '/api/v1/admin/analytics' : `/api/v1/studios/${studio.id}/analytics`;
+        const qs = duration === 'custom' ? `startDate=${startDate}&endDate=${endDate}` : `duration=${duration}`;
+        const [data, dailyRes] = await Promise.all([
+          api<AnalyticsSummary>(`${base}?${qs}`),
+          api<{ points: DailyAnalyticsPoint[] }>(`${base}/daily?${qs}`),
+        ]);
         setAnalytics(data);
+        setDailyAnalytics(dailyRes.points);
       } catch (err) {
         console.error('Failed to load analytics', err);
       } finally {
@@ -230,18 +244,20 @@ export default function DashboardClient({
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            <Link href={`/admin/studios/${studio.id}/campaigns/new`}>
-              <Button
-                leftIcon={<Plus className="h-4 w-4" />}
-                suppressHydrationWarning
-                className="shadow-lg"
-                style={{ boxShadow: `0 4px 14px ${studio.brandColor}40` } as React.CSSProperties}
-              >
-                New Campaign
-              </Button>
-            </Link>
-          </div>
+          {studio.id !== 'global' && (
+            <div className="flex items-center gap-3">
+              <Link href={`/admin/studios/${studio.id}/campaigns/new`}>
+                <Button
+                  leftIcon={<Plus className="h-4 w-4" />}
+                  suppressHydrationWarning
+                  className="shadow-lg"
+                  style={{ boxShadow: `0 4px 14px ${studio.brandColor}40` } as React.CSSProperties}
+                >
+                  New Campaign
+                </Button>
+              </Link>
+            </div>
+          )}
         </div>
       </div>
 
@@ -343,9 +359,11 @@ export default function DashboardClient({
                     title="No active campaigns"
                     description="Create your first campaign to get a shareable lead-capture URL."
                     action={
-                      <Link href={`/admin/studios/${studio.id}/campaigns/new`}>
-                        <Button leftIcon={<Plus className="h-4 w-4" />} suppressHydrationWarning>New campaign</Button>
-                      </Link>
+                      studio.id !== 'global' ? (
+                        <Link href={`/admin/studios/${studio.id}/campaigns/new`}>
+                          <Button leftIcon={<Plus className="h-4 w-4" />} suppressHydrationWarning>New campaign</Button>
+                        </Link>
+                      ) : undefined
                     }
                   />
                 ) : (
@@ -530,6 +548,173 @@ export default function DashboardClient({
                   </p>
                 </Card>
 
+                <Card
+                  title={<span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Outbound Messages Sent</span>}
+                  className="bg-sky-50/20 border-sky-100 dark:border-sky-950/20 dark:bg-sky-950/5"
+                >
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-3xl font-black text-zinc-900 dark:text-white">
+                      {analytics.outboundMessagesSent}
+                    </span>
+                    <Send className="h-5 w-5 text-sky-500" />
+                  </div>
+                  <p className="mt-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                    Total outbound messages sent across all channels in the selected period.
+                  </p>
+                </Card>
+
+                <Card
+                  title={<span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Trials Purchased</span>}
+                  className="bg-amber-50/20 border-amber-100 dark:border-amber-950/20 dark:bg-amber-950/5 hover:border-amber-200 transition-colors"
+                >
+                  <Link href={studio.id === 'global' ? `/admin/leads?statuses=trial_booked` : `/admin/studios/${studio.id}/leads?statuses=trial_booked`}>
+                    <div className="flex items-baseline gap-2 cursor-pointer group">
+                      <span className="text-3xl font-black text-zinc-900 dark:text-white group-hover:underline">
+                        {analytics.trialBookedLeads}
+                      </span>
+                      <ShoppingCart className="h-5 w-5 text-amber-500" />
+                    </div>
+                  </Link>
+                  <p className="mt-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                    Leads currently at the Trial Booked status.
+                  </p>
+                </Card>
+
+                <Card
+                  title={<span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Members</span>}
+                  className="bg-green-50/20 border-green-100 dark:border-green-950/20 dark:bg-green-950/5 hover:border-green-200 transition-colors"
+                >
+                  <Link href={studio.id === 'global' ? `/admin/leads?statuses=member` : `/admin/studios/${studio.id}/leads?statuses=member`}>
+                    <div className="flex items-baseline gap-2 cursor-pointer group">
+                      <span className="text-3xl font-black text-zinc-900 dark:text-white group-hover:underline">
+                        {analytics.memberLeads}
+                      </span>
+                      <ShoppingCart className="h-5 w-5 text-green-500" />
+                    </div>
+                  </Link>
+                  <p className="mt-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                    Leads currently at the Member status.
+                  </p>
+                </Card>
+
+                <Card
+                  title={<span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Connection Ratio</span>}
+                  className="bg-cyan-50/20 border-cyan-100 dark:border-cyan-950/20 dark:bg-cyan-950/5"
+                >
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-3xl font-black text-zinc-900 dark:text-white">
+                      {analytics.connectionRate.toFixed(1)}%
+                    </span>
+                    <Link2 className="h-5 w-5 text-cyan-500" />
+                  </div>
+                  <p className="mt-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                    Of leads that were contacted, the percentage that ever sent a reply back.
+                  </p>
+                </Card>
+
+                <Card
+                  title={<span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Conversion Ratio</span>}
+                  className="bg-fuchsia-50/20 border-fuchsia-100 dark:border-fuchsia-950/20 dark:bg-fuchsia-950/5"
+                >
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-3xl font-black text-zinc-900 dark:text-white">
+                      {analytics.conversionRate.toFixed(1)}%
+                    </span>
+                    <Target className="h-5 w-5 text-fuchsia-500" />
+                  </div>
+                  <p className="mt-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                    Percentage of all leads that ended up booking a trial or becoming a member.
+                  </p>
+                </Card>
+              </div>
+
+              {/* Daily trend chart — same duration/date-range filter as the KPI cards above */}
+              <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+                <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-black uppercase tracking-[0.15em] text-zinc-900 dark:text-white">
+                      Daily Activity
+                    </h3>
+                    <p className="mt-1 text-[11px] font-semibold text-zinc-400">
+                      Messages sent, new connections, and conversions per day — same period as above.
+                    </p>
+                  </div>
+                  {dailyAnalytics.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-4">
+                      {[
+                        { key: 'outboundMessagesSent', label: 'Messages Sent', color: '#0ea5e9' },
+                        { key: 'connectedLeads', label: 'Connected', color: '#8b5cf6' },
+                        { key: 'convertedLeads', label: 'Converted', color: '#10b981' },
+                      ].map((s) => (
+                        <div key={s.key} className="flex items-baseline gap-1.5">
+                          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: s.color }} />
+                          <span className="text-lg font-black text-zinc-900 dark:text-white">
+                            {dailyAnalytics.reduce((sum, d) => sum + (d[s.key as keyof DailyAnalyticsPoint] as number), 0)}
+                          </span>
+                          <span className="text-[10px] font-bold uppercase tracking-wide text-zinc-400">{s.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {dailyAnalytics.length === 0 || dailyAnalytics.every((d) => d.outboundMessagesSent === 0 && d.connectedLeads === 0 && d.convertedLeads === 0) ? (
+                  <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
+                    <Activity className="h-6 w-6 text-zinc-300 dark:text-zinc-700" />
+                    <p className="text-xs font-semibold text-zinc-400">No activity in this period.</p>
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height={320}>
+                    <AreaChart data={dailyAnalytics} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
+                      <defs>
+                        <linearGradient id="fillMessages" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.35} />
+                          <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0} />
+                        </linearGradient>
+                        <linearGradient id="fillConnected" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.35} />
+                          <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
+                        </linearGradient>
+                        <linearGradient id="fillConverted" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.35} />
+                          <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" vertical={false} className="dark:[&>line]:stroke-white/10" />
+                      <XAxis
+                        dataKey="date"
+                        tick={{ fontSize: 11, fill: '#a1a1aa' }}
+                        tickFormatter={(v: string) => {
+                          const d = new Date(v + 'T00:00:00');
+                          return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                        }}
+                        axisLine={false}
+                        tickLine={false}
+                        minTickGap={24}
+                      />
+                      <YAxis tick={{ fontSize: 11, fill: '#a1a1aa' }} allowDecimals={false} axisLine={false} tickLine={false} width={32} />
+                      <Tooltip
+                        labelFormatter={(v: string) => {
+                          const d = new Date(v + 'T00:00:00');
+                          return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+                        }}
+                        contentStyle={{
+                          background: 'var(--tooltip-bg, #fff)',
+                          border: '1px solid rgba(0,0,0,0.08)',
+                          borderRadius: '12px',
+                          boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+                          fontSize: 12,
+                          color: '#111',
+                        }}
+                      />
+                      <Area type="monotone" dataKey="outboundMessagesSent" name="Messages Sent" stroke="#0ea5e9" strokeWidth={2.5} fill="url(#fillMessages)" dot={false} activeDot={{ r: 5, strokeWidth: 0 }} />
+                      <Area type="monotone" dataKey="connectedLeads" name="Connected" stroke="#8b5cf6" strokeWidth={2.5} fill="url(#fillConnected)" dot={false} activeDot={{ r: 5, strokeWidth: 0 }} />
+                      <Area type="monotone" dataKey="convertedLeads" name="Converted" stroke="#10b981" strokeWidth={2.5} fill="url(#fillConverted)" dot={false} activeDot={{ r: 5, strokeWidth: 0 }} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <Card
                   title={<span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Open Follow-ups</span>}
                   className="bg-amber-50/20 border-amber-100 dark:border-amber-950/20 dark:bg-amber-950/5 hover:border-amber-200 transition-colors"

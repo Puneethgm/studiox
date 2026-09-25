@@ -19,7 +19,7 @@ import { Select } from '@/components/ui/Select';
 import MemberSubscriptionsTable from '@/components/MemberSubscriptionsTable';
 import { api } from '@/lib/api';
 
-interface Invoice {
+export interface Invoice {
   id: string;
   number: string;
   amount_due: number;
@@ -48,6 +48,7 @@ const paymentsCache: Record<string, {
 export default function PaymentsClient({ studioId }: { studioId: string }) {
   const cached = paymentsCache[studioId];
 
+  const [activeTab, setActiveTab] = useState<'overview' | 'memberships'>('overview');
   const [stripeStatus, setStripeStatus] = useState<'connected' | 'disconnected'>(
     cached ? cached.stripeStatus : 'disconnected'
   );
@@ -356,6 +357,35 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
   }
 
   return (
+    <div className="flex flex-col gap-4 sm:gap-6">
+      {studioId !== 'global' && (
+        <div className="flex border-b border-zinc-200 dark:border-zinc-800">
+          <button
+            onClick={() => setActiveTab('overview')}
+            className={`px-4 py-2.5 text-xs font-black uppercase tracking-widest transition-colors border-b-2 -mb-px ${
+              activeTab === 'overview'
+                ? 'border-brand-500 text-zinc-950 dark:text-white'
+                : 'border-transparent text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300'
+            }`}
+          >
+            Overview
+          </button>
+          <button
+            onClick={() => setActiveTab('memberships')}
+            className={`px-4 py-2.5 text-xs font-black uppercase tracking-widest transition-colors border-b-2 -mb-px ${
+              activeTab === 'memberships'
+                ? 'border-brand-500 text-zinc-950 dark:text-white'
+                : 'border-transparent text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300'
+            }`}
+          >
+            Memberships
+          </button>
+        </div>
+      )}
+
+      {activeTab === 'memberships' && studioId !== 'global' ? (
+        <MemberSubscriptionsTable studioId={studioId} invoices={invoices} />
+      ) : (
     <div className="flex flex-col gap-4 animate-in fade-in duration-300 sm:gap-6 lg:grid lg:grid-cols-3 lg:gap-6">
         {/* Plan Upgrade / Stripe Connect — shown first on mobile so
             connecting Stripe doesn't require scrolling past everything else */}
@@ -831,11 +861,8 @@ export default function PaymentsClient({ studioId }: { studioId: string }) {
           </Card>
         </div>
 
-        {studioId !== 'global' && (
-          <div className="order-4 lg:order-4 lg:col-span-3">
-            <MemberSubscriptionsTable studioId={studioId} />
-          </div>
-        )}
+    </div>
+      )}
     </div>
   );
 }

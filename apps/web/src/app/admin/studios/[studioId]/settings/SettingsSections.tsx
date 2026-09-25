@@ -13,6 +13,8 @@ import {
   saveWhatsAppSendSpacing,
   getWhatsAppDailyMessageLimit,
   saveWhatsAppDailyMessageLimit,
+  getColdLeadThresholds,
+  saveColdLeadThresholds,
   getInitialContactDelay,
   saveInitialContactDelay,
   getAIReplyDelay,
@@ -480,21 +482,28 @@ export function IntegrationsSection({ studio, onChange }: { studio: Studio; onCh
   const [loading, setLoading] = useState(true);
   const [sendSpacing, setSendSpacing] = useState(20);
   const [dailyMessageLimit, setDailyMessageLimit] = useState(48);
+  const [coldNeverRepliedDays, setColdNeverRepliedDays] = useState(1);
+  const [coldStalledDays, setColdStalledDays] = useState(7);
   const [initialDelayMinutes, setInitialDelayMinutes] = useState(0);
   const [aiReplyDelay, setAiReplyDelay] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [spacingRes, dailyLimitRes, delayRes, aiDelayRes] = await Promise.all([
+      const [spacingRes, dailyLimitRes, coldRes, delayRes, aiDelayRes] = await Promise.all([
         getWhatsAppSendSpacing(studio.id),
         getWhatsAppDailyMessageLimit(studio.id),
+        getColdLeadThresholds(studio.id),
         getInitialContactDelay(studio.id),
         getAIReplyDelay(studio.id),
       ]);
       if (cancelled) return;
       if (spacingRes.ok && spacingRes.data) setSendSpacing(spacingRes.data.whatsappSendSpacingSeconds);
       if (dailyLimitRes.ok && dailyLimitRes.data) setDailyMessageLimit(dailyLimitRes.data.whatsappDailyMessageLimit);
+      if (coldRes.ok && coldRes.data) {
+        setColdNeverRepliedDays(coldRes.data.coldNeverRepliedDays);
+        setColdStalledDays(coldRes.data.coldStalledDays);
+      }
       if (delayRes.ok && delayRes.data) setInitialDelayMinutes(delayRes.data.initialContactDelayMinutes);
       if (aiDelayRes.ok && aiDelayRes.data) setAiReplyDelay(aiDelayRes.data.aiReplyDelaySeconds);
       setLoading(false);
@@ -586,6 +595,28 @@ export function IntegrationsSection({ studio, onChange }: { studio: Studio; onCh
               onSave={async (n) => {
                 const res = await saveWhatsAppDailyMessageLimit(studio.id, n);
                 if (res.ok) setDailyMessageLimit(n);
+                return res;
+              }}
+            />
+            <EditableNumberRow
+              label="Cold Lead: Never Replied"
+              description="Days of silence before a contacted-but-never-replied lead shows up in the Pipeline's Cold column. A background scan applies this roughly every 15 minutes."
+              value={coldNeverRepliedDays}
+              suffix="days"
+              onSave={async (n) => {
+                const res = await saveColdLeadThresholds(studio.id, n, coldStalledDays);
+                if (res.ok) setColdNeverRepliedDays(n);
+                return res;
+              }}
+            />
+            <EditableNumberRow
+              label="Cold Lead: Went Quiet"
+              description="Days of no activity after a lead replied at least once before it's flagged Cold."
+              value={coldStalledDays}
+              suffix="days"
+              onSave={async (n) => {
+                const res = await saveColdLeadThresholds(studio.id, coldNeverRepliedDays, n);
+                if (res.ok) setColdStalledDays(n);
                 return res;
               }}
             />

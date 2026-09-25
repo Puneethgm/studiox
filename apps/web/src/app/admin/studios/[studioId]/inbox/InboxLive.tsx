@@ -142,11 +142,29 @@ interface PendingJob {
   lastError?: string;
 }
 
-// Friendlier copy for known failure reasons; anything else falls back to the
-// raw last_error from the backend.
+// Friendlier copy for known failure reasons. The wa-web sender's errors
+// arrive as "wa-web send failed <code>: {...raw json...}" — extract just
+// the underlying message instead of showing that whole blob with escaped
+// quotes and braces, and special-case the ones with a clean known meaning.
 function jobFailureReason(lastError?: string): string {
+  if (!lastError) return 'Send failed';
   if (lastError === 'daily_limit_exceeded') return 'WhatsApp daily message limit reached';
-  return lastError || 'Send failed';
+
+  const jsonStart = lastError.indexOf('{');
+  if (jsonStart !== -1) {
+    try {
+      const parsed = JSON.parse(lastError.slice(jsonStart));
+      const inner: string = parsed?.error || parsed?.message || '';
+      if (inner) {
+        if (/not registered on whatsapp/i.test(inner)) return 'Not registered on WhatsApp';
+        if (/rate limit/i.test(inner)) return 'WhatsApp rate limit hit';
+        return inner;
+      }
+    } catch {
+      // Not valid JSON after all — fall through to the raw string below.
+    }
+  }
+  return lastError;
 }
 
 type InboxTab = 'conversations' | 'escalation' | 'automated_messages' | 'snippets' | 'trigger_links';

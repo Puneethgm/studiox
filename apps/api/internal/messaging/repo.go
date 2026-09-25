@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -1748,6 +1749,346 @@ func (r *Repo) CancelPendingFollowupJobsForLead(ctx context.Context, studioID, l
 
 // ListFollowupSteps returns a studio's configured no-reply follow-up steps,
 // ordered. An empty result means follow-ups are off for that studio.
+// ColdLead is a conversation that has gone dead — a candidate for the
+// Pipeline's cold-lead re-engagement action. Keyed on ConversationID (always
+// present) rather than lead ID, because a WhatsApp Web connect backfills
+// historical chats as conversations/messages without ever creating a lead
+// for them (a deliberate "no-phantom-leads" import contract — see
+// HandleInboundWAWebBackfill) — LeadID is nil for those. Reason is
+// "never_replied" (sent at least one message, zero replies back, ever) or
+// "stalled" (they did reply at some point, but the whole conversation —
+// either direction — has had no activity in over a week and they still
+// haven't converted).
+type ColdLead struct {
+	ConversationID  uuid.UUID  `json:"conversationId"`
+	LeadID          *uuid.UUID `json:"leadId"`
+	Name            string     `json:"name"`
+	Phone           string     `json:"phone"`
+	Status          string     `json:"status"`
+	ContactAttempts int        `json:"contactAttempts"`
+	LastContactedAt *time.Time `json:"lastContactedAt"`
+	LastMessageAt   *time.Time `json:"lastMessageAt"`
+	Reason          string     `json:"reason"`
+}
+
+// ListColdLeads finds conversations that have effectively gone dead — two
+// cases, both excluding members and leads explicitly marked dropped (those
+// aren't "cold", they're resolved), and both requiring at least one
+// outbound message (someone from the studio's side — automation, AI, a
+// manual reply, or history from before this platform was connected —
+// actually reached out; a conversation with only inbound messages was never
+// "contacted" in the first place):
+//
+//  1. never_replied: never received a single inbound message. Only flagged
+//     after cold_never_replied_days of silence, since a fresh lead is often
+//     still mid the automated follow-up cascade (see autocontact_worker).
+//  2. stalled: replied at some point, so it's a real conversation, but
+//     neither side has sent anything in over cold_stalled_days and they
+//     still haven't converted — the thread went quiet before they booked a
+//     trial or became a member.
+//
+// Includes conversations with no lead at all (backfilled WhatsApp Web
+// history — see the ColdLead doc comment) alongside lead-linked ones, so a
+// studio's pre-existing chat history is covered by the same re-engagement
+// flow as leads created through this platform.
+//
+// Reads the persisted cold_reason column (written by the periodic
+// ColdLeadScanner, see cold_scanner.go) instead of recomputing this live on
+// every call — cheap regardless of conversation volume, at the cost of
+// results lagging the scanner's own interval.
+func (r *Repo) ListColdLeads(ctx context.Context, studioID uuid.UUID) ([]ColdLead, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT c.id, l.id, COALESCE(l.name, ci.display_name, ''), COALESCE(l.phone, ci.value, ''),
+		       COALESCE(l.status, ''), COALESCE(l.contact_attempts, 0), l.last_contacted_at,
+		       c.last_message_at, c.cold_reason
+		FROM conversations c
+		JOIN contact_identities ci ON ci.id = c.contact_identity_id
+		LEFT JOIN leads l ON l.id = c.lead_id
+		WHERE c.studio_id = $1
+		  AND c.cold_reason IS NOT NULL
+		ORDER BY c.last_message_at ASC NULLS LAST
+	`, studioID)
+	if err != nil {
+		return nil, fmt.Errorf("list cold leads: %w", err)
+	}
+	defer rows.Close()
+	out := make([]ColdLead, 0)
+	for rows.Next() {
+		var c ColdLead
+		var leadID *uuid.UUID
+		if err := rows.Scan(&c.ConversationID, &leadID, &c.Name, &c.Phone, &c.Status, &c.ContactAttempts, &c.LastContactedAt, &c.LastMessageAt, &c.Reason); err != nil {
+			return nil, fmt.Errorf("scan cold lead: %w", err)
+		}
+		c.LeadID = leadID
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// GetColdLeadThresholds returns the studio's configured never-replied and
+// stalled day counts, used by both ListColdLeads' old live-query logic
+// (retired) and the ColdLeadScanner's periodic recompute.
+func (r *Repo) GetColdLeadThresholds(ctx context.Context, studioID uuid.UUID) (neverRepliedDays, stalledDays int, err error) {
+	err = r.pool.QueryRow(ctx, `
+		SELECT cold_never_replied_days, cold_stalled_days FROM studios WHERE id = $1
+	`, studioID).Scan(&neverRepliedDays, &stalledDays)
+	if err != nil {
+		return 0, 0, fmt.Errorf("get cold lead thresholds: %w", err)
+	}
+	return neverRepliedDays, stalledDays, nil
+}
+
+func (r *Repo) SetColdLeadThresholds(ctx context.Context, studioID uuid.UUID, neverRepliedDays, stalledDays int) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE studios SET cold_never_replied_days = $2, cold_stalled_days = $3, updated_at = now() WHERE id = $1
+	`, studioID, neverRepliedDays, stalledDays)
+	if err != nil {
+		return fmt.Errorf("set cold lead thresholds: %w", err)
+	}
+	return nil
+}
+
+// ListStudioIDs returns every studio ID, for the ColdLeadScanner to iterate.
+func (r *Repo) ListStudioIDs(ctx context.Context) ([]uuid.UUID, error) {
+	rows, err := r.pool.Query(ctx, `SELECT id FROM studios`)
+	if err != nil {
+		return nil, fmt.Errorf("list studio ids: %w", err)
+	}
+	defer rows.Close()
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan studio id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// RecomputeColdLeads is the ColdLeadScanner's per-studio tick: it re-derives
+// which conversations currently qualify as cold under this studio's own
+// thresholds and persists that onto conversations.cold_reason — setting it
+// for newly-qualifying conversations (preserving cold_detected_at for ones
+// that were already cold) and clearing it for ones that no longer qualify
+// (member/dropped now, or the contact replied, or a re-engage/move already
+// cleared it and it hasn't gone stale again).
+func (r *Repo) RecomputeColdLeads(ctx context.Context, studioID uuid.UUID, neverRepliedDays, stalledDays int) error {
+	rows, err := r.pool.Query(ctx, `
+		SELECT c.id,
+		       CASE WHEN NOT EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.direction = 'inbound')
+		            THEN 'never_replied' ELSE 'stalled' END AS reason
+		FROM conversations c
+		LEFT JOIN leads l ON l.id = c.lead_id
+		WHERE c.studio_id = $1
+		  AND (l.status IS NULL OR l.status NOT IN ('member', 'dropped'))
+		  AND EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.direction = 'outbound')
+		  AND (
+		    (NOT EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.direction = 'inbound')
+		      AND (l.last_contacted_at IS NULL OR l.last_contacted_at < now() - make_interval(days => $2))
+		      AND c.last_message_at < now() - make_interval(days => $2))
+		    OR
+		    (EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.direction = 'inbound')
+		      AND c.last_message_at < now() - make_interval(days => $3))
+		  )
+	`, studioID, neverRepliedDays, stalledDays)
+	if err != nil {
+		return fmt.Errorf("recompute cold leads: find qualifying: %w", err)
+	}
+	var ids []uuid.UUID
+	var reasons []string
+	for rows.Next() {
+		var id uuid.UUID
+		var reason string
+		if err := rows.Scan(&id, &reason); err != nil {
+			rows.Close()
+			return fmt.Errorf("recompute cold leads: scan qualifying: %w", err)
+		}
+		ids = append(ids, id)
+		reasons = append(reasons, reason)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("recompute cold leads: iterate qualifying: %w", err)
+	}
+	rows.Close()
+
+	if len(ids) > 0 {
+		if _, err := r.pool.Exec(ctx, `
+			UPDATE conversations c
+			SET cold_reason = data.reason,
+			    cold_detected_at = COALESCE(c.cold_detected_at, now())
+			FROM (SELECT unnest($1::uuid[]) AS id, unnest($2::text[]) AS reason) data
+			WHERE c.id = data.id
+		`, ids, reasons); err != nil {
+			return fmt.Errorf("recompute cold leads: set cold: %w", err)
+		}
+	}
+
+	if _, err := r.pool.Exec(ctx, `
+		UPDATE conversations
+		SET cold_reason = NULL, cold_detected_at = NULL
+		WHERE studio_id = $1 AND cold_reason IS NOT NULL AND NOT (id = ANY($2::uuid[]))
+	`, studioID, ids); err != nil {
+		return fmt.Errorf("recompute cold leads: clear stale: %w", err)
+	}
+	return nil
+}
+
+// ClearColdStatus removes a single conversation's cold flag immediately —
+// used by re-engage and the Pipeline's cold-column drag-and-drop so the
+// change is reflected right away instead of waiting for the scanner's next
+// tick to notice the lead responded/moved.
+func (r *Repo) ClearColdStatus(ctx context.Context, studioID, conversationID uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE conversations SET cold_reason = NULL, cold_detected_at = NULL
+		WHERE id = $2 AND studio_id = $1
+	`, studioID, conversationID)
+	if err != nil {
+		return fmt.Errorf("clear cold status: %w", err)
+	}
+	return nil
+}
+
+// ColdLeadContext is what re-engaging a single cold conversation needs: the
+// contact's own name/status (from the lead if one exists, else the
+// WhatsApp contact identity), the studio's name/greeting template, and
+// which conversation to send into.
+type ColdLeadContext struct {
+	LeadID         *uuid.UUID
+	ContactName    string
+	LeadStatus     string
+	ConversationID uuid.UUID
+	StudioName     string
+	StudioGreeting string
+}
+
+// CreateLeadFromColdConversation mints a real lead for a conversation that
+// doesn't have one yet — backfilled WhatsApp Web history is deliberately
+// imported without a lead (see HandleInboundWAWebBackfill's no-phantom-leads
+// contract), so it never shows up anywhere in the Pipeline/Leads views. That
+// changes the moment a studio admin actively re-engages the contact: it's no
+// longer passive history, it's a real outreach target, so it needs a real
+// lead to be trackable like any other one. Mirrors the exact campaign-
+// attribution fallback HandleInboundWAWeb's own lead auto-create uses
+// (active campaign → any campaign → give up if the studio has none at all).
+func (r *Repo) CreateLeadFromColdConversation(ctx context.Context, studioID, conversationID uuid.UUID) (uuid.UUID, error) {
+	var contactName, contactValue string
+	if err := r.pool.QueryRow(ctx, `
+		SELECT COALESCE(ci.display_name, ''), ci.value
+		FROM conversations c
+		JOIN contact_identities ci ON ci.id = c.contact_identity_id
+		WHERE c.id = $1 AND c.studio_id = $2
+	`, conversationID, studioID).Scan(&contactName, &contactValue); err != nil {
+		return uuid.Nil, fmt.Errorf("load contact for cold conversation: %w", err)
+	}
+	cleanPhone := nonDigit.ReplaceAllString(contactValue, "")
+
+	var campaignID uuid.UUID
+	var fitnessPlans []string
+	err := r.pool.QueryRow(ctx, `
+		SELECT id, fitness_plans FROM campaigns
+		WHERE studio_id = $1 AND active = true
+		ORDER BY created_at DESC LIMIT 1
+	`, studioID).Scan(&campaignID, &fitnessPlans)
+	if err != nil {
+		_ = r.pool.QueryRow(ctx, `
+			SELECT id, fitness_plans FROM campaigns WHERE studio_id = $1 LIMIT 1
+		`, studioID).Scan(&campaignID, &fitnessPlans)
+	}
+	if campaignID == uuid.Nil {
+		return uuid.Nil, fmt.Errorf("studio has no campaign to attribute a new lead to")
+	}
+	defaultPlan := "Trial Class"
+	if len(fitnessPlans) > 0 {
+		defaultPlan = fitnessPlans[0]
+	}
+
+	leadName := cleanPhone
+	if contactName != "" {
+		leadName = contactName
+	}
+	leadID := uuid.New()
+	if _, err := r.pool.Exec(ctx, `
+		INSERT INTO leads (id, studio_id, campaign_id, name, first_name, last_name,
+		                   email, phone, fitness_plan, status, source,
+		                   auto_contact_stage, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,'', '',$6,$7,'contacted','whatsapp_web','awaiting_interest',now(),now())
+	`, leadID, studioID, campaignID, leadName, leadName, cleanPhone, defaultPlan); err != nil {
+		return uuid.Nil, fmt.Errorf("create lead from cold conversation: %w", err)
+	}
+	if _, err := r.pool.Exec(ctx, `UPDATE conversations SET lead_id = $2, updated_at = now() WHERE id = $1`, conversationID, leadID); err != nil {
+		return uuid.Nil, fmt.Errorf("link conversation to new lead: %w", err)
+	}
+	if _, err := r.pool.Exec(ctx, `UPDATE contact_identities SET lead_id = $2 WHERE value = $1`, contactValue, leadID); err != nil {
+		slog.Warn("re-engage: failed to link contact identity to new lead", "err", err, "lead_id", leadID)
+	}
+	return leadID, nil
+}
+
+// GetColdLeadContext loads what ReEngageColdLeads needs for one
+// conversation, or ErrNotFound if it doesn't belong to this studio.
+func (r *Repo) GetColdLeadContext(ctx context.Context, studioID, conversationID uuid.UUID) (*ColdLeadContext, error) {
+	var c ColdLeadContext
+	var leadID *uuid.UUID
+	err := r.pool.QueryRow(ctx, `
+		SELECT c.lead_id, COALESCE(l.name, ci.display_name, ''), COALESCE(l.status, ''), s.name, s.greeting_message
+		FROM conversations c
+		JOIN studios s ON s.id = c.studio_id
+		JOIN contact_identities ci ON ci.id = c.contact_identity_id
+		LEFT JOIN leads l ON l.id = c.lead_id
+		WHERE c.studio_id = $1 AND c.id = $2
+	`, studioID, conversationID).Scan(&leadID, &c.ContactName, &c.LeadStatus, &c.StudioName, &c.StudioGreeting)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get cold lead context: %w", err)
+	}
+	c.LeadID = leadID
+	c.ConversationID = conversationID
+	return &c, nil
+}
+
+// SetLeadStatus updates a lead's pipeline status directly — used when a
+// studio admin drags a Cold Leads card into another Pipeline column.
+// Mirrors the same permissive behavior the normal drag-and-drop already has
+// (PATCH /studios/{id}/leads/{leadId}) — no extra validation on which
+// transitions are allowed, since admins already rely on manually dragging a
+// lead straight to Member for off-platform payments.
+func (r *Repo) SetLeadStatus(ctx context.Context, studioID, leadID uuid.UUID, status string) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE leads SET status = $3, updated_at = now() WHERE id = $2 AND studio_id = $1
+	`, studioID, leadID, status)
+	if err != nil {
+		return fmt.Errorf("set lead status: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// MarkLeadContacted mirrors leads.Repo's method of the same name — kept as
+// a duplicate here rather than reaching into the leads package, matching
+// how the rest of this file already updates leads.* columns via raw SQL
+// (see processInboundLeadAutomation) instead of importing leads.Repo.
+func (r *Repo) MarkLeadContacted(ctx context.Context, leadID uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE leads
+		SET contact_attempts = contact_attempts + 1,
+			last_contacted_at = now(),
+			status = 'contacted',
+			auto_contact_stage = 'awaiting_interest',
+			updated_at = now()
+		WHERE id = $1
+	`, leadID)
+	if err != nil {
+		return fmt.Errorf("mark lead contacted: %w", err)
+	}
+	return nil
+}
+
 func (r *Repo) ListFollowupSteps(ctx context.Context, studioID uuid.UUID) ([]FollowupStep, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, step_order, delay_minutes, message_template

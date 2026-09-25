@@ -2,7 +2,7 @@
 
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { useState, useEffect } from 'react';
-import { Eye, EyeOff, Database, Building, Calendar, Cpu, Lock, Save, CheckCircle2, X, DollarSign, Upload, Loader2, Timer, Bot } from 'lucide-react';
+import { Eye, EyeOff, Database, Building, Calendar, Cpu, Lock, Save, CheckCircle2, X, DollarSign, Upload, Loader2, Timer, Bot, Snowflake } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { FieldError, FieldHint, Label } from '@/components/ui/Label';
@@ -18,6 +18,8 @@ import {
   saveWhatsAppSendSpacing,
   getWhatsAppDailyMessageLimit,
   saveWhatsAppDailyMessageLimit,
+  getColdLeadThresholds,
+  saveColdLeadThresholds,
   getInitialContactDelay,
   saveInitialContactDelay,
   getAIReplyDelay,
@@ -163,6 +165,10 @@ export function SettingsForm({
   const [dailyMessageLimit, setDailyMessageLimit] = useState(48);
   const [dailyMessageLimitSaving, setDailyMessageLimitSaving] = useState(false);
   const [dailyMessageLimitError, setDailyMessageLimitError] = useState<string | null>(null);
+  const [coldNeverRepliedDays, setColdNeverRepliedDays] = useState(1);
+  const [coldStalledDays, setColdStalledDays] = useState(7);
+  const [coldThresholdsSaving, setColdThresholdsSaving] = useState(false);
+  const [coldThresholdsError, setColdThresholdsError] = useState<string | null>(null);
   const [initialDelayValue, setInitialDelayValue] = useState(0);
   const [initialDelayUnit, setInitialDelayUnit] = useState<'minutes' | 'hours'>('minutes');
   const [aiReplyDelaySeconds, setAiReplyDelaySeconds] = useState(0);
@@ -230,6 +236,13 @@ export function SettingsForm({
       }
     })();
     void (async () => {
+      const res = await getColdLeadThresholds(studio.id);
+      if (res.ok && res.data) {
+        setColdNeverRepliedDays(res.data.coldNeverRepliedDays ?? 1);
+        setColdStalledDays(res.data.coldStalledDays ?? 7);
+      }
+    })();
+    void (async () => {
       const res = await getInitialContactDelay(studio.id);
       if (res.ok && res.data) {
         const minutes = res.data.initialContactDelayMinutes ?? 0;
@@ -283,6 +296,24 @@ export function SettingsForm({
       setDailyMessageLimitError(err.message || 'An error occurred.');
     } finally {
       setDailyMessageLimitSaving(false);
+    }
+  }
+
+  async function onSaveColdLeadThresholds(e: React.FormEvent) {
+    e.preventDefault();
+    setColdThresholdsError(null);
+    setColdThresholdsSaving(true);
+    try {
+      const res = await saveColdLeadThresholds(studio.id, coldNeverRepliedDays, coldStalledDays);
+      if (res.ok) {
+        showToast('Cold Leads thresholds saved successfully.');
+      } else {
+        setColdThresholdsError(res.error || 'Failed to save Cold Leads thresholds.');
+      }
+    } catch (err: any) {
+      setColdThresholdsError(err.message || 'An error occurred.');
+    } finally {
+      setColdThresholdsSaving(false);
     }
   }
 
@@ -1317,6 +1348,60 @@ export function SettingsForm({
                     className="bg-brand-500 hover:bg-brand-600 text-white text-xs font-black uppercase tracking-widest rounded h-10 px-6"
                   >
                     Save Limit
+                  </Button>
+                </div>
+              </form>
+            </div>
+
+            {/* Cold Leads thresholds — how many days of silence before a lead is flagged Cold */}
+            <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+              <div className="border-b border-zinc-200 px-6 py-4 dark:border-zinc-800 flex items-center gap-2">
+                <Snowflake className="h-4 w-4 text-brand-500" />
+                <h3 className="text-sm font-black text-zinc-950 dark:text-white">Cold Leads Thresholds</h3>
+              </div>
+              <form onSubmit={onSaveColdLeadThresholds} className="space-y-4 p-6">
+                <p className="text-[10px] text-zinc-400">
+                  Controls when a lead shows up in the Pipeline&apos;s Cold column. A background scan re-checks
+                  every studio roughly every 15 minutes, so a lead can take up to that long to appear or clear
+                  after crossing a threshold.
+                </p>
+
+                <div className="grid grid-cols-2 gap-4 max-w-md">
+                  <div>
+                    <Label htmlFor="coldNeverRepliedDays">Never Replied (days)</Label>
+                    <Input
+                      id="coldNeverRepliedDays"
+                      type="number"
+                      min={1}
+                      value={coldNeverRepliedDays}
+                      onChange={(e) => setColdNeverRepliedDays(Math.max(1, Number(e.target.value) || 1))}
+                    />
+                    <FieldHint>Contacted but never sent a single reply.</FieldHint>
+                  </div>
+                  <div>
+                    <Label htmlFor="coldStalledDays">Went Quiet (days)</Label>
+                    <Input
+                      id="coldStalledDays"
+                      type="number"
+                      min={1}
+                      value={coldStalledDays}
+                      onChange={(e) => setColdStalledDays(Math.max(1, Number(e.target.value) || 1))}
+                    />
+                    <FieldHint>Replied at least once, then no activity since.</FieldHint>
+                  </div>
+                </div>
+
+                {coldThresholdsError ? (
+                  <p className="text-xs font-black text-rose-500 uppercase tracking-wider">{coldThresholdsError}</p>
+                ) : null}
+
+                <div className="flex items-center justify-end border-t border-zinc-200 dark:border-zinc-800 pt-4">
+                  <Button
+                    type="submit"
+                    loading={coldThresholdsSaving}
+                    className="bg-brand-500 hover:bg-brand-600 text-white text-xs font-black uppercase tracking-widest rounded h-10 px-6"
+                  >
+                    Save Thresholds
                   </Button>
                 </div>
               </form>

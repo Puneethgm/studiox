@@ -1389,6 +1389,45 @@ func (r *Repo) GetAnalytics(ctx context.Context, studioID uuid.UUID, durationDay
 		byPlatform = append(byPlatform, pa)
 	}
 
+	// 9. Outbound messages sent (messages carries its own studio_id, like the
+	// response-time query above, so no join needed).
+	var outboundCond string
+	if studioID != uuid.Nil {
+		outboundCond = "AND m.studio_id = $1"
+	}
+	qOutbound := fmt.Sprintf(`SELECT COUNT(*) FROM messages m WHERE m.direction = 'outbound' %s %s`,
+		outboundCond, strings.ReplaceAll(dateFilter, "created_at", "m.created_at"))
+	var outboundMessagesSent int
+	if err := r.pool.QueryRow(ctx, qOutbound, args...).Scan(&outboundMessagesSent); err != nil {
+		return nil, fmt.Errorf("analytics outbound messages: %w", err)
+	}
+
+	// 10. Connection rate: of leads actually contacted (contact_attempts > 0),
+	// what fraction ever sent a single inbound reply.
+	qConnection := fmt.Sprintf(`
+		SELECT
+			COUNT(*) FILTER (WHERE l.contact_attempts > 0) AS contacted,
+			COUNT(*) FILTER (WHERE l.contact_attempts > 0 AND EXISTS (
+				SELECT 1 FROM messages m JOIN conversations c ON c.id = m.conversation_id
+				WHERE c.lead_id = l.id AND m.direction = 'inbound'
+			)) AS connected
+		FROM leads l
+		%s %s`, cond, dateFilter)
+	var contactedLeads, connectedLeads int
+	if err := r.pool.QueryRow(ctx, qConnection, args...).Scan(&contactedLeads, &connectedLeads); err != nil {
+		return nil, fmt.Errorf("analytics connection rate: %w", err)
+	}
+	connectionRate := 0.0
+	if contactedLeads > 0 {
+		connectionRate = float64(connectedLeads) / float64(contactedLeads) * 100
+	}
+
+	purchasedLeads := trialLeads + memberLeads
+	conversionRate := 0.0
+	if totalLeads > 0 {
+		conversionRate = float64(purchasedLeads) / float64(totalLeads) * 100
+	}
+
 	trialToMemberRate := 0.0
 	if (trialLeads + memberLeads) > 0 {
 		trialToMemberRate = float64(memberLeads) / float64(trialLeads+memberLeads) * 100
@@ -1419,9 +1458,103 @@ func (r *Repo) GetAnalytics(ctx context.Context, studioID uuid.UUID, durationDay
 		AvgResponseTimeLapseSecs:   avgResponseTime,
 		LeadToTrialTimeLapseSecs:   leadToTrialTime,
 		TrialToMemberTimeLapseSecs: trialToMemberTime,
+		OutboundMessagesSent:       outboundMessagesSent,
+		PurchasedLeads:             purchasedLeads,
+		ConnectionRate:             connectionRate,
+		ConversionRate:             conversionRate,
 		ByCampaign:                 byCampaign,
 		ByPlatform:                 byPlatform,
 	}, nil
+}
+
+// GetDailyAnalytics buckets outbound messages / new connections / conversions
+// by day for the Detailed Analytics trend chart, using the same duration/
+// startDate/endDate window as GetAnalytics. An unbounded "all-time" request
+// (durationDays == 0, no explicit range) is capped at the last 90 days —
+// a multi-year daily chart isn't legible anyway, and the period selector
+// already covers 1 year for the summary cards.
+func (r *Repo) GetDailyAnalytics(ctx context.Context, studioID uuid.UUID, durationDays int, startDate, endDate string) ([]DailyAnalyticsPoint, error) {
+	var sinceExpr, untilExpr string
+	if startDate != "" && endDate != "" {
+		sinceExpr = fmt.Sprintf("'%s'::date", sanitizeDate(startDate))
+		untilExpr = fmt.Sprintf("'%s'::date", sanitizeDate(endDate))
+	} else if durationDays > 0 {
+		sinceExpr = fmt.Sprintf("CURRENT_DATE - INTERVAL '%d days'", durationDays)
+		untilExpr = "CURRENT_DATE"
+	} else {
+		sinceExpr = "CURRENT_DATE - INTERVAL '90 days'"
+		untilExpr = "CURRENT_DATE"
+	}
+
+	var args []any
+	var leadsCond, msgCond string
+	if studioID != uuid.Nil {
+		args = append(args, studioID)
+		leadsCond = "AND l.studio_id = $1"
+		msgCond = "AND m.studio_id = $1"
+	}
+
+	q := fmt.Sprintf(`
+		WITH days AS (
+			SELECT generate_series(%s, %s, interval '1 day')::date AS day
+		),
+		outbound AS (
+			SELECT m.created_at::date AS day, COUNT(*) AS cnt
+			FROM messages m
+			WHERE m.direction = 'outbound' %s AND m.created_at::date BETWEEN %s AND %s
+			GROUP BY m.created_at::date
+		),
+		first_inbound AS (
+			SELECT c.lead_id, MIN(m.created_at) AS first_reply_at
+			FROM messages m
+			JOIN conversations c ON c.id = m.conversation_id
+			WHERE m.direction = 'inbound' AND c.lead_id IS NOT NULL %s
+			GROUP BY c.lead_id
+		),
+		connected AS (
+			SELECT first_reply_at::date AS day, COUNT(*) AS cnt
+			FROM first_inbound
+			WHERE first_reply_at::date BETWEEN %s AND %s
+			GROUP BY first_reply_at::date
+		),
+		converted AS (
+			SELECT l.updated_at::date AS day, COUNT(*) AS cnt
+			FROM leads l
+			WHERE l.status IN ('trial_booked', 'member') %s AND l.updated_at::date BETWEEN %s AND %s
+			GROUP BY l.updated_at::date
+		)
+		SELECT days.day, COALESCE(outbound.cnt, 0), COALESCE(connected.cnt, 0), COALESCE(converted.cnt, 0)
+		FROM days
+		LEFT JOIN outbound ON outbound.day = days.day
+		LEFT JOIN connected ON connected.day = days.day
+		LEFT JOIN converted ON converted.day = days.day
+		ORDER BY days.day ASC
+	`, sinceExpr, untilExpr,
+		msgCond, sinceExpr, untilExpr,
+		// messages carries its own studio_id (see GetAnalytics' response-time
+		// query), so the same m.studio_id condition applies here too even
+		// though this CTE also joins conversations.
+		msgCond,
+		sinceExpr, untilExpr,
+		leadsCond, sinceExpr, untilExpr)
+
+	rows, err := r.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("daily analytics: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]DailyAnalyticsPoint, 0)
+	for rows.Next() {
+		var day time.Time
+		var p DailyAnalyticsPoint
+		if err := rows.Scan(&day, &p.OutboundMessagesSent, &p.ConnectedLeads, &p.ConvertedLeads); err != nil {
+			return nil, fmt.Errorf("scan daily analytics: %w", err)
+		}
+		p.Date = day.Format("2006-01-02")
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }
 
 // FindLeadByEmail looks up the most-recent lead for a given email within a studio.

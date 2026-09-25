@@ -31,6 +31,7 @@ import {
   Network,
   MessageSquareText,
   Link2,
+  TrendingUp,
 } from 'lucide-react';
 import { useEffect, useState, useRef, type CSSProperties, type ReactNode } from 'react';
 import { Button } from '@/components/ui/Button';
@@ -82,6 +83,12 @@ function navItemsFor(me: Me, currentPath: string, onOpenSettings: () => void): N
         label: 'Studios',
         icon: <Building2 className="h-[18px] w-[18px]" />,
         match: (p) => p === '/admin' || p.startsWith('/admin/studios'),
+      },
+      {
+        href: '/admin/analytics',
+        label: 'Analytics',
+        icon: <TrendingUp className="h-[18px] w-[18px]" />,
+        match: (p) => p.startsWith('/admin/analytics'),
       },
       {
         href: '/admin/payments',

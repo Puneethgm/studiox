@@ -1,17 +1,32 @@
 import { serverFetch } from '@/lib/auth';
 import type { Campaign, Lead, Studio, LeadStatus } from '@/lib/types';
 import DashboardClient from '../studios/[studioId]/DashboardClient';
+import { StudioSelector } from './StudioSelector';
 
 interface LeadStats {
   total: number;
   byStatus: Record<LeadStatus, number>;
 }
 
-export default async function GlobalAnalyticsPage() {
-  const [campResp, leadsResp, stats] = await Promise.all([
-    serverFetch<{ campaigns: Campaign[] }>(`/api/v1/admin/campaigns`),
-    serverFetch<{ leads: Lead[]; total: number }>(`/api/v1/admin/leads?limit=5`),
-    serverFetch<LeadStats>(`/api/v1/admin/leads/stats`),
+export default async function GlobalAnalyticsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ studioId?: string }>;
+}) {
+  const { studioId } = await searchParams;
+
+  const [{ studios }, campResp, leadsResp, stats, studio] = await Promise.all([
+    serverFetch<{ studios: Studio[] }>(`/api/v1/admin/studios`),
+    studioId
+      ? serverFetch<{ campaigns: Campaign[] }>(`/api/v1/studios/${studioId}/campaigns`)
+      : serverFetch<{ campaigns: Campaign[] }>(`/api/v1/admin/campaigns`),
+    studioId
+      ? serverFetch<{ leads: Lead[]; total: number }>(`/api/v1/studios/${studioId}/leads?limit=5`)
+      : serverFetch<{ leads: Lead[]; total: number }>(`/api/v1/admin/leads?limit=5`),
+    studioId
+      ? serverFetch<LeadStats>(`/api/v1/studios/${studioId}/leads/stats`)
+      : serverFetch<LeadStats>(`/api/v1/admin/leads/stats`),
+    studioId ? serverFetch<Studio>(`/api/v1/admin/studios/${studioId}`) : Promise.resolve(null),
   ]);
 
   const mockGlobalStudio: Studio = {
@@ -42,13 +57,15 @@ export default async function GlobalAnalyticsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold tracking-tight text-white">Global Platform Analytics</h1>
+        <StudioSelector studios={studios} selectedId={studioId ?? ''} />
       </div>
       <DashboardClient
-        studio={mockGlobalStudio}
+        studio={studio ?? mockGlobalStudio}
         campaigns={campResp.campaigns}
         initialLeads={leadsResp.leads}
         initialLeadsTotal={leadsResp.total}
         initialStats={mappedStats}
+        defaultTab="analytics"
       />
     </div>
   );

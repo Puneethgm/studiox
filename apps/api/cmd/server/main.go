@@ -182,7 +182,6 @@ func main() {
 	msgRepo := messaging.NewRepo(pool, cipher)
 	msgBus := messaging.NewInProcBus()
 	msgSvc := messaging.NewService(msgRepo, msgBus, cfg.PublicFormBaseURL, cfg.PublicAPIBaseURL)
-	msgHandler := messaging.NewHandler(msgSvc, msgBus)
 
 	// Wire DND job-cancellation callback into leads, keeping the import
 	// direction one-way (leads doesn't import messaging).
@@ -197,6 +196,9 @@ func main() {
 	msgWorker := messaging.NewOutboundWorker(msgRepo, msgBus, whatsappClient, messengerClient, instagramClient, twilioClient, xClient, telegramClient,
 		log.With("component", "messaging_worker"))
 	go msgWorker.Run(rootCtx)
+
+	coldLeadScanner := messaging.NewColdLeadScanner(msgRepo, log.With("component", "cold_lead_scanner"))
+	go coldLeadScanner.Run(rootCtx)
 
 	// Auto-contact worker: picks up lead_autocontact outbox items
 	autoWorker := messaging.NewAutoContactWorker(leadsRepo, msgRepo, msgSvc, studiosRepo, log.With("component", "autocontact_worker"))
@@ -231,6 +233,7 @@ func main() {
 		log.Error("init claude client", "err", err)
 	}
 	log.Info("claude config", "enabled", claudeClient != nil)
+	msgHandler := messaging.NewHandler(msgSvc, msgBus, studiosRepo, llmRepo, claudeClient, cfg.Claude.APIURL)
 	aiWorker := messaging.NewAIWorker(msgBus, msgRepo, msgSvc, studiosRepo, leadsRepo, dtSvc, claudeClient, cfg.Claude.APIURL, embeddingsClient, llmRepo, log.With("component", "ai_worker"))
 	go aiWorker.Run(rootCtx)
 

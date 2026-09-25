@@ -53,9 +53,24 @@ func timezoneForPhone(raw string) *time.Location {
 	if raw == "" {
 		return nil
 	}
-	// WhatsApp Cloud API's wa_id (and most stored ContactValues here) are
-	// digits-only E.164 with no leading "+" — libphonenumber requires it for
-	// region-less parsing.
+	// WhatsApp Web's contact_identities.value is the raw JID (e.g.
+	// "917483974512@c.us"), not a clean phone number — phonenumbers.Parse
+	// rejects the "@c.us" suffix outright (no tolerance for trailing
+	// non-digit characters), which silently failed this lookup for every
+	// WhatsApp Web contact, always falling through to the studio's
+	// timezone/UTC default regardless of the real recipient's location.
+	// @lid/@g.us are WhatsApp's own internal identifiers, not phone numbers
+	// at all — those must return nil rather than being parsed as one, which
+	// would confidently resolve to a bogus country/timezone.
+	if strings.HasSuffix(raw, "@lid") || strings.HasSuffix(raw, "@g.us") {
+		return nil
+	}
+	if idx := strings.IndexByte(raw, '@'); idx != -1 {
+		raw = raw[:idx]
+	}
+	// WhatsApp Cloud API's wa_id (and a bare WhatsApp Web number once the
+	// JID suffix above is stripped) are digits-only E.164 with no leading
+	// "+" — libphonenumber requires it for region-less parsing.
 	if !strings.HasPrefix(raw, "+") {
 		raw = "+" + raw
 	}

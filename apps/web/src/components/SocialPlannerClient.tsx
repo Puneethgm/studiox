@@ -165,8 +165,9 @@ export default function SocialPlannerClient({ studioId, studio, isSuperAdmin }: 
       const res = await api<{ text?: string }>(`/api/v1/studios/${studioId === 'global' ? '759b1ee2-5a68-4a5c-8fa0-5b2a64d5cc35' : studioId}/messaging/ai/generate`, {
         method: 'POST',
         json: {
-          prompt: `Create a professional marketing social media post copy for platform: ${activePlatform}. Campaign Context: ${activeCampaign || 'General Promo'}. Main topic / message details: ${quickAiPrompt}. IMPORTANT: Do not include any template variables, placeholders, or brackets like {{contact.first_name}}, {{studio.name}}, or similar. Do not include automation message formatting. This is for direct social media posting on ${activePlatform}. Format with appropriate paragraph spacing and emojis.`,
-          type: 'social'
+          prompt: `Campaign Context: ${activeCampaign || 'General Promo'}. Main topic / message details: ${quickAiPrompt}. IMPORTANT: Do not include any template variables, placeholders, or brackets like {{contact.first_name}}, {{studio.name}}, or similar. Do not include automation message formatting. Format with appropriate paragraph spacing and emojis.`,
+          type: 'social',
+          platform: activePlatform,
         }
       });
 
@@ -287,17 +288,19 @@ export default function SocialPlannerClient({ studioId, studio, isSuperAdmin }: 
     setGenerating(true);
 
     try {
-      const res = await api<{ text?: string }>(`/api/v1/studios/${studioId === 'global' ? '759b1ee2-5a68-4a5c-8fa0-5b2a64d5cc35' : studioId}/messaging/ai/generate`, {
+      const res = await api<{ text?: string; hashtags?: string[] }>(`/api/v1/studios/${studioId === 'global' ? '759b1ee2-5a68-4a5c-8fa0-5b2a64d5cc35' : studioId}/messaging/ai/generate`, {
         method: 'POST',
         json: {
-          prompt: `Create a professional and engaging marketing social media post copy for platform: ${platform}. Campaign Context: ${campaign}. Main topic / message details: ${prompt}.${mediaName ? ` An attachment named "${mediaName}" is included with this post.` : ''} IMPORTANT: Do not include any template variables, placeholders, or brackets like {{contact.first_name}}, {{studio.name}}, or similar. Do not include automation message formatting. This is for direct social media posting. Format with appropriate paragraph spacing and emojis. Write for ${platform === 'Facebook' ? 'Facebook feed' : platform === 'Instagram' ? 'Instagram caption' : 'social media'}.`
+          prompt: `Campaign Context: ${campaign}. Main topic / message details: ${prompt}.${mediaName ? ` An attachment named "${mediaName}" is included with this post.` : ''} IMPORTANT: Do not include any template variables, placeholders, or brackets like {{contact.first_name}}, {{studio.name}}, or similar. Do not include automation message formatting. Format with appropriate paragraph spacing and emojis.`,
+          type: 'social',
+          platform,
         }
       });
 
       if (res?.text) {
         setAiOutput({
           text: res.text,
-          hashtags: ['#fitness', '#marketing', platform.toLowerCase().replace(' ', '')],
+          hashtags: res.hashtags && res.hashtags.length > 0 ? res.hashtags : ['#fitness', `#${platform.replace(' ', '')}`],
           headline: `Join ${campaign || 'our fitness journey'}`,
           cta: 'Book your trial now'
         });
@@ -326,45 +329,51 @@ export default function SocialPlannerClient({ studioId, studio, isSuperAdmin }: 
     setShowConfirmModal(true);
   };
 
-  const executeSchedulePost = async () => {
+  const executeSchedulePost = async (status: 'draft' | 'scheduled' = 'scheduled') => {
     setShowConfirmModal(false);
     try {
       const targetStudioId = studioId === 'global' ? '759b1ee2-5a68-4a5c-8fa0-5b2a64d5cc35' : studioId;
       const selectedCampaign = campaigns.find(c => c.name === newPostCampaign);
       const campaignShareUrl = selectedCampaign?.shareUrl || '';
+      // A draft has no schedule yet — fall back to "now" as a placeholder so
+      // the backend's non-nullable scheduledAt column stays populated; it's
+      // ignored everywhere a post is still status:'draft'.
+      const scheduledAtIso = newPostDate && newPostTime
+        ? new Date(`${newPostDate}T${newPostTime}`).toISOString()
+        : new Date().toISOString();
+
+      const payload = {
+        campaign: newPostCampaign || 'General Promo',
+        campaignShareUrl: campaignShareUrl,
+        platform: newPostPlatform,
+        copy: newPostContent,
+        mediaUrl: mediaUrl,
+        status,
+        scheduledAt: scheduledAtIso,
+      };
 
       if (editingPostId) {
-        // Update existing post
         await api(`/api/v1/studios/${targetStudioId}/social-posts/${editingPostId}`, {
           method: 'PATCH',
-          json: {
-            campaign: newPostCampaign || 'General Promo',
-            campaignShareUrl: campaignShareUrl,
-            platform: newPostPlatform,
-            copy: newPostContent,
-            mediaUrl: mediaUrl,
-            status: 'scheduled',
-            scheduledAt: new Date(`${newPostDate}T${newPostTime}`).toISOString(),
-          }
+          json: payload,
         });
         setNotificationStatus('success');
-        setNotificationMessage(`Post updated successfully for ${new Date(`${newPostDate}T${newPostTime}`).toLocaleString()} on ${newPostPlatform}!`);
+        setNotificationMessage(
+          status === 'draft'
+            ? 'Draft saved. Find it in the queue below to schedule later.'
+            : `Post updated successfully for ${new Date(scheduledAtIso).toLocaleString()} on ${newPostPlatform}!`
+        );
       } else {
-        // Create new post
         await api(`/api/v1/studios/${targetStudioId}/social-posts`, {
           method: 'POST',
-          json: {
-            campaign: newPostCampaign || 'General Promo',
-            campaignShareUrl: campaignShareUrl,
-            platform: newPostPlatform,
-            copy: newPostContent,
-            mediaUrl: mediaUrl,
-            status: 'scheduled',
-            scheduledAt: new Date(`${newPostDate}T${newPostTime}`).toISOString(),
-          }
+          json: payload,
         });
         setNotificationStatus('success');
-        setNotificationMessage(`Your campaign post has been successfully scheduled for ${new Date(`${newPostDate}T${newPostTime}`).toLocaleString()} on ${newPostPlatform}!`);
+        setNotificationMessage(
+          status === 'draft'
+            ? 'Draft saved. Find it in the queue below to schedule later.'
+            : `Your campaign post has been successfully scheduled for ${new Date(scheduledAtIso).toLocaleString()} on ${newPostPlatform}!`
+        );
       }
 
       setNewPostContent('');
@@ -376,11 +385,16 @@ export default function SocialPlannerClient({ studioId, studio, isSuperAdmin }: 
       setShowNotificationModal(true);
       setActiveTab('scheduler');
     } catch (err) {
-      console.error('Failed to schedule post:', err);
+      console.error('Failed to save post:', err);
       setNotificationStatus('error');
       setNotificationMessage('Failed to save post. Please verify backend service and connection configuration.');
       setShowNotificationModal(true);
     }
+  };
+
+  const handleSaveDraft = () => {
+    if (!newPostContent) return;
+    void executeSchedulePost('draft');
   };
 
   const handleEditPost = (post: SocialPost) => {
@@ -856,13 +870,24 @@ export default function SocialPlannerClient({ studioId, studio, isSuperAdmin }: 
                   )}
                 </div>
 
-                <Button
-                  type="submit"
-                  className={`w-full h-11 text-white shadow-xl transition-all font-black uppercase tracking-widest text-[11px] rounded-2xl mt-4 ${editingPostId ? 'bg-gradient-to-r from-blue-500 to-cyan-600 hover:from-blue-600 hover:to-cyan-700 shadow-blue-500/10 hover:shadow-blue-500/20' : 'bg-gradient-to-r from-brand-500 to-indigo-600 hover:from-brand-600 hover:to-indigo-700 shadow-brand-500/10 hover:shadow-brand-500/20'}`}
-                  disabled={uploadingFile}
-                >
-                  {editingPostId ? 'Update Post' : 'Schedule Post'}
-                </Button>
+                <div className="flex gap-2 mt-4">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={handleSaveDraft}
+                    disabled={uploadingFile || !newPostContent}
+                    className="flex-1 h-11 text-[11px] font-black uppercase tracking-widest rounded-2xl border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-neutral-800 transition-colors"
+                  >
+                    Save as Draft
+                  </Button>
+                  <Button
+                    type="submit"
+                    className={`flex-1 h-11 text-white shadow-xl transition-all font-black uppercase tracking-widest text-[11px] rounded-2xl ${editingPostId ? 'bg-gradient-to-r from-blue-500 to-cyan-600 hover:from-blue-600 hover:to-cyan-700 shadow-blue-500/10 hover:shadow-blue-500/20' : 'bg-gradient-to-r from-brand-500 to-indigo-600 hover:from-brand-600 hover:to-indigo-700 shadow-brand-500/10 hover:shadow-brand-500/20'}`}
+                    disabled={uploadingFile}
+                  >
+                    {editingPostId ? 'Update Post' : 'Schedule Post'}
+                  </Button>
+                </div>
               </form>
             </Card>
           </div>
@@ -918,7 +943,7 @@ export default function SocialPlannerClient({ studioId, studio, isSuperAdmin }: 
                                   ? 'published (mock)'
                                   : post.status}
                               </Badge>
-                              {post.status === 'scheduled' && (
+                              {(post.status === 'scheduled' || post.status === 'draft') && (
                                 <button
                                   onClick={() => handleEditPost(post)}
                                   className="p-1.5 text-zinc-400 hover:text-brand-500 hover:bg-brand-500/10 rounded-lg transition-all"
@@ -1512,7 +1537,7 @@ export default function SocialPlannerClient({ studioId, studio, isSuperAdmin }: 
               </Button>
               <Button
                 type="button"
-                onClick={executeSchedulePost}
+                onClick={() => executeSchedulePost('scheduled')}
                 disabled={!newPostDate || !newPostTime}
                 className="flex-1 text-[10px] font-black uppercase tracking-wider py-2.5 rounded-xl bg-gradient-to-r from-brand-500 to-indigo-600 text-white shadow-xl shadow-brand-500/10 hover:shadow-brand-500/20 transition-all animate-pulse"
               >

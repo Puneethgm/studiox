@@ -1,7 +1,7 @@
 import { Inbox } from 'lucide-react';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { serverFetch } from '@/lib/auth';
-import type { Lead, LeadStatus } from '@/lib/types';
+import type { ColdLead, Lead, LeadStatus } from '@/lib/types';
 import { LEAD_STATUSES } from '@/lib/types';
 import { AutoRefresh } from '@/components/AutoRefresh';
 import { PipelineBoard } from './PipelineBoard';
@@ -34,14 +34,16 @@ export default async function PipelinePage({
 }) {
   const { studioId } = await params;
 
-  const [stats, ...buckets] = await Promise.all([
+  const [stats, coldRes, ...buckets] = await Promise.all([
     serverFetch<LeadStats>(`/api/v1/studios/${studioId}/leads/stats`),
+    serverFetch<{ leads: ColdLead[] }>(`/api/v1/studios/${studioId}/messaging/leads/cold`),
     ...LEAD_STATUSES.map((s) =>
       serverFetch<ListResp>(
         `/api/v1/studios/${studioId}/leads?status=${s}&limit=${COLUMN_CAP}`,
       ),
     ),
   ]);
+  const coldLeads = coldRes.leads ?? [];
 
   const byStatus = LEAD_STATUSES.reduce(
     (acc, status, i) => {
@@ -120,6 +122,7 @@ export default async function PipelinePage({
           initialByStatus={byStatus}
           counts={stats.byStatus}
           overflowCounts={overflowCounts}
+          coldLeads={coldLeads}
         />
       )}
     </div>

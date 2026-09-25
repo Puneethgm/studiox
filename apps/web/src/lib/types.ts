@@ -78,6 +78,20 @@ export interface Plan {
   updatedAt: string;
 }
 
+/** A conversation that's gone dead — never replied, or replied once then stalled. May or may not have a lead attached (backfilled WhatsApp Web history has a conversation but no lead). */
+export interface ColdLead {
+  conversationId: string;
+  leadId: string | null;
+  name: string;
+  phone: string;
+  status: string;
+  contactAttempts: number;
+  lastContactedAt: string | null;
+  lastMessageAt: string | null;
+  /** 'never_replied' | 'stalled' */
+  reason: string;
+}
+
 /** A lead's real Stripe subscription record — who paid what, on what cadence, and when the next charge lands. */
 export interface MemberSubscription {
   id: string;
@@ -96,6 +110,8 @@ export interface MemberSubscription {
   nextRenewalAt: string | null;
   canceledAt: string | null;
   createdAt: string;
+  stripeSubscriptionId: string;
+  stripeCustomerId: string;
 }
 
 export interface Campaign {
@@ -423,7 +439,18 @@ export interface AnalyticsSummary {
   avgResponseTimeLapseSecs: number;
   leadToTrialTimeLapseSecs: number;
   trialToMemberTimeLapseSecs: number;
+  outboundMessagesSent: number;
+  purchasedLeads: number;
+  connectionRate: number;
+  conversionRate: number;
   byCampaign: CampaignAnalytics[];
   byPlatform: PlatformAnalytics[];
+}
+
+export interface DailyAnalyticsPoint {
+  date: string;
+  outboundMessagesSent: number;
+  connectedLeads: number;
+  convertedLeads: number;
 }
 

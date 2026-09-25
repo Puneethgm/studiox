@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   DndContext,
   DragOverlay,
@@ -13,13 +14,14 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
-import { ArrowRight, Inbox, MessageSquareText, AlertCircle } from 'lucide-react';
+import { ArrowRight, Inbox, MessageSquareText, AlertCircle, Snowflake, Loader2, CheckCircle2 } from 'lucide-react';
 import { brandInitials } from '@/lib/color';
 import { cn } from '@/lib/cn';
 import { relativeTime } from '@/lib/datetime';
-import type { Lead, LeadStatus } from '@/lib/types';
+import { api } from '@/lib/api';
+import type { ColdLead, Lead, LeadStatus } from '@/lib/types';
 import { LEAD_STATUSES, LEAD_STATUS_LABELS } from '@/lib/types';
-import { updatePipelineStatus } from '../leads/actions';
+import { updatePipelineStatus, movePipelineColdLead } from '../leads/actions';
 
 // Per-status visual config
 const COLUMN_CONFIG: Record<LeadStatus, {
@@ -107,16 +109,39 @@ export function PipelineBoard({
   initialByStatus,
   counts,
   overflowCounts,
+  coldLeads: initialColdLeads,
 }: {
   studioId: string;
   initialByStatus: Record<LeadStatus, Lead[]>;
   counts: Record<LeadStatus, number>;
   overflowCounts: Record<LeadStatus, number>;
+  coldLeads: ColdLead[];
 }) {
   const [byStatus, setByStatus] = useState(initialByStatus);
+  const [coldLeads, setColdLeads] = useState(initialColdLeads);
+
+  // router.refresh() re-renders this already-mounted client component with
+  // fresh server props — it does NOT remount it, so useState's initializer
+  // above only ever runs once. Without this sync, every AutoRefresh tick and
+  // every post-drag router.refresh() silently no-ops: the board keeps
+  // showing whatever local optimistic edits happened, never the real
+  // server-fetched state (e.g. Cold count staying frozen after a move).
+  useEffect(() => {
+    setByStatus(initialByStatus);
+  }, [initialByStatus]);
+
+  useEffect(() => {
+    setColdLeads(initialColdLeads);
+  }, [initialColdLeads]);
+
   const [activeLead, setActiveLead] = useState<Lead | null>(null);
+  const [activeColdLead, setActiveColdLead] = useState<ColdLead | null>(null);
   const [pending, setPending] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  // Paused is rarely used day-to-day — when nothing's actually paused, that
+  // column slot shows Cold Leads instead of an empty "no leads yet" column.
+  const showPausedColumn = (counts.paused ?? 0) > 0;
+  const router = useRouter();
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -125,13 +150,37 @@ export function PipelineBoard({
   function handleDragStart(event: DragStartEvent) {
     setError(null);
     const lead = event.active.data.current?.lead as Lead | undefined;
+    const coldLead = event.active.data.current?.coldLead as ColdLead | undefined;
     setActiveLead(lead ?? null);
+    setActiveColdLead(coldLead ?? null);
   }
 
   async function handleDragEnd(event: DragEndEvent) {
     const lead = event.active.data.current?.lead as Lead | undefined;
+    const coldLead = event.active.data.current?.coldLead as ColdLead | undefined;
     const targetStatus = event.over?.id as LeadStatus | undefined;
     setActiveLead(null);
+    setActiveColdLead(null);
+
+    if (coldLead) {
+      if (!targetStatus) return;
+      // Optimistic remove from the Cold column immediately. The lead being
+      // created server-side means we don't have a full Lead object to drop
+      // straight into the target column (email/fitnessPlan/createdAt/etc.
+      // aren't known client-side) — router.refresh() re-runs the page's
+      // server fetch right after the move completes instead, landing it in
+      // the target column within one round trip rather than waiting up to
+      // 4s for AutoRefresh's next tick.
+      setColdLeads((prev) => prev.filter((l) => l.conversationId !== coldLead.conversationId));
+      const res = await movePipelineColdLead(studioId, coldLead.conversationId, targetStatus);
+      if (!res.ok) {
+        setColdLeads((prev) => [coldLead, ...prev]);
+        setError(`Couldn't move ${coldLead.name || 'contact'}: ${res.error}`);
+        return;
+      }
+      router.refresh();
+      return;
+    }
 
     if (!lead || !targetStatus || targetStatus === lead.status) {
       return;
@@ -177,17 +226,21 @@ export function PipelineBoard({
       )}
       <div className="flex-1 overflow-x-auto pb-2">
         <div className="grid h-full min-w-[1300px] grid-cols-6 gap-4 xl:min-w-0">
-          {LEAD_STATUSES.map((status) => (
-            <PipelineColumn
-              key={status}
-              status={status}
-              count={counts[status] ?? 0}
-              leads={byStatus[status]}
-              overflow={overflowCounts[status] ?? 0}
-              studioId={studioId}
-              pending={pending}
-            />
-          ))}
+          {LEAD_STATUSES.map((status) =>
+            status === 'paused' && !showPausedColumn ? (
+              <ColdColumn key="cold" studioId={studioId} leads={coldLeads} onRemove={(id) => setColdLeads((prev) => prev.filter((l) => l.conversationId !== id))} />
+            ) : (
+              <PipelineColumn
+                key={status}
+                status={status}
+                count={counts[status] ?? 0}
+                leads={byStatus[status]}
+                overflow={overflowCounts[status] ?? 0}
+                studioId={studioId}
+                pending={pending}
+              />
+            ),
+          )}
         </div>
       </div>
       <DragOverlay>
@@ -197,6 +250,8 @@ export function PipelineBoard({
             cfg={COLUMN_CONFIG[activeLead.status]}
             dragging
           />
+        ) : activeColdLead ? (
+          <ColdLeadCardVisual lead={activeColdLead} dragging />
         ) : null}
       </DragOverlay>
     </DndContext>
@@ -309,6 +364,215 @@ function PipelineColumn({
         )}
       </div>
     </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────
+// Cold Leads column — takes the Paused slot when nothing's actually
+// paused. Conversations that have gone dead (never replied, or replied
+// once then stalled 7+ days with no progress), including WhatsApp Web
+// history backfilled before this platform was ever connected — those have
+// no lead at all, so this list is keyed by conversationId, not lead id.
+// ─────────────────────────────────────────────────────
+
+const COLD_COLOR = '#f59e0b';
+
+function ColdColumn({
+  studioId, leads, onRemove,
+}: {
+  studioId: string;
+  leads: ColdLead[];
+  onRemove: (conversationId: string) => void;
+}) {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [sending, setSending] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+
+  function toggleOne(conversationId: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(conversationId)) next.delete(conversationId);
+      else next.add(conversationId);
+      return next;
+    });
+  }
+
+  async function reEngage() {
+    if (selected.size === 0) return;
+    setSending(true);
+    setResult(null);
+    try {
+      const res = await api<{ sent: number }>(`/api/v1/studios/${studioId}/messaging/leads/cold/re-engage`, {
+        method: 'POST',
+        json: { conversationIds: Array.from(selected) },
+      });
+      selected.forEach((id) => onRemove(id));
+      setSelected(new Set());
+      setResult(`Sent to ${res.sent}.`);
+    } catch (e) {
+      setResult(e instanceof Error ? e.message : 'Failed to re-engage');
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <section
+      className="flex h-full flex-col overflow-hidden rounded-[20px] backdrop-blur-2xl border bg-amber-500/5 dark:bg-amber-950/20 border-amber-500/20 dark:border-amber-500/10"
+      style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.10), 0 4px 20px rgba(0,0,0,0.04)' }}
+      aria-label="Cold Leads"
+    >
+      <div className="h-1 w-full shrink-0" style={{ background: `linear-gradient(90deg, ${COLD_COLOR} 0%, ${COLD_COLOR}70 100%)` }} />
+
+      <header className="flex shrink-0 items-center justify-between gap-2 px-4 py-3">
+        <div className="flex items-center gap-2">
+          <Snowflake className="h-3.5 w-3.5 text-amber-500" />
+          <h3 className="text-xs font-black uppercase tracking-[0.14em] text-amber-600 dark:text-amber-400">Cold</h3>
+        </div>
+        <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-black tabular-nums text-amber-600 dark:text-amber-400">
+          {leads.length}
+        </span>
+      </header>
+
+      {leads.length > 0 && (
+        <div className="flex shrink-0 items-center justify-between gap-2 px-2.5 pb-2">
+          <button
+            type="button"
+            onClick={() => setSelected(selected.size === leads.length ? new Set() : new Set(leads.map((l) => l.conversationId)))}
+            className="text-[10px] font-bold text-amber-600 hover:text-amber-700 dark:text-amber-400"
+          >
+            {selected.size === leads.length ? 'Deselect All' : 'Select All'}
+          </button>
+          <button
+            type="button"
+            onClick={reEngage}
+            disabled={selected.size === 0 || sending}
+            className="flex items-center gap-1 rounded-full bg-amber-500 px-2.5 py-1 text-[10px] font-bold text-white disabled:opacity-50"
+          >
+            {sending && <Loader2 className="h-3 w-3 animate-spin" />}
+            Re-engage {selected.size > 0 ? `(${selected.size})` : ''}
+          </button>
+        </div>
+      )}
+
+      <div className="flex flex-1 flex-col gap-1.5 overflow-y-auto no-scrollbar px-2.5 pb-3">
+        {leads.length === 0 ? (
+          <div className="flex flex-1 items-center justify-center rounded-xl border-2 border-dashed border-amber-500/20 py-8 text-center text-slate-400">
+            <div>
+              <div className="mx-auto mb-2 grid h-8 w-8 place-items-center rounded-xl bg-amber-500/10">
+                <Snowflake className="h-4 w-4 text-amber-500" />
+              </div>
+              <p className="text-[11px] font-semibold">Nothing cold</p>
+            </div>
+          </div>
+        ) : (
+          <>
+            {leads.map((lead) => (
+              <ColdLeadCard
+                key={lead.conversationId}
+                lead={lead}
+                checked={selected.has(lead.conversationId)}
+                onToggle={() => toggleOne(lead.conversationId)}
+              />
+            ))}
+          </>
+        )}
+        {result && (
+          <div className="flex items-center gap-1.5 px-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+            <CheckCircle2 className="h-3 w-3 shrink-0" />
+            {result}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// Draggable wrapper — same drag-out-to-another-column support as a normal
+// lead card. The checkbox still works for click-to-select because dnd-kit's
+// PointerSensor requires a few pixels of movement before a drag activates
+// (see activationConstraint above), so a plain click passes through.
+function ColdLeadCard({
+  lead, checked, onToggle,
+}: {
+  lead: ColdLead;
+  checked: boolean;
+  onToggle: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `cold-${lead.conversationId}`,
+    data: { coldLead: lead },
+  });
+
+  return (
+    <div ref={setNodeRef} {...listeners} {...attributes} className={cn('touch-none', isDragging && 'opacity-40')}>
+      <ColdLeadCardVisual lead={lead} checked={checked} onToggle={onToggle} />
+    </div>
+  );
+}
+
+function ColdLeadCardVisual({
+  lead, checked, onToggle, dragging,
+}: {
+  lead: ColdLead;
+  checked?: boolean;
+  onToggle?: () => void;
+  dragging?: boolean;
+}) {
+  return (
+    <label
+      className={cn(
+        'flex items-start gap-2 rounded-[14px] border border-amber-500/15 bg-white/60 p-2.5 backdrop-blur-xl dark:bg-neutral-900/30',
+        dragging ? 'shadow-xl rotate-2' : 'cursor-pointer hover:bg-white/80 dark:hover:bg-neutral-900/50',
+      )}
+    >
+      <input
+        type="checkbox"
+        checked={checked ?? false}
+        onChange={onToggle}
+        disabled={dragging}
+        className="mt-0.5 shrink-0 rounded"
+      />
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[12px] font-bold text-zinc-900 dark:text-zinc-100">
+          {lead.name || 'Unnamed contact'}
+        </div>
+        <div className="truncate text-[10px] text-zinc-400">{lead.phone}</div>
+        <div className="mt-1 flex flex-wrap items-center gap-1">
+          {lead.status && (lead.status as LeadStatus) in LEAD_STATUS_LABELS && (
+            <span
+              className="rounded-full px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider"
+              style={{
+                background: COLUMN_CONFIG[lead.status as LeadStatus].pill,
+                color: COLUMN_CONFIG[lead.status as LeadStatus].pillText,
+              }}
+            >
+              {LEAD_STATUS_LABELS[lead.status as LeadStatus]}
+            </span>
+          )}
+          <span
+            className={cn(
+              'rounded-full px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider',
+              lead.reason === 'stalled'
+                ? 'bg-orange-100 text-orange-600 dark:bg-orange-500/10 dark:text-orange-400'
+                : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
+            )}
+          >
+            {lead.reason === 'stalled' ? 'Stalled' : 'Never replied'}
+          </span>
+          {!lead.leadId && (
+            <span className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider text-sky-600 dark:bg-sky-500/10 dark:text-sky-400">
+              Imported
+            </span>
+          )}
+        </div>
+        {lead.lastMessageAt && (
+          <div className="mt-1 text-[9px] font-semibold uppercase tracking-wider text-zinc-400">
+            {relativeTime(lead.lastMessageAt)}
+          </div>
+        )}
+      </div>
+    </label>
   );
 }
 

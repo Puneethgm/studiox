@@ -58,7 +58,7 @@ func TestTGWebConnected_Integration(t *testing.T) {
 	msgRepo := NewRepo(pool, cipher)
 	msgBus := NewInProcBus()
 	msgSvc := NewService(msgRepo, msgBus, "", "")
-	handler := NewHandler(msgSvc, msgBus)
+	handler := NewHandler(msgSvc, msgBus, nil, nil, nil, "")
 
 	t.Cleanup(func() {
 		_, _ = pool.Exec(ctx, `DELETE FROM channel_accounts WHERE studio_id = $1 AND kind = 'telegram_mtproto'`, studioID)

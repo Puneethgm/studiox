@@ -30,6 +30,8 @@ type MemberSubscription struct {
 	NextRenewalAt        *time.Time `json:"nextRenewalAt"`
 	CanceledAt           *time.Time `json:"canceledAt"`
 	CreatedAt            time.Time  `json:"createdAt"`
+	StripeSubscriptionID string     `json:"stripeSubscriptionId"`
+	StripeCustomerID     string     `json:"stripeCustomerId"`
 }
 
 // ListMemberSubscriptions returns every membership subscription (active,
@@ -40,7 +42,8 @@ func (r *Repo) ListMemberSubscriptions(ctx context.Context, studioID uuid.UUID) 
 	rows, err := r.pool.Query(ctx, `
 		SELECT us.id, us.lead_id, l.name, l.phone, us.plan_name, us.amount_paid, us.currency,
 		       us.payment_status, us.subscription_status, us.billing_interval, us.billing_interval_count,
-		       us.start_date, us.next_renewal_at, us.canceled_at, us.created_at
+		       us.start_date, us.next_renewal_at, us.canceled_at, us.created_at,
+		       us.stripe_subscription_id, us.stripe_customer_id
 		FROM user_subscriptions us
 		JOIN leads l ON l.id = us.lead_id
 		WHERE us.studio_id = $1
@@ -59,6 +62,7 @@ func (r *Repo) ListMemberSubscriptions(ctx context.Context, studioID uuid.UUID) 
 			&s.ID, &s.LeadID, &s.LeadName, &s.LeadPhone, &s.PlanName, &s.AmountPaid, &s.Currency,
 			&s.PaymentStatus, &s.SubscriptionStatus, &s.BillingInterval, &s.BillingIntervalCount,
 			&s.StartDate, &s.NextRenewalAt, &s.CanceledAt, &s.CreatedAt,
+			&s.StripeSubscriptionID, &s.StripeCustomerID,
 		); err != nil {
 			return nil, fmt.Errorf("list member subscriptions scan: %w", err)
 		}
