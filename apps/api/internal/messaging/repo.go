@@ -1913,6 +1913,15 @@ func (r *Repo) RecomputeColdLeads(ctx context.Context, studioID uuid.UUID, never
 	}
 	rows.Close()
 
+	// pgx's default type map can't encode a []uuid.UUID slice directly as a
+	// uuid[] array parameter (confirmed in production: "unable to encode
+	// []uuid.UUID{...}") — converting to []string first sidesteps it, since
+	// string-slice-to-text[]/uuid[] encoding is always supported.
+	idStrs := make([]string, len(ids))
+	for i, id := range ids {
+		idStrs[i] = id.String()
+	}
+
 	if len(ids) > 0 {
 		if _, err := r.pool.Exec(ctx, `
 			UPDATE conversations c
@@ -1920,7 +1929,7 @@ func (r *Repo) RecomputeColdLeads(ctx context.Context, studioID uuid.UUID, never
 			    cold_detected_at = COALESCE(c.cold_detected_at, now())
 			FROM (SELECT unnest($1::uuid[]) AS id, unnest($2::text[]) AS reason) data
 			WHERE c.id = data.id
-		`, ids, reasons); err != nil {
+		`, idStrs, reasons); err != nil {
 			return fmt.Errorf("recompute cold leads: set cold: %w", err)
 		}
 	}
@@ -1929,7 +1938,7 @@ func (r *Repo) RecomputeColdLeads(ctx context.Context, studioID uuid.UUID, never
 		UPDATE conversations
 		SET cold_reason = NULL, cold_detected_at = NULL
 		WHERE studio_id = $1 AND cold_reason IS NOT NULL AND NOT (id = ANY($2::uuid[]))
-	`, studioID, ids); err != nil {
+	`, studioID, idStrs); err != nil {
 		return fmt.Errorf("recompute cold leads: clear stale: %w", err)
 	}
 	return nil
