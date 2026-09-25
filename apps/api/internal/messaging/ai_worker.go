@@ -1215,7 +1215,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		w.log.Warn("fetch conversation ai summary failed", "err", err)
 		aiContextSummary = ""
 	}
-	prompt := w.buildPrompt(ctx, history, semanticHistory, styleExamples, conv, lead, studio, plans, sentiment, keywords, kbChunks, intent, kbConfident, aiContextSummary, "")
+	prompt, expectedGreeting := w.buildPrompt(ctx, history, semanticHistory, styleExamples, conv, lead, studio, plans, sentiment, keywords, kbChunks, intent, kbConfident, aiContextSummary, "")
 
 	// Waterfall: Groq → Gemini → Claude. Which model(s) each provider tries
 	// is read from studio_ai_models (studio's AI Assistant settings page),
@@ -1316,6 +1316,9 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		resp = stripMotivationQuestions(resp)
 	}
 
+	// Enforce the correct greeting word — see enforceGreeting's doc comment.
+	resp = enforceGreeting(resp, expectedGreeting)
+
 	w.log.Info("ai response generated", "message_id", msg.ID, "response_len", len(resp), "channel", channel.Kind, "model", sourceRef)
 
 	// Enqueue outbound reply. Delayed slightly so the reply doesn't feel
@@ -1351,8 +1354,14 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 // recipient's phone-derived timezone and the studio's own — see
 // resolveGreetingLocation. Only Test Chat sets it (to the admin's own
 // browser/system timezone); real conversations always pass "".
-func (w *AIWorker) buildPrompt(ctx context.Context, history []Message, semanticHistory []SemanticMatch, styleExamples []StyleExample, conv *Conversation, lead *leads.Lead, studio *studios.Studio, plans []Plan, sentiment int, keywords []string, kbChunks []string, intent string, kbConfident bool, aiContextSummary string, greetingTZOverride string) string {
+// buildPrompt returns the composed prompt plus the greeting word (e.g.
+// "Good afternoon") it instructed the model to open with, or "" if no
+// greeting was requested. Callers use the latter to enforce the correct
+// word on the model's actual output — see the call site's comment for why
+// trusting the instruction alone isn't reliable enough.
+func (w *AIWorker) buildPrompt(ctx context.Context, history []Message, semanticHistory []SemanticMatch, styleExamples []StyleExample, conv *Conversation, lead *leads.Lead, studio *studios.Studio, plans []Plan, sentiment int, keywords []string, kbChunks []string, intent string, kbConfident bool, aiContextSummary string, greetingTZOverride string) (string, string) {
 	var sb strings.Builder
+	var expectedGreeting string
 
 	// ── System role ──────────────────────────────────────────────────────────
 	sb.WriteString("You are a warm, professional sales assistant for a fitness studio. ")
@@ -1449,7 +1458,8 @@ func (w *AIWorker) buildPrompt(ctx context.Context, history []Message, semanticH
 		// — see resolveGreetingLocation. Falls back to the studio's timezone
 		// (loc, above) when neither is available.
 		hour := now.In(resolveGreetingLocation(greetingTZOverride, conv, loc)).Hour()
-		sb.WriteString(fmt.Sprintf("Open your reply with '%s'. ", greetingWord(hour)))
+		expectedGreeting = greetingWord(hour)
+		sb.WriteString(fmt.Sprintf("Open your reply with '%s'. ", expectedGreeting))
 	} else {
 		sb.WriteString("Do NOT start with a greeting like Good morning/afternoon/evening/night — jump straight into the response. ")
 	}
@@ -1646,7 +1656,7 @@ func (w *AIWorker) buildPrompt(ctx context.Context, history []Message, semanticH
 	}
 	sb.WriteString("Assistant: ")
 
-	return sb.String()
+	return sb.String(), expectedGreeting
 }
 
 func (w *AIWorker) detectOptionChoice(body string, status leads.LeadStatus) (leads.LeadStatus, bool) {
@@ -1806,6 +1816,33 @@ func (w *AIWorker) scheduleTrialFollowup(ctx context.Context, studioID uuid.UUID
 	}); err != nil {
 		w.log.Error("enqueue 1-day trial followup failed", "lead", lead.ID, "err", err)
 	}
+}
+
+var greetingPrefixes = []string{"Good morning", "Good afternoon", "Good evening", "Good night"}
+
+// enforceGreeting corrects the model's opening greeting word if it doesn't
+// match expectedGreeting. Models reliably OPEN a reply with some greeting
+// when instructed to (see buildPrompt), but don't reliably pick the correct
+// one from the instruction — same class of unreliability documented on
+// stripMotivationQuestions below, just for the greeting instead. Only
+// replaces an existing leading greeting phrase; doesn't prepend one if the
+// model skipped the greeting entirely; that's a separate failure mode.
+func enforceGreeting(resp, expectedGreeting string) string {
+	if expectedGreeting == "" {
+		return resp
+	}
+	trimmed := strings.TrimLeft(resp, " \t\n")
+	lower := strings.ToLower(trimmed)
+	for _, g := range greetingPrefixes {
+		if strings.HasPrefix(lower, strings.ToLower(g)) {
+			if strings.EqualFold(g, expectedGreeting) {
+				return resp
+			}
+			leadingSpace := resp[:len(resp)-len(trimmed)]
+			return leadingSpace + expectedGreeting + trimmed[len(g):]
+		}
+	}
+	return resp
 }
 
 // stripMotivationQuestions removes sentences asking about fitness goals/motivations
