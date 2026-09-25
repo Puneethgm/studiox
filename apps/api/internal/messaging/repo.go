@@ -1798,7 +1798,8 @@ type ColdLead struct {
 // results lagging the scanner's own interval.
 func (r *Repo) ListColdLeads(ctx context.Context, studioID uuid.UUID) ([]ColdLead, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT c.id, l.id, COALESCE(l.name, ci.display_name, ''), COALESCE(l.phone, ci.value, ''),
+		SELECT c.id, l.id, COALESCE(l.name, ci.display_name, ''),
+		       COALESCE(NULLIF(l.phone, ''), split_part(ci.value, '@', 1), ''),
 		       COALESCE(l.status, ''), COALESCE(l.contact_attempts, 0), l.last_contacted_at,
 		       c.last_message_at, c.cold_reason
 		FROM conversations c
