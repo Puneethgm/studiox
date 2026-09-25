@@ -9,6 +9,12 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	_ "time/tzdata" // bundles the IANA zoneinfo DB into the binary — the
+	// runtime image (deploy/api.Dockerfile, alpine:3.19) never installs the
+	// tzdata package, so time.LoadLocation("Asia/Singapore") etc. was
+	// silently failing for every non-UTC zone in the app (confirmed:
+	// /usr/share/zoneinfo doesn't exist in the running container). This
+	// makes zone resolution work regardless of what the OS image provides.
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"

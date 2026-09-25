@@ -29,6 +29,12 @@ RUN go build -trimpath -ldflags="-s -w" -o /out/server              ./cmd/server
 # ---------- runtime ----------
 FROM alpine:3.19
 
+# tzdata for time.LoadLocation() (e.g. "Asia/Singapore") — the server binary
+# also bundles time/tzdata as a Go-level fallback, but installing it here too
+# means any tool/script run inside this image resolves zones correctly, not
+# just the Go binaries.
+RUN apk add --no-cache tzdata
+
 WORKDIR /app
 
 COPY --from=build /out/server              /usr/local/bin/server
