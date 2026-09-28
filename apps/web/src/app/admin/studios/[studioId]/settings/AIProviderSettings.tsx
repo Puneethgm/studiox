@@ -59,6 +59,14 @@ function GroqMark({ className }: { className?: string }) {
   );
 }
 
+function MistralMark({ className }: { className?: string }) {
+  return (
+    <span className={className} aria-hidden="true">
+      M
+    </span>
+  );
+}
+
 const PROVIDER_META: Record<
   AIProvider,
   { label: string; keyPlaceholder: string; hint: string; icon: ReactNode; iconBg: string }
@@ -84,9 +92,16 @@ const PROVIDER_META: Record<
     icon: <AnthropicMark className="h-4 w-4" />,
     iconBg: 'bg-[#F0EEE6] dark:bg-zinc-200 ring-1 ring-inset ring-zinc-200 dark:ring-zinc-700',
   },
+  mistral: {
+    label: 'Mistral (OCR)',
+    keyPlaceholder: 'a1B2c3...',
+    hint: 'Used only for Knowledge Base image OCR (extracting text from uploaded photos/screenshots) — not part of the chat-reply models below, no model selection needed.',
+    icon: <MistralMark className="text-sm font-black leading-none text-white" />,
+    iconBg: 'bg-[#FA520F]',
+  },
 };
 
-const PROVIDER_ORDER: AIProvider[] = ['gemini', 'claude', 'groq'];
+const PROVIDER_ORDER: AIProvider[] = ['gemini', 'claude', 'groq', 'mistral'];
 
 export function AIProviderSettings({ studioId }: { studioId: string }) {
   const [loading, setLoading] = useState(true);
@@ -346,6 +361,17 @@ function ProviderCard({
           {keyOk && <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400">Connection OK.</p>}
         </form>
 
+        {provider === 'mistral' ? (
+          <div className="space-y-2 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+            <Label>Model</Label>
+            <div className="flex items-center gap-2.5">
+              <span className="font-mono text-xs text-zinc-800 dark:text-zinc-200">mistral-ocr-latest</span>
+              <Badge tone="neutral">Fixed</Badge>
+            </div>
+            <FieldHint>OCR uses this one model — nothing to add or choose here.</FieldHint>
+          </div>
+        ) : (
+        <>
         <div className="space-y-2 border-t border-zinc-200 pt-4 dark:border-zinc-800">
           <div className="flex items-center justify-between">
             <Label>Models</Label>
@@ -481,6 +507,8 @@ function ProviderCard({
             Add
           </Button>
         </form>
+        </>
+        )}
       </div>
     </div>
   );
