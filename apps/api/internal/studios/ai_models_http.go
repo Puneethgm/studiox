@@ -257,15 +257,23 @@ func (h *Handler) PostAITestKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	models, err := h.llmRepo.EnabledModelsForStudio(r.Context(), studioID, llm.ProviderName(provider))
-	if err != nil || len(models) == 0 {
-		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
-		return
+	// mistral is OCR-only — it has no chat-reply models to enable (see
+	// testProviderModel's mistral case, which ignores the model param
+	// entirely), so it must skip the "needs an enabled model" requirement
+	// every other provider here has.
+	testModel := ""
+	if provider != "mistral" {
+		models, err := h.llmRepo.EnabledModelsForStudio(r.Context(), studioID, llm.ProviderName(provider))
+		if err != nil || len(models) == 0 {
+			httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+			return
+		}
+		testModel = models[0]
 	}
 
 	testCtx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	if testErr := testProviderModel(testCtx, provider, h.claudeAPIURL, apiKey, models[0]); testErr != nil {
+	if testErr := testProviderModel(testCtx, provider, h.claudeAPIURL, apiKey, testModel); testErr != nil {
 		httpx.WriteValidationError(w, map[string]string{"apiKey": testErr.Error()})
 		return
 	}
@@ -277,7 +285,7 @@ func (h *Handler) PostAITestKey(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true, "testedModel": models[0]})
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true, "testedModel": testModel})
 }
 
 type postAIModelReq struct {
