@@ -15,15 +15,17 @@ import (
 	"github.com/projectx/api/internal/integrations/gemini"
 	"github.com/projectx/api/internal/integrations/groq"
 	"github.com/projectx/api/internal/integrations/llm"
+	"github.com/projectx/api/internal/integrations/mistral"
 	"github.com/projectx/api/internal/platform/httpx"
 )
 
 // aiProviderKeyGetters reads the studio's saved key for provider, so the
 // test/add-model handler doesn't need a second provider->column switch.
 var aiProviderKeyGetters = map[string]func(*Studio) string{
-	"gemini": func(s *Studio) string { return s.GeminiAPIKey },
-	"groq":   func(s *Studio) string { return s.GroqAPIKey },
-	"claude": func(s *Studio) string { return s.ClaudeAPIKey },
+	"gemini":  func(s *Studio) string { return s.GeminiAPIKey },
+	"groq":    func(s *Studio) string { return s.GroqAPIKey },
+	"claude":  func(s *Studio) string { return s.ClaudeAPIKey },
+	"mistral": func(s *Studio) string { return s.MistralAPIKey },
 }
 
 func isKnownProvider(provider string) bool {
@@ -66,6 +68,11 @@ func testProviderModel(ctx context.Context, provider, claudeAPIURL, apiKey, mode
 		}
 		_, err = client.GenerateReplyForModel(ctx, testPingPrompt, model)
 		return err
+	case "mistral":
+		// Mistral isn't a chat-reply provider here (OCR-only, see
+		// internal/integrations/mistral) — a cheap auth check stands in for
+		// the reply-generation test the other providers do.
+		return mistral.New().ValidateKey(ctx, apiKey)
 	default:
 		return fmt.Errorf("unsupported provider %q", provider)
 	}
@@ -115,7 +122,7 @@ func (h *Handler) GetAIModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	providers := []string{"groq", "gemini", "claude"}
+	providers := []string{"groq", "gemini", "claude", "mistral"}
 	out := make([]aiProviderResponse, 0, len(providers))
 	for _, provider := range providers {
 		rows, err := h.llmRepo.ListStudioModels(r.Context(), studioID, llm.ProviderName(provider))
@@ -124,7 +131,11 @@ func (h *Handler) GetAIModels(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		var models []aiModelResponse
+		// Always a non-nil slice — a provider with no rows AND no entry in
+		// DefaultModels (e.g. mistral, which isn't a chat-reply provider)
+		// would otherwise stay a nil slice, which encoding/json marshals as
+		// JSON null instead of [], breaking the frontend's config.models.filter(...).
+		models := []aiModelResponse{}
 		if len(rows) == 0 {
 			for _, name := range llm.DefaultModels[llm.ProviderName(provider)] {
 				models = append(models, aiModelResponse{ModelName: name, Enabled: false, IsDefault: true})
