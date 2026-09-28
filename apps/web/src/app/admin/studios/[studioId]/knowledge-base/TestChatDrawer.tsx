@@ -81,7 +81,10 @@ export function TestChatDrawer({
 
     setError(null);
     setInput('');
-    const history = turns;
+    // Backend's TestChatTurn only has role/text (strict decoding rejects
+    // unknown fields) — strip the UI-only `sources` we attach to assistant
+    // turns before resending the transcript as history.
+    const history = turns.map(({ role, text }) => ({ role, text }));
     setTurns((prev) => [...prev, { role: 'user', text: message }]);
     setSending(true);
 
