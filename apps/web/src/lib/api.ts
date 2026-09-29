@@ -39,6 +39,17 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
 
   const text = await res.text();
   const body = text ? JSON.parse(text) : undefined;
+
+  if (res.status === 401 && body?.code === 'unauthorized' && typeof window !== 'undefined') {
+    // Expired JWT, idle session timeout, or revoked session — a full
+    // navigation to /login rather than a client-side router push, so any
+    // stale in-memory state from the dead session doesn't linger. Checked
+    // by code, not just status: a failed *login attempt* is also a 401 but
+    // uses invalid_credentials/account_inactive/role_inactive — those must
+    // stay on the login form as an inline error, not bounce through here.
+    window.location.href = '/login';
+  }
+
   if (!res.ok) {
     throw new ApiError(
       body?.error ?? `HTTP ${res.status}`,

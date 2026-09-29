@@ -115,7 +115,7 @@ func TestExecutor_TokenExchange_Integration(t *testing.T) {
 
 	// crm_connections cascades from crm_providers (ON DELETE CASCADE), so the
 	// provider cleanup above already removes this connection too.
-	if _, err := repo.CreateConnection(ctx, studioID, provider.ID, map[string]string{"Api-Key": "test-api-key"}); err != nil {
+	if _, err := repo.CreateConnection(ctx, studioID, provider.ID, map[string]string{"Api-Key": "test-api-key"}, nil); err != nil {
 		t.Fatalf("create connection: %v", err)
 	}
 

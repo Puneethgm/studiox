@@ -31,15 +31,17 @@ func NewRepo(pool *pgxpool.Pool) *Repo {
 	return &Repo{pool: pool}
 }
 
-func (r *Repo) Create(ctx context.Context, input CreateReviewInput) (*Review, error) {
+// Create is called from a public, unauthenticated endpoint (a lead/customer
+// submitting a review, no login involved) — actorID is always nil here.
+func (r *Repo) Create(ctx context.Context, input CreateReviewInput, actorID *uuid.UUID) (*Review, error) {
 	query := `
-		INSERT INTO reviews (name, rating, review_text)
-		VALUES ($1, $2, $3)
+		INSERT INTO reviews (name, rating, review_text, created_by, updated_by)
+		VALUES ($1, $2, $3, $4, $4)
 		RETURNING id, name, rating, review_text, created_at
 	`
 
 	var review Review
-	err := r.pool.QueryRow(ctx, query, input.Name, input.Rating, input.ReviewText).
+	err := r.pool.QueryRow(ctx, query, input.Name, input.Rating, input.ReviewText, actorID).
 		Scan(&review.ID, &review.Name, &review.Rating, &review.ReviewText, &review.CreatedAt)
 
 	if err != nil {

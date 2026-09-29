@@ -20,11 +20,15 @@ export default async function StudioOverviewPage({
     ? `/api/v1/admin/studios/${studioId}`
     : `/api/v1/me/studios/${studioId}`;
 
+  // A studio_staff teammate may not be granted every one of these sections
+  // (identity/permissions) — campaigns/leads/stats degrade to empty instead
+  // of taking down the whole dashboard on a 403. `studio` itself never
+  // degrades: every role needs it, and its own endpoint isn't permission-gated.
   const [studio, campResp, leadsResp, stats] = await Promise.all([
     serverFetch<Studio>(studioEndpoint),
-    serverFetch<{ campaigns: Campaign[] }>(`/api/v1/studios/${studioId}/campaigns`),
-    serverFetch<{ leads: Lead[]; total: number }>(`/api/v1/studios/${studioId}/leads?limit=5`),
-    serverFetch<LeadStats>(`/api/v1/studios/${studioId}/leads/stats`),
+    serverFetch<{ campaigns: Campaign[] }>(`/api/v1/studios/${studioId}/campaigns`).catch(() => ({ campaigns: [] })),
+    serverFetch<{ leads: Lead[]; total: number }>(`/api/v1/studios/${studioId}/leads?limit=5`).catch(() => ({ leads: [], total: 0 })),
+    serverFetch<LeadStats>(`/api/v1/studios/${studioId}/leads/stats`).catch(() => ({ total: 0, byStatus: {} as LeadStats['byStatus'] })),
   ]);
 
   // Map to the shape expected by DashboardClient

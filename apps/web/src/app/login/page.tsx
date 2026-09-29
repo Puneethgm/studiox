@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { ForgotPasswordModal } from './ForgotPasswordModal';
 import { useState, useEffect, type CSSProperties } from 'react';
 import { ArrowRight, Building2, Eye, EyeOff, Inbox, Sparkles, Sun, Moon } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
@@ -22,6 +23,7 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
 
   useEffect(() => {
     const isDark = document.documentElement.classList.contains('dark');
@@ -50,7 +52,10 @@ export default function LoginPage() {
         method: 'POST',
         json: { email, password },
       });
-      if (me.role === 'studio_admin' && me.studioId) {
+      if (me.studioId) {
+        // studio_admin and studio_staff are both scoped to one studio —
+        // only super_admin (no studioId) belongs on the bare /admin/studios
+        // list, which is super-admin-only and 403s for anyone else.
         setPostBrand(me.studio?.brandColor ?? null);
         router.push(`/admin/studios/${me.studioId}`);
       } else {
@@ -188,6 +193,13 @@ export default function LoginPage() {
                   <div className="space-y-2.5">
                     <div className="flex items-center justify-between px-1">
                       <Label htmlFor="password" className="ml-2 text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400 dark:text-zinc-500">Password</Label>
+                      <button
+                        type="button"
+                        onClick={() => setShowForgotPassword(true)}
+                        className="text-xs font-bold text-brand-600 hover:underline dark:text-brand-400"
+                      >
+                        Forgot password?
+                      </button>
                     </div>
                     <div className="relative">
                       <Input
@@ -238,6 +250,7 @@ export default function LoginPage() {
           </div>
         </section>
       </div>
+      <ForgotPasswordModal open={showForgotPassword} onClose={() => setShowForgotPassword(false)} />
     </main>
   );
 }

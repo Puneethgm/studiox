@@ -239,7 +239,7 @@ func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Requ
 						id, err := uuid.Parse(sub.Metadata["studio_id"])
 						if err == nil {
 							// Set the studio tier to 'past_due'
-							_ = h.svc.UpdatePayments(context.Background(), id, "", "", "", "", "past_due")
+							_ = h.svc.UpdatePayments(context.Background(), id, "", "", "", "", "past_due", nil) // Stripe webhook, no session
 							slog.Info("stripe studio past_due", "studio_id", sub.Metadata["studio_id"])
 						}
 					}
@@ -259,7 +259,7 @@ func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Requ
 				id, err := uuid.Parse(sub.Metadata["studio_id"])
 				if err == nil {
 					if sub.Status == "canceled" || sub.CancelAtPeriodEnd {
-						_ = h.svc.UpdatePayments(context.Background(), id, "", "", "", "", "canceled")
+						_ = h.svc.UpdatePayments(context.Background(), id, "", "", "", "", "canceled", nil) // Stripe webhook, no session
 						slog.Info("stripe studio canceled", "studio_id", sub.Metadata["studio_id"])
 					} else {
 						// If they un-cancel, or upgrade
@@ -312,7 +312,7 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 		tier := session.Metadata["plan_tier"]
 		id, err := uuid.Parse(studioIDStr)
 		if err == nil {
-			_ = h.svc.UpdatePayments(ctx, id, "", "", "", "", tier)
+			_ = h.svc.UpdatePayments(ctx, id, "", "", "", "", tier, nil) // Stripe webhook, no session
 			slog.Info("stripe studio upgraded", "studio_id", studioIDStr, "tier", tier)
 
 			// Cancel old subscriptions
@@ -485,7 +485,7 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 			if session.Customer != nil {
 				custID = session.Customer.ID
 			}
-			if _, err := h.applyMembershipConfirmed(ctx, studio, *leadID, planIDStr, session.AmountTotal, session.ID, subID, custID, session.Metadata["old_subscription_id"]); err != nil {
+			if _, err := h.applyMembershipConfirmed(ctx, studio, *leadID, planIDStr, session.AmountTotal, session.ID, subID, custID, session.Metadata["old_subscription_id"], receiptURL); err != nil {
 				slog.Warn("stripe lead status update failed", "err", err)
 			} else {
 				slog.Info("stripe lead status updated to member", "phone", customerPhone)
@@ -502,6 +502,12 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 				slog.Info("stripe lead status updated to trial_booked", "phone", customerPhone)
 				h.svc.SyncLeadToGlofoxByID(ctx, *leadID, glofox.GlofoxStatusTrial, session.AmountTotal)
 				h.svc.SyncLeadToMindbodyByID(ctx, *leadID, true, session.AmountTotal)
+
+				var custID string
+				if session.Customer != nil {
+					custID = session.Customer.ID
+				}
+				h.recordTrialSubscription(ctx, studio.ID, *leadID, string(session.Currency), session.ID, custID, receiptURL, session.AmountTotal)
 
 				// Schedule a 2-day post-trial follow-up to push membership.
 				// This fires after the trial session and nudges the lead to join.
@@ -567,7 +573,18 @@ func (h *StripeWebhookHandler) handleMembershipOneTimePaymentSucceeded(ctx conte
 		return
 	}
 
-	result, err := h.applyMembershipConfirmed(ctx, studio, leadID, planID, pi.Amount, pi.ID, "", "", "")
+	receiptURL := ""
+	if studio.StripeSecretKey != "" {
+		sc := &client.API{}
+		sc.Init(studio.StripeSecretKey, nil)
+		if full, errPI := sc.PaymentIntents.Get(pi.ID, &stripe.PaymentIntentParams{
+			Params: stripe.Params{Expand: stripe.StringSlice([]string{"latest_charge"})},
+		}); errPI == nil && full != nil && full.LatestCharge != nil {
+			receiptURL = full.LatestCharge.ReceiptURL
+		}
+	}
+
+	result, err := h.applyMembershipConfirmed(ctx, studio, leadID, planID, pi.Amount, pi.ID, "", "", "", receiptURL)
 	if err != nil {
 		slog.Warn("stripe: failed to apply one-time membership", "err", err, "lead_id", leadID)
 		return
@@ -586,16 +603,6 @@ func (h *StripeWebhookHandler) handleMembershipOneTimePaymentSucceeded(ctx conte
 	name := leadName
 	if name == "" {
 		name = "there"
-	}
-	receiptURL := ""
-	if studio.StripeSecretKey != "" {
-		sc := &client.API{}
-		sc.Init(studio.StripeSecretKey, nil)
-		if full, errPI := sc.PaymentIntents.Get(pi.ID, &stripe.PaymentIntentParams{
-			Params: stripe.Params{Expand: stripe.StringSlice([]string{"latest_charge"})},
-		}); errPI == nil && full != nil && full.LatestCharge != nil {
-			receiptURL = full.LatestCharge.ReceiptURL
-		}
 	}
 	receiptLine := ""
 	if receiptURL != "" {
@@ -689,6 +696,12 @@ func (h *StripeWebhookHandler) handlePaymentIntentSucceeded(ctx context.Context,
 	slog.Info("stripe trial payment: lead status updated to trial_booked", "lead_id", leadIDStr)
 	h.svc.SyncLeadToGlofoxByID(ctx, leadIDStr, glofox.GlofoxStatusTrial, pi.Amount)
 	h.svc.SyncLeadToMindbodyByID(ctx, leadIDStr, true, pi.Amount)
+
+	var custID string
+	if pi.Customer != nil {
+		custID = pi.Customer.ID
+	}
+	h.recordTrialSubscription(ctx, studioID, leadIDStr, string(pi.Currency), pi.ID, custID, receiptURL, pi.Amount)
 
 	var convID string
 	_ = h.svc.repo.Pool().QueryRow(ctx, `
@@ -912,7 +925,16 @@ func (h *StripeWebhookHandler) handleFirstMembershipInvoice(ctx context.Context,
 		custID = sub.Customer.ID
 	}
 
-	result, err := h.applyMembershipConfirmed(ctx, studio, leadID, planID, invoice.AmountPaid, invoice.ID, subID, custID, "")
+	receiptURL := ""
+	if inv, errInv := sc.Invoices.Get(invoice.ID, nil); errInv == nil && inv != nil {
+		if inv.HostedInvoiceURL != "" {
+			receiptURL = inv.HostedInvoiceURL
+		} else if inv.InvoicePDF != "" {
+			receiptURL = inv.InvoicePDF
+		}
+	}
+
+	result, err := h.applyMembershipConfirmed(ctx, studio, leadID, planID, invoice.AmountPaid, invoice.ID, subID, custID, "", receiptURL)
 	if err != nil {
 		slog.Warn("stripe: failed to apply new embedded-flow membership", "err", err, "lead_id", leadID)
 		return
@@ -931,14 +953,6 @@ func (h *StripeWebhookHandler) handleFirstMembershipInvoice(ctx context.Context,
 	name := leadName
 	if name == "" {
 		name = "there"
-	}
-	receiptURL := ""
-	if inv, errInv := sc.Invoices.Get(invoice.ID, nil); errInv == nil && inv != nil {
-		if inv.HostedInvoiceURL != "" {
-			receiptURL = inv.HostedInvoiceURL
-		} else if inv.InvoicePDF != "" {
-			receiptURL = inv.InvoicePDF
-		}
 	}
 	receiptLine := ""
 	if receiptURL != "" {
@@ -1026,7 +1040,7 @@ type membershipConfirmed struct {
 // embedded-Elements flow on the studio's own branded page (a Subscription's
 // invoice.paid for a recurring plan, or payment_intent.succeeded for a
 // one-time plan — see publicCreatePlanPaymentIntent).
-func (h *StripeWebhookHandler) applyMembershipConfirmed(ctx context.Context, studio *Studio, leadID, planIDStr string, amountPaid int64, paymentID, subID, custID, oldSubscriptionID string) (membershipConfirmed, error) {
+func (h *StripeWebhookHandler) applyMembershipConfirmed(ctx context.Context, studio *Studio, leadID, planIDStr string, amountPaid int64, paymentID, subID, custID, oldSubscriptionID, receiptURL string) (membershipConfirmed, error) {
 	var planName, planBillingCycle, planBillingInterval string
 	var planBillingIntervalCount int
 	_ = h.svc.repo.Pool().QueryRow(ctx, "SELECT plan_name, billing_cycle, billing_interval, billing_interval_count FROM plans WHERE id = $1", planIDStr).
@@ -1085,9 +1099,9 @@ func (h *StripeWebhookHandler) applyMembershipConfirmed(ctx context.Context, stu
 		INSERT INTO user_subscriptions
 			(studio_id, lead_id, plan_id, plan_name, amount_paid, currency, payment_id,
 			 payment_status, subscription_status, stripe_subscription_id, stripe_customer_id,
-			 billing_interval, billing_interval_count, next_renewal_at)
-		VALUES ($1, $2, $3, $4, $5, 'SGD', $6, 'paid', $7, $8, $9, $10, $11, $12)
-	`, studio.ID, leadID, planIDStr, planName, amountPaid, paymentID, subStatus, subID, custID, interval, intervalCount, nextRenewalAt); subErr != nil {
+			 billing_interval, billing_interval_count, next_renewal_at, receipt_url)
+		VALUES ($1, $2, $3, $4, $5, 'SGD', $6, 'paid', $7, $8, $9, $10, $11, $12, $13)
+	`, studio.ID, leadID, planIDStr, planName, amountPaid, paymentID, subStatus, subID, custID, interval, intervalCount, nextRenewalAt, receiptURL); subErr != nil {
 		slog.Warn("stripe: failed to record member subscription", "err", subErr, "lead_id", leadID)
 	}
 
@@ -1120,6 +1134,42 @@ func (h *StripeWebhookHandler) applyMembershipConfirmed(ctx context.Context, stu
 	}
 
 	return membershipConfirmed{PlanName: planName}, nil
+}
+
+// recordTrialSubscription persists a completed one-time trial payment into
+// user_subscriptions — the same durable record applyMembershipConfirmed
+// writes for memberships — so it shows up in the lead's Payment history
+// (internal/studios's lead-detail page) and so alreadyPaidBody
+// (internal/messaging) can quote the real amount/date instead of falling
+// back to a generic message. Previously neither trial webhook path (this
+// one nor handleCheckoutComplete's trial branch above) wrote here at all —
+// only leads.trial_purchased/status got updated, so a genuinely paid trial
+// was invisible outside Stripe itself.
+//
+// Looks up the studio's plan literally named "Trial" for plan_id/plan_name
+// (same convention IsTrialPlanActive/ResolveTrialAmountSGD use) — every
+// studio gets one seeded at creation, but skip quietly if it's ever missing
+// rather than fail the webhook over a non-critical record.
+func (h *StripeWebhookHandler) recordTrialSubscription(ctx context.Context, studioID uuid.UUID, leadID, currency, paymentID, custID, receiptURL string, amountPaid int64) {
+	var planID uuid.UUID
+	var planName string
+	if err := h.svc.repo.Pool().QueryRow(ctx, `
+		SELECT id, plan_name FROM plans WHERE studio_id = $1 AND plan_name = 'Trial' LIMIT 1
+	`, studioID).Scan(&planID, &planName); err != nil {
+		slog.Warn("stripe trial payment: no Trial plan found, skipping subscription record", "studio_id", studioID, "err", err)
+		return
+	}
+	if currency == "" {
+		currency = "SGD"
+	}
+	if _, err := h.svc.repo.Pool().Exec(ctx, `
+		INSERT INTO user_subscriptions
+			(studio_id, lead_id, plan_id, plan_name, amount_paid, currency, payment_id,
+			 payment_status, subscription_status, stripe_customer_id, receipt_url)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'paid', 'completed', $8, $9)
+	`, studioID, leadID, planID, planName, amountPaid, strings.ToUpper(currency), paymentID, custID, receiptURL); err != nil {
+		slog.Warn("stripe: failed to record trial subscription", "err", err, "lead_id", leadID)
+	}
 }
 
 // Removed direct sendWhatsAppMessage in favor of outbound_jobs queue

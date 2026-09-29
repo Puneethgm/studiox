@@ -32,6 +32,7 @@ type MemberSubscription struct {
 	CreatedAt            time.Time  `json:"createdAt"`
 	StripeSubscriptionID string     `json:"stripeSubscriptionId"`
 	StripeCustomerID     string     `json:"stripeCustomerId"`
+	ReceiptURL           string     `json:"receiptUrl"`
 }
 
 // ListMemberSubscriptions returns every membership subscription (active,
@@ -43,7 +44,7 @@ func (r *Repo) ListMemberSubscriptions(ctx context.Context, studioID uuid.UUID) 
 		SELECT us.id, us.lead_id, l.name, l.phone, us.plan_name, us.amount_paid, us.currency,
 		       us.payment_status, us.subscription_status, us.billing_interval, us.billing_interval_count,
 		       us.start_date, us.next_renewal_at, us.canceled_at, us.created_at,
-		       us.stripe_subscription_id, us.stripe_customer_id
+		       us.stripe_subscription_id, us.stripe_customer_id, us.receipt_url
 		FROM user_subscriptions us
 		JOIN leads l ON l.id = us.lead_id
 		WHERE us.studio_id = $1
@@ -55,16 +56,56 @@ func (r *Repo) ListMemberSubscriptions(ctx context.Context, studioID uuid.UUID) 
 	}
 	defer rows.Close()
 
-	var out []MemberSubscription
+	out := []MemberSubscription{} // not nil — see ListMemberSubscriptionsForLead's comment
 	for rows.Next() {
 		var s MemberSubscription
 		if err := rows.Scan(
 			&s.ID, &s.LeadID, &s.LeadName, &s.LeadPhone, &s.PlanName, &s.AmountPaid, &s.Currency,
 			&s.PaymentStatus, &s.SubscriptionStatus, &s.BillingInterval, &s.BillingIntervalCount,
 			&s.StartDate, &s.NextRenewalAt, &s.CanceledAt, &s.CreatedAt,
-			&s.StripeSubscriptionID, &s.StripeCustomerID,
+			&s.StripeSubscriptionID, &s.StripeCustomerID, &s.ReceiptURL,
 		); err != nil {
 			return nil, fmt.Errorf("list member subscriptions scan: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// ListMemberSubscriptionsForLead returns every membership subscription for
+// one lead (a trial then an upgrade, a renewal, a lapsed-then-resubscribed
+// history, etc.), newest first — the "Payment" section on a lead's detail
+// page. Scoped to studioID so a lead can't be looked up cross-studio.
+func (r *Repo) ListMemberSubscriptionsForLead(ctx context.Context, studioID, leadID uuid.UUID) ([]MemberSubscription, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT us.id, us.lead_id, l.name, l.phone, us.plan_name, us.amount_paid, us.currency,
+		       us.payment_status, us.subscription_status, us.billing_interval, us.billing_interval_count,
+		       us.start_date, us.next_renewal_at, us.canceled_at, us.created_at,
+		       us.stripe_subscription_id, us.stripe_customer_id, us.receipt_url
+		FROM user_subscriptions us
+		JOIN leads l ON l.id = us.lead_id
+		WHERE us.studio_id = $1 AND us.lead_id = $2
+		ORDER BY us.created_at DESC
+	`, studioID, leadID)
+	if err != nil {
+		return nil, fmt.Errorf("list member subscriptions for lead query: %w", err)
+	}
+	defer rows.Close()
+
+	// []MemberSubscription{}, not var out []MemberSubscription — a nil
+	// slice marshals to JSON `null`, and the lead detail page's `.length`
+	// check on the response crashed exactly on that for any lead with zero
+	// subscriptions.
+	out := []MemberSubscription{}
+	for rows.Next() {
+		var s MemberSubscription
+		if err := rows.Scan(
+			&s.ID, &s.LeadID, &s.LeadName, &s.LeadPhone, &s.PlanName, &s.AmountPaid, &s.Currency,
+			&s.PaymentStatus, &s.SubscriptionStatus, &s.BillingInterval, &s.BillingIntervalCount,
+			&s.StartDate, &s.NextRenewalAt, &s.CanceledAt, &s.CreatedAt,
+			&s.StripeSubscriptionID, &s.StripeCustomerID, &s.ReceiptURL,
+		); err != nil {
+			return nil, fmt.Errorf("list member subscriptions for lead scan: %w", err)
 		}
 		out = append(out, s)
 	}

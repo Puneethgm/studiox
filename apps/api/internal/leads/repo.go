@@ -469,7 +469,7 @@ func (r *Repo) ListLeads(ctx context.Context, studioID uuid.UUID, f ListLeadsFil
 		       l.name, COALESCE(l.first_name, ''), COALESCE(l.last_name, ''), l.email, l.phone, l.fitness_plan, l.goals,
 		       l.source, l.status, l.currency, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage,
 		       COALESCE(l.assigned_to, ''), l.trial_attended, l.member_sold, l.monthly_fee, COALESCE(l.offer, ''), COALESCE(l.further_notes, ''),
-		       l.dnd_enabled, l.created_at, l.updated_at
+		       l.dnd_enabled, l.needs_manual_followup, l.created_at, l.updated_at
 		FROM leads l
 		JOIN campaigns c ON c.id = l.campaign_id
 		JOIN studios s ON s.id = l.studio_id
@@ -489,7 +489,7 @@ func (r *Repo) ListLeads(ctx context.Context, studioID uuid.UUID, f ListLeadsFil
 		if err := rows.Scan(&l.ID, &l.StudioID, &l.StudioName, &l.StudioSlug, &l.CampaignID, &l.CampaignName, &l.CampaignSlug,
 			&l.Name, &l.FirstName, &l.LastName, &l.Email, &l.Phone, &l.FitnessPlan, &l.Goals,
 			&l.Source, &l.Status, &l.Currency, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage,
-			&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.DNDEnabled, &l.CreatedAt, &l.UpdatedAt); err != nil {
+			&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.DNDEnabled, &l.NeedsManualFollowup, &l.CreatedAt, &l.UpdatedAt); err != nil {
 			return nil, 0, fmt.Errorf("scan lead: %w", err)
 		}
 		out = append(out, l)
@@ -503,7 +503,7 @@ func (r *Repo) GetLead(ctx context.Context, studioID, id uuid.UUID) (*Lead, erro
 		       l.name, COALESCE(l.first_name, ''), COALESCE(l.last_name, ''), l.email, l.phone, l.fitness_plan, l.goals,
 		       l.source, l.status, l.currency, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage,
 		       COALESCE(l.assigned_to, ''), l.trial_attended, l.member_sold, l.monthly_fee, COALESCE(l.offer, ''), COALESCE(l.further_notes, ''),
-		       l.dnd_enabled, l.created_at, l.updated_at, COALESCE(l.gender, ''), l.date_of_birth
+		       l.dnd_enabled, l.needs_manual_followup, l.created_at, l.updated_at, COALESCE(l.gender, ''), l.date_of_birth
 		FROM leads l
 		JOIN campaigns c ON c.id = l.campaign_id
 		JOIN studios s ON s.id = l.studio_id
@@ -513,7 +513,7 @@ func (r *Repo) GetLead(ctx context.Context, studioID, id uuid.UUID) (*Lead, erro
 	if err := row.Scan(&l.ID, &l.StudioID, &l.StudioName, &l.StudioSlug, &l.CampaignID, &l.CampaignName, &l.CampaignSlug,
 		&l.Name, &l.FirstName, &l.LastName, &l.Email, &l.Phone, &l.FitnessPlan, &l.Goals,
 		&l.Source, &l.Status, &l.Currency, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage,
-		&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.DNDEnabled, &l.CreatedAt, &l.UpdatedAt, &l.Gender, &l.DateOfBirth); err != nil {
+		&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.DNDEnabled, &l.NeedsManualFollowup, &l.CreatedAt, &l.UpdatedAt, &l.Gender, &l.DateOfBirth); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrLeadNotFound
 		}
@@ -528,7 +528,7 @@ func (r *Repo) GetLeadTx(ctx context.Context, tx pgx.Tx, studioID, id uuid.UUID)
 		       l.name, COALESCE(l.first_name, ''), COALESCE(l.last_name, ''), l.email, l.phone, l.fitness_plan, l.goals,
 		       l.source, l.status, l.currency, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage,
 		       COALESCE(l.assigned_to, ''), l.trial_attended, l.member_sold, l.monthly_fee, COALESCE(l.offer, ''), COALESCE(l.further_notes, ''),
-		       l.dnd_enabled, l.created_at, l.updated_at, COALESCE(l.gender, ''), l.date_of_birth
+		       l.dnd_enabled, l.needs_manual_followup, l.created_at, l.updated_at, COALESCE(l.gender, ''), l.date_of_birth
 		FROM leads l
 		JOIN campaigns c ON c.id = l.campaign_id
 		JOIN studios s ON s.id = l.studio_id
@@ -538,7 +538,7 @@ func (r *Repo) GetLeadTx(ctx context.Context, tx pgx.Tx, studioID, id uuid.UUID)
 	if err := row.Scan(&l.ID, &l.StudioID, &l.StudioName, &l.StudioSlug, &l.CampaignID, &l.CampaignName, &l.CampaignSlug,
 		&l.Name, &l.FirstName, &l.LastName, &l.Email, &l.Phone, &l.FitnessPlan, &l.Goals,
 		&l.Source, &l.Status, &l.Currency, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage,
-		&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.DNDEnabled, &l.CreatedAt, &l.UpdatedAt, &l.Gender, &l.DateOfBirth); err != nil {
+		&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.DNDEnabled, &l.NeedsManualFollowup, &l.CreatedAt, &l.UpdatedAt, &l.Gender, &l.DateOfBirth); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrLeadNotFound
 		}
@@ -827,6 +827,25 @@ func (r *Repo) SetDNDEnabled(ctx context.Context, studioID, id uuid.UUID, enable
 	`, studioID, id, enabled)
 	if err != nil {
 		return fmt.Errorf("set dnd enabled: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrLeadNotFound
+	}
+	return nil
+}
+
+// SetNeedsManualFollowup toggles the flag that surfaces on a lead's detail
+// page (and the Leads list) when a trial booking hit a studio with trial
+// payment collection disabled. Set true by the AI worker when that happens;
+// cleared true→false whenever a studio_user replies to that lead — see
+// ClearNeedsManualFollowupOnHumanReply.
+func (r *Repo) SetNeedsManualFollowup(ctx context.Context, id uuid.UUID, needsFollowup bool) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE leads SET needs_manual_followup = $2, updated_at = now()
+		WHERE id = $1
+	`, id, needsFollowup)
+	if err != nil {
+		return fmt.Errorf("set needs manual followup: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrLeadNotFound
@@ -1565,7 +1584,7 @@ func (r *Repo) FindLeadByEmail(ctx context.Context, studioID uuid.UUID, email st
 		       l.name, COALESCE(l.first_name, ''), COALESCE(l.last_name, ''), l.email, l.phone, l.fitness_plan, l.goals,
 		       l.source, l.status, l.currency, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage,
 		       COALESCE(l.assigned_to, ''), l.trial_attended, l.member_sold, l.monthly_fee, COALESCE(l.offer, ''), COALESCE(l.further_notes, ''),
-		       l.dnd_enabled, l.created_at, l.updated_at
+		       l.dnd_enabled, l.needs_manual_followup, l.created_at, l.updated_at
 		FROM leads l
 		JOIN campaigns c ON c.id = l.campaign_id
 		JOIN studios s ON s.id = l.studio_id
@@ -1577,7 +1596,7 @@ func (r *Repo) FindLeadByEmail(ctx context.Context, studioID uuid.UUID, email st
 	if err := row.Scan(&l.ID, &l.StudioID, &l.StudioName, &l.StudioSlug, &l.CampaignID, &l.CampaignName, &l.CampaignSlug,
 		&l.Name, &l.FirstName, &l.LastName, &l.Email, &l.Phone, &l.FitnessPlan, &l.Goals,
 		&l.Source, &l.Status, &l.Currency, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage,
-		&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.DNDEnabled, &l.CreatedAt, &l.UpdatedAt); err != nil {
+		&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.DNDEnabled, &l.NeedsManualFollowup, &l.CreatedAt, &l.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrLeadNotFound
 		}

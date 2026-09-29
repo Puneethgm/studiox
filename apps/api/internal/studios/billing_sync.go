@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/projectx/api/internal/identity"
 	"github.com/projectx/api/internal/platform/httpx"
 	"github.com/stripe/stripe-go/v78"
 	"github.com/stripe/stripe-go/v78/client"
@@ -25,6 +26,7 @@ import (
 //	@Failure		404	{object}	httpx.ErrorResponse	"studio not found"
 //	@Router			/api/v1/me/studios/{id}/billing/sync [post]
 func (h *Handler) SyncBillingStatus(w http.ResponseWriter, r *http.Request) {
+	c := identity.MustClaims(r.Context())
 	studioID := chi.URLParam(r, "id")
 	if studioID == "global" {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid_studio", "Cannot sync global studio")
@@ -59,7 +61,7 @@ func (h *Handler) SyncBillingStatus(w http.ResponseWriter, r *http.Request) {
 	if !iter.Next() {
 		// No customer at all — they've never paid, mark as canceled if they have a non-free tier
 		if os.Getenv("API_ENV") != "local" && studio.SubscriptionTier != "" && studio.SubscriptionTier != "Trial Pass" {
-			_ = h.svc.UpdatePayments(r.Context(), parsedID, "", "", "", "", "canceled")
+			_ = h.svc.UpdatePayments(r.Context(), parsedID, "", "", "", "", "canceled", &c.UserID)
 			slog.Info("billing sync: no stripe customer, marked canceled", "studio_id", studioID)
 		}
 		tier := "canceled"
@@ -94,7 +96,7 @@ func (h *Handler) SyncBillingStatus(w http.ResponseWriter, r *http.Request) {
 	if activeSub == nil {
 		// No active subscription → mark canceled
 		if os.Getenv("API_ENV") != "local" && currentTier != "canceled" && currentTier != "" {
-			_ = h.svc.UpdatePayments(r.Context(), parsedID, "", "", "", "", "canceled")
+			_ = h.svc.UpdatePayments(r.Context(), parsedID, "", "", "", "", "canceled", &c.UserID)
 			slog.Info("billing sync: no active subscription, marked canceled", "studio_id", studioID)
 		}
 		tier := "canceled"
@@ -128,7 +130,7 @@ func (h *Handler) SyncBillingStatus(w http.ResponseWriter, r *http.Request) {
 
 	// If we have a tier and it differs from what's stored (or stored is canceled), update
 	if planTier != "" && (planTier != currentTier || currentTier == "canceled" || currentTier == "past_due") {
-		_ = h.svc.UpdatePayments(r.Context(), parsedID, "", "", "", "", planTier)
+		_ = h.svc.UpdatePayments(r.Context(), parsedID, "", "", "", "", planTier, &c.UserID)
 		slog.Info("billing sync: tier updated", "studio_id", studioID, "from", currentTier, "to", planTier)
 		httpx.JSON(w, http.StatusOK, map[string]any{"synced": true, "tier": planTier})
 		return
@@ -140,7 +142,7 @@ func (h *Handler) SyncBillingStatus(w http.ResponseWriter, r *http.Request) {
 		if restoreTier == "" {
 			restoreTier = "Growth Tier" // fallback if no metadata found
 		}
-		_ = h.svc.UpdatePayments(r.Context(), parsedID, "", "", "", "", restoreTier)
+		_ = h.svc.UpdatePayments(r.Context(), parsedID, "", "", "", "", restoreTier, &c.UserID)
 		slog.Info("billing sync: tier restored", "studio_id", studioID, "tier", restoreTier)
 		httpx.JSON(w, http.StatusOK, map[string]any{"synced": true, "tier": restoreTier})
 		return

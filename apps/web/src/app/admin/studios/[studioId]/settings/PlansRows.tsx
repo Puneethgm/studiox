@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Plus, Trash2, Check, X, Pencil, Loader2, CheckCircle2 } from 'lucide-react';
-import type { Plan } from '@/lib/types';
+import type { Plan, Studio } from '@/lib/types';
 import { api, ApiError } from '@/lib/api';
 import { BILLING_CYCLES, BILLING_INTERVAL_UNITS, cycleShortSuffix } from '@/lib/billingCycles';
 import { Button } from '@/components/ui/Button';
@@ -33,7 +33,8 @@ const emptyNew = () => ({
 // Plan cards styled to match the Platform Billing pricing grid (colored top
 // accent, big price, checkmark feature list) but editable in place — click
 // the pencil on price or features, click the Active badge to toggle it.
-export function PlansRows({ studioId, initialPlans }: { studioId: string; initialPlans: Plan[] }) {
+export function PlansRows({ studio, initialPlans }: { studio: Studio; initialPlans: Plan[] }) {
+  const studioId = studio.id;
   const [plans, setPlans] = useState<Plan[]>(initialPlans);
   const [showAdd, setShowAdd] = useState(false);
   const [newPlan, setNewPlan] = useState(emptyNew());

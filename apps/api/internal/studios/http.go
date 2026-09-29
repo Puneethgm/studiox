@@ -162,6 +162,7 @@ func (h *Handler) SelfRoutes(r chi.Router) {
 	r.Get("/studios/{id}/payments", h.getPayments)
 	r.Post("/studios/{id}/payments/stripe", h.linkStripe)
 	r.Get("/studios/{id}/member-subscriptions", h.listMemberSubscriptions)
+	r.Get("/studios/{id}/leads/{leadId}/member-subscriptions", h.listLeadMemberSubscriptions)
 	// Platform Plans route
 	r.Put("/studios/global/plans", h.UpdatePlatformPlans)
 
@@ -236,7 +237,6 @@ type createReq struct {
 	ContactEmail         string `json:"contactEmail"`
 	ContactPhone         string `json:"contactPhone"`
 	AdminEmail           string `json:"adminEmail"`
-	AdminPassword        string `json:"adminPassword"`
 	SocialPlannerEnabled bool   `json:"socialPlannerEnabled"`
 }
 
@@ -261,6 +261,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if req.BrandColor == "" {
 		req.BrandColor = "#7c3aed"
 	}
+	c := identity.MustClaims(r.Context())
 	res, errs, err := h.svc.CreateStudioWithAdmin(r.Context(), CreateStudioInput{
 		Slug:                 req.Slug,
 		Name:                 req.Name,
@@ -269,9 +270,8 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		ContactEmail:         req.ContactEmail,
 		ContactPhone:         req.ContactPhone,
 		AdminEmail:           req.AdminEmail,
-		AdminPassword:        req.AdminPassword,
 		SocialPlannerEnabled: req.SocialPlannerEnabled,
-	})
+	}, &c.UserID)
 	if errs != nil {
 		httpx.WriteValidationError(w, errs)
 		return
@@ -528,7 +528,8 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		input.MembershipGlofoxPlanCode = *req.MembershipGlofoxPlanCode
 	}
 
-	errs, err := h.svc.Update(r.Context(), id, input)
+	c := identity.MustClaims(r.Context())
+	errs, err := h.svc.Update(r.Context(), id, input, &c.UserID)
 	if errs != nil {
 		httpx.WriteValidationError(w, errs)
 		return
@@ -766,7 +767,7 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 	if req.MembershipGlofoxPlanCode != nil {
 		input.MembershipGlofoxPlanCode = *req.MembershipGlofoxPlanCode
 	}
-	errs, err := h.svc.Update(r.Context(), studioID, input)
+	errs, err := h.svc.Update(r.Context(), studioID, input, &c.UserID)
 	if errs != nil {
 		httpx.WriteValidationError(w, errs)
 		return
@@ -2137,10 +2138,15 @@ func (h *Handler) publicCreateTrialPaymentIntent(w http.ResponseWriter, r *http.
 	}
 
 	var studioID uuid.UUID
+	var trialPurchased bool
 	if err := h.svc.repo.Pool().QueryRow(r.Context(),
-		"SELECT studio_id FROM leads WHERE id = $1", leadID,
-	).Scan(&studioID); err != nil {
+		"SELECT studio_id, trial_purchased FROM leads WHERE id = $1", leadID,
+	).Scan(&studioID, &trialPurchased); err != nil {
 		httpx.WriteError(w, http.StatusNotFound, "not_found", "lead not found")
+		return
+	}
+	if trialPurchased {
+		httpx.WriteError(w, http.StatusConflict, "already_purchased", "this trial has already been paid for")
 		return
 	}
 
@@ -2231,6 +2237,27 @@ func (h *Handler) publicCreatePlanPaymentIntent(w http.ResponseWriter, r *http.R
 	}
 	if selected == nil || selected.PriceSGD == 0 {
 		httpx.WriteError(w, http.StatusBadRequest, "plan_not_found", "plan not found, inactive, or free")
+		return
+	}
+
+	// Same lead + same plan, already paid and not since canceled/superseded —
+	// block a second checkout for it. Scoped to this exact plan (not a
+	// blanket "already a member" check) so switching to a different plan, or
+	// resubscribing to this one after a genuine cancellation, still works.
+	var alreadyPurchased bool
+	if err := h.svc.repo.Pool().QueryRow(r.Context(), `
+		SELECT EXISTS (
+			SELECT 1 FROM user_subscriptions
+			WHERE lead_id = $1 AND plan_id = $2
+			  AND payment_status = 'paid'
+			  AND subscription_status NOT IN ('canceled', 'superseded')
+		)
+	`, leadID, selected.ID).Scan(&alreadyPurchased); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	if alreadyPurchased {
+		httpx.WriteError(w, http.StatusConflict, "already_purchased", "this plan has already been paid for")
 		return
 	}
 
@@ -2512,7 +2539,7 @@ func (h *Handler) ProvisionPlatformStudio(w http.ResponseWriter, r *http.Request
 		AdminEmail:           customerEmail,
 		AdminPassword:        req.AdminPassword,
 		SocialPlannerEnabled: true,
-	})
+	}, nil) // public, no-auth endpoint — no actor to attribute
 
 	if errs != nil {
 		// If the admin email is already in use, or slug taken
@@ -2532,7 +2559,7 @@ func (h *Handler) ProvisionPlatformStudio(w http.ResponseWriter, r *http.Request
 	// Assign the subscription tier based on the payment
 	if res != nil && res.Studio != nil {
 		// Just update the tier via direct DB update or service wrapper
-		_ = h.svc.UpdatePayments(r.Context(), res.Studio.ID, "", "", "", "", tier)
+		_ = h.svc.UpdatePayments(r.Context(), res.Studio.ID, "", "", "", "", tier, nil) // public, no-auth endpoint
 	}
 
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true, "studioId": res.Studio.ID})
@@ -2554,6 +2581,7 @@ func (h *Handler) ProvisionPlatformStudio(w http.ResponseWriter, r *http.Request
 //	@Failure		500		{object}	httpx.ErrorResponse
 //	@Router			/api/v1/me/studios/{id}/payments/stripe [post]
 func (h *Handler) linkStripe(w http.ResponseWriter, r *http.Request) {
+	c := identity.MustClaims(r.Context())
 	idStr := chi.URLParam(r, "id")
 
 	var req struct {
@@ -2568,20 +2596,20 @@ func (h *Handler) linkStripe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if idStr == "global" {
-		if err := h.svc.UpdatePlatformSetting(r.Context(), "stripe_account_id", req.StripeAccountId); err != nil {
+		if err := h.svc.UpdatePlatformSetting(r.Context(), "stripe_account_id", req.StripeAccountId, &c.UserID); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to update stripe_account_id")
 			return
 		}
-		if err := h.svc.UpdatePlatformSetting(r.Context(), "stripe_publishable_key", req.StripePublishableKey); err != nil {
+		if err := h.svc.UpdatePlatformSetting(r.Context(), "stripe_publishable_key", req.StripePublishableKey, &c.UserID); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to update stripe_publishable_key")
 			return
 		}
-		if err := h.svc.UpdatePlatformSetting(r.Context(), "stripe_secret_key", req.StripeSecretKey); err != nil {
+		if err := h.svc.UpdatePlatformSetting(r.Context(), "stripe_secret_key", req.StripeSecretKey, &c.UserID); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to update stripe_secret_key")
 			return
 		}
 		if req.StripeWebhookSecret != "" {
-			if err := h.svc.UpdatePlatformSetting(r.Context(), "stripe_webhook_secret", req.StripeWebhookSecret); err != nil {
+			if err := h.svc.UpdatePlatformSetting(r.Context(), "stripe_webhook_secret", req.StripeWebhookSecret, &c.UserID); err != nil {
 				httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to update stripe_webhook_secret")
 				return
 			}
@@ -2602,7 +2630,7 @@ func (h *Handler) linkStripe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.svc.UpdatePayments(r.Context(), id, req.StripeAccountId, req.StripeSecretKey, req.StripePublishableKey, req.StripeWebhookSecret, s.SubscriptionTier)
+	err = h.svc.UpdatePayments(r.Context(), id, req.StripeAccountId, req.StripeSecretKey, req.StripePublishableKey, req.StripeWebhookSecret, s.SubscriptionTier, &c.UserID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
@@ -2847,7 +2875,7 @@ func (h *Handler) StripeConnectCallback(w http.ResponseWriter, r *http.Request) 
 	// Update the studio's payment configuration with the connected account ID
 	s, err := h.svc.GetByID(r.Context(), studioID)
 	if err == nil {
-		_ = h.svc.UpdatePayments(r.Context(), studioID, token.StripeUserID, "", "", "", s.SubscriptionTier)
+		_ = h.svc.UpdatePayments(r.Context(), studioID, token.StripeUserID, "", "", "", s.SubscriptionTier, nil) // public OAuth redirect, no session
 	}
 
 	// Redirect back to frontend
@@ -2903,6 +2931,38 @@ func (h *Handler) listMemberSubscriptions(w http.ResponseWriter, r *http.Request
 		return
 	}
 	subs, err := h.svc.ListMemberSubscriptions(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to list member subscriptions")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"subscriptions": subs})
+}
+
+// listLeadMemberSubscriptions godoc
+//
+//	@Summary		List one lead's membership subscriptions
+//	@Description	Same record as listMemberSubscriptions, scoped to a single lead — the "Payment" section on a lead's detail page. Newest first; includes past/superseded rows so a trial-then-upgrade or lapsed-then-renewed history is visible, not just the current one.
+//	@Tags			Billing
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id		path		string	true	"Studio ID"
+//	@Param			leadId	path		string	true	"Lead ID"
+//	@Success		200		{object}	map[string]interface{}
+//	@Failure		400		{object}	httpx.ErrorResponse	"invalid studio or lead id"
+//	@Failure		500		{object}	httpx.ErrorResponse
+//	@Router			/api/v1/me/studios/{id}/leads/{leadId}/member-subscriptions [get]
+func (h *Handler) listLeadMemberSubscriptions(w http.ResponseWriter, r *http.Request) {
+	studioID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid studio id")
+		return
+	}
+	leadID, err := uuid.Parse(chi.URLParam(r, "leadId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid lead id")
+		return
+	}
+	subs, err := h.svc.ListMemberSubscriptionsForLead(r.Context(), studioID, leadID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to list member subscriptions")
 		return

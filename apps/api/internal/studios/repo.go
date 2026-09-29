@@ -34,7 +34,7 @@ func NewRepo(pool *pgxpool.Pool, cipher *secrets.Cipher) *Repo {
 // transactional create-studio-with-admin flow.
 func (r *Repo) Pool() *pgxpool.Pool { return r.pool }
 
-func (r *Repo) Create(ctx context.Context, tx pgx.Tx, s *Studio) error {
+func (r *Repo) Create(ctx context.Context, tx pgx.Tx, s *Studio, actorID *uuid.UUID) error {
 	var err error
 	encWebhookSecret := s.StripeWebhookSecret
 	if encWebhookSecret != "" && r.cipher != nil {
@@ -45,10 +45,10 @@ func (r *Repo) Create(ctx context.Context, tx pgx.Tx, s *Studio) error {
 	}
 	kbFilesJSON, _ := json.Marshal(s.KnowledgeBaseFiles)
 	row := tx.QueryRow(ctx, `
-		INSERT INTO studios (slug, name, brand_color, logo_url, contact_email, contact_phone, active, gemini_api_key, groq_api_key, claude_api_key, meta_app_id, meta_app_secret, google_client_id, google_client_secret, google_developer_token, stripe_account_id, stripe_secret_key, stripe_publishable_key, stripe_webhook_secret, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files, trial_amount_sgd, managed_by_1hero)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+		INSERT INTO studios (slug, name, brand_color, logo_url, contact_email, contact_phone, active, gemini_api_key, groq_api_key, claude_api_key, meta_app_id, meta_app_secret, google_client_id, google_client_secret, google_developer_token, stripe_account_id, stripe_secret_key, stripe_publishable_key, stripe_webhook_secret, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files, trial_amount_sgd, managed_by_1hero, created_by, updated_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$26)
 		RETURNING id, created_at, updated_at
-	`, s.Slug, s.Name, s.BrandColor, s.LogoURL, s.ContactEmail, s.ContactPhone, s.Active, s.GeminiAPIKey, s.GroqAPIKey, s.ClaudeAPIKey, s.MetaAppID, s.MetaAppSecret, s.GoogleClientID, s.GoogleClientSecret, s.GoogleDeveloperToken, s.StripeAccountID, s.StripeSecretKey, s.StripePublishableKey, encWebhookSecret, s.SubscriptionTier, s.SocialPlannerEnabled, s.KnowledgeBase, string(kbFilesJSON), s.TrialAmountSGD, s.ManagedBy1Hero)
+	`, s.Slug, s.Name, s.BrandColor, s.LogoURL, s.ContactEmail, s.ContactPhone, s.Active, s.GeminiAPIKey, s.GroqAPIKey, s.ClaudeAPIKey, s.MetaAppID, s.MetaAppSecret, s.GoogleClientID, s.GoogleClientSecret, s.GoogleDeveloperToken, s.StripeAccountID, s.StripeSecretKey, s.StripePublishableKey, encWebhookSecret, s.SubscriptionTier, s.SocialPlannerEnabled, s.KnowledgeBase, string(kbFilesJSON), s.TrialAmountSGD, s.ManagedBy1Hero, actorID)
 	if err := row.Scan(&s.ID, &s.CreatedAt, &s.UpdatedAt); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -162,7 +162,7 @@ func (r *Repo) GetBySlug(ctx context.Context, slug string) (*Studio, error) {
 // Update writes the editable fields. Slug is intentionally NOT updatable here
 // (changing a slug breaks every shared public link). Add a deliberate "rename
 // slug" flow when needed.
-func (r *Repo) Update(ctx context.Context, id uuid.UUID, name, brandColor, logoURL, contactEmail, contactPhone string, active bool, managedBy1Hero bool, availabilitySlots []AvailabilitySlot, availabilityTimezone string, geminiAPIKey, groqAPIKey, metaAppID, metaAppSecret, googleClientID, googleClientSecret, googleDeveloperToken string, socialPlannerEnabled bool, knowledgeBase string, knowledgeBaseFiles []KnowledgeBaseFile, greetingMessage string, trialAmountSGD int, bookingHeroImageURL, bookingHeroVideoURL string, trialConfirmationMessage, membershipConfirmationMessage string, trialGlofoxMembershipID, trialGlofoxPlanCode, membershipGlofoxMembershipID, membershipGlofoxPlanCode string) error {
+func (r *Repo) Update(ctx context.Context, id uuid.UUID, name, brandColor, logoURL, contactEmail, contactPhone string, active bool, managedBy1Hero bool, availabilitySlots []AvailabilitySlot, availabilityTimezone string, geminiAPIKey, groqAPIKey, metaAppID, metaAppSecret, googleClientID, googleClientSecret, googleDeveloperToken string, socialPlannerEnabled bool, knowledgeBase string, knowledgeBaseFiles []KnowledgeBaseFile, greetingMessage string, trialAmountSGD int, bookingHeroImageURL, bookingHeroVideoURL string, trialConfirmationMessage, membershipConfirmationMessage string, trialGlofoxMembershipID, trialGlofoxPlanCode, membershipGlofoxMembershipID, membershipGlofoxPlanCode string, actorID *uuid.UUID) error {
 	slotsJSON, _ := json.Marshal(availabilitySlots)
 	filesJSON, _ := json.Marshal(knowledgeBaseFiles)
 	tag, err := r.pool.Exec(ctx, `
@@ -173,9 +173,10 @@ func (r *Repo) Update(ctx context.Context, id uuid.UUID, name, brandColor, logoU
 		    social_planner_enabled = $17, knowledge_base = $18, knowledge_base_files = $19,
 		    greeting_message = $20, trial_amount_sgd = $21, managed_by_1hero = $22, booking_hero_image_url = $23, booking_hero_video_url = $24,
 		    trial_confirmation_message = $25, membership_confirmation_message = $26,
-		    trial_glofox_membership_id = $27, trial_glofox_plan_code = $28, membership_glofox_membership_id = $29, membership_glofox_plan_code = $30, updated_at = now()
+		    trial_glofox_membership_id = $27, trial_glofox_plan_code = $28, membership_glofox_membership_id = $29, membership_glofox_plan_code = $30,
+		    updated_by = $31, updated_at = now()
 		WHERE id = $1`,
-		id, name, brandColor, logoURL, contactEmail, contactPhone, active, string(slotsJSON), availabilityTimezone, geminiAPIKey, groqAPIKey, metaAppID, metaAppSecret, googleClientID, googleClientSecret, googleDeveloperToken, socialPlannerEnabled, knowledgeBase, string(filesJSON), greetingMessage, trialAmountSGD, managedBy1Hero, bookingHeroImageURL, bookingHeroVideoURL, trialConfirmationMessage, membershipConfirmationMessage, trialGlofoxMembershipID, trialGlofoxPlanCode, membershipGlofoxMembershipID, membershipGlofoxPlanCode)
+		id, name, brandColor, logoURL, contactEmail, contactPhone, active, string(slotsJSON), availabilityTimezone, geminiAPIKey, groqAPIKey, metaAppID, metaAppSecret, googleClientID, googleClientSecret, googleDeveloperToken, socialPlannerEnabled, knowledgeBase, string(filesJSON), greetingMessage, trialAmountSGD, managedBy1Hero, bookingHeroImageURL, bookingHeroVideoURL, trialConfirmationMessage, membershipConfirmationMessage, trialGlofoxMembershipID, trialGlofoxPlanCode, membershipGlofoxMembershipID, membershipGlofoxPlanCode, actorID)
 	if err != nil {
 		return fmt.Errorf("update studio: %w", err)
 	}
@@ -456,12 +457,12 @@ var aiProviderKeyColumns = map[string]string{
 // dedicated setter (like SetCommunicationStyleProfile/SetTrialPageLayout
 // above) rather than another parameter on the already-large Update, since
 // the AI Assistant settings page saves one provider's key at a time.
-func (r *Repo) UpdateAIProviderKey(ctx context.Context, studioID uuid.UUID, provider, key string) error {
+func (r *Repo) UpdateAIProviderKey(ctx context.Context, studioID uuid.UUID, provider, key string, actorID *uuid.UUID) error {
 	col, ok := aiProviderKeyColumns[provider]
 	if !ok {
 		return fmt.Errorf("unsupported ai provider %q", provider)
 	}
-	tag, err := r.pool.Exec(ctx, fmt.Sprintf(`UPDATE studios SET %s = $2, updated_at = now() WHERE id = $1`, col), studioID, key)
+	tag, err := r.pool.Exec(ctx, fmt.Sprintf(`UPDATE studios SET %s = $2, updated_by = $3, updated_at = now() WHERE id = $1`, col), studioID, key, actorID)
 	if err != nil {
 		return fmt.Errorf("update ai provider key: %w", err)
 	}
@@ -504,7 +505,7 @@ func scanStudio(row pgx.Row, cipher *secrets.Cipher) (*Studio, error) {
 	return &s, nil
 }
 
-func (r *Repo) UpdatePayments(ctx context.Context, id uuid.UUID, stripeAccountId, stripeSecretKey, stripePublishableKey, stripeWebhookSecret, subscriptionTier string) error {
+func (r *Repo) UpdatePayments(ctx context.Context, id uuid.UUID, stripeAccountId, stripeSecretKey, stripePublishableKey, stripeWebhookSecret, subscriptionTier string, actorID *uuid.UUID) error {
 	var err error
 	if stripeSecretKey != "" && r.cipher != nil {
 		stripeSecretKey, err = r.cipher.Encrypt(stripeSecretKey)
@@ -521,9 +522,9 @@ func (r *Repo) UpdatePayments(ctx context.Context, id uuid.UUID, stripeAccountId
 
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE studios
-		SET stripe_account_id = $2, stripe_secret_key = $3, stripe_publishable_key = $4, stripe_webhook_secret = $5, subscription_tier = $6, updated_at = now()
+		SET stripe_account_id = $2, stripe_secret_key = $3, stripe_publishable_key = $4, stripe_webhook_secret = $5, subscription_tier = $6, updated_by = $7, updated_at = now()
 		WHERE id = $1`,
-		id, stripeAccountId, stripeSecretKey, stripePublishableKey, stripeWebhookSecret, subscriptionTier)
+		id, stripeAccountId, stripeSecretKey, stripePublishableKey, stripeWebhookSecret, subscriptionTier, actorID)
 	if err != nil {
 		return fmt.Errorf("update payments: %w", err)
 	}
@@ -546,12 +547,12 @@ func (r *Repo) evict(id uuid.UUID) {
 	r.cache.Evict(idKey)
 }
 
-func (r *Repo) UpdatePlatformSetting(ctx context.Context, key, value string) error {
+func (r *Repo) UpdatePlatformSetting(ctx context.Context, key, value string, actorID *uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `
-		INSERT INTO platform_settings (key, value, updated_at)
-		VALUES ($1, $2, now())
-		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
-	`, key, value)
+		INSERT INTO platform_settings (key, value, updated_by, updated_at)
+		VALUES ($1, $2, $3, now())
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()
+	`, key, value, actorID)
 	if err == nil {
 		r.cache.Evict("pset:" + key)
 	}

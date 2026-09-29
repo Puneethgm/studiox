@@ -18,11 +18,12 @@ import (
 type EventKind string
 
 const (
-	EvtMessageReceived     EventKind = "message.received" // inbound from customer
-	EvtMessageSent         EventKind = "message.sent"     // outbound delivered to channel
-	EvtConversationUpdated EventKind = "conversation.updated"
-	EvtOutboundJobEnqueued EventKind = "outbound_job.enqueued"
-	EvtWAWebBackfillDone   EventKind = "wa_web_backfill.done" // chat history import finished for a studio
+	EvtMessageReceived       EventKind = "message.received" // inbound from customer
+	EvtMessageSent           EventKind = "message.sent"     // outbound delivered to channel
+	EvtConversationUpdated   EventKind = "conversation.updated"
+	EvtConversationEscalated EventKind = "conversation.escalated" // EscalateConversation just fired — see repo.go
+	EvtOutboundJobEnqueued   EventKind = "outbound_job.enqueued"
+	EvtWAWebBackfillDone     EventKind = "wa_web_backfill.done" // chat history import finished for a studio
 )
 
 type Event struct {
@@ -31,6 +32,7 @@ type Event struct {
 	ConversationID   uuid.UUID  `json:"conversationId"`
 	MessageID        *uuid.UUID `json:"messageId,omitempty"`
 	ChannelAccountID *uuid.UUID `json:"channelAccountId,omitempty"` // set on EvtWAWebBackfillDone
+	Reason           string     `json:"reason,omitempty"`           // set on EvtConversationEscalated
 }
 
 func (e Event) JSON() string {

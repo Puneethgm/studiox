@@ -77,6 +77,66 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/admin/analytics/daily": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Returns one point per day (outbound messages sent, newly-connected leads, newly-converted leads) for the resolved studio over the same time window getAnalytics accepts. An unbounded all-time request is capped at the last 90 days for chart legibility.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Leads"
+                ],
+                "summary": "Daily analytics trend",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Time window, e.g. '30d' (default: last 90 days)",
+                        "name": "duration",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Explicit range start date",
+                        "name": "startDate",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Explicit range end date",
+                        "name": "endDate",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/internal_leads.DailyAnalyticsPoint"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "missing/invalid studioId",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/admin/campaigns": {
             "get": {
                 "security": [
@@ -2071,6 +2131,53 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/me/studios/{id}/member-subscriptions": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Returns every membership-plan subscription (active, past_due, canceled, superseded, completed) for the studio's leads — who paid what, on what cadence, and when the next charge lands. Sourced from user_subscriptions (the record the Stripe webhook maintains), not a live Stripe API call.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Billing"
+                ],
+                "summary": "List member subscriptions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "invalid studio id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/me/studios/{id}/payments": {
             "get": {
                 "security": [
@@ -2582,6 +2689,93 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/permissions": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Returns the fixed, platform-wide set of grantable permissions (one per left-nav section).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "RBAC"
+                ],
+                "summary": "List the permission catalog",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/public/leads/{leadId}/plan-payment-intent": {
+            "post": {
+                "description": "Public endpoint that sets up payment for a lead's selected membership plan on the studio's own branded page (the same design as the trial page), mirroring publicCreateTrialPaymentIntent's embedded-Elements flow instead of a hosted Checkout Session redirect. Recurring plans create a Stripe Subscription (payment_behavior=default_incomplete) and return its first invoice's PaymentIntent client secret; a one_time plan creates a plain PaymentIntent. No auth required.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Studios (Public)"
+                ],
+                "summary": "Create a public Stripe PaymentIntent (or subscription) for a membership plan",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Lead ID",
+                        "name": "leadId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "{planId}",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "invalid lead id, invalid JSON, plan not found, or Stripe not configured",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "lead not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Stripe error",
                         "schema": {
                             "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
                         }
@@ -3589,6 +3783,73 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/internal_leads.AnalyticsSummary"
+                        }
+                    },
+                    "400": {
+                        "description": "missing/invalid studioId",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/studios/{studioId}/analytics/daily": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Returns one point per day (outbound messages sent, newly-connected leads, newly-converted leads) for the resolved studio over the same time window getAnalytics accepts. An unbounded all-time request is capped at the last 90 days for chart legibility.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Leads"
+                ],
+                "summary": "Daily analytics trend",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Time window, e.g. '30d' (default: last 90 days)",
+                        "name": "duration",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Explicit range start date",
+                        "name": "startDate",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Explicit range end date",
+                        "name": "endDate",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/internal_leads.DailyAnalyticsPoint"
+                            }
                         }
                     },
                     "400": {
@@ -5765,7 +6026,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Uses the studio's configured Gemini API key to generate either a customer message template (\"type\" omitted/other) or social media post copy (\"type\":\"social\") from a free-text prompt. Requires a Gemini API key to be configured in Studio Settings.",
+                "description": "Generates either a customer message template (\"type\" omitted/other) or social media post copy + hashtags (\"type\":\"social\") from a free-text prompt, using whichever AI provider (Groq/Gemini/Claude) this studio has configured — the same provider waterfall the chat AI uses, not one hardcoded provider.",
                 "consumes": [
                     "application/json"
                 ],
@@ -5804,7 +6065,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "missing Gemini API key",
+                        "description": "no AI provider configured",
                         "schema": {
                             "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
                         }
@@ -7810,6 +8071,269 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/studios/{studioId}/messaging/leads/cold": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Returns leads the automation has messaged at least once but who have never sent a single inbound reply, for the Pipeline's cold-lead re-engagement view.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Messaging - Leads"
+                ],
+                "summary": "List cold (contacted, never replied) leads",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/studios/{studioId}/messaging/leads/cold/move": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Drag-and-drop target for the Pipeline's Cold Leads column. If the conversation has no lead yet (backfilled WhatsApp Web history), one is created first, then its status is set — same effect as the normal Pipeline drag-and-drop, just starting from a conversation instead of an existing lead.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Messaging - Leads"
+                ],
+                "summary": "Move a cold conversation into a Pipeline status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Conversation and target status",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_messaging.moveColdLeadReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "invalid JSON, conversation id, or status",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "conversation not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/studios/{studioId}/messaging/leads/cold/re-engage": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Resends the studio's opening greeting into each given conversation (resetting the lead's automation stage back to awaiting_interest when a lead is attached — the same entry point a brand-new lead gets) and re-schedules the no-reply follow-up cascade. Works for backfilled WhatsApp Web history too, which has a conversation but no lead.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Messaging - Leads"
+                ],
+                "summary": "Re-engage selected cold conversations",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Conversation IDs to re-engage",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_messaging.reEngageColdLeadsReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "invalid JSON or conversation id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/studios/{studioId}/messaging/settings/cold-lead-thresholds": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Returns how many days of silence before a never-contacted-back lead, and a lead that replied then went quiet, are flagged Cold. Applied by the periodic Cold Leads scanner, not live per-request.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Messaging - Leads"
+                ],
+                "summary": "Get Cold Leads day thresholds",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Updates the never-replied and stalled day thresholds the Cold Leads scanner uses for this studio.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Messaging - Leads"
+                ],
+                "summary": "Set Cold Leads day thresholds",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Cold lead thresholds",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_messaging.setColdLeadThresholdsReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/studios/{studioId}/messaging/settings/daily-message-limit": {
             "get": {
                 "security": [
@@ -8559,6 +9083,226 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/studios/{studioId}/roles": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "RBAC"
+                ],
+                "summary": "List a studio's roles",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID (UUID)",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Creates a role scoped to this studio, with the given permission grants. Studio admin (own studio) or super admin only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "RBAC"
+                ],
+                "summary": "Create a studio role",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID (UUID)",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Role name, description, permission keys",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_identity.roleReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/internal_identity.roleRes"
+                        }
+                    },
+                    "409": {
+                        "description": "role name already exists in this studio",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/studios/{studioId}/roles/{roleId}": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "RBAC"
+                ],
+                "summary": "Get a studio role",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID (UUID)",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Role ID (UUID)",
+                        "name": "roleId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_identity.roleRes"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Rejected with 409 if any user still has this role assigned (spec: identity/studio-roles).",
+                "tags": [
+                    "RBAC"
+                ],
+                "summary": "Delete a studio role",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID (UUID)",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Role ID (UUID)",
+                        "name": "roleId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "no content"
+                    },
+                    "409": {
+                        "description": "role still assigned to one or more users",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Updates the role's name/description and replaces its entire permission grant with the given keys.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "RBAC"
+                ],
+                "summary": "Update a studio role",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID (UUID)",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Role ID (UUID)",
+                        "name": "roleId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Role name, description, permission keys",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_identity.roleReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_identity.roleRes"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/studios/{studioId}/social-posts": {
             "get": {
                 "security": [
@@ -8954,6 +9698,91 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
                         }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Creates a studio_staff user with a fixed default password and a forced password-reset requirement. No password is accepted here — see identity/studio-users.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "RBAC"
+                ],
+                "summary": "Add a teammate to a studio",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID (UUID)",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Teammate details",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_identity.createStudioUserReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/internal_identity.studioUserRes"
+                        }
+                    },
+                    "409": {
+                        "description": "username or email already taken",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/studios/{studioId}/users/{userId}": {
+            "delete": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Soft-deletes the user — the row stays (with who deactivated it and when), and they can no longer log in.",
+                "tags": [
+                    "RBAC"
+                ],
+                "summary": "Deactivate a teammate",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID (UUID)",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "User ID (UUID)",
+                        "name": "userId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "no content"
                     }
                 }
             }
@@ -10726,11 +11555,13 @@ const docTemplate = `{
             "type": "string",
             "enum": [
                 "super_admin",
-                "studio_admin"
+                "studio_admin",
+                "studio_staff"
             ],
             "x-enum-varnames": [
                 "RoleSuperAdmin",
-                "RoleStudioAdmin"
+                "RoleStudioAdmin",
+                "RoleStudioStaff"
             ]
         },
         "internal_identity.StudioBrand": {
@@ -10773,6 +11604,26 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_identity.createStudioUserReq": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "firstName": {
+                    "type": "string"
+                },
+                "lastName": {
+                    "type": "string"
+                },
+                "roleId": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_identity.loginReq": {
             "type": "object",
             "properties": {
@@ -10793,6 +11644,16 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "mustResetPassword": {
+                    "type": "boolean"
+                },
+                "permissions": {
+                    "description": "Permissions is null for super_admin/studio_admin (full access, no\nfiltering) and a (possibly empty) list of granted nav-section keys\nfor studio_staff — see AppShell.tsx's nav filter.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "role": {
                     "$ref": "#/definitions/internal_identity.Role"
                 },
@@ -10800,6 +11661,78 @@ const docTemplate = `{
                     "$ref": "#/definitions/internal_identity.StudioBrand"
                 },
                 "studioId": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_identity.roleReq": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "permissionKeys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "internal_identity.roleRes": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "permissionKeys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "internal_identity.studioUserRes": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "firstName": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lastName": {
+                    "type": "string"
+                },
+                "mustResetPassword": {
+                    "type": "boolean"
+                },
+                "role": {
+                    "$ref": "#/definitions/internal_identity.Role"
+                },
+                "roleId": {
+                    "type": "string"
+                },
+                "roleName": {
+                    "type": "string"
+                },
+                "username": {
                     "type": "string"
                 }
             }
@@ -10822,6 +11755,14 @@ const docTemplate = `{
                         "$ref": "#/definitions/internal_leads.PlatformAnalytics"
                     }
                 },
+                "connectionRate": {
+                    "description": "% of contacted leads (contact_attempts \u003e 0) who ever sent an inbound reply",
+                    "type": "number"
+                },
+                "conversionRate": {
+                    "description": "% of all leads that reached trial_booked or member",
+                    "type": "number"
+                },
                 "droppedLeads": {
                     "type": "integer"
                 },
@@ -10840,11 +11781,18 @@ const docTemplate = `{
                 "newLeads": {
                     "type": "integer"
                 },
+                "outboundMessagesSent": {
+                    "type": "integer"
+                },
                 "pausedLeads": {
                     "type": "integer"
                 },
                 "pausedRate": {
                     "type": "number"
+                },
+                "purchasedLeads": {
+                    "description": "status in (trial_booked, member)",
+                    "type": "integer"
                 },
                 "totalLeads": {
                     "type": "integer"
@@ -10882,6 +11830,23 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "totalLeads": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_leads.DailyAnalyticsPoint": {
+            "type": "object",
+            "properties": {
+                "connectedLeads": {
+                    "type": "integer"
+                },
+                "convertedLeads": {
+                    "type": "integer"
+                },
+                "date": {
+                    "type": "string"
+                },
+                "outboundMessagesSent": {
                     "type": "integer"
                 }
             }
@@ -11821,6 +12786,28 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_messaging.moveColdLeadReq": {
+            "type": "object",
+            "properties": {
+                "conversationId": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_messaging.reEngageColdLeadsReq": {
+            "type": "object",
+            "properties": {
+                "conversationIds": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "internal_messaging.replaceFollowupStepsReq": {
             "type": "object",
             "properties": {
@@ -11851,6 +12838,17 @@ const docTemplate = `{
                 },
                 "body": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_messaging.setColdLeadThresholdsReq": {
+            "type": "object",
+            "properties": {
+                "coldNeverRepliedDays": {
+                    "type": "integer"
+                },
+                "coldStalledDays": {
+                    "type": "integer"
                 }
             }
         },
@@ -12019,6 +13017,12 @@ const docTemplate = `{
             "properties": {
                 "billingCycle": {
                     "type": "string"
+                },
+                "billingInterval": {
+                    "type": "string"
+                },
+                "billingIntervalCount": {
+                    "type": "integer"
                 },
                 "features": {
                     "type": "array",
@@ -12311,6 +13315,12 @@ const docTemplate = `{
             "properties": {
                 "billingCycle": {
                     "type": "string"
+                },
+                "billingInterval": {
+                    "type": "string"
+                },
+                "billingIntervalCount": {
+                    "type": "integer"
                 },
                 "features": {
                     "type": "array",

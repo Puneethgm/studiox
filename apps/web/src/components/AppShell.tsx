@@ -32,10 +32,15 @@ import {
   MessageSquareText,
   Link2,
   TrendingUp,
+  Users,
+  ShieldCheck,
 } from 'lucide-react';
 import { useEffect, useState, useRef, type CSSProperties, type ReactNode } from 'react';
 import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Input';
 import { SettingsModal } from '@/app/admin/studios/[studioId]/settings/SettingsModal';
+import { EscalationToast } from '@/components/EscalationToast';
+import { changeMyPassword } from '@/app/admin/studios/[studioId]/settings/actions';
 import { api } from '@/lib/api';
 import { brandInitials, withAlpha } from '@/lib/color';
 import { cn } from '@/lib/cn';
@@ -49,6 +54,11 @@ interface NavItem {
   // When set, clicking this item opens the Settings modal instead of
   // navigating — href is kept as a fallback (e.g. "open in new tab").
   onClick?: () => void;
+  // Matches the permission catalog's key (see identity/permissions).
+  // Only consulted for studio_staff — see the filter in navItemsFor.
+  // Absent on items (Studios, Analytics, Users, Roles, ...) that aren't
+  // gated by the permission catalog at all.
+  permKey?: string;
 }
 
 function navItemsFor(me: Me, currentPath: string, onOpenSettings: () => void): NavItem[] {
@@ -72,6 +82,8 @@ function navItemsFor(me: Me, currentPath: string, onOpenSettings: () => void): N
         { href: `${base}/knowledge-base`,  label: 'Knowledge Base', icon: <Database className="h-[18px] w-[18px]" />,      match: (p) => p.startsWith(`${base}/knowledge-base`) },
         { href: `${base}/decision-trees`, label: 'Decision Trees', icon: <Network className="h-[18px] w-[18px]" />,       match: (p) => p.startsWith(`${base}/decision-trees`) },
         { href: `${base}/templates`,      label: 'Templates',      icon: <MessageSquareText className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/templates`) },
+        { href: `${base}/users`,          label: 'Users',          icon: <Users className="h-[18px] w-[18px]" />,          match: (p) => p.startsWith(`${base}/users`) },
+        { href: `${base}/roles`,          label: 'Roles',          icon: <ShieldCheck className="h-[18px] w-[18px]" />,    match: (p) => p.startsWith(`${base}/roles`) },
         { href: `${base}/settings`,       label: 'Settings',       icon: <Settings className="h-[18px] w-[18px]" />,      match: (p) => p.startsWith(`${base}/settings`), onClick: onOpenSettings },
       ];
     }
@@ -117,35 +129,51 @@ function navItemsFor(me: Me, currentPath: string, onOpenSettings: () => void): N
     ];
   }
 
-  // Studio admin nav
+  // Studio admin / studio staff nav
   const sid = me.studioId!;
   const base = `/admin/studios/${sid}`;
   const links: NavItem[] = [
-    { href: base,                 label: 'Dashboard', icon: <Home className="h-[18px] w-[18px]" />,           match: (p) => p === base },
-    { href: `${base}/inbox`,      label: 'Inbox',     icon: <MessagesSquare className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/inbox`) },
-    { href: `${base}/pipeline`,   label: 'Pipeline',  icon: <GitBranch className="h-[18px] w-[18px]" />,   match: (p) => p.startsWith(`${base}/pipeline`) },
-    { href: `${base}/campaigns`,  label: 'Campaigns', icon: <Megaphone className="h-[18px] w-[18px]" />,      match: (p) => p.startsWith(`${base}/campaigns`) },
-    { href: `${base}/leads`,      label: 'Leads',     icon: <Inbox className="h-[18px] w-[18px]" />,          match: (p) => p.startsWith(`${base}/leads`) },
+    { href: base,                 label: 'Dashboard', icon: <Home className="h-[18px] w-[18px]" />,           match: (p) => p === base, permKey: 'dashboard' },
+    { href: `${base}/inbox`,      label: 'Inbox',     icon: <MessagesSquare className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/inbox`), permKey: 'inbox' },
+    { href: `${base}/pipeline`,   label: 'Pipeline',  icon: <GitBranch className="h-[18px] w-[18px]" />,   match: (p) => p.startsWith(`${base}/pipeline`), permKey: 'pipeline' },
+    { href: `${base}/campaigns`,  label: 'Campaigns', icon: <Megaphone className="h-[18px] w-[18px]" />,      match: (p) => p.startsWith(`${base}/campaigns`), permKey: 'campaigns' },
+    { href: `${base}/leads`,      label: 'Leads',     icon: <Inbox className="h-[18px] w-[18px]" />,          match: (p) => p.startsWith(`${base}/leads`), permKey: 'leads' },
   ];
 
   if (me.studio?.socialPlannerEnabled) {
-    links.push({ href: `${base}/social-planner`, label: 'Social Planner', icon: <Sparkles className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/social-planner`) });
+    links.push({ href: `${base}/social-planner`, label: 'Social Planner', icon: <Sparkles className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/social-planner`), permKey: 'social-planner' });
   }
 
   links.push(
-    { href: `${base}/payments`,   label: 'Payments',  icon: <CreditCard className="h-[18px] w-[18px]" />,     match: (p) => p.startsWith(`${base}/payments`) },
-    { href: `${base}/channels`,   label: 'Channels',  icon: <Plug className="h-[18px] w-[18px]" />,           match: (p) => p.startsWith(`${base}/channels`) },
-    { href: `${base}/knowledge-base`,  label: 'Knowledge Base', icon: <Database className="h-[18px] w-[18px]" />,  match: (p) => p.startsWith(`${base}/knowledge-base`) },
-    { href: `${base}/decision-trees`, label: 'Decision Trees', icon: <Network className="h-[18px] w-[18px]" />,  match: (p) => p.startsWith(`${base}/decision-trees`) },
-    { href: `${base}/templates`,      label: 'Templates',      icon: <MessageSquareText className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/templates`) },
-    { href: `${base}/settings`,       label: 'Settings',       icon: <Settings className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/settings`), onClick: onOpenSettings },
+    { href: `${base}/payments`,   label: 'Payments',  icon: <CreditCard className="h-[18px] w-[18px]" />,     match: (p) => p.startsWith(`${base}/payments`), permKey: 'payments' },
+    { href: `${base}/channels`,   label: 'Channels',  icon: <Plug className="h-[18px] w-[18px]" />,           match: (p) => p.startsWith(`${base}/channels`), permKey: 'channels' },
+    { href: `${base}/knowledge-base`,  label: 'Knowledge Base', icon: <Database className="h-[18px] w-[18px]" />,  match: (p) => p.startsWith(`${base}/knowledge-base`), permKey: 'knowledge-base' },
+    { href: `${base}/decision-trees`, label: 'Decision Trees', icon: <Network className="h-[18px] w-[18px]" />,  match: (p) => p.startsWith(`${base}/decision-trees`), permKey: 'decision-trees' },
+    { href: `${base}/templates`,      label: 'Templates',      icon: <MessageSquareText className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/templates`), permKey: 'templates' },
+    { href: `${base}/settings`,       label: 'Settings',       icon: <Settings className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/settings`), onClick: onOpenSettings, permKey: 'settings' },
   );
 
-  return links;
+  // Only studio_staff is ever filtered — super_admin/studio_admin (both
+  // BypassesPermissionChecks server-side too) always get the full list.
+  const visible = me.role === 'studio_staff' && me.permissions
+    ? links.filter((l) => !l.permKey || me.permissions!.includes(l.permKey))
+    : links;
+
+  // Users/Roles management is never part of the permission catalog — only
+  // the actual studio_admin sees these tabs, matching the backend's
+  // RequireRole(studio_admin, super_admin) gate on those endpoints.
+  if (me.role === 'studio_admin') {
+    visible.push(
+      { href: `${base}/users`, label: 'Users', icon: <Users className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/users`) },
+      { href: `${base}/roles`, label: 'Roles', icon: <ShieldCheck className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/roles`) },
+    );
+  }
+
+  return visible;
 }
 
 export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
-  const isStudio = me.role === 'studio_admin' && !!me.studio;
+  const isStudio = (me.role === 'studio_admin' || me.role === 'studio_staff') && !!me.studio;
   const brand = isStudio ? me.studio!.brandColor : '#7c3aed';
 
   // All hooks must run unconditionally — keep them above the lockout branch.
@@ -233,6 +261,15 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
     ['--brand-onbrand' as string]: '#ffffff',
   };
 
+  // A teammate created with the default password: full-screen forced reset,
+  // for any route. The backend also 403s every other studio-scoped/admin
+  // endpoint with `password_reset_required` — this is the matching UX
+  // wrapper. Checked before the inactive-studio lockout below since setting
+  // your own password is a precondition of using the account at all.
+  if (me.mustResetPassword) {
+    return <ForcedPasswordResetScreen me={me} />;
+  }
+
   // Studio-admin of an inactive studio: full-screen lockout. The backend
   // also 403s every studio-scoped endpoint with `studio_inactive`; this is
   // the matching UX wrapper. Super-admin always sees the normal shell.
@@ -290,6 +327,8 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
         <SettingsModal studioId={activeStudioId} open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       )}
 
+      <EscalationToast studioId={activeStudioId} />
+
       {/* Custom Floating Toast Notification */}
       {globalToast && (
         <div className="fixed bottom-6 right-6 z-[9999] p-4 rounded-2xl border border-emerald-500/30 bg-white/90 dark:bg-zinc-900/90 backdrop-blur-xl shadow-2xl flex items-center gap-3 animate-in slide-in-from-bottom-5 fade-in duration-300 min-w-[320px]">
@@ -340,7 +379,7 @@ function Sidebar({
   settingsOpen: boolean;
 }) {
   const items = navItemsFor(me, pathname, onOpenSettings);
-  const isStudio = me.role === 'studio_admin' && !!me.studio;
+  const isStudio = (me.role === 'studio_admin' || me.role === 'studio_staff') && !!me.studio;
   const studio = isStudio ? me.studio! : null;
   const isSuperAdminInStudio = me.role === 'super_admin' && /\/admin\/studios\/[^/]+/.test(pathname);
 
@@ -724,6 +763,107 @@ function Topbar({
         </div>
       </div>
     </header>
+  );
+}
+
+// Full-screen forced reset for a teammate still on the default password
+// (identity.DefaultTeammatePassword server-side). Reuses the existing
+// change-password Server Action + endpoint — the teammate does know their
+// "current" password, it's just the well-known default, so this asks for
+// only the two fields the user actually needs to fill in (new + confirm),
+// same as any other "reset your password" flow.
+const DEFAULT_TEAMMATE_PASSWORD = 'password123'; // must match identity.DefaultTeammatePassword (apps/api)
+
+function ForcedPasswordResetScreen({ me }: { me: Me }) {
+  const router = useRouter();
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError('');
+    if (newPassword.length < 8) {
+      setError('Password must be at least 8 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await changeMyPassword({
+        currentPassword: DEFAULT_TEAMMATE_PASSWORD,
+        newPassword,
+        confirmPassword,
+      });
+      if (!res.ok) {
+        setError((res.details && Object.values(res.details)[0]) || res.error);
+        return;
+      }
+      router.refresh();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function logout() {
+    try {
+      await api('/api/v1/auth/logout', { method: 'POST' });
+    } finally {
+      router.push('/login');
+      router.refresh();
+    }
+  }
+
+  return (
+    <main className="grid min-h-screen place-items-center bg-slate-50 px-4 dark:bg-slate-950">
+      <div className="w-full max-w-sm">
+        <div className="mx-auto mb-5 grid h-14 w-14 place-items-center rounded-2xl bg-slate-900/5 text-slate-500 dark:bg-slate-50/5 dark:text-slate-400">
+          <Lock className="h-6 w-6" />
+        </div>
+        <h1 className="text-center text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+          Set your password
+        </h1>
+        <p className="mt-2 text-center text-sm leading-relaxed text-slate-500 dark:text-slate-400">
+          Welcome{me.username ? `, ${me.username}` : ''} — before you continue, choose a password only you know.
+        </p>
+        <form onSubmit={onSubmit} className="mt-8 space-y-3">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">New password</label>
+            <Input
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              placeholder="At least 8 characters"
+              invalid={!!error}
+              autoFocus
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Confirm new password</label>
+            <Input
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              placeholder="Re-enter the password above"
+              invalid={!!error}
+            />
+          </div>
+          {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+          <Button type="submit" className="w-full" disabled={saving} suppressHydrationWarning>
+            {saving ? 'Saving…' : 'Set password and continue'}
+          </Button>
+        </form>
+        <div className="mt-6 text-center">
+          <Button variant="outline" onClick={logout} leftIcon={<LogOut className="h-4 w-4" />} suppressHydrationWarning>
+            Sign out instead
+          </Button>
+        </div>
+      </div>
+    </main>
   );
 }
 

@@ -85,6 +85,10 @@ func (w *AutoContactWorker) processItem(ctx context.Context, it leads.OutboxItem
 	if phone == "" {
 		return fmt.Errorf("empty phone for lead %s", l.ID)
 	}
+	if l.DNDEnabled {
+		w.log.Info("autocontact: dnd active — skipping initial greeting", "lead", l.ID)
+		return nil
+	}
 
 	// Resolve active channel for phone-based contact (WhatsApp Meta → WhatsApp Web → SMS)
 	channelKind := KindWhatsAppMeta

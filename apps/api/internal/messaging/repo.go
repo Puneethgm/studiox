@@ -573,6 +573,25 @@ func (r *Repo) UpdateLeadName(ctx context.Context, tx pgx.Tx, leadID uuid.UUID, 
 	return nil
 }
 
+// SetLeadNeedsManualFollowup toggles the flag SendTrialPaymentLink sets when
+// a studio has trial payment collection disabled (see studios.Studio.
+// TrialPaymentEnabled) — the trial link is never sent, so a human needs to
+// actually reach out instead. Cleared back to false the next time a
+// studio_user replies to that lead (see EnqueueReply). Raw SQL against the
+// leads table rather than importing internal/leads, matching this repo's
+// existing direct lead writes (UpdateLeadName above, trial_purchased reads
+// in SendTrialPaymentLink) — leads already imports messaging, so the
+// reverse import would cycle.
+func (r *Repo) SetLeadNeedsManualFollowup(ctx context.Context, leadID uuid.UUID, needsFollowup bool) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE leads SET needs_manual_followup = $2, updated_at = now() WHERE id = $1
+	`, leadID, needsFollowup)
+	if err != nil {
+		return fmt.Errorf("set lead needs manual followup: %w", err)
+	}
+	return nil
+}
+
 // ============================================================
 // conversations
 // ============================================================
@@ -2292,6 +2311,42 @@ func (r *Repo) CountAutomatedWhatsAppSentToday(ctx context.Context, studioID uui
 	return count, nil
 }
 
+// SubscriptionSummary is a lightweight projection of a lead's most recent
+// paid subscription (user_subscriptions row) — enough to tell them what
+// they already paid for and when, without re-sending a payment link.
+// Deliberately not studios.MemberSubscription: importing internal/studios
+// here would cycle, since studios already depends on messaging elsewhere.
+// Same raw-SQL-against-a-shared-table convention as GetStripeConfig below.
+type SubscriptionSummary struct {
+	PlanName   string
+	AmountPaid int
+	Currency   string
+	PaidAt     time.Time
+}
+
+// GetLatestSubscriptionForLead returns the lead's most recent
+// user_subscriptions row (nil, nil if they have none) — used before
+// sending a trial or membership payment link, so an already-paid lead gets
+// told what they already have instead of a second checkout link (and a
+// second charge).
+func (r *Repo) GetLatestSubscriptionForLead(ctx context.Context, leadID uuid.UUID) (*SubscriptionSummary, error) {
+	var s SubscriptionSummary
+	err := r.pool.QueryRow(ctx, `
+		SELECT plan_name, amount_paid, currency, created_at
+		FROM user_subscriptions
+		WHERE lead_id = $1
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, leadID).Scan(&s.PlanName, &s.AmountPaid, &s.Currency, &s.PaidAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
 func (r *Repo) GetStripeConfig(ctx context.Context, studioID uuid.UUID) (secretKey string, amountSGD int, name string, slug string, err error) {
 	var encKey string
 	err = r.pool.QueryRow(ctx, "SELECT stripe_secret_key, trial_amount_sgd, name, slug FROM studios WHERE id = $1", studioID).Scan(&encKey, &amountSGD, &name, &slug)
@@ -2307,6 +2362,27 @@ func (r *Repo) GetStripeConfig(ctx context.Context, studioID uuid.UUID) (secretK
 		secretKey = encKey
 	}
 	return
+}
+
+// IsTrialPaymentEnabled reports whether SendTrialPaymentLink should collect
+// payment for this studio's trial bookings, or skip straight to the
+// disabled-payment holding-message path (see studios.Studio.
+// TrialPaymentEnabled — mirrored here via direct SQL, not an import, for
+// the same reason as GetStripeConfig above).
+// IsTrialPlanActive reports whether the studio's designated Trial plan —
+// the plan literally named "Trial", same convention ListActivePlans uses
+// to exclude it from the membership list below — is currently active.
+// There's no separate "collect trial payment" toggle: the existing
+// Active/Inactive switch on the Trial plan card in Settings → Plans *is*
+// the toggle. No plan named "Trial" at all counts as inactive — there's
+// nothing to charge for.
+func (r *Repo) IsTrialPlanActive(ctx context.Context, studioID uuid.UUID) (bool, error) {
+	var active bool
+	err := r.pool.QueryRow(ctx, `SELECT is_active FROM plans WHERE studio_id = $1 AND plan_name = 'Trial' LIMIT 1`, studioID).Scan(&active)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return active, err
 }
 
 type Plan struct {

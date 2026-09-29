@@ -37,9 +37,10 @@ type Handler struct {
 	llmRepo      *llm.Repo
 	claudeClient *claude.Client
 	claudeAPIURL string
+	answerCache  *AnswerCache
 }
 
-func NewHandler(svc *Service, bus Bus, studiosRepo *studios.Repo, llmRepo *llm.Repo, claudeClient *claude.Client, claudeAPIURL string) *Handler {
+func NewHandler(svc *Service, bus Bus, studiosRepo *studios.Repo, llmRepo *llm.Repo, claudeClient *claude.Client, claudeAPIURL string, answerCache *AnswerCache) *Handler {
 	return &Handler{
 		svc:          svc,
 		bus:          bus,
@@ -47,6 +48,7 @@ func NewHandler(svc *Service, bus Bus, studiosRepo *studios.Repo, llmRepo *llm.R
 		llmRepo:      llmRepo,
 		claudeClient: claudeClient,
 		claudeAPIURL: claudeAPIURL,
+		answerCache:  answerCache,
 	}
 }
 
@@ -1286,6 +1288,14 @@ func (h *Handler) resolveConversationEscalation(w http.ResponseWriter, r *http.R
 		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
 		return
 	}
+	// Also clears the Leads-page "needs follow up" badge, if this
+	// escalation came from SendTrialPaymentLink's disabled-payment path —
+	// resolving here is the one deliberate action that should close out
+	// both signals together. Best-effort: a lookup failure shouldn't block
+	// resolving the escalation itself.
+	if conv, err := h.svc.repo.GetConversation(r.Context(), studioID, id); err == nil && conv.LeadID != nil {
+		_ = h.svc.repo.SetLeadNeedsManualFollowup(r.Context(), *conv.LeadID, false)
+	}
 	if err := h.svc.repo.ResolveConversationEscalation(r.Context(), studioID, id); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return
@@ -2188,7 +2198,7 @@ Important:
 Generate the message content based on this instruction: ` + req.Prompt
 	}
 
-	generatedText, source := llmWaterfall(r.Context(), h.studiosRepo, h.llmRepo, h.svc.repo, h.claudeClient, h.claudeAPIURL, slog.Default(), studioID, studio, systemInstruction)
+	generatedText, source := llmWaterfall(r.Context(), h.studiosRepo, h.llmRepo, h.svc.repo, h.claudeClient, h.claudeAPIURL, slog.Default(), studioID, studio, systemInstruction, h.answerCache, "template_gen")
 	if generatedText == "" {
 		httpx.WriteError(w, http.StatusBadRequest, "no_provider", "No AI provider is configured for this studio — set up Groq, Gemini, or Claude in Settings → AI Assistant.")
 		return

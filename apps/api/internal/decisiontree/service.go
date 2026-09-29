@@ -169,11 +169,11 @@ func extractKeywordsLocally(label, replyTemplate string) []string {
 	return out
 }
 
-func (s *Service) CreateTree(ctx context.Context, studioID uuid.UUID, input CreateTreeInput) (*Tree, map[string]string, error) {
+func (s *Service) CreateTree(ctx context.Context, studioID uuid.UUID, input CreateTreeInput, actorID *uuid.UUID) (*Tree, map[string]string, error) {
 	if errs := validateTree(input); errs != nil {
 		return nil, errs, nil
 	}
-	t, err := s.repo.CreateTree(ctx, studioID, input)
+	t, err := s.repo.CreateTree(ctx, studioID, input, actorID)
 	if err == nil {
 		s.repo.InvalidateCache(studioID)
 	}
@@ -188,7 +188,7 @@ func (s *Service) GetTree(ctx context.Context, studioID, treeID uuid.UUID) (*Tre
 	return s.repo.GetTree(ctx, studioID, treeID)
 }
 
-func (s *Service) UpdateTree(ctx context.Context, studioID, treeID uuid.UUID, input UpdateTreeInput) (*Tree, error) {
+func (s *Service) UpdateTree(ctx context.Context, studioID, treeID uuid.UUID, input UpdateTreeInput, actorID *uuid.UUID) (*Tree, error) {
 	if input.IsActive != nil && *input.IsActive {
 		// Deactivate any other active tree that targets the same statuses.
 		// - Activating a catch-all tree (empty statuses) deactivates other catch-all trees.
@@ -211,13 +211,15 @@ func (s *Service) UpdateTree(ctx context.Context, studioID, treeID uuid.UUID, in
 				continue
 			}
 			if overlaps(incomingStatuses, t.TargetStatuses) {
-				if _, err := s.repo.UpdateTree(ctx, studioID, t.ID, UpdateTreeInput{IsActive: &f}); err != nil {
+				// Same actor: this deactivation is a direct, synchronous
+				// consequence of their activate-this-tree request.
+				if _, err := s.repo.UpdateTree(ctx, studioID, t.ID, UpdateTreeInput{IsActive: &f}, actorID); err != nil {
 					return nil, err
 				}
 			}
 		}
 	}
-	t, err := s.repo.UpdateTree(ctx, studioID, treeID, input)
+	t, err := s.repo.UpdateTree(ctx, studioID, treeID, input, actorID)
 	if err == nil {
 		s.repo.InvalidateCache(studioID)
 	}
@@ -247,7 +249,7 @@ func (s *Service) DeleteTree(ctx context.Context, studioID, treeID uuid.UUID) er
 	return err
 }
 
-func (s *Service) CreateNode(ctx context.Context, studioID, treeID uuid.UUID, input CreateNodeInput) (*Node, map[string]string, error) {
+func (s *Service) CreateNode(ctx context.Context, studioID, treeID uuid.UUID, input CreateNodeInput, actorID *uuid.UUID) (*Node, map[string]string, error) {
 	// Verify tree belongs to studio.
 	if _, err := s.repo.GetTree(ctx, studioID, treeID); err != nil {
 		return nil, nil, err
@@ -256,7 +258,7 @@ func (s *Service) CreateNode(ctx context.Context, studioID, treeID uuid.UUID, in
 		return nil, errs, nil
 	}
 	input.TreeID = treeID
-	n, err := s.repo.CreateNode(ctx, input)
+	n, err := s.repo.CreateNode(ctx, input, actorID)
 	if err == nil {
 		s.repo.InvalidateCache(studioID)
 	}
@@ -291,7 +293,7 @@ type ImportRowError struct {
 // appear in the sheet in any order (a child can be listed before its
 // parent). Rows whose parent never resolves (typo, or a genuine cycle) are
 // reported as errors rather than silently dropped or attached to the root.
-func (s *Service) ImportNodes(ctx context.Context, studioID, treeID uuid.UUID, rows []ImportRow) (created int, errs []ImportRowError, err error) {
+func (s *Service) ImportNodes(ctx context.Context, studioID, treeID uuid.UUID, rows []ImportRow, actorID *uuid.UUID) (created int, errs []ImportRowError, err error) {
 	tree, err := s.repo.GetTree(ctx, studioID, treeID)
 	if err != nil {
 		return 0, nil, err
@@ -357,7 +359,7 @@ func (s *Service) ImportNodes(ctx context.Context, studioID, treeID uuid.UUID, r
 				continue
 			}
 
-			n, err := s.repo.CreateNode(ctx, input)
+			n, err := s.repo.CreateNode(ctx, input, actorID)
 			if err != nil {
 				errs = append(errs, ImportRowError{RowNum: row.RowNum, Label: row.Label, Error: err.Error()})
 				failedLabels[strings.ToLower(row.Label)] = true
@@ -397,11 +399,11 @@ func (s *Service) ImportNodes(ctx context.Context, studioID, treeID uuid.UUID, r
 	return created, errs, nil
 }
 
-func (s *Service) UpdateNode(ctx context.Context, studioID, treeID, nodeID uuid.UUID, input UpdateNodeInput) (*Node, error) {
+func (s *Service) UpdateNode(ctx context.Context, studioID, treeID, nodeID uuid.UUID, input UpdateNodeInput, actorID *uuid.UUID) (*Node, error) {
 	if _, err := s.repo.GetTree(ctx, studioID, treeID); err != nil {
 		return nil, err
 	}
-	n, err := s.repo.UpdateNode(ctx, treeID, nodeID, input)
+	n, err := s.repo.UpdateNode(ctx, treeID, nodeID, input, actorID)
 	if err == nil {
 		s.repo.InvalidateCache(studioID)
 	}

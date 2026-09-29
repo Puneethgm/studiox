@@ -1886,6 +1886,14 @@ func (s *Service) EnqueueReply(ctx context.Context, in SendInput) (int64, error)
 		return 0, err
 	}
 
+	// A human just replied to this lead — clear any pending "needs manual
+	// followup" flag (set by SendTrialPaymentLink when trial payment
+	// collection is disabled for this studio). Best-effort: a failure here
+	// shouldn't fail the reply that was just sent.
+	if conv.LeadID != nil {
+		_ = s.repo.SetLeadNeedsManualFollowup(ctx, *conv.LeadID, false)
+	}
+
 	s.bus.Publish(ctx, Event{
 		Kind:           EvtOutboundJobEnqueued,
 		StudioID:       in.StudioID,
@@ -2330,6 +2338,50 @@ func formatPlanReprompt(intro string, plans []Plan) string {
 	return sb.String()
 }
 
+// formatMoneyCents renders cents as "SGD 10.00" — matches the frontend's
+// Intl.NumberFormat currency style (no $ sign for non-USD currencies).
+func formatMoneyCents(amountCents int, currency string) string {
+	if currency == "" {
+		currency = "SGD"
+	}
+	return fmt.Sprintf("%s %.2f", strings.ToUpper(currency), float64(amountCents)/100)
+}
+
+// alreadyPaidBody tells a lead what they already paid for and when,
+// instead of re-sending a payment link (and risking a second charge).
+// kind is "trial" or "membership", only used in the fallback message when
+// no user_subscriptions row is found (the purchased flag is set but the
+// subscription record itself is missing — shouldn't happen, but the
+// customer still shouldn't get billed twice over a data gap).
+func alreadyPaidBody(ctx context.Context, repo *Repo, leadID uuid.UUID, firstName, kind string) string {
+	sub, err := repo.GetLatestSubscriptionForLead(ctx, leadID)
+	if err != nil || sub == nil {
+		return fmt.Sprintf("Hi %s! Looks like your %s is already booked and paid for — no need to pay again. Let us know if something looks off and we'll sort it out. See you soon!", firstName, kind)
+	}
+	return fmt.Sprintf(
+		"Hi %s! You're all set — you already paid %s for the %s plan on %s. No need to pay again! Let us know if something looks off and we'll sort it out.",
+		firstName, formatMoneyCents(sub.AmountPaid, sub.Currency), sub.PlanName, sub.PaidAt.Format("2 Jan 2006"),
+	)
+}
+
+// escalateForManualMembership flags the lead and puts the conversation in
+// the Inbox's Escalation tab — the same two-signal pattern
+// SendTrialPaymentLink already uses when the Trial plan is inactive — for
+// every membership fallback that dead-ends on a "team will reach out"
+// placeholder (no active plans configured, matching a plan failed, etc.).
+// Without this, that placeholder message goes out but nothing ever surfaces
+// the conversation to a human, so it can sit unanswered indefinitely.
+func (s *Service) escalateForManualMembership(ctx context.Context, studioID, convID, leadID uuid.UUID, reason string) {
+	if err := s.repo.SetLeadNeedsManualFollowup(ctx, leadID, true); err != nil {
+		slog.Error("escalate for manual membership: failed to flag lead", "lead", leadID, "err", err)
+	}
+	if err := s.repo.EscalateConversation(ctx, studioID, convID, reason); err != nil {
+		slog.Error("escalate for manual membership: failed to escalate conversation", "conv", convID, "err", err)
+		return
+	}
+	s.bus.Publish(ctx, Event{Kind: EvtConversationEscalated, StudioID: studioID, ConversationID: convID, Reason: reason})
+}
+
 // buildPlanCheckoutBody creates a Stripe subscription checkout for the
 // selected plan and returns the confirmation message to send. When
 // oldSubscriptionID is non-empty (an existing member changing plans, not a
@@ -2443,22 +2495,69 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 	var leadName, leadStatus, leadNotes, autoContactStage, studioSlug, campaignSlug string
 	var slotsJSON []byte
 	var timezone string
+	var leadDND bool
 	err := tx.QueryRow(ctx, `
-		SELECT l.name, l.status, l.notes, l.auto_contact_stage, s.slug, COALESCE(c.slug, ''), s.availability_slots, s.availability_timezone
+		SELECT l.name, l.status, l.notes, l.auto_contact_stage, s.slug, COALESCE(c.slug, ''), s.availability_slots, s.availability_timezone, l.dnd_enabled
 		FROM leads l
 		JOIN studios s ON s.id = l.studio_id
 		LEFT JOIN campaigns c ON c.id = l.campaign_id
 		WHERE l.studio_id = $1 AND l.id = $2
-	`, studioID, *conv.LeadID).Scan(&leadName, &leadStatus, &leadNotes, &autoContactStage, &studioSlug, &campaignSlug, &slotsJSON, &timezone)
+	`, studioID, *conv.LeadID).Scan(&leadName, &leadStatus, &leadNotes, &autoContactStage, &studioSlug, &campaignSlug, &slotsJSON, &timezone, &leadDND)
 
 	if err != nil {
 		slog.Warn("auto-contact: lead query failed, skipping", "err", err, "lead_id", conv.LeadID)
 		return nil // Lead not found or other db error, skip automation
 	}
 
+	// Do Not Disturb — same intent as the ai_enabled gate above, just a
+	// separate flag: a lead/conversation with DND on gets no automated
+	// message from this deterministic stage machine either (trial links,
+	// numbered-menu prompts, etc.), not just no free-text AI reply. Checked
+	// here (not just in ai_worker.go) because this function runs first,
+	// synchronously, on every inbound message — ai_worker's own DND check
+	// never even gets a chance to matter for this path otherwise.
+	if leadDND || conv.DNDEnabled {
+		slog.Info("auto-contact: dnd active — skipping automation", "lead_id", conv.LeadID, "conversation_id", conv.ID)
+		return nil
+	}
+
 	slog.Info("auto-contact: processing inbound", "lead_id", conv.LeadID, "stage", autoContactStage, "status", leadStatus, "body", body)
 
 	text := strings.ToLower(strings.TrimSpace(body))
+
+	// Billing complaint — takes priority over the stage machine below.
+	// Without this, a free-text message like "yes but I was charged twice"
+	// still contains "yes" and trips the numbered-menu matching further
+	// down, so the complaint gets silently swallowed and the customer is
+	// walked right back into another payment prompt. Plain keyword match
+	// (mirrors the human-handoff check in ai_worker.go) so it fires
+	// deterministically ahead of any stage-specific interpretation.
+	billingComplaintPhrases := []string{
+		"charged twice", "charged 2 times", "double charge", "double charged",
+		"billed twice", "charged again", "paid twice", "two charges",
+		"duplicate charge", "duplicate payment",
+	}
+	for _, phrase := range billingComplaintPhrases {
+		if !strings.Contains(text, phrase) {
+			continue
+		}
+		slog.Info("auto-contact: billing complaint detected, escalating", "lead_id", conv.LeadID, "conversation_id", conv.ID)
+		if err := s.repo.EscalateConversation(ctx, studioID, conv.ID, "Customer reported being charged twice"); err != nil {
+			slog.Warn("auto-contact: failed to escalate billing complaint", "err", err, "conversation_id", conv.ID)
+			break
+		}
+		s.bus.Publish(ctx, Event{Kind: EvtConversationEscalated, StudioID: studioID, ConversationID: conv.ID, Reason: "Customer reported being charged twice"})
+		_, _ = s.repo.EnqueueOutbound(ctx, OutboundJob{
+			StudioID:       studioID,
+			ConversationID: conv.ID,
+			Body:           "I'm really sorry about that — I've flagged this for our team to check your payment and sort it out right away. A real team member will follow up with you shortly.",
+			SourceKind:     SourceAI,
+			SourceRef:      "billing_complaint_escalation",
+			ScheduledFor:   time.Now().UTC(),
+		})
+		return nil
+	}
+
 	targetStage := autoContactStage
 	targetStatus := leadStatus
 	targetNotes := leadNotes
@@ -2568,17 +2667,27 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 			sentBody, _ := s.SendTrialPaymentLink(ctx, studioID, conv.ID, conv.LeadID, firstName)
 			alreadySent = sentBody != ""
 		} else if isMember && !isTrial {
-			// Show the actual plan list and move into awaiting_plan_selection
-			// instead of dead-ending on a "team will reach out" placeholder —
-			// the awaiting_plan_selection stage (below) already knows how to
-			// match a reply to a plan and send a real Stripe checkout link.
-			plans, errPlans := s.repo.ListActivePlans(ctx, studioID)
-			if errPlans == nil && len(plans) > 0 {
-				targetStage = "awaiting_plan_selection"
-				outboundBody = formatPlanReprompt("Awesome! Here are our membership plans — reply with the number of the one you'd like:", plans)
-			} else {
+			var memberSold bool
+			_ = tx.QueryRow(ctx, "SELECT member_sold FROM leads WHERE id = $1", *conv.LeadID).Scan(&memberSold)
+			if memberSold {
+				// Already a paying member — tell them what they have instead
+				// of sending a fresh checkout link (and a second charge).
 				targetStage = "completed"
-				outboundBody = "Awesome! Our team will reach out to you ASAP to discuss membership options."
+				outboundBody = alreadyPaidBody(ctx, s.repo, *conv.LeadID, firstName, "membership")
+			} else {
+				// Show the actual plan list and move into awaiting_plan_selection
+				// instead of dead-ending on a "team will reach out" placeholder —
+				// the awaiting_plan_selection stage (below) already knows how to
+				// match a reply to a plan and send a real Stripe checkout link.
+				plans, errPlans := s.repo.ListActivePlans(ctx, studioID)
+				if errPlans == nil && len(plans) > 0 {
+					targetStage = "awaiting_plan_selection"
+					outboundBody = formatPlanReprompt("Awesome! Here are our membership plans — reply with the number of the one you'd like:", plans)
+				} else {
+					targetStage = "completed"
+					outboundBody = "Awesome! Our team will reach out to you ASAP to discuss membership options."
+					s.escalateForManualMembership(ctx, studioID, conv.ID, *conv.LeadID, "All membership plans are currently inactive — customer asked to become a member")
+				}
 			}
 		}
 		// Unrecognised message at awaiting_options — let the AI worker answer the question.
@@ -2604,6 +2713,7 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 		} else {
 			targetStage = "completed"
 			outboundBody = "Thank you! Our team will reach out to you shortly to finalize your membership."
+			s.escalateForManualMembership(ctx, studioID, conv.ID, *conv.LeadID, "All membership plans are currently inactive — customer was choosing a plan")
 		}
 	} else if autoContactStage == "awaiting_plan_change_selection" {
 		// Existing member confirmed they want to change/upgrade their plan
@@ -2627,6 +2737,7 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 		} else {
 			targetStage = "completed"
 			outboundBody = "Thank you! Our team will reach out to you shortly to update your plan."
+			s.escalateForManualMembership(ctx, studioID, conv.ID, *conv.LeadID, "All membership plans are currently inactive — existing member was changing plan")
 		}
 	} else if autoContactStage == "awaiting_trial_date" {
 		days, daysWeekdayStr := getAvailableDays()
@@ -2839,13 +2950,21 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 			strings.Contains(text, "premium") ||
 			strings.Contains(text, "package"))
 		if wantsMembership {
-			plans, errPlans := s.repo.ListActivePlans(ctx, studioID)
-			if errPlans == nil && len(plans) > 0 {
-				targetStage = "awaiting_plan_selection"
-				outboundBody = formatPlanReprompt("Awesome! Here are our membership plans — reply with the number of the one you'd like:", plans)
-			} else {
+			var memberSold bool
+			_ = tx.QueryRow(ctx, "SELECT member_sold FROM leads WHERE id = $1", *conv.LeadID).Scan(&memberSold)
+			if memberSold {
 				targetStage = "completed"
-				outboundBody = "Awesome! Our team will reach out to you ASAP to discuss membership options."
+				outboundBody = alreadyPaidBody(ctx, s.repo, *conv.LeadID, firstName, "membership")
+			} else {
+				plans, errPlans := s.repo.ListActivePlans(ctx, studioID)
+				if errPlans == nil && len(plans) > 0 {
+					targetStage = "awaiting_plan_selection"
+					outboundBody = formatPlanReprompt("Awesome! Here are our membership plans — reply with the number of the one you'd like:", plans)
+				} else {
+					targetStage = "completed"
+					outboundBody = "Awesome! Our team will reach out to you ASAP to discuss membership options."
+					s.escalateForManualMembership(ctx, studioID, conv.ID, *conv.LeadID, "All membership plans are currently inactive — customer asked to become a member")
+				}
 			}
 		}
 	}
@@ -3094,18 +3213,49 @@ func (s *Service) SendTrialPaymentLink(ctx context.Context, studioID, convID uui
 	var body string
 
 	if leadID != nil {
-		_, _, _, studioSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
-		if errStripe == nil && studioSlug != "" {
-			detailsURL := fmt.Sprintf("%s/trial-details/%s?studio=%s", frontendURL, leadID.String(), studioSlug)
-			tl := &TriggerLink{StudioID: studioID, Name: fmt.Sprintf("Trial - %s", firstName), URL: detailsURL}
-			if errLink := s.repo.CreateTriggerLink(ctx, tl); errLink == nil {
-				shortURL := fmt.Sprintf("%s/api/v1/links/%s", frontendURL, tl.ID.String())
-				body = fmt.Sprintf("Hi %s! Great choice. Here's your secure trial booking link:\n\n%s\n\nJust a couple of quick details and payment to confirm your spot. We look forward to seeing you!", firstName, shortURL)
+		var trialPurchased bool
+		_ = s.repo.pool.QueryRow(ctx, "SELECT trial_purchased FROM leads WHERE id = $1", *leadID).Scan(&trialPurchased)
+		trialPlanActive, errActive := s.repo.IsTrialPlanActive(ctx, studioID)
+		if trialPurchased {
+			body = alreadyPaidBody(ctx, s.repo, *leadID, firstName, "trial")
+		} else if errActive == nil && !trialPlanActive {
+			// The Trial plan itself is switched off (Settings → Plans →
+			// its Active/Inactive toggle) — skip Stripe entirely and send
+			// a holding message. Two signals, on purpose:
+			//   - EscalateConversation puts this thread in the Inbox's
+			//     existing Escalation tab (same mechanism a decision-tree
+			//     "escalate" node uses) and turns off AI auto-reply, since
+			//     the AI just told the customer a human will take over —
+			//     it shouldn't keep auto-replying until staff resolve it.
+			//   - SetLeadNeedsManualFollowup flags the lead itself for the
+			//     Leads-page badge; that one clears as soon as a
+			//     studio_user sends any reply (EnqueueReply), independent
+			//     of the escalation, which stays open until explicitly
+			//     resolved via the same "Resolve escalation" button every
+			//     other escalation reason uses.
+			body = fmt.Sprintf("Hi %s! Great choice. Our team will reach out to you shortly to confirm your trial — no payment needed from you right now.", firstName)
+			if errFlag := s.repo.SetLeadNeedsManualFollowup(ctx, *leadID, true); errFlag != nil {
+				slog.Error("send trial payment link: failed to flag lead for manual followup", "lead", leadID, "err", errFlag)
+			}
+			if errEsc := s.repo.EscalateConversation(ctx, studioID, convID, "Trial plan is inactive — confirm the trial with the customer manually"); errEsc != nil {
+				slog.Error("send trial payment link: failed to escalate conversation", "conv", convID, "err", errEsc)
 			} else {
-				body = fmt.Sprintf("Hi %s! Great choice. Here's your secure trial booking link:\n\n%s\n\nWe look forward to seeing you!", firstName, detailsURL)
+				s.bus.Publish(ctx, Event{Kind: EvtConversationEscalated, StudioID: studioID, ConversationID: convID, Reason: "Trial plan is inactive — confirm the trial with the customer manually"})
 			}
 		} else {
-			body = fmt.Sprintf("Hi %s! Great choice. Our team will reach out to you within 24 hours to schedule your trial. We look forward to seeing you!", firstName)
+			_, _, _, studioSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
+			if errStripe == nil && studioSlug != "" {
+				detailsURL := fmt.Sprintf("%s/trial-details/%s?studio=%s", frontendURL, leadID.String(), studioSlug)
+				tl := &TriggerLink{StudioID: studioID, Name: fmt.Sprintf("Trial - %s", firstName), URL: detailsURL}
+				if errLink := s.repo.CreateTriggerLink(ctx, tl); errLink == nil {
+					shortURL := fmt.Sprintf("%s/api/v1/links/%s", frontendURL, tl.ID.String())
+					body = fmt.Sprintf("Hi %s! Great choice. Here's your secure trial booking link:\n\n%s\n\nJust a couple of quick details and payment to confirm your spot. We look forward to seeing you!", firstName, shortURL)
+				} else {
+					body = fmt.Sprintf("Hi %s! Great choice. Here's your secure trial booking link:\n\n%s\n\nWe look forward to seeing you!", firstName, detailsURL)
+				}
+			} else {
+				body = fmt.Sprintf("Hi %s! Great choice. Our team will reach out to you within 24 hours to schedule your trial. We look forward to seeing you!", firstName)
+			}
 		}
 	} else {
 		// No lead attached — nothing to collect details against, fall back

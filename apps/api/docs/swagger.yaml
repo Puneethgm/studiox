@@ -201,10 +201,12 @@ definitions:
     enum:
     - super_admin
     - studio_admin
+    - studio_staff
     type: string
     x-enum-varnames:
     - RoleSuperAdmin
     - RoleStudioAdmin
+    - RoleStudioStaff
   internal_identity.StudioBrand:
     properties:
       active:
@@ -231,6 +233,19 @@ definitions:
       newPassword:
         type: string
     type: object
+  internal_identity.createStudioUserReq:
+    properties:
+      email:
+        type: string
+      firstName:
+        type: string
+      lastName:
+        type: string
+      roleId:
+        type: string
+      username:
+        type: string
+    type: object
   internal_identity.loginReq:
     properties:
       email:
@@ -244,11 +259,68 @@ definitions:
         type: string
       id:
         type: string
+      mustResetPassword:
+        type: boolean
+      permissions:
+        description: |-
+          Permissions is null for super_admin/studio_admin (full access, no
+          filtering) and a (possibly empty) list of granted nav-section keys
+          for studio_staff — see AppShell.tsx's nav filter.
+        items:
+          type: string
+        type: array
       role:
         $ref: '#/definitions/internal_identity.Role'
       studio:
         $ref: '#/definitions/internal_identity.StudioBrand'
       studioId:
+        type: string
+    type: object
+  internal_identity.roleReq:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+      permissionKeys:
+        items:
+          type: string
+        type: array
+    type: object
+  internal_identity.roleRes:
+    properties:
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      permissionKeys:
+        items:
+          type: string
+        type: array
+    type: object
+  internal_identity.studioUserRes:
+    properties:
+      createdAt:
+        type: string
+      email:
+        type: string
+      firstName:
+        type: string
+      id:
+        type: string
+      lastName:
+        type: string
+      mustResetPassword:
+        type: boolean
+      role:
+        $ref: '#/definitions/internal_identity.Role'
+      roleId:
+        type: string
+      roleName:
+        type: string
+      username:
         type: string
     type: object
   internal_leads.AnalyticsSummary:
@@ -263,6 +335,13 @@ definitions:
         items:
           $ref: '#/definitions/internal_leads.PlatformAnalytics'
         type: array
+      connectionRate:
+        description: '% of contacted leads (contact_attempts > 0) who ever sent an
+          inbound reply'
+        type: number
+      conversionRate:
+        description: '% of all leads that reached trial_booked or member'
+        type: number
       droppedLeads:
         type: integer
       droppedRate:
@@ -275,10 +354,15 @@ definitions:
         type: integer
       newLeads:
         type: integer
+      outboundMessagesSent:
+        type: integer
       pausedLeads:
         type: integer
       pausedRate:
         type: number
+      purchasedLeads:
+        description: status in (trial_booked, member)
+        type: integer
       totalLeads:
         type: integer
       trialBookedLeads:
@@ -303,6 +387,17 @@ definitions:
       slug:
         type: string
       totalLeads:
+        type: integer
+    type: object
+  internal_leads.DailyAnalyticsPoint:
+    properties:
+      connectedLeads:
+        type: integer
+      convertedLeads:
+        type: integer
+      date:
+        type: string
+      outboundMessagesSent:
         type: integer
     type: object
   internal_leads.ExternalLeadsSheetSettings:
@@ -973,6 +1068,20 @@ definitions:
       displayName:
         type: string
     type: object
+  internal_messaging.moveColdLeadReq:
+    properties:
+      conversationId:
+        type: string
+      status:
+        type: string
+    type: object
+  internal_messaging.reEngageColdLeadsReq:
+    properties:
+      conversationIds:
+        items:
+          type: string
+        type: array
+    type: object
   internal_messaging.replaceFollowupStepsReq:
     properties:
       steps:
@@ -993,6 +1102,13 @@ definitions:
         type: array
       body:
         type: string
+    type: object
+  internal_messaging.setColdLeadThresholdsReq:
+    properties:
+      coldNeverRepliedDays:
+        type: integer
+      coldStalledDays:
+        type: integer
     type: object
   internal_messaging.setDailyMessageLimitReq:
     properties:
@@ -1111,6 +1227,10 @@ definitions:
     properties:
       billingCycle:
         type: string
+      billingInterval:
+        type: string
+      billingIntervalCount:
+        type: integer
       features:
         items:
           type: string
@@ -1307,6 +1427,10 @@ definitions:
     properties:
       billingCycle:
         type: string
+      billingInterval:
+        type: string
+      billingIntervalCount:
+        type: integer
       features:
         items:
           type: string
@@ -1438,6 +1562,47 @@ paths:
       security:
       - CookieAuth: []
       summary: Lead analytics summary
+      tags:
+      - Leads
+  /api/v1/admin/analytics/daily:
+    get:
+      description: Returns one point per day (outbound messages sent, newly-connected
+        leads, newly-converted leads) for the resolved studio over the same time window
+        getAnalytics accepts. An unbounded all-time request is capped at the last
+        90 days for chart legibility.
+      parameters:
+      - description: 'Time window, e.g. ''30d'' (default: last 90 days)'
+        in: query
+        name: duration
+        type: string
+      - description: Explicit range start date
+        in: query
+        name: startDate
+        type: string
+      - description: Explicit range end date
+        in: query
+        name: endDate
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_leads.DailyAnalyticsPoint'
+            type: array
+        "400":
+          description: missing/invalid studioId
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Daily analytics trend
       tags:
       - Leads
   /api/v1/admin/campaigns:
@@ -2811,6 +2976,39 @@ paths:
       summary: Upload studio logo
       tags:
       - Studios
+  /api/v1/me/studios/{id}/member-subscriptions:
+    get:
+      description: Returns every membership-plan subscription (active, past_due, canceled,
+        superseded, completed) for the studio's leads — who paid what, on what cadence,
+        and when the next charge lands. Sourced from user_subscriptions (the record
+        the Stripe webhook maintains), not a live Stripe API call.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: invalid studio id
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: List member subscriptions
+      tags:
+      - Billing
   /api/v1/me/studios/{id}/payments:
     get:
       description: Returns the studio's connected Stripe account ID, publishable key,
@@ -3200,6 +3398,71 @@ paths:
       summary: Update platform subscription plans
       tags:
       - Platform
+  /api/v1/permissions:
+    get:
+      description: Returns the fixed, platform-wide set of grantable permissions (one
+        per left-nav section).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: List the permission catalog
+      tags:
+      - RBAC
+  /api/v1/public/leads/{leadId}/plan-payment-intent:
+    post:
+      consumes:
+      - application/json
+      description: Public endpoint that sets up payment for a lead's selected membership
+        plan on the studio's own branded page (the same design as the trial page),
+        mirroring publicCreateTrialPaymentIntent's embedded-Elements flow instead
+        of a hosted Checkout Session redirect. Recurring plans create a Stripe Subscription
+        (payment_behavior=default_incomplete) and return its first invoice's PaymentIntent
+        client secret; a one_time plan creates a plain PaymentIntent. No auth required.
+      parameters:
+      - description: Lead ID
+        in: path
+        name: leadId
+        required: true
+        type: string
+      - description: '{planId}'
+        in: body
+        name: body
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: invalid lead id, invalid JSON, plan not found, or Stripe not
+            configured
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "404":
+          description: lead not found
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "500":
+          description: Stripe error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      summary: Create a public Stripe PaymentIntent (or subscription) for a membership
+        plan
+      tags:
+      - Studios (Public)
   /api/v1/public/leads/{leadId}/trial-checkout:
     get:
       description: Public endpoint used by the trial-checkout landing page to look
@@ -3923,6 +4186,52 @@ paths:
       security:
       - CookieAuth: []
       summary: Lead analytics summary
+      tags:
+      - Leads
+  /api/v1/studios/{studioId}/analytics/daily:
+    get:
+      description: Returns one point per day (outbound messages sent, newly-connected
+        leads, newly-converted leads) for the resolved studio over the same time window
+        getAnalytics accepts. An unbounded all-time request is capped at the last
+        90 days for chart legibility.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: 'Time window, e.g. ''30d'' (default: last 90 days)'
+        in: query
+        name: duration
+        type: string
+      - description: Explicit range start date
+        in: query
+        name: startDate
+        type: string
+      - description: Explicit range end date
+        in: query
+        name: endDate
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_leads.DailyAnalyticsPoint'
+            type: array
+        "400":
+          description: missing/invalid studioId
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Daily analytics trend
       tags:
       - Leads
   /api/v1/studios/{studioId}/campaigns:
@@ -5416,10 +5725,10 @@ paths:
     post:
       consumes:
       - application/json
-      description: Uses the studio's configured Gemini API key to generate either
-        a customer message template ("type" omitted/other) or social media post copy
-        ("type":"social") from a free-text prompt. Requires a Gemini API key to be
-        configured in Studio Settings.
+      description: Generates either a customer message template ("type" omitted/other)
+        or social media post copy + hashtags ("type":"social") from a free-text prompt,
+        using whichever AI provider (Groq/Gemini/Claude) this studio has configured
+        — the same provider waterfall the chat AI uses, not one hardcoded provider.
       parameters:
       - description: Studio ID
         in: path
@@ -5442,7 +5751,7 @@ paths:
             additionalProperties: true
             type: object
         "400":
-          description: missing Gemini API key
+          description: no AI provider configured
           schema:
             $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
         "500":
@@ -6801,6 +7110,187 @@ paths:
       summary: Trigger a pending job immediately
       tags:
       - Messaging - Automation Jobs
+  /api/v1/studios/{studioId}/messaging/leads/cold:
+    get:
+      description: Returns leads the automation has messaged at least once but who
+        have never sent a single inbound reply, for the Pipeline's cold-lead re-engagement
+        view.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: List cold (contacted, never replied) leads
+      tags:
+      - Messaging - Leads
+  /api/v1/studios/{studioId}/messaging/leads/cold/move:
+    post:
+      consumes:
+      - application/json
+      description: Drag-and-drop target for the Pipeline's Cold Leads column. If the
+        conversation has no lead yet (backfilled WhatsApp Web history), one is created
+        first, then its status is set — same effect as the normal Pipeline drag-and-drop,
+        just starting from a conversation instead of an existing lead.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: Conversation and target status
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_messaging.moveColdLeadReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: invalid JSON, conversation id, or status
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "404":
+          description: conversation not found
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Move a cold conversation into a Pipeline status
+      tags:
+      - Messaging - Leads
+  /api/v1/studios/{studioId}/messaging/leads/cold/re-engage:
+    post:
+      consumes:
+      - application/json
+      description: Resends the studio's opening greeting into each given conversation
+        (resetting the lead's automation stage back to awaiting_interest when a lead
+        is attached — the same entry point a brand-new lead gets) and re-schedules
+        the no-reply follow-up cascade. Works for backfilled WhatsApp Web history
+        too, which has a conversation but no lead.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: Conversation IDs to re-engage
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_messaging.reEngageColdLeadsReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: invalid JSON or conversation id
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Re-engage selected cold conversations
+      tags:
+      - Messaging - Leads
+  /api/v1/studios/{studioId}/messaging/settings/cold-lead-thresholds:
+    get:
+      description: Returns how many days of silence before a never-contacted-back
+        lead, and a lead that replied then went quiet, are flagged Cold. Applied by
+        the periodic Cold Leads scanner, not live per-request.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Get Cold Leads day thresholds
+      tags:
+      - Messaging - Leads
+    put:
+      consumes:
+      - application/json
+      description: Updates the never-replied and stalled day thresholds the Cold Leads
+        scanner uses for this studio.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: Cold lead thresholds
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_messaging.setColdLeadThresholdsReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Set Cold Leads day thresholds
+      tags:
+      - Messaging - Leads
   /api/v1/studios/{studioId}/messaging/settings/daily-message-limit:
     get:
       description: Returns the max number of automation/AI/Manual-Actions-sourced
@@ -7306,6 +7796,149 @@ paths:
       summary: Set the program schedule's start date
       tags:
       - Knowledge Base
+  /api/v1/studios/{studioId}/roles:
+    get:
+      parameters:
+      - description: Studio ID (UUID)
+        in: path
+        name: studioId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: List a studio's roles
+      tags:
+      - RBAC
+    post:
+      consumes:
+      - application/json
+      description: Creates a role scoped to this studio, with the given permission
+        grants. Studio admin (own studio) or super admin only.
+      parameters:
+      - description: Studio ID (UUID)
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: Role name, description, permission keys
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_identity.roleReq'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_identity.roleRes'
+        "409":
+          description: role name already exists in this studio
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Create a studio role
+      tags:
+      - RBAC
+  /api/v1/studios/{studioId}/roles/{roleId}:
+    delete:
+      description: 'Rejected with 409 if any user still has this role assigned (spec:
+        identity/studio-roles).'
+      parameters:
+      - description: Studio ID (UUID)
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: Role ID (UUID)
+        in: path
+        name: roleId
+        required: true
+        type: string
+      responses:
+        "204":
+          description: no content
+        "409":
+          description: role still assigned to one or more users
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Delete a studio role
+      tags:
+      - RBAC
+    get:
+      parameters:
+      - description: Studio ID (UUID)
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: Role ID (UUID)
+        in: path
+        name: roleId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_identity.roleRes'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Get a studio role
+      tags:
+      - RBAC
+    patch:
+      consumes:
+      - application/json
+      description: Updates the role's name/description and replaces its entire permission
+        grant with the given keys.
+      parameters:
+      - description: Studio ID (UUID)
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: Role ID (UUID)
+        in: path
+        name: roleId
+        required: true
+        type: string
+      - description: Role name, description, permission keys
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_identity.roleReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_identity.roleRes'
+      security:
+      - CookieAuth: []
+      summary: Update a studio role
+      tags:
+      - RBAC
   /api/v1/studios/{studioId}/social-posts:
     get:
       description: Returns all social planner posts for a studio, published posts
@@ -7579,6 +8212,62 @@ paths:
       summary: List users in a studio
       tags:
       - Auth
+    post:
+      consumes:
+      - application/json
+      description: Creates a studio_staff user with a fixed default password and a
+        forced password-reset requirement. No password is accepted here — see identity/studio-users.
+      parameters:
+      - description: Studio ID (UUID)
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: Teammate details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_identity.createStudioUserReq'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_identity.studioUserRes'
+        "409":
+          description: username or email already taken
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Add a teammate to a studio
+      tags:
+      - RBAC
+  /api/v1/studios/{studioId}/users/{userId}:
+    delete:
+      description: Soft-deletes the user — the row stays (with who deactivated it
+        and when), and they can no longer log in.
+      parameters:
+      - description: Studio ID (UUID)
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: User ID (UUID)
+        in: path
+        name: userId
+        required: true
+        type: string
+      responses:
+        "204":
+          description: no content
+      security:
+      - CookieAuth: []
+      summary: Deactivate a teammate
+      tags:
+      - RBAC
   /api/v1/webhooks/meta/data-deletion:
     post:
       consumes:

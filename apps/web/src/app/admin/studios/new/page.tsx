@@ -38,7 +38,6 @@ export default function NewStudioPage() {
   const [contactPhoneCountryCode, setContactPhoneCountryCode] = useState('+65');
   const [contactPhone, setContactPhone] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
-  const [adminPassword, setAdminPassword] = useState('');
   const [socialPlannerEnabled, setSocialPlannerEnabled] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -60,7 +59,6 @@ export default function NewStudioPage() {
           contactEmail,
           contactPhone: fullPhone,
           adminEmail,
-          adminPassword,
           socialPlannerEnabled
         },
       });
@@ -303,22 +301,8 @@ export default function NewStudioPage() {
                 onChange={(e) => setAdminEmail(e.target.value)}
                 placeholder="admin@studio.com"
               />
+              <FieldHint>They&rsquo;ll get a welcome email here with a link to set their own password and sign in.</FieldHint>
               <FieldError message={errors.adminEmail} />
-            </div>
-            <div>
-              <Label htmlFor="adminPassword">Temporary password</Label>
-              <Input
-                id="adminPassword"
-                type="password"
-                form="studio-form"
-                required
-                invalid={!!errors.adminPassword}
-                value={adminPassword}
-                onChange={(e) => setAdminPassword(e.target.value)}
-                placeholder="At least 8 characters"
-              />
-              <FieldHint>Share this securely with the studio admin. They sign in at the same /login page.</FieldHint>
-              <FieldError message={errors.adminPassword} />
             </div>
           </div>
         </Card>

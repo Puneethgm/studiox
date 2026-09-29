@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/projectx/api/internal/identity"
 	"github.com/projectx/api/internal/integrations/claude"
 	"github.com/projectx/api/internal/integrations/gemini"
 	"github.com/projectx/api/internal/integrations/groq"
@@ -205,7 +206,8 @@ func (h *Handler) PutAIProviderKey(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteValidationError(w, map[string]string{"apiKey": "required"})
 		return
 	}
-	if err := h.svc.repo.UpdateAIProviderKey(r.Context(), studioID, provider, req.APIKey); err != nil {
+	c := identity.MustClaims(r.Context())
+	if err := h.svc.repo.UpdateAIProviderKey(r.Context(), studioID, provider, req.APIKey, &c.UserID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return
 	}
@@ -280,7 +282,8 @@ func (h *Handler) PostAITestKey(w http.ResponseWriter, r *http.Request) {
 
 	// Only touch storage after a successful test — save the key if a new one was submitted.
 	if strings.TrimSpace(req.APIKey) != "" {
-		if err := h.svc.repo.UpdateAIProviderKey(r.Context(), studioID, provider, req.APIKey); err != nil {
+		c := identity.MustClaims(r.Context())
+		if err := h.svc.repo.UpdateAIProviderKey(r.Context(), studioID, provider, req.APIKey, &c.UserID); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 			return
 		}

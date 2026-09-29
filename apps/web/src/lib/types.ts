@@ -1,4 +1,4 @@
-export type Role = 'super_admin' | 'studio_admin';
+export type Role = 'super_admin' | 'studio_admin' | 'studio_staff';
 
 export interface StudioBrand {
   slug: string;
@@ -14,8 +14,45 @@ export interface Me {
   id: string;
   email: string;
   role: Role;
+  username?: string;
   studioId?: string;
   studio?: StudioBrand; // present for studio_admin
+  // null = full access (super_admin/studio_admin); a list of granted
+  // nav-section keys for studio_staff — see AppShell's nav filter.
+  permissions: string[] | null;
+  mustResetPassword: boolean;
+}
+
+export interface Permission {
+  key: string;
+  label: string;
+}
+
+export interface StudioRole {
+  id: string;
+  name: string;
+  description: string;
+  permissionKeys: string[];
+  // Reversible — deactivating a role blocks login for every user assigned
+  // to it, distinct from deleting the role.
+  active: boolean;
+}
+
+export interface StudioUser {
+  id: string;
+  email: string;
+  role: Role;
+  username?: string;
+  firstName?: string;
+  lastName?: string;
+  roleId?: string;
+  roleName?: string;
+  mustResetPassword: boolean;
+  // Reversible login gate, distinct from the permanent "Deactivate"
+  // (soft-delete) action — an inactive user just can't log in until
+  // reactivated.
+  active: boolean;
+  createdAt: string;
 }
 
 export interface Studio {
@@ -112,6 +149,7 @@ export interface MemberSubscription {
   createdAt: string;
   stripeSubscriptionId: string;
   stripeCustomerId: string;
+  receiptUrl: string;
 }
 
 export interface Campaign {
@@ -175,6 +213,11 @@ export interface Lead {
   contactMade: boolean;
   hotLead: boolean;
   trialPurchased: boolean;
+  // Set when a trial booking hit a studio with trial payment collection
+  // disabled — the AI sent a holding message instead of a payment link,
+  // and a human needs to actually reach out. Clears automatically once a
+  // studio_user replies to this lead.
+  needsManualFollowup?: boolean;
   assignedTo?: string;
   trialAttended: boolean;
   memberSold: boolean;

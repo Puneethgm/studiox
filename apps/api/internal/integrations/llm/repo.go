@@ -65,8 +65,8 @@ func (r *Repo) UpsertTaskConfig(ctx context.Context, purpose string, provider Pr
 		encPtr = &enc
 	}
 	_, err := r.pool.Exec(ctx, `
-		INSERT INTO ai_task_configs (purpose, provider, model, api_key_enc, updated_by)
-		VALUES ($1,$2,$3,$4,$5)
+		INSERT INTO ai_task_configs (purpose, provider, model, api_key_enc, created_by, updated_by)
+		VALUES ($1,$2,$3,$4,$5,$5)
 		ON CONFLICT (purpose) DO UPDATE
 		SET provider = EXCLUDED.provider,
 		    model = EXCLUDED.model,

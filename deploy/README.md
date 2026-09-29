@@ -6,7 +6,7 @@ app is live.
 
 ```
 deploy/
-  docker-compose.yml      # the stack: postgres + api + web + nginx + one-shots
+  docker-compose.yml      # the stack: postgres + redis + api + web + nginx + one-shots
   api.Dockerfile          # multi-stage Go build → distroless (~30 MB)
   web.Dockerfile          # multi-stage Next.js → standalone (~150 MB)
   nginx/default.conf      # reverse proxy: /api/* → api,  /* → web
@@ -57,8 +57,23 @@ nano deploy/.env       # fill in real values; see notes inside the file
 Key values you must change:
 - `POSTGRES_PASSWORD` — long random
 - `JWT_SECRET` — 32+ random chars
+- `REDIS_PASSWORD` — long random (stack refuses to start without it — see below)
 - `SUPER_ADMIN_PASSWORD` — your login password
 - `COOKIE_DOMAIN` and `PUBLIC_FORM_BASE_URL` — your IP (or domain when added)
+
+### Redis (AI answer cache)
+
+The `redis` service backs a per-studio cache of AI-generated answers (chat
+replies, conversation summaries, style-profile rebuilds, AI-generated
+templates) — an identical prompt for the same studio is served from Redis
+instead of paying for and waiting on another Groq/Gemini/Claude call. It's
+backend-network-only (never exposed on a host port) and requires
+`REDIS_PASSWORD` to start at all — the stack fails fast with a clear message
+if it's unset, same as `JWT_SECRET`/`TOKEN_ENCRYPTION_KEY`.
+
+It holds no data worth keeping: no volume, safe to lose on restart or
+redeploy — the api container transparently falls back to calling the model
+directly if Redis is ever unreachable.
 
 ### 5. (Optional) Google Sheets
 

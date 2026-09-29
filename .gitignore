@@ -64,3 +64,7 @@ heroic-artifact-434914-d4-1b7152cf7bec.json
 !apps/api/docs/swagger.json
 apps/api/secrets/
 .aider*
+
+# OpenSpec local planning artifacts
+openspec/
+.claude/skills/openspec-*/

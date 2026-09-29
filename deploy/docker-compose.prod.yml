@@ -18,7 +18,7 @@ x-api-env: &api_env
   POSTGRES_DB: ${POSTGRES_DB}
   POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:-require}
   JWT_SECRET: ${JWT_SECRET}
-  JWT_TTL_HOURS: "24"
+  JWT_TTL: "30m"
   SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL}
   SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD}
   COOKIE_NAME: px_session
@@ -49,6 +49,16 @@ x-api-env: &api_env
   GLOFOX_API_KEY: ${GLOFOX_API_KEY:-}
   GLOFOX_API_TOKEN: ${GLOFOX_API_TOKEN:-}
   GLOFOX_BRANCH_ID: ${GLOFOX_BRANCH_ID:-}
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  REDIS_PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set — generate one with openssl rand -base64 24}"
+  REDIS_DB: "0"
+  AI_ANSWER_CACHE_TTL: ${AI_ANSWER_CACHE_TTL:-30m}
+  # Idle timeout for identity.SessionStore (Redis-tracked-by-jti session
+  # revocation) — independent of JWT_TTL, which is the token's own absolute
+  # cap. Redis being unreachable is a hard auth failure here (fail closed),
+  # unlike AI_ANSWER_CACHE_TTL above, which degrades gracefully.
+  SESSION_IDLE_TIMEOUT: ${SESSION_IDLE_TIMEOUT:-15m}
 
 services:
   postgres:
@@ -63,6 +73,24 @@ services:
       - projectx_pg_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - backend
+
+  # Per-studio AI-answer cache (internal/messaging.AnswerCache) AND
+  # identity.SessionStore (session revocation + idle timeout — see
+  # SESSION_IDLE_TIMEOUT above). Backend-only, never exposed on a host port.
+  # No volume: losing it on restart just means every session must
+  # re-authenticate and every cached AI answer is recomputed once.
+  redis:
+    image: redis:7-alpine
+    container_name: projectx-redis
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set — generate one with: openssl rand -base64 24}"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "--no-auth-warning", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -93,6 +121,8 @@ services:
       - uploads_data:/app/uploads
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       init-uploads:
         condition: service_completed_successfully

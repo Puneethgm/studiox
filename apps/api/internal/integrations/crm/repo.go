@@ -49,9 +49,9 @@ func (r *Repo) CreateProvider(ctx context.Context, p *Provider) error {
 		INSERT INTO crm_providers (
 			name, description, base_url, auth_type, auth_field_defs,
 			token_login_path, token_login_method, token_login_body_mapping, token_response_path, token_expiry_path, token_expiry_seconds,
-			spec_source, status, created_by
+			spec_source, status, created_by, updated_by
 		)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14)
 		RETURNING id, created_at, updated_at
 	`, p.Name, p.Description, p.BaseURL, p.AuthType, fieldDefs,
 		p.TokenLoginPath, loginMethod, loginBodyMapping, p.TokenResponsePath, p.TokenExpiryPath, p.TokenExpirySeconds,
@@ -101,7 +101,7 @@ type UpdateProviderInput struct {
 // UpdateProvider lets a super-admin correct what the AI detected before
 // activating — the review step the plan requires between an AI-proposed
 // mapping and it going live.
-func (r *Repo) UpdateProvider(ctx context.Context, id uuid.UUID, in UpdateProviderInput) error {
+func (r *Repo) UpdateProvider(ctx context.Context, id uuid.UUID, in UpdateProviderInput, actorID *uuid.UUID) error {
 	fieldDefs, err := marshalJSONB(in.AuthFieldDefs)
 	if err != nil {
 		return fmt.Errorf("marshal auth field defs: %w", err)
@@ -119,10 +119,10 @@ func (r *Repo) UpdateProvider(ctx context.Context, id uuid.UUID, in UpdateProvid
 		SET description = $2, base_url = $3, auth_type = $4, auth_field_defs = $5,
 		    token_login_path = $6, token_login_method = $7, token_login_body_mapping = $8,
 		    token_response_path = $9, token_expiry_path = $10, token_expiry_seconds = $11,
-		    updated_at = now()
+		    updated_by = $12, updated_at = now()
 		WHERE id = $1
 	`, id, in.Description, in.BaseURL, in.AuthType, fieldDefs,
-		in.TokenLoginPath, loginMethod, loginBodyMapping, in.TokenResponsePath, in.TokenExpiryPath, in.TokenExpirySeconds)
+		in.TokenLoginPath, loginMethod, loginBodyMapping, in.TokenResponsePath, in.TokenExpiryPath, in.TokenExpirySeconds, actorID)
 	if err != nil {
 		return fmt.Errorf("update provider: %w", err)
 	}
@@ -132,8 +132,8 @@ func (r *Repo) UpdateProvider(ctx context.Context, id uuid.UUID, in UpdateProvid
 	return nil
 }
 
-func (r *Repo) ActivateProvider(ctx context.Context, id uuid.UUID) error {
-	tag, err := r.pool.Exec(ctx, `UPDATE crm_providers SET status = 'active', updated_at = now() WHERE id = $1`, id)
+func (r *Repo) ActivateProvider(ctx context.Context, id uuid.UUID, actorID *uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx, `UPDATE crm_providers SET status = 'active', updated_by = $2, updated_at = now() WHERE id = $1`, id, actorID)
 	if err != nil {
 		return fmt.Errorf("activate provider: %w", err)
 	}
@@ -269,7 +269,7 @@ func scanOperation(row pgx.Row) (*Operation, error) {
 
 // CreateConnection encrypts credentials (a map of the provider's
 // AuthFieldDefs keys to values) and stores the connection.
-func (r *Repo) CreateConnection(ctx context.Context, studioID, providerID uuid.UUID, credentials map[string]string) (*Connection, error) {
+func (r *Repo) CreateConnection(ctx context.Context, studioID, providerID uuid.UUID, credentials map[string]string, actorID *uuid.UUID) (*Connection, error) {
 	plain, err := json.Marshal(credentials)
 	if err != nil {
 		return nil, fmt.Errorf("marshal credentials: %w", err)
@@ -280,12 +280,12 @@ func (r *Repo) CreateConnection(ctx context.Context, studioID, providerID uuid.U
 	}
 	c := &Connection{StudioID: studioID, CRMProviderID: providerID, CredentialsEnc: enc, Status: ConnectionActive}
 	row := r.pool.QueryRow(ctx, `
-		INSERT INTO crm_connections (studio_id, crm_provider_id, credentials_enc, status)
-		VALUES ($1,$2,$3,$4)
+		INSERT INTO crm_connections (studio_id, crm_provider_id, credentials_enc, status, created_by, updated_by)
+		VALUES ($1,$2,$3,$4,$5,$5)
 		ON CONFLICT (studio_id, crm_provider_id) DO UPDATE
-		SET credentials_enc = EXCLUDED.credentials_enc, status = 'active', updated_at = now()
+		SET credentials_enc = EXCLUDED.credentials_enc, status = 'active', updated_by = $5, updated_at = now()
 		RETURNING id, connected_at, updated_at
-	`, studioID, providerID, enc, ConnectionActive)
+	`, studioID, providerID, enc, ConnectionActive, actorID)
 	if err := row.Scan(&c.ID, &c.ConnectedAt, &c.UpdatedAt); err != nil {
 		return nil, fmt.Errorf("create connection: %w", err)
 	}

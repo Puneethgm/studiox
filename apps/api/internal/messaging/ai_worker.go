@@ -38,9 +38,10 @@ type AIWorker struct {
 	log          *slog.Logger
 	subs         map[uuid.UUID]func()
 	httpClient   *http.Client
+	answerCache  *AnswerCache
 }
 
-func NewAIWorker(bus Bus, msgRepo *Repo, msgSvc *Service, studiosRepo *studios.Repo, leadsRepo *leads.Repo, dtSvc *decisiontree.Service, cl *claude.Client, claudeAPIURL string, embClient *embeddings.Client, llmRepo *llm.Repo, log *slog.Logger) *AIWorker {
+func NewAIWorker(bus Bus, msgRepo *Repo, msgSvc *Service, studiosRepo *studios.Repo, leadsRepo *leads.Repo, dtSvc *decisiontree.Service, cl *claude.Client, claudeAPIURL string, embClient *embeddings.Client, llmRepo *llm.Repo, log *slog.Logger, answerCache *AnswerCache) *AIWorker {
 	transport := &http.Transport{
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 100,
@@ -65,6 +66,7 @@ func NewAIWorker(bus Bus, msgRepo *Repo, msgSvc *Service, studiosRepo *studios.R
 		log:          log,
 		subs:         make(map[uuid.UUID]func()),
 		httpClient:   client,
+		answerCache:  answerCache,
 	}
 }
 
@@ -212,24 +214,43 @@ func (w *AIWorker) summarizeConversation(ctx context.Context, studioID, convID u
 // (Groq -> Gemini -> Claude) but is factored out standalone since
 // summarization has no Message/decision-tree/KB context to gather.
 func (w *AIWorker) runSummaryWaterfall(ctx context.Context, studioID uuid.UUID, studio *studios.Studio, prompt string) (text string, sourceRef string) {
-	return llmWaterfall(ctx, w.studiosRepo, w.llmRepo, w.msgRepo, w.claude, w.claudeAPIURL, w.log, studioID, studio, prompt)
+	return llmWaterfall(ctx, w.studiosRepo, w.llmRepo, w.msgRepo, w.claude, w.claudeAPIURL, w.log, studioID, studio, prompt, w.answerCache, "summary")
 }
 
-// llmWaterfall tries Groq → Gemini → Claude in order, falling through on
-// error or an empty reply, and logs every attempt via msgRepo.LogLLMUsage.
-// This is the platform's one shared "give me a completion for this prompt,
-// I don't care which provider" path — used both for AI reply generation
-// (via runSummaryWaterfall above) and for any other background task that
-// needs an LLM call without depending on a specific provider being
-// configured (see StyleWorker, which can't assume Claude is set up since
-// it's a single platform-wide key while Groq/Gemini are per-studio).
+// llmWaterfall is a Redis-cache-first wrapper around llmWaterfallUncached:
+// on a hit for this exact (studioID, kind, prompt), it returns the cached
+// answer without touching Groq/Gemini/Claude at all; on a miss, it runs the
+// real waterfall and — if a provider actually answered — stores the result
+// before returning it. cache may be nil (caching disabled); see AnswerCache.
+//
+// kind namespaces the cache by caller (e.g. "summary", "style_profile",
+// "test_chat", "template_gen", "incoming_reply") so two different features
+// can never collide even on an identical prompt.
+func llmWaterfall(ctx context.Context, studiosRepo *studios.Repo, llmRepo *llm.Repo, msgRepo *Repo, claudeClient *claude.Client, claudeAPIURL string, log *slog.Logger, studioID uuid.UUID, studio *studios.Studio, prompt string, cache *AnswerCache, kind string) (text string, sourceRef string) {
+	if cachedText, cachedSource, ok := cache.Get(ctx, studioID, kind, prompt); ok {
+		return cachedText, cachedSource
+	}
+	text, sourceRef = llmWaterfallUncached(ctx, studiosRepo, llmRepo, msgRepo, claudeClient, claudeAPIURL, log, studioID, studio, prompt)
+	cache.Set(ctx, studioID, kind, prompt, text, sourceRef)
+	return text, sourceRef
+}
+
+// llmWaterfallUncached tries Groq → Gemini → Claude in order, falling
+// through on error or an empty reply, and logs every attempt via
+// msgRepo.LogLLMUsage. This is the platform's one shared "give me a
+// completion for this prompt, I don't care which provider" path — used
+// both for AI reply generation (via runSummaryWaterfall above) and for any
+// other background task that needs an LLM call without depending on a
+// specific provider being configured (see StyleWorker, which can't assume
+// Claude is set up since it's a single platform-wide key while Groq/Gemini
+// are per-studio).
 //
 // Which MODEL each provider tries is read from studio_ai_models via
 // llmRepo.EnabledModelsForStudio, not hardcoded — a studio's AI Assistant
 // settings page controls this list (internal/studios/ai_models_http.go). A
 // provider with several enabled models tries each in order (first success
 // wins), same as Groq's small-then-large fallback used to be hardcoded.
-func llmWaterfall(ctx context.Context, studiosRepo *studios.Repo, llmRepo *llm.Repo, msgRepo *Repo, claudeClient *claude.Client, claudeAPIURL string, log *slog.Logger, studioID uuid.UUID, studio *studios.Studio, prompt string) (text string, sourceRef string) {
+func llmWaterfallUncached(ctx context.Context, studiosRepo *studios.Repo, llmRepo *llm.Repo, msgRepo *Repo, claudeClient *claude.Client, claudeAPIURL string, log *slog.Logger, studioID uuid.UUID, studio *studios.Studio, prompt string) (text string, sourceRef string) {
 	groqKey := studio.GroqAPIKey
 	if groqKey == "" {
 		if pk, e := studiosRepo.GetPlatformSetting(ctx, "groq_api_key"); e == nil {
@@ -599,6 +620,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 			w.log.Warn("failed to mark conversation escalated (explicit request)", "studio_id", studioID, "err", err)
 			break
 		}
+		w.bus.Publish(ctx, Event{Kind: EvtConversationEscalated, StudioID: studioID, ConversationID: conv.ID, Reason: "Customer asked to speak with a human"})
 		handoffBody := "Of course — connecting you with a real team member now. They'll be with you shortly!"
 		if _, err := w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
 			StudioID:       studioID,
@@ -877,6 +899,8 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 				w.log.Info("decision tree matched, escalating to human", "studio_id", studioID, "node", treeResult.NodeLabel)
 				if err := w.msgRepo.EscalateConversation(ctx, studioID, msg.ConversationID, treeResult.NodeLabel); err != nil {
 					w.log.Warn("failed to mark conversation escalated", "studio_id", studioID, "err", err)
+				} else {
+					w.bus.Publish(ctx, Event{Kind: EvtConversationEscalated, StudioID: studioID, ConversationID: msg.ConversationID, Reason: treeResult.NodeLabel})
 				}
 				if treeResult.Reply != "" {
 					reply := treeResult.Reply
@@ -1188,6 +1212,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		if err := w.msgRepo.EscalateConversation(ctx, studioID, conv.ID, "AI uncertain — insufficient knowledge base match"); err != nil {
 			w.log.Warn("failed to mark conversation escalated (low confidence)", "studio_id", studioID, "err", err)
 		} else {
+			w.bus.Publish(ctx, Event{Kind: EvtConversationEscalated, StudioID: studioID, ConversationID: conv.ID, Reason: "AI uncertain — insufficient knowledge base match"})
 			handoffBody := "That's a great question — let me get one of our team members to help you with the details. They'll be with you shortly!"
 			if _, err := w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
 				StudioID:       studioID,
@@ -1217,97 +1242,111 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	}
 	prompt, expectedGreeting := w.buildPrompt(ctx, history, semanticHistory, styleExamples, conv, lead, studio, plans, sentiment, keywords, kbChunks, intent, kbConfident, aiContextSummary, "")
 
-	// Waterfall: Groq → Gemini → Claude. Which model(s) each provider tries
-	// is read from studio_ai_models (studio's AI Assistant settings page),
-	// not hardcoded — see llmWaterfall's doc comment.
 	var resp string
 	var sourceRef string
 
-	// 1. Try Groq (fast + cheap) — use studio key first, fall back to platform key
-	groqKey := studio.GroqAPIKey
-	if groqKey == "" {
-		if pk, e := w.studiosRepo.GetPlatformSetting(ctx, "groq_api_key"); e == nil {
-			groqKey = pk
-		}
-	}
-	if groqKey != "" {
-		groqClient := groq.New(groqKey)
-		groqModels, _ := w.llmRepo.EnabledModelsForStudio(ctx, studioID, llm.ProviderGroq)
-		for _, model := range groqModels {
-			w.log.Info("generating ai reply using groq", "studio_id", studioID, "message_id", msg.ID, "model", model)
-			t0 := time.Now()
-			gr, gerr := groqClient.GenerateReply(ctx, prompt, model)
-			latMs := int(time.Since(t0).Milliseconds())
-			errMsg := ""
-			if gerr != nil {
-				errMsg = gerr.Error()
-			}
-			// A short reply is treated as a soft failure (Groq's small models
-			// sometimes truncate) so the next enabled model gets a turn.
-			ok := gerr == nil && len(strings.TrimSpace(gr.Text)) >= 15
-			w.msgRepo.LogLLMUsage(ctx, studioID, "groq", model, latMs, ok, errMsg, gr.TokensIn, gr.TokensOut)
-			if ok {
-				resp = gr.Text
-				sourceRef = "groq:" + model
-				break
-			}
-			w.log.Info("groq model failed or short, trying next", "studio_id", studioID, "model", model, "err", gerr)
-		}
-	}
-
-	// 2. Gemini fallback
-	if resp == "" && apiKey != "" {
-		geminiModels, _ := w.llmRepo.EnabledModelsForStudio(ctx, studioID, llm.ProviderGemini)
-		for _, model := range geminiModels {
-			w.log.Info("generating ai reply using gemini", "studio_id", studioID, "message_id", msg.ID, "model", model)
-			t0 := time.Now()
-			gemReply, gerr := w.geminiClient.GenerateReplyForModel(ctx, apiKey, model, prompt)
-			latMs := int(time.Since(t0).Milliseconds())
-			errMsg := ""
-			if gerr != nil {
-				errMsg = gerr.Error()
-			}
-			ok := gerr == nil && gemReply.Text != ""
-			w.msgRepo.LogLLMUsage(ctx, studioID, "gemini", model, latMs, ok, errMsg, gemReply.TokensIn, gemReply.TokensOut)
-			if ok {
-				resp = gemReply.Text
-				sourceRef = "gemini:" + model
-				break
-			}
-		}
-	}
-
-	// 3. Claude fallback — studio's own key if set, else the platform client
-	claudeClient := w.claude
-	if studio.ClaudeAPIKey != "" {
-		if c, cerr := claude.New(w.claudeAPIURL, studio.ClaudeAPIKey); cerr == nil && c != nil {
-			claudeClient = c
-		}
-	}
-	if resp == "" && claudeClient != nil {
-		claudeModels, _ := w.llmRepo.EnabledModelsForStudio(ctx, studioID, llm.ProviderClaude)
-		for _, model := range claudeModels {
-			w.log.Info("generating ai reply using claude", "studio_id", studioID, "message_id", msg.ID, "model", model)
-			t0 := time.Now()
-			cr, cerr := claudeClient.GenerateReplyForModel(ctx, prompt, model)
-			latMs := int(time.Since(t0).Milliseconds())
-			errMsg := ""
-			if cerr != nil {
-				errMsg = cerr.Error()
-			}
-			ok := cerr == nil && cr.Text != ""
-			w.msgRepo.LogLLMUsage(ctx, studioID, "claude", model, latMs, ok, errMsg, cr.TokensIn, cr.TokensOut)
-			if ok {
-				resp = cr.Text
-				sourceRef = "claude:" + model
-				break
-			}
-		}
+	// Redis-cache-first: an identical prompt for this studio (same history,
+	// lead, KB chunks, plans etc. — buildPrompt folds all of that in) skips
+	// the provider waterfall entirely. See AnswerCache.
+	cachedResp, cachedSource, cacheHit := w.answerCache.Get(ctx, studioID, "incoming_reply", prompt)
+	if cacheHit {
+		resp = cachedResp
+		sourceRef = cachedSource
 	}
 
 	if resp == "" {
-		w.log.Warn("skipping ai reply: all providers failed or not configured", "studio_id", studioID)
-		return nil
+		// Waterfall: Groq → Gemini → Claude. Which model(s) each provider
+		// tries is read from studio_ai_models (studio's AI Assistant
+		// settings page), not hardcoded — see llmWaterfall's doc comment.
+
+		// 1. Try Groq (fast + cheap) — use studio key first, fall back to platform key
+		groqKey := studio.GroqAPIKey
+		if groqKey == "" {
+			if pk, e := w.studiosRepo.GetPlatformSetting(ctx, "groq_api_key"); e == nil {
+				groqKey = pk
+			}
+		}
+		if groqKey != "" {
+			groqClient := groq.New(groqKey)
+			groqModels, _ := w.llmRepo.EnabledModelsForStudio(ctx, studioID, llm.ProviderGroq)
+			for _, model := range groqModels {
+				w.log.Info("generating ai reply using groq", "studio_id", studioID, "message_id", msg.ID, "model", model)
+				t0 := time.Now()
+				gr, gerr := groqClient.GenerateReply(ctx, prompt, model)
+				latMs := int(time.Since(t0).Milliseconds())
+				errMsg := ""
+				if gerr != nil {
+					errMsg = gerr.Error()
+				}
+				// A short reply is treated as a soft failure (Groq's small models
+				// sometimes truncate) so the next enabled model gets a turn.
+				ok := gerr == nil && len(strings.TrimSpace(gr.Text)) >= 15
+				w.msgRepo.LogLLMUsage(ctx, studioID, "groq", model, latMs, ok, errMsg, gr.TokensIn, gr.TokensOut)
+				if ok {
+					resp = gr.Text
+					sourceRef = "groq:" + model
+					break
+				}
+				w.log.Info("groq model failed or short, trying next", "studio_id", studioID, "model", model, "err", gerr)
+			}
+		}
+
+		// 2. Gemini fallback
+		if resp == "" && apiKey != "" {
+			geminiModels, _ := w.llmRepo.EnabledModelsForStudio(ctx, studioID, llm.ProviderGemini)
+			for _, model := range geminiModels {
+				w.log.Info("generating ai reply using gemini", "studio_id", studioID, "message_id", msg.ID, "model", model)
+				t0 := time.Now()
+				gemReply, gerr := w.geminiClient.GenerateReplyForModel(ctx, apiKey, model, prompt)
+				latMs := int(time.Since(t0).Milliseconds())
+				errMsg := ""
+				if gerr != nil {
+					errMsg = gerr.Error()
+				}
+				ok := gerr == nil && gemReply.Text != ""
+				w.msgRepo.LogLLMUsage(ctx, studioID, "gemini", model, latMs, ok, errMsg, gemReply.TokensIn, gemReply.TokensOut)
+				if ok {
+					resp = gemReply.Text
+					sourceRef = "gemini:" + model
+					break
+				}
+			}
+		}
+
+		// 3. Claude fallback — studio's own key if set, else the platform client
+		claudeClient := w.claude
+		if studio.ClaudeAPIKey != "" {
+			if c, cerr := claude.New(w.claudeAPIURL, studio.ClaudeAPIKey); cerr == nil && c != nil {
+				claudeClient = c
+			}
+		}
+		if resp == "" && claudeClient != nil {
+			claudeModels, _ := w.llmRepo.EnabledModelsForStudio(ctx, studioID, llm.ProviderClaude)
+			for _, model := range claudeModels {
+				w.log.Info("generating ai reply using claude", "studio_id", studioID, "message_id", msg.ID, "model", model)
+				t0 := time.Now()
+				cr, cerr := claudeClient.GenerateReplyForModel(ctx, prompt, model)
+				latMs := int(time.Since(t0).Milliseconds())
+				errMsg := ""
+				if cerr != nil {
+					errMsg = cerr.Error()
+				}
+				ok := cerr == nil && cr.Text != ""
+				w.msgRepo.LogLLMUsage(ctx, studioID, "claude", model, latMs, ok, errMsg, cr.TokensIn, cr.TokensOut)
+				if ok {
+					resp = cr.Text
+					sourceRef = "claude:" + model
+					break
+				}
+			}
+		}
+
+		if resp == "" {
+			w.log.Warn("skipping ai reply: all providers failed or not configured", "studio_id", studioID)
+			return nil
+		}
+
+		w.answerCache.Set(ctx, studioID, "incoming_reply", prompt, resp, sourceRef)
 	}
 
 	// Post-process: strip motivation questions when customer clearly wants to book.
@@ -1523,10 +1562,15 @@ func (w *AIWorker) buildPrompt(ctx context.Context, history []Message, semanticH
 					}
 				}
 				customerAsksAboutBooking := false
+				// A specific unrelated question (hours, location, pricing details,
+				// etc.) shouldn't get the booking menu tacked onto its answer just
+				// because this is the lead's first message — only a booking-related
+				// message or a bare/generic opener (e.g. "Hi") should trigger it.
+				customerAskedUnrelatedQuestion := false
 				if len(history) > 0 {
 					lastMsg := history[len(history)-1]
 					if lastMsg.Direction == DirectionInbound {
-						lt := strings.ToLower(lastMsg.Body)
+						lt := strings.ToLower(strings.TrimSpace(lastMsg.Body))
 						customerAsksAboutBooking = strings.Contains(lt, "book") ||
 							strings.Contains(lt, "trial") ||
 							strings.Contains(lt, "trail") || // common typo for "trial"
@@ -1535,9 +1579,16 @@ func (w *AIWorker) buildPrompt(ctx context.Context, history []Message, semanticH
 							strings.Contains(lt, "sign up") ||
 							strings.Contains(lt, "enroll") ||
 							strings.Contains(lt, "register")
+						isSpecificQuestion := strings.Contains(lt, "?") ||
+							strings.HasPrefix(lt, "what") || strings.HasPrefix(lt, "how") ||
+							strings.HasPrefix(lt, "when") || strings.HasPrefix(lt, "where") ||
+							strings.HasPrefix(lt, "why") || strings.HasPrefix(lt, "is ") ||
+							strings.HasPrefix(lt, "are ") || strings.HasPrefix(lt, "do ") ||
+							strings.HasPrefix(lt, "can ")
+						customerAskedUnrelatedQuestion = isSpecificQuestion && !customerAsksAboutBooking
 					}
 				}
-				if !optionsAlreadySent || customerAsksAboutBooking {
+				if customerAsksAboutBooking || (!optionsAlreadySent && !customerAskedUnrelatedQuestion) {
 					sb.WriteString("END your reply with these exact options:\n  1. Book a Trial\n  2. Become a Member\n\n")
 				}
 			}

@@ -231,6 +231,11 @@ export default async function LeadsPage({
 
                     {/* Flags */}
                     <div className="flex flex-wrap gap-1">
+                      {l.needsManualFollowup && (
+                        <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-amber-600 dark:text-amber-400">
+                          📞 Needs Follow-up
+                        </span>
+                      )}
                       {l.hotLead && (
                         <span className="inline-flex items-center gap-0.5 rounded-full bg-red-500/10 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-red-600 dark:text-red-400">
                           🔥 Hot
@@ -246,7 +251,7 @@ export default async function LeadsPage({
                           💬 Made
                         </span>
                       )}
-                      {!l.hotLead && !l.trialPurchased && !l.contactMade && (
+                      {!l.needsManualFollowup && !l.hotLead && !l.trialPurchased && !l.contactMade && (
                         <span className="text-xs text-zinc-400">-</span>
                       )}
                     </div>

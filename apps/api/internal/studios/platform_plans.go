@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/projectx/api/internal/identity"
 	"github.com/projectx/api/internal/platform/httpx"
 )
 
@@ -47,8 +48,9 @@ func (h *Handler) UpdatePlatformPlans(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	c := identity.MustClaims(r.Context())
 	b, _ := json.Marshal(payload)
-	if err := h.svc.UpdatePlatformSetting(r.Context(), "platform_plans", string(b)); err != nil {
+	if err := h.svc.UpdatePlatformSetting(r.Context(), "platform_plans", string(b), &c.UserID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "db_error", "failed to update platform plans")
 		return
 	}

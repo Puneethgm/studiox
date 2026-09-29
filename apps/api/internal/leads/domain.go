@@ -70,21 +70,27 @@ type Lead struct {
 	AutoContactStage string     `json:"autoContactStage"`
 	DNDEnabled       bool       `json:"dndEnabled"`
 	AssignedTo       string     `json:"assignedTo"`
-	TrialAttended    bool       `json:"trialAttended"`
-	MemberSold       bool       `json:"memberSold"`
-	MonthlyFee       float64    `json:"monthlyFee"`
-	Offer            string     `json:"offer"`
-	FurtherNotes     string     `json:"furtherNotes"`
-	Referrer         string     `json:"referrer,omitempty"`
-	UserAgent        string     `json:"userAgent,omitempty"`
-	IPAddress        *net.IP    `json:"ipAddress,omitempty"`
+	// NeedsManualFollowup is set when a trial-booking attempt hit a studio
+	// with trial payment collection disabled — the AI sent a holding
+	// message instead of a Stripe link, and this flags the lead for a
+	// human to actually reach out. Cleared automatically the next time a
+	// studio_user (not the AI) sends that lead a message.
+	NeedsManualFollowup bool    `json:"needsManualFollowup"`
+	TrialAttended       bool    `json:"trialAttended"`
+	MemberSold          bool    `json:"memberSold"`
+	MonthlyFee          float64 `json:"monthlyFee"`
+	Offer               string  `json:"offer"`
+	FurtherNotes        string  `json:"furtherNotes"`
+	Referrer            string  `json:"referrer,omitempty"`
+	UserAgent           string  `json:"userAgent,omitempty"`
+	IPAddress           *net.IP `json:"ipAddress,omitempty"`
 	// Gender / DateOfBirth are collected on the pre-payment trial details
 	// page, right before Stripe checkout — optional, used to send real
 	// values to Glofox instead of a neutral placeholder birth date.
-	Gender       string     `json:"gender,omitempty"`
-	DateOfBirth  *time.Time `json:"dateOfBirth,omitempty"`
-	CreatedAt        time.Time  `json:"createdAt"`
-	UpdatedAt        time.Time  `json:"updatedAt"`
+	Gender      string     `json:"gender,omitempty"`
+	DateOfBirth *time.Time `json:"dateOfBirth,omitempty"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	UpdatedAt   time.Time  `json:"updatedAt"`
 }
 
 type StudioSheetsSettings struct {
@@ -102,28 +108,28 @@ type StudioSheetsSettings struct {
 // our own export destination), we never write to this sheet — column letters
 // are configurable since we don't control its layout.
 type ExternalLeadsSheetSettings struct {
-	ID              uuid.UUID `json:"id"`
-	StudioID        uuid.UUID `json:"studioId"`
-	SpreadsheetID   string    `json:"spreadsheetId"`
-	TabName         string    `json:"tabName"`
-	NameColumn      string    `json:"nameColumn"`
-	FirstNameColumn string    `json:"firstNameColumn"`
-	LastNameColumn  string    `json:"lastNameColumn"`
-	EmailColumn     string    `json:"emailColumn"`
-	PhoneColumn     string    `json:"phoneColumn"`
-	SourceColumn    string    `json:"sourceColumn"`
-	NotesColumn     string    `json:"notesColumn"`
-	DateColumn      string    `json:"dateColumn"`
-	HotLeadColumn   string    `json:"hotLeadColumn"`
-	TrialPurchasedColumn string `json:"trialPurchasedColumn"`
-	ContinueAIAfterGreeting bool `json:"continueAiAfterGreeting"`
+	ID                      uuid.UUID `json:"id"`
+	StudioID                uuid.UUID `json:"studioId"`
+	SpreadsheetID           string    `json:"spreadsheetId"`
+	TabName                 string    `json:"tabName"`
+	NameColumn              string    `json:"nameColumn"`
+	FirstNameColumn         string    `json:"firstNameColumn"`
+	LastNameColumn          string    `json:"lastNameColumn"`
+	EmailColumn             string    `json:"emailColumn"`
+	PhoneColumn             string    `json:"phoneColumn"`
+	SourceColumn            string    `json:"sourceColumn"`
+	NotesColumn             string    `json:"notesColumn"`
+	DateColumn              string    `json:"dateColumn"`
+	HotLeadColumn           string    `json:"hotLeadColumn"`
+	TrialPurchasedColumn    string    `json:"trialPurchasedColumn"`
+	ContinueAIAfterGreeting bool      `json:"continueAiAfterGreeting"`
 	// AutoContactEnabled controls whether newly-synced leads get an initial
 	// outreach message. When false, leads are imported silently regardless
 	// of what the sheet's HOT/COLD column says.
-	AutoContactEnabled bool `json:"autoContactEnabled"`
-	Active          bool      `json:"active"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	AutoContactEnabled bool      `json:"autoContactEnabled"`
+	Active             bool      `json:"active"`
+	CreatedAt          time.Time `json:"createdAt"`
+	UpdatedAt          time.Time `json:"updatedAt"`
 }
 
 var (

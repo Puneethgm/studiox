@@ -135,7 +135,7 @@ func TestExecutor_AuthTypes_Integration(t *testing.T) {
 				t.Fatalf("create operation: %v", err)
 			}
 
-			conn, err := repo.CreateConnection(ctx, studioID, p.ID, tc.creds)
+			conn, err := repo.CreateConnection(ctx, studioID, p.ID, tc.creds, nil)
 			if err != nil {
 				t.Fatalf("create connection: %v", err)
 			}

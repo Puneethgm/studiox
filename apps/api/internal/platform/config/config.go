@@ -23,6 +23,7 @@ type Config struct {
 	JWT       JWTConfig
 	Cookie    CookieConfig
 	SuperUser SuperUserConfig
+	Session   SessionConfig
 
 	PublicFormBaseURL string
 
@@ -46,6 +47,41 @@ type Config struct {
 	Groq   GroqConfig
 	S3     S3Config
 	Glofox GlofoxConfig
+	Redis  RedisConfig
+	SMTP   SMTPConfig
+}
+
+// SMTPConfig sends transactional email (currently just password-reset
+// links). Unset (Host empty) means email sending is disabled — Enabled()
+// gates every call site so a studio/dev environment without SMTP configured
+// degrades to "reset link couldn't be emailed" rather than a boot failure.
+type SMTPConfig struct {
+	Host     string
+	Port     int
+	User     string
+	Password string
+	From     string
+}
+
+func (s SMTPConfig) Enabled() bool {
+	return s.Host != "" && s.User != "" && s.Password != ""
+}
+
+// RedisConfig backs the per-studio AI-answer cache (internal/messaging.AnswerCache).
+// Redis being unreachable degrades to always calling the model — it is
+// never required for the app to boot or serve requests. Discrete
+// host/port/password fields (not a redis://user:pass@host URL) so a
+// password containing URL-special characters is never mis-parsed.
+type RedisConfig struct {
+	Host           string
+	Port           int
+	Password       string
+	DB             int
+	AnswerCacheTTL time.Duration
+}
+
+func (r RedisConfig) Addr() string {
+	return fmt.Sprintf("%s:%d", r.Host, r.Port)
 }
 
 type GlofoxConfig struct {
@@ -113,6 +149,16 @@ type CookieConfig struct {
 	Secure bool
 }
 
+// SessionConfig backs identity.SessionStore — the Redis-tracked-by-jti
+// session that enforces revocation and an idle timeout shorter than the
+// JWT's own absolute TTL (JWTConfig.TTL). See SessionStore's doc comment:
+// unlike RedisConfig's other consumer (the AI answer cache), Redis being
+// unreachable here fails closed (requests are rejected), since this is an
+// access-control mechanism, not a perf cache.
+type SessionConfig struct {
+	IdleTimeout time.Duration
+}
+
 type SuperUserConfig struct {
 	Email    string
 	Password string
@@ -139,7 +185,27 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	ttl, err := atoiDefault("JWT_TTL_HOURS", 24)
+	jwtTTL, err := durationDefault("JWT_TTL", 30*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	answerCacheTTL, err := durationDefault("AI_ANSWER_CACHE_TTL", 30*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	sessionIdleTimeout, err := durationDefault("SESSION_IDLE_TIMEOUT", 15*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	redisPort, err := atoiDefault("REDIS_PORT", 6379)
+	if err != nil {
+		return Config{}, err
+	}
+	redisDB, err := atoiDefault("REDIS_DB", 0)
+	if err != nil {
+		return Config{}, err
+	}
+	smtpPort, err := atoiDefault("SMTP_PORT", 587)
 	if err != nil {
 		return Config{}, err
 	}
@@ -151,7 +217,7 @@ func Load() (Config, error) {
 		CORSOrigins: splitCSV(getEnv("API_CORS_ORIGINS", "http://localhost:3000,http://localhost:3001")),
 		JWT: JWTConfig{
 			Secret: getEnv("JWT_SECRET", ""),
-			TTL:    time.Duration(ttl) * time.Hour,
+			TTL:    jwtTTL,
 		},
 		Cookie: CookieConfig{
 			Name:   getEnv("COOKIE_NAME", "px_session"),
@@ -161,6 +227,9 @@ func Load() (Config, error) {
 		SuperUser: SuperUserConfig{
 			Email:    getEnv("SUPER_ADMIN_EMAIL", ""),
 			Password: getEnv("SUPER_ADMIN_PASSWORD", ""),
+		},
+		Session: SessionConfig{
+			IdleTimeout: sessionIdleTimeout,
 		},
 		PublicFormBaseURL: getEnv("PUBLIC_FORM_BASE_URL", "http://localhost:3000"),
 		PublicAPIBaseURL:  getEnv("PUBLIC_API_BASE_URL", "http://localhost:8080"),
@@ -194,6 +263,20 @@ func Load() (Config, error) {
 			APIKey:   getEnv("GLOFOX_API_KEY", ""),
 			APIToken: getEnv("GLOFOX_API_TOKEN", ""),
 			BranchID: getEnv("GLOFOX_BRANCH_ID", ""),
+		},
+		Redis: RedisConfig{
+			Host:           getEnv("REDIS_HOST", "localhost"),
+			Port:           redisPort,
+			Password:       getEnv("REDIS_PASSWORD", ""),
+			DB:             redisDB,
+			AnswerCacheTTL: answerCacheTTL,
+		},
+		SMTP: SMTPConfig{
+			Host:     getEnv("SMTP_HOST", ""),
+			Port:     smtpPort,
+			User:     getEnv("SMTP_USER", ""),
+			Password: getEnv("SMTP_PASSWORD", ""),
+			From:     getEnv("SMTP_FROM", getEnv("SMTP_USER", "")),
 		},
 	}
 
@@ -264,6 +347,18 @@ func atoiDefault(k string, def int) (int, error) {
 		return 0, fmt.Errorf("env %s: %w", k, err)
 	}
 	return n, nil
+}
+
+func durationDefault(k string, def time.Duration) (time.Duration, error) {
+	v, ok := os.LookupEnv(k)
+	if !ok || v == "" {
+		return def, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return 0, fmt.Errorf("env %s: %w", k, err)
+	}
+	return d, nil
 }
 
 func splitCSV(v string) []string {

@@ -126,7 +126,7 @@ func TestGlofoxMigration_PurchaseMembership_Parity(t *testing.T) {
 		"x-glofox-api-token": apiToken,
 		"x-api-key":          apiKey,
 		"x-glofox-branch-id": branchID,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("create connection: %v", err)
 	}

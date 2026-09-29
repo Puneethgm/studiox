@@ -51,7 +51,10 @@ type Studio struct {
 	KnowledgeBase        string              `json:"knowledgeBase"`
 	KnowledgeBaseFiles   []KnowledgeBaseFile `json:"knowledgeBaseFiles"`
 	// GreetingMessage is sent automatically on the first inbound message of a new conversation.
-	GreetingMessage               string `json:"greetingMessage"`
+	GreetingMessage string `json:"greetingMessage"`
+	// TrialAmountSGD, when 0, falls back to the active "Trial" plan's own
+	// price (see ResolveTrialAmountSGD) — there's no separate trial-price
+	// override needed for most studios.
 	TrialAmountSGD                int    `json:"trialAmountSgd"`
 	BookingHeroImageURL           string `json:"bookingHeroImageUrl"`
 	BookingHeroVideoURL           string `json:"bookingHeroVideoUrl"`

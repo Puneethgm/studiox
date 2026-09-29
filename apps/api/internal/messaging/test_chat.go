@@ -144,7 +144,7 @@ func (w *AIWorker) TestChat(ctx context.Context, studioID uuid.UUID, req TestCha
 
 	prompt, expectedGreeting := w.buildPrompt(ctx, history, nil, styleExamples, nil, nil, studio, plans, sentiment, nil, kbChunks, intent, len(kbChunks) >= 2, "", req.Timezone)
 
-	reply, _ := llmWaterfall(ctx, w.studiosRepo, w.llmRepo, w.msgRepo, w.claude, w.claudeAPIURL, w.log, studioID, studio, prompt)
+	reply, _ := llmWaterfall(ctx, w.studiosRepo, w.llmRepo, w.msgRepo, w.claude, w.claudeAPIURL, w.log, studioID, studio, prompt, w.answerCache, "test_chat")
 	if reply == "" {
 		return "", nil, ErrNoProviderConfigured
 	}

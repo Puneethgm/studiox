@@ -24,7 +24,7 @@ x-api-env: &api_env
   POSTGRES_DB: ${POSTGRES_DB}
   POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:-require}
   JWT_SECRET: ${JWT_SECRET}
-  JWT_TTL_HOURS: "24"
+  JWT_TTL: "30m"
   SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL}
   SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD}
   COOKIE_NAME: px_session
@@ -56,6 +56,12 @@ x-api-env: &api_env
   GLOFOX_API_KEY: ${GLOFOX_API_KEY:-}
   GLOFOX_API_TOKEN: ${GLOFOX_API_TOKEN:-}
   GLOFOX_BRANCH_ID: ${GLOFOX_BRANCH_ID:-}
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  REDIS_PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD must be set — generate one with openssl rand -base64 24}"
+  REDIS_DB: "0"
+  AI_ANSWER_CACHE_TTL: ${AI_ANSWER_CACHE_TTL:-30m}
+  SESSION_IDLE_TIMEOUT: ${SESSION_IDLE_TIMEOUT:-15m}
 
 services:
   postgres:
@@ -69,6 +75,21 @@ services:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - backend
+
+  # Per-studio AI-answer cache (internal/messaging.AnswerCache). Backend-only
+  # — never exposed on a host port, since only the api container needs it.
+  # No volume: it's a cache, safe to lose on restart/redeploy.
+  redis:
+    image: redis:7-alpine
+    restart: always
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set — generate one with: openssl rand -base64 24}"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5

@@ -59,10 +59,11 @@ type StyleWorker struct {
 	embeddings   *embeddings.Client
 	llmRepo      *llm.Repo
 	log          *slog.Logger
+	answerCache  *AnswerCache
 }
 
-func NewStyleWorker(studiosRepo *studios.Repo, msgRepo *Repo, claudeClient *claude.Client, claudeAPIURL string, embClient *embeddings.Client, llmRepo *llm.Repo, logger *slog.Logger) *StyleWorker {
-	return &StyleWorker{studiosRepo: studiosRepo, msgRepo: msgRepo, claude: claudeClient, claudeAPIURL: claudeAPIURL, embeddings: embClient, llmRepo: llmRepo, log: logger}
+func NewStyleWorker(studiosRepo *studios.Repo, msgRepo *Repo, claudeClient *claude.Client, claudeAPIURL string, embClient *embeddings.Client, llmRepo *llm.Repo, logger *slog.Logger, answerCache *AnswerCache) *StyleWorker {
+	return &StyleWorker{studiosRepo: studiosRepo, msgRepo: msgRepo, claude: claudeClient, claudeAPIURL: claudeAPIURL, embeddings: embClient, llmRepo: llmRepo, log: logger, answerCache: answerCache}
 }
 
 func (w *StyleWorker) Run(ctx context.Context) {
@@ -336,7 +337,7 @@ func (w *StyleWorker) rebuildProfile(ctx context.Context, studioID uuid.UUID) er
 	// Same Groq → Gemini → Claude waterfall the AI reply pipeline uses — this
 	// worker can't assume Claude is configured, since it's a single
 	// platform-wide key while Groq/Gemini keys are set per studio.
-	replyText, sourceRef := llmWaterfall(ctx, w.studiosRepo, w.llmRepo, w.msgRepo, w.claude, w.claudeAPIURL, w.log, studioID, studio, prompt)
+	replyText, sourceRef := llmWaterfall(ctx, w.studiosRepo, w.llmRepo, w.msgRepo, w.claude, w.claudeAPIURL, w.log, studioID, studio, prompt, w.answerCache, "style_profile")
 	profile := strings.TrimSpace(replyText)
 	if profile == "" {
 		return fmt.Errorf("no LLM provider configured or all providers failed")

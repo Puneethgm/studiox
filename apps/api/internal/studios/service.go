@@ -17,6 +17,7 @@ import (
 	"github.com/projectx/api/internal/integrations/crm"
 	"github.com/projectx/api/internal/integrations/embeddings"
 	"github.com/projectx/api/internal/integrations/glofox"
+	platmail "github.com/projectx/api/internal/platform/mail"
 )
 
 type Service struct {
@@ -25,10 +26,12 @@ type Service struct {
 	glofox      *glofox.Client
 	crmExecutor *crm.Executor
 	embeddings  *embeddings.Client
+	mailer      *platmail.Sender
+	frontendURL string
 }
 
-func NewService(repo *Repo, id *identity.Repo, gf *glofox.Client, crmExecutor *crm.Executor, embClient *embeddings.Client) *Service {
-	return &Service{repo: repo, identity: id, glofox: gf, crmExecutor: crmExecutor, embeddings: embClient}
+func NewService(repo *Repo, id *identity.Repo, gf *glofox.Client, crmExecutor *crm.Executor, embClient *embeddings.Client, mailer *platmail.Sender, frontendURL string) *Service {
+	return &Service{repo: repo, identity: id, glofox: gf, crmExecutor: crmExecutor, embeddings: embClient, mailer: mailer, frontendURL: frontendURL}
 }
 
 // SyncLeadToGlofoxByID pushes a lead to Glofox CRM as trial/member. Used by
@@ -265,7 +268,7 @@ type CreateStudioResult struct {
 // CreateStudioWithAdmin creates the studio and its first studio_admin in a
 // single transaction so a half-provisioned studio (with no admin) can never
 // exist.
-func (s *Service) CreateStudioWithAdmin(ctx context.Context, in CreateStudioInput) (*CreateStudioResult, map[string]string, error) {
+func (s *Service) CreateStudioWithAdmin(ctx context.Context, in CreateStudioInput, actorID *uuid.UUID) (*CreateStudioResult, map[string]string, error) {
 	in.Slug = strings.TrimSpace(strings.ToLower(in.Slug))
 	in.Name = strings.TrimSpace(in.Name)
 	in.BrandColor = normalizeHex(in.BrandColor)
@@ -289,7 +292,12 @@ func (s *Service) CreateStudioWithAdmin(ctx context.Context, in CreateStudioInpu
 	if _, err := mail.ParseAddress(in.AdminEmail); err != nil {
 		errs["adminEmail"] = "invalid email"
 	}
-	if len(in.AdminPassword) < 8 {
+	// AdminPassword is optional: the internal "New Studio" admin flow leaves
+	// it empty and gets a default password + a welcome email with a
+	// set-your-own-password link (see below); the public Stripe self-signup
+	// flow (ProvisionPlatformStudio) still supplies one directly since the
+	// customer is choosing it themselves at checkout.
+	if in.AdminPassword != "" && len(in.AdminPassword) < 8 {
 		errs["adminPassword"] = "must be at least 8 characters"
 	}
 	if in.ContactEmail != "" {
@@ -323,25 +331,32 @@ func (s *Service) CreateStudioWithAdmin(ctx context.Context, in CreateStudioInpu
 		SocialPlannerEnabled: in.SocialPlannerEnabled,
 		KnowledgeBaseFiles:   []KnowledgeBaseFile{},
 	}
-	if err := s.repo.Create(ctx, tx, studio); err != nil {
+	if err := s.repo.Create(ctx, tx, studio, actorID); err != nil {
 		if errors.Is(err, ErrSlugTaken) {
 			return nil, map[string]string{"slug": "this slug is already in use"}, nil
 		}
 		return nil, nil, err
 	}
 
-	hash, err := identity.HashPassword(in.AdminPassword)
+	usingDefaultPassword := in.AdminPassword == ""
+	plainPassword := in.AdminPassword
+	if usingDefaultPassword {
+		plainPassword = identity.DefaultTeammatePassword
+	}
+	hash, err := identity.HashPassword(plainPassword)
 	if err != nil {
 		return nil, nil, fmt.Errorf("hash password: %w", err)
 	}
 	// CreateStudioAdmin uses the pool directly — but inside the same tx we must
 	// run it on the tx connection. Inline the insert here to honor atomicity.
+	// must_reset_password only when we generated the default — the public
+	// self-signup path's caller-chosen password needs no forced change.
 	var adminID uuid.UUID
 	row := tx.QueryRow(ctx, `
-		INSERT INTO users (studio_id, email, password_hash, role)
-		VALUES ($1, $2, $3, 'studio_admin')
+		INSERT INTO users (studio_id, email, password_hash, role, must_reset_password, created_by, updated_by)
+		VALUES ($1, $2, $3, 'studio_admin', $4, $5, $5)
 		RETURNING id
-	`, studio.ID, in.AdminEmail, hash)
+	`, studio.ID, in.AdminEmail, hash, usingDefaultPassword, actorID)
 	if err := row.Scan(&adminID); err != nil {
 		// Unique-violation on email
 		if isPgUnique(err) {
@@ -380,7 +395,7 @@ func (s *Service) CreateStudioWithAdmin(ctx context.Context, in CreateStudioInpu
 				FirstName: firstName,
 				LastName:  lastName,
 				Phone:     in.ContactPhone,
-				Password:  in.AdminPassword,
+				Password:  plainPassword,
 			})
 			if err != nil {
 				slog.Warn("Glofox | Studio admin account creation failed — admin will not appear in Glofox CRM",
@@ -397,6 +412,28 @@ func (s *Service) CreateStudioWithAdmin(ctx context.Context, in CreateStudioInpu
 					"studio_name", studioName,
 					"admin_email", adminEmail,
 				)
+			}
+		}()
+	}
+
+	// Welcome email with a set-your-own-password link — only for the
+	// internal admin-created flow (usingDefaultPassword); the public
+	// self-signup path already had the customer choose their password at
+	// checkout, so there's nothing to reset here.
+	if usingDefaultPassword && s.mailer != nil && s.mailer.Enabled() {
+		adminEmail := in.AdminEmail
+		studioName := studio.Name
+		go func() {
+			ctx := context.Background()
+			token, err := s.identity.CreatePasswordResetToken(ctx, adminID, time.Hour)
+			if err != nil {
+				slog.Error("studio welcome email: failed to create reset token", "err", err, "admin_id", adminID)
+				return
+			}
+			resetLink := fmt.Sprintf("%s/reset-password?token=%s", s.frontendURL, token)
+			loginLink := fmt.Sprintf("%s/login", s.frontendURL)
+			if err := s.mailer.SendStudioWelcome(adminEmail, studioName, loginLink, resetLink); err != nil {
+				slog.Error("studio welcome email: failed to send", "err", err, "admin_email", adminEmail)
 			}
 		}()
 	}
@@ -450,7 +487,7 @@ type UpdateStudioInput struct {
 	MembershipGlofoxPlanCode      string              `json:"membershipGlofoxPlanCode"`
 }
 
-func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput) (map[string]string, error) {
+func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput, actorID *uuid.UUID) (map[string]string, error) {
 	oldStudio, err := s.repo.GetByID(ctx, id)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return nil, err
@@ -486,7 +523,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput
 	if len(errs) > 0 {
 		return errs, nil
 	}
-	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.ContactPhone, in.Active, in.ManagedBy1Hero, in.AvailabilitySlots, in.AvailabilityTimezone, in.GeminiAPIKey, in.GroqAPIKey, in.MetaAppID, in.MetaAppSecret, in.GoogleClientID, in.GoogleClientSecret, in.GoogleDeveloperToken, in.SocialPlannerEnabled, in.KnowledgeBase, in.KnowledgeBaseFiles, in.GreetingMessage, in.TrialAmountSGD, in.BookingHeroImageURL, in.BookingHeroVideoURL, in.TrialConfirmationMessage, in.MembershipConfirmationMessage, in.TrialGlofoxMembershipID, in.TrialGlofoxPlanCode, in.MembershipGlofoxMembershipID, in.MembershipGlofoxPlanCode); err != nil {
+	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.ContactPhone, in.Active, in.ManagedBy1Hero, in.AvailabilitySlots, in.AvailabilityTimezone, in.GeminiAPIKey, in.GroqAPIKey, in.MetaAppID, in.MetaAppSecret, in.GoogleClientID, in.GoogleClientSecret, in.GoogleDeveloperToken, in.SocialPlannerEnabled, in.KnowledgeBase, in.KnowledgeBaseFiles, in.GreetingMessage, in.TrialAmountSGD, in.BookingHeroImageURL, in.BookingHeroVideoURL, in.TrialConfirmationMessage, in.MembershipConfirmationMessage, in.TrialGlofoxMembershipID, in.TrialGlofoxPlanCode, in.MembershipGlofoxMembershipID, in.MembershipGlofoxPlanCode, actorID); err != nil {
 		return nil, err
 	}
 
@@ -673,8 +710,8 @@ func isPgUnique(err error) bool {
 	return false
 }
 
-func (s *Service) UpdatePayments(ctx context.Context, id uuid.UUID, stripeAccountId, stripeSecretKey, stripePublishableKey, stripeWebhookSecret, subscriptionTier string) error {
-	return s.repo.UpdatePayments(ctx, id, stripeAccountId, stripeSecretKey, stripePublishableKey, stripeWebhookSecret, subscriptionTier)
+func (s *Service) UpdatePayments(ctx context.Context, id uuid.UUID, stripeAccountId, stripeSecretKey, stripePublishableKey, stripeWebhookSecret, subscriptionTier string, actorID *uuid.UUID) error {
+	return s.repo.UpdatePayments(ctx, id, stripeAccountId, stripeSecretKey, stripePublishableKey, stripeWebhookSecret, subscriptionTier, actorID)
 }
 
 func (s *Service) ListPlans(ctx context.Context, studioID uuid.UUID) ([]Plan, error) {
@@ -687,12 +724,22 @@ func (s *Service) ListPlans(ctx context.Context, studioID uuid.UUID) ([]Plan, er
 // trial-details page (so the price shown matches what Stripe will charge)
 // and by trial payment-intent/checkout creation. Don't duplicate this
 // resolution elsewhere — call this instead.
+// ResolveTrialAmountSGD returns the trial price to charge: the studio's own
+// explicit setting if they've made one, else a fallback derived from their
+// plans. The fallback only considers the plan literally named "Trial" —
+// the same plan_name == "Trial" convention internal/messaging.
+// ListActivePlans already uses to exclude it from the membership list, so
+// "which plan is the trial" is identified the same way everywhere in the
+// codebase — not just "whichever active plan happens to be cheapest".
+// Picking the cheapest ACROSS ALL active plans regardless of name was the
+// bug here: a discounted or entry-level monthly membership priced below
+// the studio's intended trial price would get mistaken for the trial.
 func (s *Service) ResolveTrialAmountSGD(ctx context.Context, studioID uuid.UUID, trialAmountSGD int) int64 {
 	amount := int64(trialAmountSGD)
 	if amount == 0 {
 		plans, _ := s.ListPlans(ctx, studioID)
 		for _, p := range plans {
-			if !p.IsActive {
+			if !p.IsActive || p.PlanName != "Trial" {
 				continue
 			}
 			if amount == 0 || int64(p.PriceSGD) < amount {
@@ -722,10 +769,14 @@ func (s *Service) ListMemberSubscriptions(ctx context.Context, studioID uuid.UUI
 	return s.repo.ListMemberSubscriptions(ctx, studioID)
 }
 
+func (s *Service) ListMemberSubscriptionsForLead(ctx context.Context, studioID, leadID uuid.UUID) ([]MemberSubscription, error) {
+	return s.repo.ListMemberSubscriptionsForLead(ctx, studioID, leadID)
+}
+
 func (s *Service) GetPlatformSetting(ctx context.Context, key string) (string, error) {
 	return s.repo.GetPlatformSetting(ctx, key)
 }
 
-func (s *Service) UpdatePlatformSetting(ctx context.Context, key, value string) error {
-	return s.repo.UpdatePlatformSetting(ctx, key, value)
+func (s *Service) UpdatePlatformSetting(ctx context.Context, key, value string, actorID *uuid.UUID) error {
+	return s.repo.UpdatePlatformSetting(ctx, key, value, actorID)
 }

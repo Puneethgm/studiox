@@ -41,6 +41,8 @@ import (
 	"github.com/projectx/api/internal/platform/db"
 	"github.com/projectx/api/internal/platform/httpx"
 	"github.com/projectx/api/internal/platform/logger"
+	"github.com/projectx/api/internal/platform/mail"
+	"github.com/projectx/api/internal/platform/rediscache"
 	s3pkg "github.com/projectx/api/internal/platform/s3"
 	"github.com/projectx/api/internal/platform/secrets"
 	"github.com/projectx/api/internal/reviews"
@@ -87,6 +89,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Shared Redis client — backs both the per-studio AI answer cache
+	// (internal/messaging.AnswerCache, degrades to "call the model
+	// directly" on any failure) and identity.SessionStore (session
+	// revocation + idle timeout, which fails CLOSED on a Redis error — see
+	// SessionStore's doc comment). The connection is lazy — go-redis dials
+	// on first command — so a Redis outage never blocks boot.
+	if cfg.Redis.Password == "" {
+		log.Warn("REDIS_PASSWORD is not set — connecting to Redis without auth")
+	}
+	redisClient := rediscache.New(cfg.Redis.Addr(), cfg.Redis.Password, cfg.Redis.DB)
+	sessions := identity.NewSessionStore(redisClient, cfg.Session.IdleTimeout)
+
 	// --- repos / services / handlers ---
 	identityRepo := identity.NewRepo(pool)
 	leadsRepo := leads.NewRepo(pool)
@@ -96,7 +110,7 @@ func main() {
 	studiosRepo := studios.NewRepo(pool, cipher)
 	reviewsRepo := reviews.NewRepo(pool)
 
-	tokens := identity.NewTokenIssuer(cfg.JWT.Secret, cfg.JWT.TTL)
+	tokens := identity.NewTokenIssuer(cfg.JWT.Secret, cfg.JWT.TTL, cfg.Session.IdleTimeout, cipher)
 
 	crmRepo := crm.NewRepo(pool, cipher)
 	crmExecutor := crm.NewExecutor(crmRepo)
@@ -123,7 +137,12 @@ func main() {
 	embeddingsClient := embeddings.New(embeddingsServiceURL())
 	log.Info("embeddings config", "enabled", embeddingsClient != nil, "url", embeddingsServiceURL())
 
-	studiosSvc := studios.NewService(studiosRepo, identityRepo, glofoxClient, crmExecutor, embeddingsClient)
+	mailer := mail.NewSender(cfg.SMTP)
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "http://localhost:3000"
+	}
+	studiosSvc := studios.NewService(studiosRepo, identityRepo, glofoxClient, crmExecutor, embeddingsClient, mailer, frontendURL)
 	reviewsHandler := reviews.NewHandler(reviewsRepo)
 
 	// Initialize S3 uploader if configured
@@ -166,7 +185,7 @@ func main() {
 			SubscriptionTier:     s.SubscriptionTier,
 		}, nil
 	})
-	identityHandler := identity.NewHandler(identityRepo, tokens, cfg.Cookie, brandLookup)
+	identityHandler := identity.NewHandler(identityRepo, tokens, cfg.Cookie, brandLookup, sessions, mailer, frontendURL)
 
 	leadsSvc := leads.NewService(leadsRepo, glofoxClient)
 	leadsHandler := leads.NewHandler(leadsSvc, cfg)
@@ -233,14 +252,17 @@ func main() {
 		glofoxStudioID, cfg.Glofox.BranchID, log.With("component", "glofox_first_session"))
 	go firstSessionWorker.Run(rootCtx)
 
+	// AI answer cache — reuses the shared redisClient constructed above.
+	answerCache := messaging.NewAnswerCache(redisClient, cfg.Redis.AnswerCacheTTL)
+
 	// Claude AI worker
 	claudeClient, err := claude.New(cfg.Claude.APIURL, cfg.Claude.APIKey)
 	if err != nil {
 		log.Error("init claude client", "err", err)
 	}
 	log.Info("claude config", "enabled", claudeClient != nil)
-	msgHandler := messaging.NewHandler(msgSvc, msgBus, studiosRepo, llmRepo, claudeClient, cfg.Claude.APIURL)
-	aiWorker := messaging.NewAIWorker(msgBus, msgRepo, msgSvc, studiosRepo, leadsRepo, dtSvc, claudeClient, cfg.Claude.APIURL, embeddingsClient, llmRepo, log.With("component", "ai_worker"))
+	msgHandler := messaging.NewHandler(msgSvc, msgBus, studiosRepo, llmRepo, claudeClient, cfg.Claude.APIURL, answerCache)
+	aiWorker := messaging.NewAIWorker(msgBus, msgRepo, msgSvc, studiosRepo, leadsRepo, dtSvc, claudeClient, cfg.Claude.APIURL, embeddingsClient, llmRepo, log.With("component", "ai_worker"), answerCache)
 	go aiWorker.Run(rootCtx)
 
 	// llm.Resolver: which LLM handles which AI-driven admin task (starting
@@ -254,7 +276,7 @@ func main() {
 	// Style worker: periodically distills each studio's own staff-authored
 	// replies into a short "communication style" writeup, shown/editable on
 	// the Knowledge Base page and injected into the AI prompt.
-	styleWorker := messaging.NewStyleWorker(studiosRepo, msgRepo, claudeClient, cfg.Claude.APIURL, embeddingsClient, llmRepo, log.With("component", "style_worker"))
+	styleWorker := messaging.NewStyleWorker(studiosRepo, msgRepo, claudeClient, cfg.Claude.APIURL, embeddingsClient, llmRepo, log.With("component", "style_worker"), answerCache)
 	go styleWorker.Run(rootCtx)
 	go styleWorker.ListenForNewReplies(rootCtx, msgBus)
 
@@ -355,6 +377,12 @@ func main() {
 		// Authenticated
 		r.Group(func(r chi.Router) {
 			r.Use(identityHandler.RequireAuth)
+			// Blocks everything below for a teammate who hasn't set their own
+			// password yet — /auth/login, /auth/logout, /auth/me, /auth/password,
+			// and /permissions (registered directly above, outside this Group)
+			// are structurally unreachable through this chain, so no carve-out
+			// list is needed here (see RequirePasswordSet's doc comment).
+			r.Use(identity.RequirePasswordSet)
 
 			// Super-admin only: studio CRUD + create-with-admin
 			r.Route("/admin", func(r chi.Router) {
@@ -378,9 +406,17 @@ func main() {
 			// gates against inactive studios for non-super-admins.
 			r.Route("/studios/{studioId}", func(r chi.Router) {
 				r.Use(studiosHandler.RequireActiveStudio)
+				r.Use(identity.RequirePermission)
+				// Each gets its own r.Group: RolesRoutes/StudioUserMgmtRoutes add
+				// their own r.Use(RequireRole(...)) — chi panics if middleware is
+				// added to a mux that already has routes registered on it, so
+				// they can't both call r.Use directly on the shared r above.
+				r.Group(func(r chi.Router) { identityHandler.RolesRoutes(r) })
+				r.Group(func(r chi.Router) { identityHandler.StudioUserMgmtRoutes(r) })
 				dtHandler.AdminRoutes(r)
 				r.Post("/knowledge-base/test-chat", aiWorker.TestChatHandler)
 				r.Get("/knowledge-base/sync-status", studiosHandler.GetKnowledgeSyncStatus)
+				r.Post("/knowledge-base/ocr", studiosHandler.OCRKnowledgeBaseImage)
 				r.Get("/google-oauth/login", googleOAuth.LoginHandler)
 				r.Get("/stripe-oauth/login", studiosHandler.StripeConnectRedirect)
 				r.Get("/initial-contact-delay", studiosHandler.GetInitialContactDelay)

@@ -132,7 +132,8 @@ func (h *Handler) updateProvider(w http.ResponseWriter, r *http.Request) {
 		TokenExpiryPath:       req.TokenExpiryPath,
 		TokenExpirySeconds:    req.TokenExpirySeconds,
 	}
-	if err := h.repo.UpdateProvider(r.Context(), id, in); err != nil {
+	c := identity.MustClaims(r.Context())
+	if err := h.repo.UpdateProvider(r.Context(), id, in, &c.UserID); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			httpx.WriteError(w, http.StatusNotFound, "not_found", "provider not found")
 			return
@@ -154,7 +155,8 @@ func (h *Handler) activateProvider(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid provider id")
 		return
 	}
-	if err := h.repo.ActivateProvider(r.Context(), id); err != nil {
+	c := identity.MustClaims(r.Context())
+	if err := h.repo.ActivateProvider(r.Context(), id, &c.UserID); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			httpx.WriteError(w, http.StatusNotFound, "not_found", "provider not found")
 			return
@@ -307,7 +309,8 @@ func (h *Handler) createConnection(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteValidationError(w, map[string]string{"crmProviderId": "required"})
 		return
 	}
-	conn, err := h.repo.CreateConnection(r.Context(), studioID, req.CRMProviderID, req.Credentials)
+	c := identity.MustClaims(r.Context())
+	conn, err := h.repo.CreateConnection(r.Context(), studioID, req.CRMProviderID, req.Credentials, &c.UserID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return

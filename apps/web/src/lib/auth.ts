@@ -33,6 +33,19 @@ export async function serverFetch<T>(path: string, init: RequestInit = {}): Prom
     },
     cache: 'no-store',
   });
+  if (res.status === 401) {
+    const body = await res.json().catch(() => null) as { code?: string } | null;
+    // Expired JWT, idle session timeout, or revoked session (logout,
+    // password change) — send them back to log in instead of surfacing a
+    // generic "Something went wrong" error boundary for what's really just
+    // an expired session. serverFetch is only ever used for already-
+    // authenticated data loading (never the login attempt itself), so any
+    // "unauthorized" here genuinely means the session is dead — but keep
+    // the code check anyway, matching the client-side api() helper, in
+    // case that ever changes.
+    if (body?.code === 'unauthorized') redirect('/login');
+    throw new Error(`API ${path}: ${res.status}`);
+  }
   if (!res.ok) {
     throw new Error(`API ${path}: ${res.status}`);
   }

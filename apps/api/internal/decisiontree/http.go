@@ -96,10 +96,11 @@ func (h *Handler) createTree(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
+	c := identity.MustClaims(r.Context())
 	t, errs, err := h.svc.CreateTree(r.Context(), studioID, CreateTreeInput{
 		Name:           req.Name,
 		TargetStatuses: req.TargetStatuses,
-	})
+	}, &c.UserID)
 	if errs != nil {
 		httpx.WriteValidationError(w, errs)
 		return
@@ -231,7 +232,8 @@ func (h *Handler) updateTree(w http.ResponseWriter, r *http.Request) {
 			inp.TargetStatuses = []string{}
 		}
 	}
-	t, err := h.svc.UpdateTree(r.Context(), studioID, treeID, inp)
+	c := identity.MustClaims(r.Context())
+	t, err := h.svc.UpdateTree(r.Context(), studioID, treeID, inp, &c.UserID)
 	if errors.Is(err, ErrTreeNotFound) {
 		httpx.WriteError(w, http.StatusNotFound, "not_found", "tree not found")
 		return
@@ -326,6 +328,7 @@ func (h *Handler) createNode(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
+	c := identity.MustClaims(r.Context())
 	n, errs, err := h.svc.CreateNode(r.Context(), studioID, treeID, CreateNodeInput{
 		ParentID:       req.ParentID,
 		Label:          req.Label,
@@ -337,7 +340,7 @@ func (h *Handler) createNode(w http.ResponseWriter, r *http.Request) {
 		SortOrder:      req.SortOrder,
 		PositionX:      req.PositionX,
 		PositionY:      req.PositionY,
-	})
+	}, &c.UserID)
 	if errs != nil {
 		httpx.WriteValidationError(w, errs)
 		return
@@ -402,6 +405,7 @@ func (h *Handler) updateNode(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
+	c := identity.MustClaims(r.Context())
 	n, err := h.svc.UpdateNode(r.Context(), studioID, treeID, nodeID, UpdateNodeInput{
 		Label:          req.Label,
 		ConditionType:  req.ConditionType,
@@ -412,7 +416,7 @@ func (h *Handler) updateNode(w http.ResponseWriter, r *http.Request) {
 		SortOrder:      req.SortOrder,
 		PositionX:      req.PositionX,
 		PositionY:      req.PositionY,
-	})
+	}, &c.UserID)
 	if errors.Is(err, ErrTreeNotFound) {
 		httpx.WriteError(w, http.StatusNotFound, "not_found", "tree not found")
 		return
@@ -839,7 +843,8 @@ func (h *Handler) importNodes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, parseErrs := parseImportRows(sheetRows)
-	created, importErrs, err := h.svc.ImportNodes(r.Context(), studioID, treeID, rows)
+	c := identity.MustClaims(r.Context())
+	created, importErrs, err := h.svc.ImportNodes(r.Context(), studioID, treeID, rows, &c.UserID)
 	if errors.Is(err, ErrTreeNotFound) {
 		httpx.WriteError(w, http.StatusNotFound, "not_found", "tree not found")
 		return

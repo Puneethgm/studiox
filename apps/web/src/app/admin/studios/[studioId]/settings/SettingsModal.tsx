@@ -154,7 +154,7 @@ export function SettingsModal({ studioId, open, onClose }: { studioId: string; o
               )}
               {visited.has('plans') && (
                 <div hidden={section !== 'plans'}>
-                  <PlansRows studioId={studio.id} initialPlans={plans} />
+                  <PlansRows studio={studio} initialPlans={plans} />
                 </div>
               )}
               {visited.has('availability') && (

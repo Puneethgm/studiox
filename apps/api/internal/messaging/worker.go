@@ -202,6 +202,24 @@ func (w *OutboundWorker) dispatch(ctx context.Context, j OutboundJob) {
 		w.failJob(ctx, j, "conversation lookup: "+err.Error(), false)
 		return
 	}
+
+	// Do Not Disturb — final safety net. The enqueue-time checks (decision
+	// tree, autocontact worker) should already have kept a DND lead/
+	// conversation from getting a job queued in the first place, but this
+	// catches anything that slipped through (e.g. DND toggled on after the
+	// job was already queued). A human's own typed reply (SourceStudioUser)
+	// is deliberately exempt — DND silences automation, not staff.
+	if j.SourceKind == SourceAutomation || j.SourceKind == SourceAI {
+		dnd := conv.DNDEnabled
+		if !dnd && conv.LeadID != nil {
+			_ = w.repo.Pool().QueryRow(ctx, "SELECT dnd_enabled FROM leads WHERE id = $1", *conv.LeadID).Scan(&dnd)
+		}
+		if dnd {
+			w.failJob(ctx, j, "dnd enabled — automated send blocked", true)
+			return
+		}
+	}
+
 	channel, err := w.repo.GetChannelByID(ctx, j.StudioID, conv.ChannelAccountID)
 	if err != nil {
 		w.failJob(ctx, j, "channel lookup: "+err.Error(), true) // dead — channel deleted

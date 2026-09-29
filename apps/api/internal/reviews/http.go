@@ -39,7 +39,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	review, err := h.repo.Create(ctx, input)
+	review, err := h.repo.Create(ctx, input, nil)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to create review")
 		return

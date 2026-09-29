@@ -37,5 +37,20 @@ services:
     ports:
       - "${POSTGRES_PORT:-5435}:5432"
 
+  redis:
+    image: redis:7-alpine
+    container_name: projectx-redis
+    restart: unless-stopped
+    # Fails fast if REDIS_PASSWORD isn't set — this instance holds cached AI
+    # answers and must never run reachable without auth.
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD in .env — generate one with: openssl rand -base64 24}"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "--no-auth-warning", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   projectx_pg_data:

@@ -23,17 +23,23 @@ help: ## Show this help
 
 # ---------- environment ----------
 .PHONY: db-up db-down db-logs
-db-up: ## Start Postgres (Docker)
-	docker compose up -d postgres
+db-up: ## Start Postgres + Redis (Docker)
+	docker compose up -d postgres redis
 	@echo "Waiting for Postgres to be healthy..."
 	@until docker inspect --format='{{.State.Health.Status}}' projectx-postgres 2>/dev/null | grep -q healthy; do sleep 1; done
 	@echo "Postgres is ready."
+	@echo "Waiting for Redis to be healthy..."
+	@until docker inspect --format='{{.State.Health.Status}}' projectx-redis 2>/dev/null | grep -q healthy; do sleep 1; done
+	@echo "Redis is ready."
 
-db-down: ## Stop Postgres
+db-down: ## Stop Postgres + Redis
 	docker compose down
 
 db-logs: ## Tail Postgres logs
 	docker compose logs -f postgres
+
+redis-logs: ## Tail Redis logs
+	docker compose logs -f redis
 
 # ---------- migrations ----------
 .PHONY: migrate up down status new migrate-up migrate-down migrate-status migrate-new

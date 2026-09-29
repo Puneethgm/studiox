@@ -41,7 +41,7 @@ func main() {
 	}
 
 	repo := identity.NewRepo(pool)
-	id, err := repo.UpsertSuperAdmin(ctx, cfg.SuperUser.Email, hash)
+	id, err := repo.UpsertSuperAdmin(ctx, cfg.SuperUser.Email, hash, nil)
 	if err != nil {
 		log.Error("upsert super admin", "err", err)
 		os.Exit(1)

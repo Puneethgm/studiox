@@ -49,17 +49,17 @@ func (r *Repo) InvalidateCache(studioID uuid.UUID) {
 
 // ----- trees -----
 
-func (r *Repo) CreateTree(ctx context.Context, studioID uuid.UUID, input CreateTreeInput) (*Tree, error) {
+func (r *Repo) CreateTree(ctx context.Context, studioID uuid.UUID, input CreateTreeInput, actorID *uuid.UUID) (*Tree, error) {
 	t := &Tree{}
 	statuses := input.TargetStatuses
 	if statuses == nil {
 		statuses = []string{}
 	}
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO decision_trees (studio_id, name, target_statuses)
-		VALUES ($1, $2, $3)
+		INSERT INTO decision_trees (studio_id, name, target_statuses, created_by, updated_by)
+		VALUES ($1, $2, $3, $4, $4)
 		RETURNING id, studio_id, name, is_active, target_statuses, created_at, updated_at
-	`, studioID, input.Name, statuses).Scan(
+	`, studioID, input.Name, statuses, actorID).Scan(
 		&t.ID, &t.StudioID, &t.Name, &t.IsActive, &t.TargetStatuses, &t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
@@ -161,7 +161,7 @@ func (r *Repo) GetActiveTreeForLead(ctx context.Context, studioID uuid.UUID, lea
 	return t, nil
 }
 
-func (r *Repo) UpdateTree(ctx context.Context, studioID, treeID uuid.UUID, input UpdateTreeInput) (*Tree, error) {
+func (r *Repo) UpdateTree(ctx context.Context, studioID, treeID uuid.UUID, input UpdateTreeInput, actorID *uuid.UUID) (*Tree, error) {
 	t := &Tree{}
 	var err error
 	if input.UpdateStatuses {
@@ -175,10 +175,11 @@ func (r *Repo) UpdateTree(ctx context.Context, studioID, treeID uuid.UUID, input
 				name            = COALESCE($3, name),
 				is_active       = COALESCE($4, is_active),
 				target_statuses = $5,
+				updated_by      = $6,
 				updated_at      = now()
 			WHERE id = $1 AND studio_id = $2
 			RETURNING id, studio_id, name, is_active, target_statuses, created_at, updated_at
-		`, treeID, studioID, input.Name, input.IsActive, statuses).Scan(
+		`, treeID, studioID, input.Name, input.IsActive, statuses, actorID).Scan(
 			&t.ID, &t.StudioID, &t.Name, &t.IsActive, &t.TargetStatuses, &t.CreatedAt, &t.UpdatedAt,
 		)
 	} else {
@@ -187,10 +188,11 @@ func (r *Repo) UpdateTree(ctx context.Context, studioID, treeID uuid.UUID, input
 			SET
 				name       = COALESCE($3, name),
 				is_active  = COALESCE($4, is_active),
+				updated_by = $5,
 				updated_at = now()
 			WHERE id = $1 AND studio_id = $2
 			RETURNING id, studio_id, name, is_active, target_statuses, created_at, updated_at
-		`, treeID, studioID, input.Name, input.IsActive).Scan(
+		`, treeID, studioID, input.Name, input.IsActive, actorID).Scan(
 			&t.ID, &t.StudioID, &t.Name, &t.IsActive, &t.TargetStatuses, &t.CreatedAt, &t.UpdatedAt,
 		)
 	}
@@ -242,7 +244,7 @@ func (r *Repo) listNodes(ctx context.Context, treeID uuid.UUID) ([]Node, error) 
 	return nodes, nil
 }
 
-func (r *Repo) CreateNode(ctx context.Context, input CreateNodeInput) (*Node, error) {
+func (r *Repo) CreateNode(ctx context.Context, input CreateNodeInput, actorID *uuid.UUID) (*Node, error) {
 	cvJSON, err := json.Marshal(input.ConditionValue)
 	if err != nil {
 		return nil, fmt.Errorf("marshal condition value: %w", err)
@@ -253,13 +255,13 @@ func (r *Repo) CreateNode(ctx context.Context, input CreateNodeInput) (*Node, er
 	}
 	row := r.pool.QueryRow(ctx, `
 		INSERT INTO tree_nodes
-		    (tree_id, parent_id, label, condition_type, condition_value, reply_template, action, action_value, sort_order, position_x, position_y)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		    (tree_id, parent_id, label, condition_type, condition_value, reply_template, action, action_value, sort_order, position_x, position_y, created_by, updated_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12)
 		RETURNING id, tree_id, parent_id, label, condition_type, condition_value,
 		          reply_template, action, action_value, sort_order, position_x, position_y, created_at, updated_at
 	`, input.TreeID, input.ParentID, input.Label, string(input.ConditionType),
 		string(cvJSON), input.ReplyTemplate, string(input.Action), string(avJSON), input.SortOrder,
-		input.PositionX, input.PositionY)
+		input.PositionX, input.PositionY, actorID)
 	n, err := scanNode(row)
 	if err != nil {
 		return nil, fmt.Errorf("create node: %w", err)
@@ -267,7 +269,7 @@ func (r *Repo) CreateNode(ctx context.Context, input CreateNodeInput) (*Node, er
 	return &n, nil
 }
 
-func (r *Repo) UpdateNode(ctx context.Context, treeID, nodeID uuid.UUID, input UpdateNodeInput) (*Node, error) {
+func (r *Repo) UpdateNode(ctx context.Context, treeID, nodeID uuid.UUID, input UpdateNodeInput, actorID *uuid.UUID) (*Node, error) {
 	var cvJSON *string
 	if input.ConditionValue != nil {
 		b, err := json.Marshal(input.ConditionValue)
@@ -309,12 +311,13 @@ func (r *Repo) UpdateNode(ctx context.Context, treeID, nodeID uuid.UUID, input U
 			sort_order      = COALESCE($9, sort_order),
 			position_x      = COALESCE($10, position_x),
 			position_y      = COALESCE($11, position_y),
+			updated_by      = $12,
 			updated_at      = now()
 		WHERE id = $1 AND tree_id = $2
 		RETURNING id, tree_id, parent_id, label, condition_type, condition_value,
 		          reply_template, action, action_value, sort_order, position_x, position_y, created_at, updated_at
 	`, nodeID, treeID, input.Label, ct, cvJSON, input.ReplyTemplate, act, avJSON, input.SortOrder,
-		input.PositionX, input.PositionY)
+		input.PositionX, input.PositionY, actorID)
 
 	n, err := scanNode(row)
 	if errors.Is(err, pgx.ErrNoRows) {
