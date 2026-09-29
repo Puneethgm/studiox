@@ -68,3 +68,7 @@ apps/api/secrets/
 # OpenSpec local planning artifacts
 openspec/
 .claude/skills/openspec-*/
+
+# Local dev artifacts
+dump.rdb
+ngrok.log
