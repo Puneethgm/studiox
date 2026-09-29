@@ -115,7 +115,7 @@ func (r *Repo) GetByID(ctx context.Context, id uuid.UUID) (*Studio, error) {
 
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, slug, name, brand_color, logo_url, contact_email, contact_phone, active, created_at, updated_at,
-		       availability_slots, availability_timezone, gemini_api_key, groq_api_key, claude_api_key, meta_app_id, meta_app_secret,
+		       availability_slots, availability_timezone, gemini_api_key, groq_api_key, claude_api_key, mistral_api_key, meta_app_id, meta_app_secret,
 		       google_client_id, google_client_secret, google_developer_token,
 		       stripe_account_id, stripe_secret_key, stripe_publishable_key, stripe_webhook_secret, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files,
 		       greeting_message, trial_amount_sgd, managed_by_1hero, booking_hero_image_url, booking_hero_video_url,
@@ -142,7 +142,7 @@ func (r *Repo) GetBySlug(ctx context.Context, slug string) (*Studio, error) {
 
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, slug, name, brand_color, logo_url, contact_email, contact_phone, active, created_at, updated_at,
-		       availability_slots, availability_timezone, gemini_api_key, groq_api_key, claude_api_key, meta_app_id, meta_app_secret,
+		       availability_slots, availability_timezone, gemini_api_key, groq_api_key, claude_api_key, mistral_api_key, meta_app_id, meta_app_secret,
 		       google_client_id, google_client_secret, google_developer_token,
 		       stripe_account_id, stripe_secret_key, stripe_publishable_key, stripe_webhook_secret, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files,
 		       greeting_message, trial_amount_sgd, managed_by_1hero, booking_hero_image_url, booking_hero_video_url,
@@ -446,9 +446,10 @@ func (r *Repo) SetCommunicationStyleProfile(ctx context.Context, studioID uuid.U
 // to — provider comes from a URL path segment, so it's validated against
 // this map rather than interpolated into SQL directly.
 var aiProviderKeyColumns = map[string]string{
-	"gemini": "gemini_api_key",
-	"groq":   "groq_api_key",
-	"claude": "claude_api_key",
+	"gemini":  "gemini_api_key",
+	"groq":    "groq_api_key",
+	"claude":  "claude_api_key",
+	"mistral": "mistral_api_key",
 }
 
 // UpdateAIProviderKey saves a studio's API key for one AI provider. A small
@@ -474,7 +475,7 @@ func (r *Repo) UpdateAIProviderKey(ctx context.Context, studioID uuid.UUID, prov
 func scanStudio(row pgx.Row, cipher *secrets.Cipher) (*Studio, error) {
 	var s Studio
 	if err := row.Scan(&s.ID, &s.Slug, &s.Name, &s.BrandColor, &s.LogoURL, &s.ContactEmail, &s.ContactPhone,
-		&s.Active, &s.CreatedAt, &s.UpdatedAt, &s.AvailabilitySlots, &s.AvailabilityTimezone, &s.GeminiAPIKey, &s.GroqAPIKey, &s.ClaudeAPIKey, &s.MetaAppID, &s.MetaAppSecret,
+		&s.Active, &s.CreatedAt, &s.UpdatedAt, &s.AvailabilitySlots, &s.AvailabilityTimezone, &s.GeminiAPIKey, &s.GroqAPIKey, &s.ClaudeAPIKey, &s.MistralAPIKey, &s.MetaAppID, &s.MetaAppSecret,
 		&s.GoogleClientID, &s.GoogleClientSecret, &s.GoogleDeveloperToken,
 		&s.StripeAccountID, &s.StripeSecretKey, &s.StripePublishableKey, &s.StripeWebhookSecret, &s.SubscriptionTier, &s.SocialPlannerEnabled, &s.KnowledgeBase, &s.KnowledgeBaseFiles,
 		&s.GreetingMessage, &s.TrialAmountSGD, &s.ManagedBy1Hero, &s.BookingHeroImageURL, &s.BookingHeroVideoURL,

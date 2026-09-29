@@ -48,6 +48,45 @@ export async function parseDocument(formData: FormData): Promise<ParseResult> {
   }
 }
 
+export interface OcrResult {
+  ok: boolean;
+  error?: string;
+  data?: { text: string };
+}
+
+// ocrImage forwards an image to the backend's Mistral OCR endpoint — unlike
+// parseDocument (parsed entirely here, client-independent), this needs the
+// studio's Mistral API key server-side, so it's a thin proxy to the API
+// rather than doing the work in this action itself.
+export async function ocrImage(studioId: string, formData: FormData): Promise<OcrResult> {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/knowledge-base/ocr`, {
+      method: 'POST',
+      headers: {
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      },
+      body: formData,
+      cache: 'no-store',
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      return { ok: false, error: body?.error ?? `HTTP ${res.status}` };
+    }
+
+    const data = await res.json() as { text: string };
+    return { ok: true, data };
+  } catch (err: any) {
+    return { ok: false, error: err.message || 'Failed to extract text from image' };
+  }
+}
+
 export async function updateKnowledgeBase(
   studioId: string,
   studioSlug: string,

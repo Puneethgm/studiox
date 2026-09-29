@@ -36,6 +36,7 @@ type Studio struct {
 	GeminiAPIKey         string              `json:"geminiApiKey"`
 	GroqAPIKey           string              `json:"groqApiKey"`
 	ClaudeAPIKey         string              `json:"claudeApiKey"`
+	MistralAPIKey        string              `json:"mistralApiKey"`
 	MetaAppID            string              `json:"metaAppId"`
 	MetaAppSecret        string              `json:"metaAppSecret"`
 	GoogleClientID       string              `json:"googleClientId"`

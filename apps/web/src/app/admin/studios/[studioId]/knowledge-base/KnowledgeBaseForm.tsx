@@ -8,10 +8,16 @@ import { Label, FieldHint } from '@/components/ui/Label';
 import { Dialog, DialogHeader } from '@/components/ui/Dialog';
 import { api } from '@/lib/api';
 import type { Studio } from '@/lib/types';
-import { parseDocument, updateKnowledgeBase, updateCommunicationStyle, updateStyleRefreshInterval, updateProgramStartDate } from './actions';
+import { parseDocument, ocrImage, updateKnowledgeBase, updateCommunicationStyle, updateStyleRefreshInterval, updateProgramStartDate } from './actions';
 import { TestChatDrawer } from './TestChatDrawer';
 
 type KBFile = { name: string; url: string; text: string; platform: string };
+
+const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp'];
+function isImageFile(name: string): boolean {
+  const lower = name.toLowerCase();
+  return IMAGE_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
 
 const DOMAINS = [
   { value: 'all',         label: 'General' },
@@ -117,6 +123,65 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  // Images go through OCR + a review popup instead of the silent
+  // document-parse-and-add flow below — extracted text can be wrong, so the
+  // admin confirms (and can edit) it before it's added to the knowledge base
+  // and embedded. Multiple images selected at once are queued and reviewed
+  // one at a time.
+  const [ocrQueue, setOcrQueue] = useState<File[]>([]);
+  const [ocrFile, setOcrFile] = useState<File | null>(null);
+  const [ocrImageUrl, setOcrImageUrl] = useState('');
+  const [ocrText, setOcrText] = useState('');
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const [ocrError, setOcrError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (ocrFile || ocrQueue.length === 0) return;
+    const [next, ...rest] = ocrQueue;
+    setOcrQueue(rest);
+    setOcrFile(next!);
+    setOcrText('');
+    setOcrImageUrl('');
+    setOcrError(null);
+    setOcrLoading(true);
+
+    void (async () => {
+      try {
+        const formData = new FormData();
+        formData.append('file', next!);
+        const [uploadRes, ocrRes] = await Promise.all([
+          fetch(`/api/v1/studios/${studio.id}/messaging/upload`, { method: 'POST', body: formData }),
+          ocrImage(studio.id, formData),
+        ]);
+        if (!uploadRes.ok) {
+          const errText = await uploadRes.text().catch(() => '');
+          throw new Error(errText || `Upload failed with status ${uploadRes.status}`);
+        }
+        if (!ocrRes.ok || !ocrRes.data) {
+          throw new Error(ocrRes.error || `Failed to extract text from "${next!.name}"`);
+        }
+        const uploadResult = (await uploadRes.json()) as { url: string };
+        setOcrImageUrl(uploadResult.url);
+        setOcrText(ocrRes.data.text);
+      } catch (err: any) {
+        setOcrError(err.message || 'Failed to extract text from image.');
+      } finally {
+        setOcrLoading(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ocrQueue, ocrFile]);
+
+  function handleOcrConfirm() {
+    if (!ocrFile) return;
+    setFiles((prev) => [...prev, { name: ocrFile.name, url: ocrImageUrl, text: ocrText, platform: 'all' }]);
+    setOcrFile(null);
+  }
+
+  function handleOcrCancel() {
+    setOcrFile(null);
+  }
 
   // Auto-save: Knowledge Base (greeting, text instructions, documents) —
   // debounced so a save fires ~900ms after the admin stops typing/uploading
@@ -323,10 +388,23 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
 
     setError(null);
     setSuccess(null);
+
+    const allFiles = Array.from(filesList);
+    const imageFiles = allFiles.filter((f) => isImageFile(f.name));
+    const documentFiles = allFiles.filter((f) => !isImageFile(f.name));
+
+    if (imageFiles.length > 0) {
+      setOcrQueue((prev) => [...prev, ...imageFiles]);
+    }
+    if (documentFiles.length === 0) {
+      e.target.value = '';
+      return;
+    }
+
     setUploading(true);
 
     try {
-      const uploadPromises = Array.from(filesList).map(async (file) => {
+      const uploadPromises = documentFiles.map(async (file) => {
         const formData = new FormData();
         formData.append('file', file);
 
@@ -578,14 +656,14 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
                   disabled={uploading}
                   onChange={handleFileUpload}
                   multiple
-                  accept=".pdf,.docx,.doc,.pptx,.ppt,.xlsx,.xls,.txt,.csv,.md"
+                  accept=".pdf,.docx,.doc,.pptx,.ppt,.xlsx,.xls,.txt,.csv,.md,.jpg,.jpeg,.png,.webp"
                 />
                 <Upload className="h-8 w-8 text-zinc-400 mb-2" />
                 <span className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">
-                  {uploading ? 'Processing file…' : 'Choose a document'}
+                  {uploading ? 'Processing file…' : 'Choose a document or image'}
                 </span>
                 <span className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">
-                  PDF, Word, PowerPoint, Excel, Text, CSV
+                  PDF, Word, PowerPoint, Excel, Text, CSV, or an image (JPG/PNG/WebP — text is extracted via OCR for you to review)
                 </span>
               </div>
               <FieldHint>
@@ -688,6 +766,52 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
       </div>
 
       <TestChatDrawer studioId={studio.id} openSignal={testChatSignal} />
+
+      <Dialog open={ocrFile !== null} onClose={handleOcrCancel} widthClassName="max-w-lg">
+        <DialogHeader
+          icon={<FileText className="h-5 w-5 text-brand-500" />}
+          title={ocrFile ? `Extracted text — ${ocrFile.name}` : 'Extracted text'}
+          onClose={handleOcrCancel}
+        />
+        <div className="space-y-4 px-5 py-4">
+          {ocrLoading ? (
+            <div className="flex items-center justify-center gap-2 py-10 text-sm text-zinc-500 dark:text-zinc-400">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Running OCR…
+            </div>
+          ) : ocrError ? (
+            <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-400">
+              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+              {ocrError}
+            </div>
+          ) : (
+            <>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                Review (and edit if needed) before this gets added to the knowledge base and embedded.
+              </p>
+              <textarea
+                value={ocrText}
+                onChange={(e) => setOcrText(e.target.value)}
+                rows={12}
+                className="w-full rounded-xl border border-zinc-200 bg-white p-3 text-sm text-zinc-800 focus:border-brand-500 focus:outline-none dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
+              />
+            </>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={handleOcrCancel}>
+              Cancel
+            </Button>
+            <Button onClick={handleOcrConfirm} disabled={ocrLoading || !!ocrError || !ocrText.trim()}>
+              Add to Knowledge Base
+            </Button>
+          </div>
+          {ocrQueue.length > 0 && (
+            <p className="text-[11px] text-zinc-400">
+              {ocrQueue.length} more image{ocrQueue.length === 1 ? '' : 's'} queued after this one.
+            </p>
+          )}
+        </div>
+      </Dialog>
 
       <Dialog open={syncOutcome !== null} onClose={() => setSyncOutcome(null)} widthClassName="max-w-sm">
         <DialogHeader

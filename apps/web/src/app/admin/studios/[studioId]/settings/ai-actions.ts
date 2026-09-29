@@ -9,7 +9,7 @@ import { revalidatePath } from 'next/cache';
 
 const API_BASE = process.env.API_BASE_URL ?? 'http://localhost:8080';
 
-export type AIProvider = 'groq' | 'gemini' | 'claude';
+export type AIProvider = 'groq' | 'gemini' | 'claude' | 'mistral';
 
 export interface AIModel {
   id?: string;
