@@ -2,6 +2,7 @@ package identity
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -98,7 +99,8 @@ func (h *Handler) createStudioUser(w http.ResponseWriter, r *http.Request) {
 
 	// The role must belong to this studio — otherwise a studio admin could
 	// assign a teammate a role scoped to a different studio entirely.
-	if _, err := h.repo.GetRole(r.Context(), studioID, roleID); err != nil {
+	role, err := h.repo.GetRole(r.Context(), studioID, roleID)
+	if err != nil {
 		if errors.Is(err, ErrRoleNotFound) {
 			httpx.WriteValidationError(w, map[string]string{"roleId": "role not found in this studio"})
 			return
@@ -126,7 +128,22 @@ func (h *Handler) createStudioUser(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to load created user")
 		return
 	}
-	httpx.JSON(w, http.StatusCreated, studioUserToRes(u, nil))
+
+	// Best-effort: a teammate who never gets this email can still be told
+	// their login details in person / reset their password via "forgot
+	// password" — not worth failing the whole creation over a flaky send.
+	if h.mailer != nil && h.mailer.Enabled() {
+		if studioName, err := h.repo.GetStudioName(r.Context(), studioID); err != nil {
+			slog.Warn("create studio user: failed to look up studio name for welcome email", "err", err)
+		} else {
+			loginLink := h.frontendURL + "/login"
+			if err := h.mailer.SendTeammateWelcome(u.Email, studioName, role.Name, req.Username, DefaultTeammatePassword, loginLink); err != nil {
+				slog.Warn("create studio user: failed to send welcome email", "err", err)
+			}
+		}
+	}
+
+	httpx.JSON(w, http.StatusCreated, studioUserToRes(u, &role.Name))
 }
 
 func studioUserToRes(u *User, roleName *string) studioUserRes {

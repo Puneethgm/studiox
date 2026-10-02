@@ -137,7 +137,7 @@ func (m *MetaMessenger) uploadMediaToMeta(ctx context.Context, accessToken, page
 
 // SendText: POST /{page_id}/messages
 // https://developers.facebook.com/docs/messenger-platform/reference/send-api
-func (m *MetaMessenger) SendText(ctx context.Context, accessToken, channelExternalID, recipient, body string, attachments []Attachment) (*SendResult, error) {
+func (m *MetaMessenger) SendText(ctx context.Context, accessToken, channelExternalID, recipient, _, body string, attachments []Attachment) (*SendResult, error) {
 	if os.Getenv("API_ENV") == "local" && (accessToken == "" || accessToken == "test") {
 		return &SendResult{
 			ExternalID: "mid.test-" + time.Now().Format("20060102150405"),

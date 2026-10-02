@@ -49,6 +49,7 @@ import type {
   Lead,
 } from '@/lib/types';
 import { ContactDetailsPanel } from './ContactDetailsPanel';
+import { BroadcastsPanel } from './BroadcastsPanel';
 import { HeaderActions } from '@/components/HeaderActions';
 
 // Strip @c.us / @lid / @s.whatsapp.net suffixes from WA chat IDs for display
@@ -101,6 +102,7 @@ const CHANNEL_BADGE: Record<ChannelKind, { label: string; color: string }> = {
   google_ads:     { label: 'Google Ads',        color: '#4285F4' },
   telegram:       { label: 'Telegram (Bot)',    color: '#26A5E4' },
   telegram_mtproto: { label: 'Telegram',        color: '#26A5E4' },
+  email_smtp:       { label: 'Email',           color: '#EA4335' },
 };
 
 interface SSEEvent {
@@ -190,6 +192,10 @@ export function InboxLive({
 
   const initialTab = (VALID_TABS.includes(searchParams.get('tab') as InboxTab) ? searchParams.get('tab') : 'conversations') as InboxTab;
   const initialChannel = (VALID_CHANNELS.includes(searchParams.get('channel') as ChannelKind) ? searchParams.get('channel') : 'whatsapp_web') as ChannelKind;
+  // Deep-link support for the escalation alert email's "Open in Inbox" link
+  // (?tab=escalation&conversationId=...) — read once at mount so the chat
+  // pane opens directly on that conversation instead of the first one.
+  const initialConversationId = searchParams.get('conversationId') || null;
 
   const [currentTab, _setCurrentTab] = useState<InboxTab>(initialTab);
   const setCurrentTab = useCallback((tab: InboxTab) => {
@@ -227,14 +233,15 @@ export function InboxLive({
       setConversationStarred(id, currentlyStarred);
     });
   }, [studioId, setConversationStarred]);
-  const [selectedId, _setSelectedId] = useState<string | null>(null);
+  const [selectedId, _setSelectedId] = useState<string | null>(initialConversationId);
   // Defaults closed so it doesn't pop open full-screen on mobile; desktop
   // opens it automatically once mounted, since there it's a static sidebar.
   const [showDetailsPanel, setShowDetailsPanel] = useState(false);
   // Mobile-only: false = show the conversation list, true = show the open
   // chat full-screen with a back button. Irrelevant at sm and above, where
-  // list and chat show side by side regardless.
-  const [mobileChatOpen, setMobileChatOpen] = useState(false);
+  // list and chat show side by side regardless. Starts open when a deep
+  // link named a specific conversation (the escalation email link).
+  const [mobileChatOpen, setMobileChatOpen] = useState(Boolean(initialConversationId));
   const [users, setUsers] = useState<{ id: string; email: string; role: string }[]>([]);
   const [selectedConvIds, setSelectedConvIds] = useState<string[]>([]);
   const [globalAI, setGlobalAI] = useState(false);
@@ -329,7 +336,7 @@ export function InboxLive({
   const [creatingConversation, setCreatingConversation] = useState(false);
   const [authError, setAuthError] = useState(false);
   const messagesEndRef = useRef<HTMLLIElement>(null);
-  const selectedIdRef = useRef<string | null>(null);
+  const selectedIdRef = useRef<string | null>(initialConversationId);
   const currentTabRef = useRef<InboxTab>(initialTab);
 
   // templates, links, jobs state
@@ -361,6 +368,11 @@ export function InboxLive({
   const [newLinkName, setNewLinkName] = useState('');
   const [newLinkUrl, setNewLinkUrl] = useState('');
   const [editingLinkId, setEditingLinkId] = useState<string | null>(null);
+
+  // Manual Actions inner tab — "Scheduled" is the existing per-conversation
+  // job scheduler below; "Broadcasts" is the bulk contact-upload + scheduled
+  // campaign feature (BroadcastsPanel.tsx).
+  const [manualActionsSubTab, setManualActionsSubTab] = useState<'scheduled' | 'broadcasts'>('scheduled');
 
   // Automated Messages Form State
   const [newJobConvId, setNewJobConvId] = useState('');
@@ -455,6 +467,9 @@ export function InboxLive({
   }, [currentTab]);
 
   const selected = conversations.find((c) => c.id === selectedId) || escalatedConversations.find((c) => c.id === selectedId);
+  // The Escalation tab reuses this same two-pane layout, just backed by the
+  // escalated-only list instead of the regular inbox list.
+  const activeListConversations = currentTab === 'escalation' ? escalatedConversations : conversations;
 
   const refreshConversations = useCallback(async () => {
     try {
@@ -1160,11 +1175,13 @@ export function InboxLive({
 
       {/* ── Tab Content Renderer ─────────────────── */}
       <div className="flex flex-1 min-h-0">
-        {currentTab === 'conversations' && (
+        {(currentTab === 'conversations' || currentTab === 'escalation') && (
           <>
             {/* Sidebar — full-width list on mobile, hidden once a chat is
                 open there; always a fixed-width column alongside the chat
-                pane from sm upward. */}
+                pane from sm upward. The Escalation tab reuses this exact
+                layout, backed by activeListConversations (escalated-only)
+                instead of the regular conversations list. */}
             <aside
               className={cn(
                 "w-full shrink-0 flex-col border-r border-zinc-200 sm:flex sm:w-80 bg-[#f8f9fa] dark:border-zinc-800 dark:bg-zinc-900",
@@ -1172,8 +1189,20 @@ export function InboxLive({
               )}
             >
 
+              {currentTab === 'escalation' && (
+                <div className="flex items-center gap-2 px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 bg-rose-50/60 dark:bg-rose-950/20">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-rose-500" />
+                  <span className="text-[10px] font-black uppercase tracking-wider text-rose-700 dark:text-rose-300">
+                    Escalated — needs a human
+                  </span>
+                  <span className="ml-auto grid h-4 min-w-[16px] place-items-center rounded-full bg-rose-500 px-1 text-[8px] font-black text-white">
+                    {escalatedConversations.length}
+                  </span>
+                </div>
+              )}
 
               {/* Google Sheet leads AI toggle */}
+              {currentTab === 'conversations' && (
               <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
@@ -1214,8 +1243,10 @@ export function InboxLive({
                   </span>
                 </button>
               </div>
+              )}
 
               {/* Inbox Tabs (Unread, All, Recents, Starred) */}
+              {currentTab === 'conversations' && (
               <div className="px-3 pt-2 pb-0 border-b border-zinc-250 dark:border-zinc-800 bg-[#f8f9fa] dark:bg-zinc-900">
                 <div className="flex items-center justify-between gap-1">
                   <button
@@ -1279,16 +1310,17 @@ export function InboxLive({
                   </button>
                 </div>
               </div>
+              )}
 
               {/* Select All and Filter Row */}
               <div className="px-4 py-2 flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 bg-[#f8f9fa] dark:bg-zinc-900 shrink-0 z-10">
                 <div className="flex items-center gap-2">
                   <input
                     type="checkbox"
-                    checked={conversations.length > 0 && selectedConvIds.length === conversations.length}
+                    checked={activeListConversations.length > 0 && selectedConvIds.length === activeListConversations.length}
                     onChange={(e) => {
                       if (e.target.checked) {
-                        setSelectedConvIds(conversations.map((c) => c.id));
+                        setSelectedConvIds(activeListConversations.map((c) => c.id));
                       } else {
                         setSelectedConvIds([]);
                       }
@@ -1305,7 +1337,7 @@ export function InboxLive({
                       type="button"
                       onClick={() => {
                         const allStarred = selectedConvIds.every(
-                          (id) => conversations.find((c) => c.id === id)?.isStarred
+                          (id) => activeListConversations.find((c) => c.id === id)?.isStarred
                         );
                         const next = !allStarred;
                         const ids = selectedConvIds;
@@ -1325,14 +1357,15 @@ export function InboxLive({
                       }}
                       className={cn(
                         "p-1 rounded transition-colors",
-                        selectedConvIds.every((id) => conversations.find((c) => c.id === id)?.isStarred)
+                        selectedConvIds.every((id) => activeListConversations.find((c) => c.id === id)?.isStarred)
                           ? "text-amber-500 hover:text-zinc-400"
                           : "text-zinc-400 hover:text-amber-500"
                       )}
-                      title={selectedConvIds.every((id) => conversations.find((c) => c.id === id)?.isStarred) ? "Unstar selected" : "Star selected"}
+                      title={selectedConvIds.every((id) => activeListConversations.find((c) => c.id === id)?.isStarred) ? "Unstar selected" : "Star selected"}
                     >
-                      <Star className={cn("h-3.5 w-3.5", selectedConvIds.every((id) => conversations.find((c) => c.id === id)?.isStarred) ? "fill-current" : "fill-none")} />
+                      <Star className={cn("h-3.5 w-3.5", selectedConvIds.every((id) => activeListConversations.find((c) => c.id === id)?.isStarred) ? "fill-current" : "fill-none")} />
                     </button>
+                    {currentTab === 'conversations' && (
                     <button
                       type="button"
                       onClick={() => handleDeleteSelectedConversations()}
@@ -1341,6 +1374,7 @@ export function InboxLive({
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => setSelectedConvIds([])}
@@ -1350,7 +1384,7 @@ export function InboxLive({
                       <X className="h-3.5 w-3.5" />
                     </button>
                   </div>
-                ) : (
+                ) : currentTab === 'conversations' ? (
                   <button
                     type="button"
                     onClick={() => setUnrespondedOnly(!unrespondedOnly)}
@@ -1364,7 +1398,7 @@ export function InboxLive({
                     <span className={cn("h-1 w-1 rounded-full", unrespondedOnly ? "bg-white animate-pulse" : "bg-rose-500")} />
                     Awaiting Reply
                   </button>
-                )}
+                ) : null}
                 {unrespondedOnly && !selectedConvIds.length && (
                   <span className="text-[9px] font-semibold uppercase tracking-wider text-zinc-400">
                     Showing all channels
@@ -1372,7 +1406,9 @@ export function InboxLive({
                 )}
               </div>
 
-              {/* New Conversation Input */}
+              {/* New Conversation Input (Conversations tab only — starting a
+                  brand-new chat doesn't apply to the escalated-only list) */}
+              {currentTab === 'conversations' ? (
               <div className="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 bg-[#f8f9fa] dark:bg-zinc-900">
                 <form
                   onSubmit={(e) => {
@@ -1405,6 +1441,18 @@ export function InboxLive({
                   </button>
                 </form>
               </div>
+              ) : (
+              <div className="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 bg-[#f8f9fa] dark:bg-zinc-900">
+                <input
+                  type="text"
+                  value={newReceiverValue}
+                  onChange={(e) => setNewReceiverValue(e.target.value)}
+                  placeholder="Search escalated contacts..."
+                  className="w-full rounded border border-zinc-200 bg-white py-1.5 px-3 text-xs font-semibold text-zinc-900 placeholder:text-zinc-400 focus:border-brand-500 focus:outline-none dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder:text-zinc-500"
+                  suppressHydrationWarning
+                />
+              </div>
+              )}
 
               {/* Conversation List — filtered live by the box above, matching
                   against contact name and number (both the raw JID/value and
@@ -1414,9 +1462,17 @@ export function InboxLive({
                   Conversation Input's existing "start a chat with this
                   number" behavior on submit when nothing matches. */}
               <div className="flex-1 overflow-y-auto no-scrollbar">
-                {mounted ? (
+                {mounted && currentTab === 'escalation' && activeListConversations.length === 0 ? (
+                  <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-zinc-400">
+                    <UserCheck className="h-8 w-8" />
+                    <p className="text-xs font-bold">No conversations are currently escalated.</p>
+                    <p className="max-w-xs text-[11px] text-zinc-400">
+                      When a decision tree routes a chat to a human (an &ldquo;escalate&rdquo; node), it shows up here instead of the regular Conversations list.
+                    </p>
+                  </div>
+                ) : mounted ? (
                   <ul className="space-y-0">
-                    {conversations
+                    {activeListConversations
                       .filter((c) => {
                         const query = newReceiverValue.trim().toLowerCase();
                         if (!query) return true;
@@ -1481,6 +1537,12 @@ export function InboxLive({
 
                             <div className="mt-1.5 flex items-center justify-between">
                               <div className="flex items-center gap-1.5 shrink-0">
+                                {currentTab === 'escalation' && c.escalatedReason && (
+                                  <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[8px] font-extrabold uppercase tracking-wider text-rose-700 bg-rose-100 dark:bg-rose-900/40 dark:text-rose-300 shrink-0">
+                                    <AlertTriangle className="h-2.5 w-2.5" />
+                                    {c.escalatedReason}
+                                  </span>
+                                )}
                                 {c.leadStatus && (
                                   <span className={cn(
                                     "px-1.5 py-0.5 rounded text-[8px] font-extrabold uppercase tracking-wider shrink-0",
@@ -1610,8 +1672,30 @@ export function InboxLive({
                       <button className="p-2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors" title="Archive">
                         <Archive className="h-4 w-4" />
                       </button>
+                      {selected.escalatedAt && (
+                        <button
+                          type="button"
+                          onClick={() => resolveEscalation(selected.id)}
+                          className="ml-1 rounded bg-emerald-500 px-2.5 py-1.5 text-[10px] font-bold text-white hover:bg-emerald-600 transition-colors"
+                          title="Mark this escalation as resolved"
+                        >
+                          Resolve escalation
+                        </button>
+                      )}
                     </div>
                   </header>
+
+                  {selected.escalatedAt && (
+                    <div className="flex items-center gap-2 border-b border-rose-200 bg-rose-50/60 px-5 py-2 dark:border-rose-900/50 dark:bg-rose-950/20 shrink-0">
+                      <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-rose-500" />
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-rose-700 dark:text-rose-300">
+                        {selected.escalatedReason || 'Escalated'}
+                      </span>
+                      <span className="text-[9px] font-semibold text-rose-500/80" suppressHydrationWarning>
+                        {relativeTime(selected.escalatedAt)}
+                      </span>
+                    </div>
+                  )}
 
                   <div
                     className="relative flex-1 overflow-y-auto no-scrollbar px-5 py-6 bg-[#f4f5f6] dark:bg-zinc-900/40"
@@ -1976,69 +2060,6 @@ export function InboxLive({
           </>
         )}
 
-        {currentTab === 'escalation' && (
-          <div className="flex-1 overflow-y-auto p-4 sm:p-6">
-            {escalatedConversations.length === 0 ? (
-              <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-zinc-400">
-                <UserCheck className="h-8 w-8" />
-                <p className="text-xs font-bold">No conversations are currently escalated.</p>
-                <p className="max-w-xs text-[11px] text-zinc-400">
-                  When a decision tree routes a chat to a human (an &ldquo;escalate&rdquo; node), it shows up here instead of the regular Conversations list.
-                </p>
-              </div>
-            ) : (
-              <ul className="mx-auto flex max-w-2xl flex-col gap-2">
-                {escalatedConversations.map((c) => (
-                  <li
-                    key={c.id}
-                    className="flex items-start gap-3 rounded-lg border border-rose-200 bg-rose-50/60 p-3 dark:border-rose-900/50 dark:bg-rose-950/20"
-                  >
-                    <ChannelAvatar kind={c.channelKind} name={c.contactDisplayName || c.contactValue} />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="truncate text-xs font-black text-zinc-800 dark:text-zinc-100">
-                          {c.contactDisplayName || displayContact(c.contactValue)}
-                        </span>
-                        <span className="shrink-0 text-[9px] font-semibold text-zinc-400" suppressHydrationWarning>
-                          {c.escalatedAt ? relativeTime(c.escalatedAt) : ''}
-                        </span>
-                      </div>
-                      <p className="mt-0.5 truncate text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
-                        {c.lastMessagePreview}
-                      </p>
-                      <div className="mt-1.5 flex items-center gap-1.5">
-                        <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[8px] font-extrabold uppercase tracking-wider text-rose-700 bg-rose-100 dark:bg-rose-900/40 dark:text-rose-300">
-                          <AlertTriangle className="h-2.5 w-2.5" />
-                          {c.escalatedReason || 'Escalated'}
-                        </span>
-                      </div>
-                      <div className="mt-2 flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedId(c.id);
-                            setCurrentTab('conversations');
-                          }}
-                          className="rounded border border-zinc-200 px-2 py-1 text-[10px] font-bold text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-white/5"
-                        >
-                          Open chat
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => resolveEscalation(c.id)}
-                          className="rounded bg-emerald-500 px-2 py-1 text-[10px] font-bold text-white hover:bg-emerald-600"
-                        >
-                          Resolve escalation
-                        </button>
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        )}
-
         {currentTab === 'automated_messages' && renderAutomatedMessages()}
         {currentTab === 'snippets' && renderSnippets()}
         {currentTab === 'trigger_links' && renderTriggerLinks()}
@@ -2048,8 +2069,43 @@ export function InboxLive({
 
   // Render layouts
   function renderAutomatedMessages() {
+    const subTabSwitcher = (
+      <div className="flex items-center gap-1 shrink-0 mb-2">
+        {(
+          [
+            { id: 'scheduled', label: 'Scheduled Messages' },
+            { id: 'broadcasts', label: 'Broadcasts' },
+          ] as const
+        ).map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setManualActionsSubTab(t.id)}
+            className={cn(
+              'px-3 py-1.5 rounded-xl text-xs font-bold transition-all',
+              manualActionsSubTab === t.id
+                ? 'bg-violet-600 text-white'
+                : 'bg-white/30 text-zinc-500 hover:bg-white/50 dark:bg-white/5 dark:text-zinc-400'
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+    );
+
+    if (manualActionsSubTab === 'broadcasts') {
+      return (
+        <div className="flex-1 overflow-hidden flex flex-col">
+          <div className="px-6 pt-6">{subTabSwitcher}</div>
+          <BroadcastsPanel studioId={studioId} />
+        </div>
+      );
+    }
+
     return (
       <div className="flex-1 overflow-hidden flex flex-col p-6 gap-6">
+        {subTabSwitcher}
         <div className="flex items-center justify-between shrink-0">
           <div>
             <h3 className="text-lg font-black text-zinc-900 dark:text-white">Scheduled &amp; Automated Messages</h3>
@@ -3036,6 +3092,7 @@ function channelLabel(k: ChannelKind): string {
     case 'google_ads':     return 'Google Ads';
     case 'telegram':       return 'Telegram';
     case 'telegram_mtproto': return 'Telegram';
+    case 'email_smtp':       return 'Email';
   }
 }
 

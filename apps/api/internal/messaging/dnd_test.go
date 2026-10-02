@@ -98,7 +98,7 @@ func setupDNDTestEnv(t *testing.T) *dndTestEnv {
 	leadsRepo := leads.NewRepo(pool)
 	msgRepo := NewRepo(pool, cipher)
 	msgBus := NewInProcBus()
-	msgSvc := NewService(msgRepo, msgBus, "", "")
+	msgSvc := NewService(msgRepo, msgBus, "", "", nil, nil, "")
 	studiosRepo := studios.NewRepo(pool, cipher)
 	llmRepo := llm.NewRepo(pool, cipher)
 

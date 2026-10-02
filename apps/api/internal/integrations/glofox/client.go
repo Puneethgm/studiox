@@ -402,44 +402,86 @@ type Booking struct {
 	Attended  bool   `json:"attended"`
 	ModelName string `json:"model_name"` // class or course name
 	Status    string `json:"status"`
-	TimeStart string `json:"time_start"`
+	TimeStart string `json:"time_start"` // "2006-01-02 15:04:05"
 	Paid      bool   `json:"paid"`
+}
+
+// bookingTimeLayout matches the format Glofox sends time_start in — not
+// RFC3339, no timezone offset in the string.
+const bookingTimeLayout = "2006-01-02 15:04:05"
+
+// ParsedTimeStart parses TimeStart, returning the zero time and false if
+// it's empty or in an unexpected format — callers should treat that as
+// "unknown" (include the booking) rather than silently drop it.
+func (b Booking) ParsedTimeStart() (time.Time, bool) {
+	t, err := time.Parse(bookingTimeLayout, b.TimeStart)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
 }
 
 type listBookingsResponse struct {
 	Data []Booking `json:"data"`
 }
 
-// ListBookings fetches all bookings for the branch from GET /2.2/branches/{branchId}/bookings.
-// Glofox does not support server-side attended filtering, so all records are returned
-// and callers should filter by Booking.Attended == true.
+// bookingsPageSize is the page size requested per call. Glofox accepts a
+// larger-than-default limit (tested up to 200), which cuts the number of
+// round trips for branches with a lot of history.
+const bookingsPageSize = 200
+
+// bookingsMaxPages is a sanity cap on pagination, not an expected ceiling —
+// see the "meta.totalCount is not trustworthy" note below. 500 pages at 200
+// each is 100,000 bookings; if a branch legitimately has more than that,
+// raise this rather than silently truncating.
+const bookingsMaxPages = 500
+
+// ListBookings fetches every bookings page for the branch from
+// GET /2.2/branches/{branchId}/bookings, paginating with page/limit until a
+// page comes back short of a full page.
+//
+// IMPORTANT: the response's meta.totalCount field is not trustworthy — it
+// was observed to equal (page+1)*limit on every call during testing (i.e.
+// it reflects the request, not the actual row count), so it is never used
+// as a loop bound. Only "page returned fewer than limit rows" signals the
+// end of the data. Glofox does not support server-side attended filtering,
+// so all records are returned and callers should filter by
+// Booking.Attended == true.
 func (c *Client) ListBookings(ctx context.Context) ([]Booking, error) {
 	if c == nil {
 		return nil, fmt.Errorf("glofox client not configured")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		c.baseURL+"/2.2/branches/"+c.branchID+"/bookings", nil)
-	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
-	}
-	c.addAuth(req)
 
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("glofox request: %w", err)
-	}
-	defer resp.Body.Close()
+	var all []Booking
+	for page := 1; page <= bookingsMaxPages; page++ {
+		url := fmt.Sprintf("%s/2.2/branches/%s/bookings?page=%d&limit=%d",
+			c.baseURL, c.branchID, page, bookingsPageSize)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("build request: %w", err)
+		}
+		c.addAuth(req)
 
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("glofox status %d: %s", resp.StatusCode, string(raw))
-	}
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("glofox request: %w", err)
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("glofox status %d: %s", resp.StatusCode, string(raw))
+		}
 
-	var out listBookingsResponse
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, fmt.Errorf("decode bookings: %w", err)
+		var out listBookingsResponse
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return nil, fmt.Errorf("decode bookings: %w", err)
+		}
+		all = append(all, out.Data...)
+		if len(out.Data) < bookingsPageSize {
+			break
+		}
 	}
-	return out.Data, nil
+	return all, nil
 }
 
 // GlofoxMember is the member profile returned by GET /2.0/members/{userId}.
@@ -451,8 +493,17 @@ type GlofoxMember struct {
 	LastName     string `json:"last_name"`
 	Phone        string `json:"phone"`
 	Membership   struct {
-		Status string `json:"status"` // "ACTIVE", "INACTIVE", etc.
-		Type   string `json:"type"`   // "payg", "membership", etc.
+		Status         string `json:"status"`          // "ACTIVE", "INACTIVE", etc.
+		Type           string `json:"type"`            // "time" (unlimited) is the only value seen so far on real data
+		MembershipName string `json:"membership_name"` // e.g. "No Limits Membership" — the plan shown on the Attendance page
+		StartDate      int64  `json:"start_date"`       // unix seconds — this plan's current period start
+		ExpiryDate     int64  `json:"expiry_date"`      // unix seconds — this plan's current period end; 0 if open-ended
+		// BookedEvents: best available signal for a class-count limit (e.g. an
+		// "8 class pack"). Every real plan sampled so far is type "time"
+		// (unlimited) with this at 0, so whether a nonzero value really means
+		// "N classes allowed in this period" is inferred from the field name,
+		// not confirmed against a real capped plan — verify once one shows up.
+		BookedEvents int `json:"boooked_events"` // sic — Glofox's own misspelling
 	} `json:"membership"`
 	MemberPurchase bool `json:"MEMBERPURCHASE"` // true if they bought a recurring membership
 	PAYGPayment    bool `json:"PAYGPAYMENT"`    // true if they paid for PAYG sessions

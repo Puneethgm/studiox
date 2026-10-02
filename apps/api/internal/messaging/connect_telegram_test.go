@@ -74,7 +74,7 @@ func TestConnectTelegramChannel_Integration(t *testing.T) {
 
 	msgRepo := NewRepo(pool, cipher)
 	msgBus := NewInProcBus()
-	msgSvc := NewService(msgRepo, msgBus, "", "https://studio.example.com")
+	msgSvc := NewService(msgRepo, msgBus, "", "https://studio.example.com", nil, nil, "")
 
 	ch, err := msgSvc.ConnectTelegramChannel(ctx, studioID, ConnectTelegramInput{BotToken: "test-connect-token"})
 	if err != nil {

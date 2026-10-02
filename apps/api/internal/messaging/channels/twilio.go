@@ -21,7 +21,7 @@ func NewTwilioSMS() *TwilioSMS {
 	}
 }
 
-func (t *TwilioSMS) SendText(ctx context.Context, accessToken, channelExternalID, recipient, body string, attachments []Attachment) (*SendResult, error) {
+func (t *TwilioSMS) SendText(ctx context.Context, accessToken, channelExternalID, recipient, _, body string, attachments []Attachment) (*SendResult, error) {
 	// accessToken actually stores "AccountSID:AuthToken" for Twilio
 	parts := strings.Split(accessToken, ":")
 	if len(parts) != 2 {

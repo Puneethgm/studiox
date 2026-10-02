@@ -56,7 +56,7 @@ func TestTelegramWebhook_Integration(t *testing.T) {
 
 	msgRepo := NewRepo(pool, cipher)
 	msgBus := NewInProcBus()
-	msgSvc := NewService(msgRepo, msgBus, "", "")
+	msgSvc := NewService(msgRepo, msgBus, "", "", nil, nil, "")
 	handler := NewTelegramWebhookHandler(msgSvc, slog.Default())
 
 	botExternalID := fmt.Sprintf("test-bot-%s", uuid.NewString()[:8])

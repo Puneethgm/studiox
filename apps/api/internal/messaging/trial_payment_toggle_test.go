@@ -64,7 +64,7 @@ func setupTrialPaymentTestEnv(t *testing.T) *trialPaymentTestEnv {
 		t.Fatalf("init cipher: %v", err)
 	}
 	msgRepo := NewRepo(pool, cipher)
-	msgSvc := NewService(msgRepo, NewInProcBus(), "", "")
+	msgSvc := NewService(msgRepo, NewInProcBus(), "", "", nil, nil, "")
 
 	return &trialPaymentTestEnv{pool: pool, msgRepo: msgRepo, msgSvc: msgSvc, studioID: studioID, channelKind: ChannelKind(kindStr)}
 }

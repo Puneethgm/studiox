@@ -160,6 +160,7 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Post("/channels/twilio", h.connectTwilio)
 	r.Post("/channels/x", h.connectX)
 	r.Post("/channels/telegram", h.connectTelegram)
+	r.Post("/channels/email", h.connectEmailSMTP)
 	r.Delete("/channels/{id}", h.disconnectChannel)
 	r.Put("/channels/{id}", h.updateChannel)
 
@@ -206,6 +207,8 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Post("/upload", h.uploadMedia)
 
 	r.Get("/stream", h.stream) // SSE — live updates for the inbox UI
+
+	h.BroadcastRoutes(r) // Manual Actions bulk-send: contact import + scheduled campaigns
 
 	// WhatsApp Web (QR-based) — proxies to the wa-web Node service
 	r.Get("/channels/whatsapp-web/qr", h.waWebQR)
@@ -755,6 +758,48 @@ func (h *Handler) connectTelegram(w http.ResponseWriter, r *http.Request) {
 	}
 	ch, err := h.svc.ConnectTelegramChannel(r.Context(), studioID, ConnectTelegramInput{
 		BotToken: req.BotToken,
+	})
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, ch)
+}
+
+// connectEmailSMTP godoc
+//
+//	@Summary		Connect a studio's own outbound email account
+//	@Description	Registers a studio-owned SMTP account (host/port/user/password/from) for outbound email. Outbound-only — separate from the platform's global password-reset SMTP config and not an inbox channel. Credentials are verified (AUTH handshake, no message sent) before being stored, and encrypted at rest.
+//	@Tags			Messaging - Channels
+//	@Security		CookieAuth
+//	@Accept			json
+//	@Produce		json
+//	@Param			studioId	path		string					true	"Studio ID"
+//	@Param			body		body		map[string]interface{}	true	"Email connection details: host, port, user, password, from"
+//	@Success		201			{object}	ChannelAccount
+//	@Failure		400			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/channels/email [post]
+func (h *Handler) connectEmailSMTP(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Host     string `json:"host"`
+		Port     int    `json:"port"`
+		User     string `json:"user"`
+		Password string `json:"password"`
+		From     string `json:"from"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	ch, err := h.svc.ConnectEmailSMTPChannel(r.Context(), studioID, ConnectEmailSMTPInput{
+		Host:     req.Host,
+		Port:     req.Port,
+		User:     req.User,
+		Password: req.Password,
+		From:     req.From,
 	})
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid", err.Error())

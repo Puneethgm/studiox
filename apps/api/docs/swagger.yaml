@@ -246,6 +246,11 @@ definitions:
       username:
         type: string
     type: object
+  internal_identity.forgotPasswordReq:
+    properties:
+      email:
+        type: string
+    type: object
   internal_identity.loginReq:
     properties:
       email:
@@ -275,6 +280,17 @@ definitions:
         $ref: '#/definitions/internal_identity.StudioBrand'
       studioId:
         type: string
+      username:
+        type: string
+    type: object
+  internal_identity.resetPasswordReq:
+    properties:
+      confirmPassword:
+        type: string
+      newPassword:
+        type: string
+      token:
+        type: string
     type: object
   internal_identity.roleReq:
     properties:
@@ -289,6 +305,8 @@ definitions:
     type: object
   internal_identity.roleRes:
     properties:
+      active:
+        type: boolean
       description:
         type: string
       id:
@@ -300,8 +318,20 @@ definitions:
           type: string
         type: array
     type: object
+  internal_identity.setRoleActiveReq:
+    properties:
+      active:
+        type: boolean
+    type: object
+  internal_identity.setUserActiveReq:
+    properties:
+      active:
+        type: boolean
+    type: object
   internal_identity.studioUserRes:
     properties:
+      active:
+        type: boolean
       createdAt:
         type: string
       email:
@@ -322,6 +352,11 @@ definitions:
         type: string
       username:
         type: string
+    type: object
+  internal_integrations_glofox_attendance.putThresholdReq:
+    properties:
+      qualifyingThreshold:
+        type: integer
     type: object
   internal_leads.AnalyticsSummary:
     properties:
@@ -503,6 +538,14 @@ definitions:
         type: number
       name:
         type: string
+      needsManualFollowup:
+        description: |-
+          NeedsManualFollowup is set when a trial-booking attempt hit a studio
+          with trial payment collection disabled — the AI sent a holding
+          message instead of a Stripe link, and this flags the lead for a
+          human to actually reach out. Cleared automatically the next time a
+          studio_user (not the AI) sends that lead a message.
+        type: boolean
       notes:
         type: string
       offer:
@@ -777,6 +820,87 @@ definitions:
       url:
         type: string
     type: object
+  internal_messaging.BroadcastCampaign:
+    properties:
+      attachments:
+        items:
+          $ref: '#/definitions/internal_messaging.Attachment'
+        type: array
+      body:
+        type: string
+      broadcastListId:
+        type: string
+      channel:
+        $ref: '#/definitions/internal_messaging.BroadcastChannel'
+      createdAt:
+        type: string
+      enqueuedCount:
+        type: integer
+      id:
+        type: string
+      listName:
+        type: string
+      scheduledFor:
+        type: string
+      status:
+        $ref: '#/definitions/internal_messaging.BroadcastCampaignStatus'
+      studioId:
+        type: string
+      subject:
+        description: email only
+        type: string
+      totalCount:
+        type: integer
+      updatedAt:
+        type: string
+    type: object
+  internal_messaging.BroadcastCampaignStatus:
+    enum:
+    - scheduled
+    - sending
+    - completed
+    - canceled
+    type: string
+    x-enum-varnames:
+    - BroadcastScheduled
+    - BroadcastSending
+    - BroadcastCompleted
+    - BroadcastCanceled
+  internal_messaging.BroadcastChannel:
+    enum:
+    - whatsapp
+    - email
+    type: string
+    x-enum-varnames:
+    - BroadcastChannelWhatsApp
+    - BroadcastChannelEmail
+  internal_messaging.BroadcastImportPreview:
+    properties:
+      importId:
+        type: string
+      missingCountryCode:
+        type: integer
+      sampleMissingNumbers:
+        description: up to 5, for the confirm-dialog's "e.g. these numbers" copy
+        items:
+          type: string
+        type: array
+      totalRows:
+        type: integer
+    type: object
+  internal_messaging.BroadcastList:
+    properties:
+      contactCount:
+        type: integer
+      createdAt:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      studioId:
+        type: string
+    type: object
   internal_messaging.ChannelAccount:
     properties:
       bsp:
@@ -820,8 +944,10 @@ definitions:
     - google_ads
     - telegram
     - telegram_mtproto
+    - email_smtp
     type: string
     x-enum-comments:
+      KindEmailSMTP: studio's own outbound-email account; outbound-only, no inbox
       KindTelegramMTProto: QR-linked via tg-web/teleproto (no bot needed)
       KindWhatsAppWeb: QR-linked via Baileys (no Meta API needed)
     x-enum-descriptions:
@@ -834,6 +960,7 @@ definitions:
     - ""
     - ""
     - QR-linked via tg-web/teleproto (no bot needed)
+    - studio's own outbound-email account; outbound-only, no inbox
     x-enum-varnames:
     - KindWhatsAppMeta
     - KindWhatsAppWeb
@@ -844,6 +971,7 @@ definitions:
     - KindGoogleAds
     - KindTelegram
     - KindTelegramMTProto
+    - KindEmailSMTP
   internal_messaging.ChannelStatus:
     enum:
     - active
@@ -1045,6 +1173,13 @@ definitions:
       url:
         type: string
     type: object
+  internal_messaging.confirmBroadcastImportReq:
+    properties:
+      defaultCountryCode:
+        type: string
+      name:
+        type: string
+    type: object
   internal_messaging.connectMetaReq:
     properties:
       accessToken:
@@ -1057,6 +1192,27 @@ definitions:
         type: string
       parentId:
         description: WABA ID or App ID
+        type: string
+    type: object
+  internal_messaging.createBroadcastCampaignReq:
+    properties:
+      attachments:
+        items:
+          $ref: '#/definitions/internal_messaging.Attachment'
+        type: array
+      body:
+        type: string
+      broadcastListId:
+        type: string
+      channel:
+        allOf:
+        - $ref: '#/definitions/internal_messaging.BroadcastChannel'
+        description: '"whatsapp" (default) or "email"'
+      scheduledFor:
+        description: nil/omitted means "as soon as today's limit allows"
+        type: string
+      subject:
+        description: required when channel is "email"
         type: string
     type: object
   internal_messaging.createConversationReq:
@@ -1245,8 +1401,6 @@ definitions:
   internal_studios.createReq:
     properties:
       adminEmail:
-        type: string
-      adminPassword:
         type: string
       brandColor:
         type: string
@@ -2404,6 +2558,31 @@ paths:
       summary: Update a studio
       tags:
       - Studios
+  /api/v1/auth/forgot-password:
+    post:
+      consumes:
+      - application/json
+      description: Checks the email against the user list first — returns 404 if there's
+        no active account for it, and only then sends the reset link. By design this
+        reveals whether an email has an account (an accepted trade-off for this internal
+        admin tool). Rate limited to 10 requests/minute per IP.
+      parameters:
+      - description: Email
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_identity.forgotPasswordReq'
+      responses:
+        "204":
+          description: no content
+        "404":
+          description: no account found for that email
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      summary: Request a password reset email
+      tags:
+      - Auth
   /api/v1/auth/google/callback:
     get:
       description: 'Redirect target Google sends the browser back to after the user
@@ -2552,6 +2731,34 @@ paths:
       security:
       - CookieAuth: []
       summary: Change the current user's password
+      tags:
+      - Auth
+  /api/v1/auth/reset-password:
+    post:
+      consumes:
+      - application/json
+      description: Sets a new password using a single-use token from the forgot-password
+        email. The token is invalidated whether or not this call succeeds past that
+        point — it cannot be reused. Rate limited to 10 requests/minute per IP.
+      parameters:
+      - description: Token and new password
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_identity.resetPasswordReq'
+      responses:
+        "204":
+          description: no content
+        "400":
+          description: invalid or expired token
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "422":
+          description: validation failed
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      summary: Consume a password reset token
       tags:
       - Auth
   /api/v1/auth/stripe/callback:
@@ -2933,6 +3140,44 @@ paths:
       summary: Delete a studio account
       tags:
       - Studios
+  /api/v1/me/studios/{id}/leads/{leadId}/member-subscriptions:
+    get:
+      description: Same record as listMemberSubscriptions, scoped to a single lead
+        — the "Payment" section on a lead's detail page. Newest first; includes past/superseded
+        rows so a trial-then-upgrade or lapsed-then-renewed history is visible, not
+        just the current one.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Lead ID
+        in: path
+        name: leadId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: invalid studio or lead id
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: List one lead's membership subscriptions
+      tags:
+      - Billing
   /api/v1/me/studios/{id}/logo:
     post:
       consumes:
@@ -5013,6 +5258,116 @@ paths:
       summary: Suggest keywords for a decision node
       tags:
       - Decision Trees
+  /api/v1/studios/{studioId}/glofox/attendance:
+    get:
+      description: Returns one page of the studio's Glofox attendance snapshot — each
+        member's attended-class count within their current plan, refreshed every 15
+        minutes by a background worker. Read-only; sends nothing.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: Page size (default 50)
+        in: query
+        name: limit
+        type: integer
+      - description: Row offset (default 0)
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Get Glofox class attendance
+      tags:
+      - Glofox
+  /api/v1/studios/{studioId}/glofox/attendance/threshold:
+    get:
+      description: Returns how many classes a member must attend (within their current
+        plan) to be flagged as qualifying on the Attendance page. Defaults to 5 until
+        the studio sets its own.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Get the Glofox attendance qualifying threshold
+      tags:
+      - Glofox
+    put:
+      consumes:
+      - application/json
+      description: Sets how many classes a member must attend (within their current
+        plan) to be flagged as qualifying. Takes effect from the worker's next poll.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: New threshold
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_integrations_glofox_attendance.putThresholdReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Set the Glofox attendance qualifying threshold
+      tags:
+      - Glofox
   /api/v1/studios/{studioId}/google-oauth/login:
     get:
       description: Builds the Google OAuth 2.0 consent-screen URL for connecting a
@@ -5140,6 +5495,52 @@ paths:
       summary: Set initial contact delay
       tags:
       - Messaging Settings
+  /api/v1/studios/{studioId}/knowledge-base/ocr:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Runs Mistral OCR on an uploaded image and returns the extracted
+        text. Does NOT save anything to the knowledge base or trigger embedding —
+        this is the review step; the admin confirms the (editable) text client-side
+        before it's added via the normal knowledge-base save, which is what actually
+        triggers embedding.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: Image to OCR (jpg/jpeg/png/webp)
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: missing Mistral API key, unsupported file type, or missing
+            file
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "502":
+          description: OCR request failed
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Extract text from an image for the Knowledge Base
+      tags:
+      - Knowledge Base
   /api/v1/studios/{studioId}/knowledge-base/sync-status:
     get:
       description: |-
@@ -5767,6 +6168,266 @@ paths:
       summary: Generate message/social copy with AI
       tags:
       - Messaging - AI
+  /api/v1/studios/{studioId}/messaging/broadcasts/campaigns:
+    get:
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: List WhatsApp broadcast campaigns
+      tags:
+      - Messaging - Broadcasts
+    post:
+      consumes:
+      - application/json
+      description: Schedules body/attachments to send to every contact in broadcastListId.
+        If the list is larger than the studio's daily WhatsApp send limit, the remainder
+        sends automatically on subsequent days — see internal/messaging's BroadcastWorker.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: Campaign details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_messaging.createBroadcastCampaignReq'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_messaging.BroadcastCampaign'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Schedule a WhatsApp broadcast to a contact list
+      tags:
+      - Messaging - Broadcasts
+  /api/v1/studios/{studioId}/messaging/broadcasts/campaigns/{campaignId}:
+    delete:
+      description: Stops enqueueing any remaining pending recipients. Recipients already
+        enqueued into outbound_jobs are not recalled.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: Campaign ID
+        in: path
+        name: campaignId
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Cancel a scheduled or in-progress WhatsApp broadcast
+      tags:
+      - Messaging - Broadcasts
+  /api/v1/studios/{studioId}/messaging/broadcasts/campaigns/{campaignId}/recipients:
+    get:
+      description: Per-recipient delivery state (pending/sent/failed/dead), joined
+        through to the actual outbound_jobs record once enqueued — sentAt is set only
+        once Meta/WhatsApp confirms delivery, not when it's merely queued.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: Campaign ID
+        in: path
+        name: campaignId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: List a broadcast's recipients with real send status
+      tags:
+      - Messaging - Broadcasts
+  /api/v1/studios/{studioId}/messaging/broadcasts/import:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Parses an uploaded .csv/.xlsx/.xls (Client Name, Phone, Email columns,
+        fuzzy-matched) and stages it — nothing is saved yet. Returns how many rows
+        are missing a country code on their phone number; if non-zero, call the confirm
+        endpoint with defaultCountryCode to finish the import.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: CSV or Excel file of contacts
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_messaging.BroadcastImportPreview'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Upload a contact sheet for a WhatsApp broadcast
+      tags:
+      - Messaging - Broadcasts
+  /api/v1/studios/{studioId}/messaging/broadcasts/import/{importId}/confirm:
+    post:
+      consumes:
+      - application/json
+      description: Applies defaultCountryCode (if given) to any staged row missing
+        one, then saves the list.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: Import ID from the upload step
+        in: path
+        name: importId
+        required: true
+        type: string
+      - description: List name and optional default country code
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_messaging.confirmBroadcastImportReq'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_messaging.BroadcastList'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Finish a staged broadcast contact import
+      tags:
+      - Messaging - Broadcasts
+  /api/v1/studios/{studioId}/messaging/broadcasts/lists:
+    get:
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - CookieAuth: []
+      summary: List broadcast contact lists
+      tags:
+      - Messaging - Broadcasts
+  /api/v1/studios/{studioId}/messaging/broadcasts/lists/{listId}:
+    delete:
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: Broadcast list ID
+        in: path
+        name: listId
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Delete a broadcast list
+      tags:
+      - Messaging - Broadcasts
+    get:
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: Broadcast list ID
+        in: path
+        name: listId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Get a broadcast list with its contacts
+      tags:
+      - Messaging - Broadcasts
   /api/v1/studios/{studioId}/messaging/channels:
     get:
       description: Returns every messaging channel connected for the studio (WhatsApp
@@ -5872,6 +6533,43 @@ paths:
       security:
       - CookieAuth: []
       summary: Update a messaging channel
+      tags:
+      - Messaging - Channels
+  /api/v1/studios/{studioId}/messaging/channels/email:
+    post:
+      consumes:
+      - application/json
+      description: Registers a studio-owned SMTP account (host/port/user/password/from)
+        for outbound email. Outbound-only — separate from the platform's global password-reset
+        SMTP config and not an inbox channel. Credentials are verified (AUTH handshake,
+        no message sent) before being stored, and encrypted at rest.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: 'Email connection details: host, port, user, password, from'
+        in: body
+        name: body
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_messaging.ChannelAccount'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Connect a studio's own outbound email account
       tags:
       - Messaging - Channels
   /api/v1/studios/{studioId}/messaging/channels/instagram:
@@ -7939,6 +8637,46 @@ paths:
       summary: Update a studio role
       tags:
       - RBAC
+  /api/v1/studios/{studioId}/roles/{roleId}/active:
+    patch:
+      consumes:
+      - application/json
+      description: Deactivating a role immediately blocks login for every user currently
+        assigned to it (checked at login time, not live-enforced on existing sessions).
+        Reversible — distinct from deleting the role.
+      parameters:
+      - description: Studio ID (UUID)
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: Role ID (UUID)
+        in: path
+        name: roleId
+        required: true
+        type: string
+      - description: Desired active state
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_identity.setRoleActiveReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_identity.roleRes'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Activate or deactivate a studio role
+      tags:
+      - RBAC
   /api/v1/studios/{studioId}/social-posts:
     get:
       description: Returns all social planner posts for a studio, published posts
@@ -8266,6 +9004,48 @@ paths:
       security:
       - CookieAuth: []
       summary: Deactivate a teammate
+      tags:
+      - RBAC
+  /api/v1/studios/{studioId}/users/{userId}/active:
+    patch:
+      consumes:
+      - application/json
+      description: A reversible login gate, distinct from deactivateStudioUser's permanent
+        soft-delete — deactivating blocks login immediately (checked at login time),
+        reactivating restores it. studio_admin can't be toggled here (no role_id path
+        applies to them; use deactivateStudioUser's soft-delete if that's genuinely
+        needed).
+      parameters:
+      - description: Studio ID (UUID)
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: User ID (UUID)
+        in: path
+        name: userId
+        required: true
+        type: string
+      - description: Desired active state
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_identity.setUserActiveReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_identity.studioUserRes'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Activate or deactivate a teammate
       tags:
       - RBAC
   /api/v1/webhooks/meta/data-deletion:

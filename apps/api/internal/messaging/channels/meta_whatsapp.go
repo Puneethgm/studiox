@@ -135,7 +135,7 @@ func (m *MetaWhatsApp) uploadMediaToMeta(ctx context.Context, accessToken, phone
 //   - If the URL already starts with https://, it is sent as "link": <url>.
 //
 // https://developers.facebook.com/docs/whatsapp/cloud-api/reference/messages
-func (m *MetaWhatsApp) SendText(ctx context.Context, accessToken, channelExternalID, recipient, body string, attachments []Attachment) (*SendResult, error) {
+func (m *MetaWhatsApp) SendText(ctx context.Context, accessToken, channelExternalID, recipient, _, body string, attachments []Attachment) (*SendResult, error) {
 	// In local dev mode with invalid/empty credentials, mock the send.
 	if os.Getenv("API_ENV") == "local" && (accessToken == "" || accessToken == "test") {
 		return &SendResult{

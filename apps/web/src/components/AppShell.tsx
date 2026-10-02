@@ -34,6 +34,7 @@ import {
   TrendingUp,
   Users,
   ShieldCheck,
+  ClipboardCheck,
 } from 'lucide-react';
 import { useEffect, useState, useRef, type CSSProperties, type ReactNode } from 'react';
 import { Button } from '@/components/ui/Button';
@@ -79,6 +80,7 @@ function navItemsFor(me: Me, currentPath: string, onOpenSettings: () => void): N
         { href: `${base}/social-planner`, label: 'Social Planner',icon: <Sparkles className="h-[18px] w-[18px]" />,       match: (p) => p.startsWith(`${base}/social-planner`) },
         { href: `${base}/payments`,       label: 'Payments',      icon: <CreditCard className="h-[18px] w-[18px]" />,     match: (p) => p.startsWith(`${base}/payments`) },
         { href: `${base}/channels`,       label: 'Channels',      icon: <Plug className="h-[18px] w-[18px]" />,           match: (p) => p.startsWith(`${base}/channels`) },
+        { href: `${base}/attendance`,     label: 'Attendance',    icon: <ClipboardCheck className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/attendance`) },
         { href: `${base}/knowledge-base`,  label: 'Knowledge Base', icon: <Database className="h-[18px] w-[18px]" />,      match: (p) => p.startsWith(`${base}/knowledge-base`) },
         { href: `${base}/decision-trees`, label: 'Decision Trees', icon: <Network className="h-[18px] w-[18px]" />,       match: (p) => p.startsWith(`${base}/decision-trees`) },
         { href: `${base}/templates`,      label: 'Templates',      icon: <MessageSquareText className="h-[18px] w-[18px]" />, match: (p) => p.startsWith(`${base}/templates`) },
@@ -647,6 +649,9 @@ function Topbar({
   } else if (pathname.includes('/channels')) {
     pageTitle = 'Channels';
     pageIcon = <Plug className="h-[18px] w-[18px] text-teal-500" />;
+  } else if (pathname.includes('/attendance')) {
+    pageTitle = 'Attendance';
+    pageIcon = <ClipboardCheck className="h-[18px] w-[18px] text-teal-500" />;
   } else if (pathname.includes('/knowledge-base')) {
     pageTitle = 'Knowledge Base';
     pageIcon = <Database className="h-[18px] w-[18px] text-indigo-500" />;

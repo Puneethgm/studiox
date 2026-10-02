@@ -168,7 +168,7 @@ func TestCountAutomatedWhatsAppSentToday_OnlyCountsAutomatedSentTodayOnWhatsApp(
 func TestCreateJob_TaggedAsAutomation_ForDailyLimitCap(t *testing.T) {
 	repo, pool, studioID, conversationID := setupDailyLimitTestEnv(t)
 	ctx := context.Background()
-	svc := NewService(repo, NewInProcBus(), "", "")
+	svc := NewService(repo, NewInProcBus(), "", "", nil, nil, "")
 
 	jobID, err := svc.CreateJob(ctx, studioID, conversationID, "daily_limit_test manual action", time.Now().UTC().Add(time.Hour), nil)
 	if err != nil {

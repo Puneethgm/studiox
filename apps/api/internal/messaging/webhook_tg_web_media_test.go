@@ -113,7 +113,7 @@ func TestTGWebInbound_WithAttachment_Integration(t *testing.T) {
 
 	msgRepo := NewRepo(pool, cipher)
 	msgBus := NewInProcBus()
-	msgSvc := NewService(msgRepo, msgBus, "", "")
+	msgSvc := NewService(msgRepo, msgBus, "", "", nil, nil, "")
 	handler := NewHandler(msgSvc, msgBus, nil, nil, nil, "", nil)
 
 	if err := msgRepo.UpsertTGWebChannel(ctx, studioID, "+15550002222", "test_media_qr_user", "fake-session"); err != nil {

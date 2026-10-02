@@ -616,11 +616,10 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		}
 		w.log.Info("ai worker: explicit human-handoff request detected, escalating",
 			"studio_id", studioID, "conversation_id", conv.ID, "message_id", msg.ID)
-		if err := w.msgRepo.EscalateConversation(ctx, studioID, conv.ID, "Customer asked to speak with a human"); err != nil {
+		if err := w.msgSvc.EscalateAndNotify(ctx, studioID, conv.ID, "Customer asked to speak with a human"); err != nil {
 			w.log.Warn("failed to mark conversation escalated (explicit request)", "studio_id", studioID, "err", err)
 			break
 		}
-		w.bus.Publish(ctx, Event{Kind: EvtConversationEscalated, StudioID: studioID, ConversationID: conv.ID, Reason: "Customer asked to speak with a human"})
 		handoffBody := "Of course — connecting you with a real team member now. They'll be with you shortly!"
 		if _, err := w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
 			StudioID:       studioID,
@@ -897,10 +896,8 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 				return nil
 			case decisiontree.ActionEscalate:
 				w.log.Info("decision tree matched, escalating to human", "studio_id", studioID, "node", treeResult.NodeLabel)
-				if err := w.msgRepo.EscalateConversation(ctx, studioID, msg.ConversationID, treeResult.NodeLabel); err != nil {
+				if err := w.msgSvc.EscalateAndNotify(ctx, studioID, msg.ConversationID, treeResult.NodeLabel); err != nil {
 					w.log.Warn("failed to mark conversation escalated", "studio_id", studioID, "err", err)
-				} else {
-					w.bus.Publish(ctx, Event{Kind: EvtConversationEscalated, StudioID: studioID, ConversationID: msg.ConversationID, Reason: treeResult.NodeLabel})
 				}
 				if treeResult.Reply != "" {
 					reply := treeResult.Reply
@@ -1209,10 +1206,9 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	if !kbConfident && (intent == "pricing_question" || intent == "general_question") {
 		w.log.Info("ai worker: low KB confidence on factual question, escalating instead of guessing",
 			"studio_id", studioID, "conversation_id", conv.ID, "intent", intent)
-		if err := w.msgRepo.EscalateConversation(ctx, studioID, conv.ID, "AI uncertain — insufficient knowledge base match"); err != nil {
+		if err := w.msgSvc.EscalateAndNotify(ctx, studioID, conv.ID, "AI uncertain — insufficient knowledge base match"); err != nil {
 			w.log.Warn("failed to mark conversation escalated (low confidence)", "studio_id", studioID, "err", err)
 		} else {
-			w.bus.Publish(ctx, Event{Kind: EvtConversationEscalated, StudioID: studioID, ConversationID: conv.ID, Reason: "AI uncertain — insufficient knowledge base match"})
 			handoffBody := "That's a great question — let me get one of our team members to help you with the details. They'll be with you shortly!"
 			if _, err := w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
 				StudioID:       studioID,

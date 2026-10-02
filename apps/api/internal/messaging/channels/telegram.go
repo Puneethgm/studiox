@@ -54,7 +54,7 @@ type TelegramCredentials struct {
 // single "send with attachments" call — each media type is its own
 // endpoint). channelExternalID is unused — Telegram routes by bot token
 // alone, unlike Meta's per-page IDs.
-func (s *TelegramSender) SendText(ctx context.Context, accessToken, channelExternalID, recipient, body string, attachments []Attachment) (*SendResult, error) {
+func (s *TelegramSender) SendText(ctx context.Context, accessToken, channelExternalID, recipient, _, body string, attachments []Attachment) (*SendResult, error) {
 	if accessToken == "" {
 		return nil, ErrInvalidCredentials
 	}

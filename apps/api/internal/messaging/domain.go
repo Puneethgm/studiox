@@ -21,11 +21,12 @@ const (
 	KindGoogleAds       ChannelKind = "google_ads"
 	KindTelegram        ChannelKind = "telegram"
 	KindTelegramMTProto ChannelKind = "telegram_mtproto" // QR-linked via tg-web/teleproto (no bot needed)
+	KindEmailSMTP       ChannelKind = "email_smtp"        // studio's own outbound-email account; outbound-only, no inbox
 )
 
 func (k ChannelKind) Valid() bool {
 	switch k {
-	case KindWhatsAppMeta, KindWhatsAppWeb, KindInstagramMeta, KindMessengerMeta, KindXDM, KindSMS, KindGoogleAds, KindTelegram, KindTelegramMTProto:
+	case KindWhatsAppMeta, KindWhatsAppWeb, KindInstagramMeta, KindMessengerMeta, KindXDM, KindSMS, KindGoogleAds, KindTelegram, KindTelegramMTProto, KindEmailSMTP:
 		return true
 	}
 	return false
@@ -214,6 +215,7 @@ type OutboundJob struct {
 	ID             int64
 	StudioID       uuid.UUID
 	ConversationID uuid.UUID
+	Subject        string // email only; ignored by every other channel
 	Body           string
 	Attachments    []Attachment
 	TemplateName   string
@@ -245,8 +247,9 @@ type FollowupStep struct {
 // ----- errors -----
 
 var (
-	ErrNotFound        = errors.New("not found")
-	ErrChannelMismatch = errors.New("channel does not belong to this studio")
+	ErrNotFound           = errors.New("not found")
+	ErrChannelMismatch    = errors.New("channel does not belong to this studio")
+	ErrEmptyBroadcastList = errors.New("broadcast list has no contacts")
 )
 
 // ----- trigger link -----

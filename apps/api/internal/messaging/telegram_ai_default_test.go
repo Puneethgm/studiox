@@ -52,7 +52,7 @@ func TestTelegramBot_AIEnabledByDefault_ButNotForcedBackOn(t *testing.T) {
 
 	msgRepo := NewRepo(pool, cipher)
 	msgBus := NewInProcBus()
-	msgSvc := NewService(msgRepo, msgBus, "", "")
+	msgSvc := NewService(msgRepo, msgBus, "", "", nil, nil, "")
 
 	botExternalID := fmt.Sprintf("test-ai-default-bot-%s", uuid.NewString()[:8])
 	creds, _ := json.Marshal(channels.TelegramCredentials{BotToken: "fake-token", WebhookSecret: "shh"})
@@ -165,7 +165,7 @@ func TestTelegramBot_NeverAutoCreatesLead(t *testing.T) {
 
 	msgRepo := NewRepo(pool, cipher)
 	msgBus := NewInProcBus()
-	msgSvc := NewService(msgRepo, msgBus, "", "")
+	msgSvc := NewService(msgRepo, msgBus, "", "", nil, nil, "")
 
 	botExternalID := fmt.Sprintf("test-no-lead-bot-%s", uuid.NewString()[:8])
 	creds, _ := json.Marshal(channels.TelegramCredentials{BotToken: "fake-token", WebhookSecret: "shh"})

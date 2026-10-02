@@ -530,7 +530,7 @@ type tgWebSender struct {
 	studioID uuid.UUID
 }
 
-func (s *tgWebSender) SendText(ctx context.Context, _, _, recipient, body string, attachments []channels.Attachment) (*channels.SendResult, error) {
+func (s *tgWebSender) SendText(ctx context.Context, _, _, recipient, _, body string, attachments []channels.Attachment) (*channels.SendResult, error) {
 	sendURL := fmt.Sprintf("%s/sessions/%s/send", tgWebServiceURL(), s.studioID)
 
 	type sendPayload struct {

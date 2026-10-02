@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,6 +31,21 @@ func (r Role) Valid() bool {
 // is always true alongside it, and every request except logout/me/password
 // is blocked until the teammate changes it (see RequirePasswordSet).
 const DefaultTeammatePassword = "password123"
+
+// fullName joins first/last name pointers (either may be nil — only
+// studio_staff users collect these; a studio_admin or super_admin may have
+// neither set) into one display string, or "" if both are empty. Used to
+// personalize transactional email copy.
+func fullName(first, last *string) string {
+	var parts []string
+	if first != nil && *first != "" {
+		parts = append(parts, *first)
+	}
+	if last != nil && *last != "" {
+		parts = append(parts, *last)
+	}
+	return strings.Join(parts, " ")
+}
 
 type User struct {
 	ID                uuid.UUID

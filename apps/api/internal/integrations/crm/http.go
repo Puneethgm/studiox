@@ -17,6 +17,16 @@ type Handler struct {
 	executor *Executor
 	llmRepo  *llm.Repo
 	resolver *llm.Resolver
+
+	// OnConnected, if set, is called right after a studio successfully
+	// connects a CRM provider — fire-and-forget, with its own background
+	// context since the request context ends when the response is written.
+	// Used by main.go to kick off an immediate first poll (e.g. Glofox
+	// attendance) instead of making the studio wait for that worker's next
+	// scheduled tick. A plain callback field, not an event bus, since this
+	// is the only subscriber today — see messaging.Bus if a second one
+	// shows up.
+	OnConnected func(studioID, providerID uuid.UUID)
 }
 
 func NewHandler(repo *Repo, executor *Executor, llmRepo *llm.Repo, resolver *llm.Resolver) *Handler {
@@ -314,6 +324,9 @@ func (h *Handler) createConnection(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return
+	}
+	if h.OnConnected != nil {
+		go h.OnConnected(studioID, req.CRMProviderID)
 	}
 	httpx.JSON(w, http.StatusCreated, conn)
 }

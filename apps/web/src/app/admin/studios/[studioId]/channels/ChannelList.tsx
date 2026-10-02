@@ -29,6 +29,7 @@ const KIND_LABELS: Record<ChannelKind, string> = {
   google_ads: 'Google Ads',
   telegram: 'Telegram (Bot)',
   telegram_mtproto: 'Telegram (QR)',
+  email_smtp: 'Email (SMTP)',
 };
 
 const STATUS_TONE: Record<ChannelStatus, 'success' | 'warning' | 'danger' | 'neutral'> = {

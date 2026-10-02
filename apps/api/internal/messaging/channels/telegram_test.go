@@ -33,7 +33,7 @@ func TestTelegramSender_SendText_Success(t *testing.T) {
 
 	creds, _ := json.Marshal(TelegramCredentials{BotToken: "123456:ABC-token", WebhookSecret: "shh"})
 	s := NewTelegramSender()
-	res, err := s.SendText(context.Background(), string(creds), "unused", "987654321", "hello there", nil)
+	res, err := s.SendText(context.Background(), string(creds), "unused", "987654321", "", "hello there", nil)
 	if err != nil {
 		t.Fatalf("SendText: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestTelegramSender_SendText_InvalidToken(t *testing.T) {
 
 	creds, _ := json.Marshal(TelegramCredentials{BotToken: "bad-token"})
 	s := NewTelegramSender()
-	_, err := s.SendText(context.Background(), string(creds), "unused", "987654321", "hi", nil)
+	_, err := s.SendText(context.Background(), string(creds), "unused", "987654321", "", "hi", nil)
 	if err != ErrInvalidCredentials {
 		t.Fatalf("err = %v, want ErrInvalidCredentials", err)
 	}
@@ -67,7 +67,7 @@ func TestTelegramSender_SendText_InvalidToken(t *testing.T) {
 
 func TestTelegramSender_SendText_EmptyToken(t *testing.T) {
 	s := NewTelegramSender()
-	_, err := s.SendText(context.Background(), "", "unused", "987654321", "hi", nil)
+	_, err := s.SendText(context.Background(), "", "unused", "987654321", "", "hi", nil)
 	if err != ErrInvalidCredentials {
 		t.Fatalf("err = %v, want ErrInvalidCredentials", err)
 	}
@@ -148,7 +148,7 @@ func TestTelegramSender_SendText_LocalAttachment_UploadsRealBytes(t *testing.T) 
 
 	creds, _ := json.Marshal(TelegramCredentials{BotToken: "123456:ABC-token"})
 	s := NewTelegramSender()
-	res, err := s.SendText(context.Background(), string(creds), "unused", "987654321", "here's a photo", []Attachment{
+	res, err := s.SendText(context.Background(), string(creds), "unused", "987654321", "", "here's a photo", []Attachment{
 		{Type: "image", URL: "/uploads/test-photo.jpg"},
 	})
 	if err != nil {
@@ -180,7 +180,7 @@ func TestTelegramSender_SendText_ExternalURLAttachment_PassesLinkNotBytes(t *tes
 
 	creds, _ := json.Marshal(TelegramCredentials{BotToken: "123456:ABC-token"})
 	s := NewTelegramSender()
-	_, err := s.SendText(context.Background(), string(creds), "unused", "987654321", "", []Attachment{
+	_, err := s.SendText(context.Background(), string(creds), "unused", "987654321", "", "", []Attachment{
 		{Type: "document", URL: "https://cdn.example.com/brochure.pdf"},
 	})
 	if err != nil {

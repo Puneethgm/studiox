@@ -128,6 +128,20 @@ func (r *Repo) ConsumePasswordResetToken(ctx context.Context, rawToken, newPassw
 	return tx.Commit(ctx)
 }
 
+// GetStudioName looks up just a studio's display name — identity can't
+// import the studios package (studios already imports identity for RBAC
+// checks, so that direction would cycle), so this is a narrow direct query
+// rather than a cross-package call, used only to personalize transactional
+// email copy.
+func (r *Repo) GetStudioName(ctx context.Context, studioID uuid.UUID) (string, error) {
+	var name string
+	err := r.pool.QueryRow(ctx, `SELECT name FROM studios WHERE id = $1`, studioID).Scan(&name)
+	if err != nil {
+		return "", fmt.Errorf("get studio name: %w", err)
+	}
+	return name, nil
+}
+
 // UpsertSuperAdmin creates the super-admin user if missing, or updates the
 // password hash if it changed. Idempotent — safe to run on every boot, from
 // cmd/seed with no logged-in actor — actorID is always nil in practice.

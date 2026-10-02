@@ -1270,6 +1270,40 @@
                 }
             }
         },
+        "/api/v1/auth/forgot-password": {
+            "post": {
+                "description": "Checks the email against the user list first — returns 404 if there's no active account for it, and only then sends the reset link. By design this reveals whether an email has an account (an accepted trade-off for this internal admin tool). Rate limited to 10 requests/minute per IP.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Request a password reset email",
+                "parameters": [
+                    {
+                        "description": "Email",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_identity.forgotPasswordReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "no content"
+                    },
+                    "404": {
+                        "description": "no account found for that email",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/auth/google/callback": {
             "get": {
                 "description": "Redirect target Google sends the browser back to after the user grants (or denies) Ads access. Exchanges the authorization code for a refresh token, then creates or updates the studio's Google Ads channel_account with it. Not called directly — Google invokes this via browser redirect after LoginHandler. Responds with a small HTML page that closes the OAuth popup and notifies the opener window. No cookie auth: the studio identity travels inside the signed `state` param round-tripped through Google.",
@@ -1476,6 +1510,46 @@
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/reset-password": {
+            "post": {
+                "description": "Sets a new password using a single-use token from the forgot-password email. The token is invalidated whether or not this call succeeds past that point — it cannot be reused. Rate limited to 10 requests/minute per IP.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Consume a password reset token",
+                "parameters": [
+                    {
+                        "description": "Token and new password",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_identity.resetPasswordReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "no content"
+                    },
+                    "400": {
+                        "description": "invalid or expired token",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "validation failed",
                         "schema": {
                             "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
                         }
@@ -2057,6 +2131,60 @@
                     },
                     "500": {
                         "description": "delete failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/me/studios/{id}/leads/{leadId}/member-subscriptions": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Same record as listMemberSubscriptions, scoped to a single lead — the \"Payment\" section on a lead's detail page. Newest first; includes past/superseded rows so a trial-then-upgrade or lapsed-then-renewed history is visible, not just the current one.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Billing"
+                ],
+                "summary": "List one lead's membership subscriptions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Lead ID",
+                        "name": "leadId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "invalid studio or lead id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
                         }
@@ -5011,6 +5139,169 @@
                 }
             }
         },
+        "/api/v1/studios/{studioId}/glofox/attendance": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Returns one page of the studio's Glofox attendance snapshot — each member's attended-class count within their current plan, refreshed every 15 minutes by a background worker. Read-only; sends nothing.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Glofox"
+                ],
+                "summary": "Get Glofox class attendance",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size (default 50)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Row offset (default 0)",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/studios/{studioId}/glofox/attendance/threshold": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Returns how many classes a member must attend (within their current plan) to be flagged as qualifying on the Attendance page. Defaults to 5 until the studio sets its own.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Glofox"
+                ],
+                "summary": "Get the Glofox attendance qualifying threshold",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Sets how many classes a member must attend (within their current plan) to be flagged as qualifying. Takes effect from the worker's next poll.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Glofox"
+                ],
+                "summary": "Set the Glofox attendance qualifying threshold",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "New threshold",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_integrations_glofox_attendance.putThresholdReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/studios/{studioId}/google-oauth/login": {
             "get": {
                 "security": [
@@ -5186,6 +5477,69 @@
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/studios/{studioId}/knowledge-base/ocr": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Runs Mistral OCR on an uploaded image and returns the extracted text. Does NOT save anything to the knowledge base or trigger embedding — this is the review step; the admin confirms the (editable) text client-side before it's added via the normal knowledge-base save, which is what actually triggers embedding.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Knowledge Base"
+                ],
+                "summary": "Extract text from an image for the Knowledge Base",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "Image to OCR (jpg/jpeg/png/webp)",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "missing Mistral API key, unsupported file type, or missing file",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "OCR request failed",
                         "schema": {
                             "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
                         }
@@ -6081,6 +6435,401 @@
                 }
             }
         },
+        "/api/v1/studios/{studioId}/messaging/broadcasts/campaigns": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Messaging - Broadcasts"
+                ],
+                "summary": "List WhatsApp broadcast campaigns",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Schedules body/attachments to send to every contact in broadcastListId. If the list is larger than the studio's daily WhatsApp send limit, the remainder sends automatically on subsequent days — see internal/messaging's BroadcastWorker.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Messaging - Broadcasts"
+                ],
+                "summary": "Schedule a WhatsApp broadcast to a contact list",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Campaign details",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_messaging.createBroadcastCampaignReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/internal_messaging.BroadcastCampaign"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/studios/{studioId}/messaging/broadcasts/campaigns/{campaignId}": {
+            "delete": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Stops enqueueing any remaining pending recipients. Recipients already enqueued into outbound_jobs are not recalled.",
+                "tags": [
+                    "Messaging - Broadcasts"
+                ],
+                "summary": "Cancel a scheduled or in-progress WhatsApp broadcast",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Campaign ID",
+                        "name": "campaignId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/studios/{studioId}/messaging/broadcasts/campaigns/{campaignId}/recipients": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Per-recipient delivery state (pending/sent/failed/dead), joined through to the actual outbound_jobs record once enqueued — sentAt is set only once Meta/WhatsApp confirms delivery, not when it's merely queued.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Messaging - Broadcasts"
+                ],
+                "summary": "List a broadcast's recipients with real send status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Campaign ID",
+                        "name": "campaignId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/studios/{studioId}/messaging/broadcasts/import": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Parses an uploaded .csv/.xlsx/.xls (Client Name, Phone, Email columns, fuzzy-matched) and stages it — nothing is saved yet. Returns how many rows are missing a country code on their phone number; if non-zero, call the confirm endpoint with defaultCountryCode to finish the import.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Messaging - Broadcasts"
+                ],
+                "summary": "Upload a contact sheet for a WhatsApp broadcast",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "CSV or Excel file of contacts",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_messaging.BroadcastImportPreview"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/studios/{studioId}/messaging/broadcasts/import/{importId}/confirm": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Applies defaultCountryCode (if given) to any staged row missing one, then saves the list.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Messaging - Broadcasts"
+                ],
+                "summary": "Finish a staged broadcast contact import",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Import ID from the upload step",
+                        "name": "importId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "List name and optional default country code",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_messaging.confirmBroadcastImportReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/internal_messaging.BroadcastList"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/studios/{studioId}/messaging/broadcasts/lists": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Messaging - Broadcasts"
+                ],
+                "summary": "List broadcast contact lists",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/studios/{studioId}/messaging/broadcasts/lists/{listId}": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Messaging - Broadcasts"
+                ],
+                "summary": "Get a broadcast list with its contacts",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Broadcast list ID",
+                        "name": "listId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "tags": [
+                    "Messaging - Broadcasts"
+                ],
+                "summary": "Delete a broadcast list",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Broadcast list ID",
+                        "name": "listId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/studios/{studioId}/messaging/channels": {
             "get": {
                 "security": [
@@ -6115,6 +6864,59 @@
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/studios/{studioId}/messaging/channels/email": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Registers a studio-owned SMTP account (host/port/user/password/from) for outbound email. Outbound-only — separate from the platform's global password-reset SMTP config and not an inbox channel. Credentials are verified (AUTH handshake, no message sent) before being stored, and encrypted at rest.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Messaging - Channels"
+                ],
+                "summary": "Connect a studio's own outbound email account",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Email connection details: host, port, user, password, from",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/internal_messaging.ChannelAccount"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
                         "schema": {
                             "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
                         }
@@ -9299,6 +10101,65 @@
                 }
             }
         },
+        "/api/v1/studios/{studioId}/roles/{roleId}/active": {
+            "patch": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Deactivating a role immediately blocks login for every user currently assigned to it (checked at login time, not live-enforced on existing sessions). Reversible — distinct from deleting the role.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "RBAC"
+                ],
+                "summary": "Activate or deactivate a studio role",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID (UUID)",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Role ID (UUID)",
+                        "name": "roleId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Desired active state",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_identity.setRoleActiveReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_identity.roleRes"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/studios/{studioId}/social-posts": {
             "get": {
                 "security": [
@@ -9779,6 +10640,65 @@
                 "responses": {
                     "204": {
                         "description": "no content"
+                    }
+                }
+            }
+        },
+        "/api/v1/studios/{studioId}/users/{userId}/active": {
+            "patch": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "A reversible login gate, distinct from deactivateStudioUser's permanent soft-delete — deactivating blocks login immediately (checked at login time), reactivating restores it. studio_admin can't be toggled here (no role_id path applies to them; use deactivateStudioUser's soft-delete if that's genuinely needed).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "RBAC"
+                ],
+                "summary": "Activate or deactivate a teammate",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID (UUID)",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "User ID (UUID)",
+                        "name": "userId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Desired active state",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_identity.setUserActiveReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_identity.studioUserRes"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
                     }
                 }
             }
@@ -11620,6 +12540,14 @@
                 }
             }
         },
+        "internal_identity.forgotPasswordReq": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_identity.loginReq": {
             "type": "object",
             "properties": {
@@ -11658,6 +12586,23 @@
                 },
                 "studioId": {
                     "type": "string"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_identity.resetPasswordReq": {
+            "type": "object",
+            "properties": {
+                "confirmPassword": {
+                    "type": "string"
+                },
+                "newPassword": {
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
                 }
             }
         },
@@ -11681,6 +12626,9 @@
         "internal_identity.roleRes": {
             "type": "object",
             "properties": {
+                "active": {
+                    "type": "boolean"
+                },
                 "description": {
                     "type": "string"
                 },
@@ -11698,9 +12646,28 @@
                 }
             }
         },
+        "internal_identity.setRoleActiveReq": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_identity.setUserActiveReq": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                }
+            }
+        },
         "internal_identity.studioUserRes": {
             "type": "object",
             "properties": {
+                "active": {
+                    "type": "boolean"
+                },
                 "createdAt": {
                     "type": "string"
                 },
@@ -11730,6 +12697,14 @@
                 },
                 "username": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_integrations_glofox_attendance.putThresholdReq": {
+            "type": "object",
+            "properties": {
+                "qualifyingThreshold": {
+                    "type": "integer"
                 }
             }
         },
@@ -11991,6 +12966,10 @@
                 },
                 "name": {
                     "type": "string"
+                },
+                "needsManualFollowup": {
+                    "description": "NeedsManualFollowup is set when a trial-booking attempt hit a studio\nwith trial payment collection disabled — the AI sent a holding\nmessage instead of a Stripe link, and this flags the lead for a\nhuman to actually reach out. Cleared automatically the next time a\nstudio_user (not the AI) sends that lead a message.",
+                    "type": "boolean"
                 },
                 "notes": {
                     "type": "string"
@@ -12405,6 +13384,124 @@
                 }
             }
         },
+        "internal_messaging.BroadcastCampaign": {
+            "type": "object",
+            "properties": {
+                "attachments": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_messaging.Attachment"
+                    }
+                },
+                "body": {
+                    "type": "string"
+                },
+                "broadcastListId": {
+                    "type": "string"
+                },
+                "channel": {
+                    "$ref": "#/definitions/internal_messaging.BroadcastChannel"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "enqueuedCount": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "listName": {
+                    "type": "string"
+                },
+                "scheduledFor": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/internal_messaging.BroadcastCampaignStatus"
+                },
+                "studioId": {
+                    "type": "string"
+                },
+                "subject": {
+                    "description": "email only",
+                    "type": "string"
+                },
+                "totalCount": {
+                    "type": "integer"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_messaging.BroadcastCampaignStatus": {
+            "type": "string",
+            "enum": [
+                "scheduled",
+                "sending",
+                "completed",
+                "canceled"
+            ],
+            "x-enum-varnames": [
+                "BroadcastScheduled",
+                "BroadcastSending",
+                "BroadcastCompleted",
+                "BroadcastCanceled"
+            ]
+        },
+        "internal_messaging.BroadcastChannel": {
+            "type": "string",
+            "enum": [
+                "whatsapp",
+                "email"
+            ],
+            "x-enum-varnames": [
+                "BroadcastChannelWhatsApp",
+                "BroadcastChannelEmail"
+            ]
+        },
+        "internal_messaging.BroadcastImportPreview": {
+            "type": "object",
+            "properties": {
+                "importId": {
+                    "type": "string"
+                },
+                "missingCountryCode": {
+                    "type": "integer"
+                },
+                "sampleMissingNumbers": {
+                    "description": "up to 5, for the confirm-dialog's \"e.g. these numbers\" copy",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "totalRows": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_messaging.BroadcastList": {
+            "type": "object",
+            "properties": {
+                "contactCount": {
+                    "type": "integer"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "studioId": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_messaging.ChannelAccount": {
             "type": "object",
             "properties": {
@@ -12463,9 +13560,11 @@
                 "sms",
                 "google_ads",
                 "telegram",
-                "telegram_mtproto"
+                "telegram_mtproto",
+                "email_smtp"
             ],
             "x-enum-comments": {
+                "KindEmailSMTP": "studio's own outbound-email account; outbound-only, no inbox",
                 "KindTelegramMTProto": "QR-linked via tg-web/teleproto (no bot needed)",
                 "KindWhatsAppWeb": "QR-linked via Baileys (no Meta API needed)"
             },
@@ -12478,7 +13577,8 @@
                 "",
                 "",
                 "",
-                "QR-linked via tg-web/teleproto (no bot needed)"
+                "QR-linked via tg-web/teleproto (no bot needed)",
+                "studio's own outbound-email account; outbound-only, no inbox"
             ],
             "x-enum-varnames": [
                 "KindWhatsAppMeta",
@@ -12489,7 +13589,8 @@
                 "KindSMS",
                 "KindGoogleAds",
                 "KindTelegram",
-                "KindTelegramMTProto"
+                "KindTelegramMTProto",
+                "KindEmailSMTP"
             ]
         },
         "internal_messaging.ChannelStatus": {
@@ -12748,6 +13849,17 @@
                 }
             }
         },
+        "internal_messaging.confirmBroadcastImportReq": {
+            "type": "object",
+            "properties": {
+                "defaultCountryCode": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_messaging.connectMetaReq": {
             "type": "object",
             "properties": {
@@ -12764,6 +13876,39 @@
                 },
                 "parentId": {
                     "description": "WABA ID or App ID",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_messaging.createBroadcastCampaignReq": {
+            "type": "object",
+            "properties": {
+                "attachments": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_messaging.Attachment"
+                    }
+                },
+                "body": {
+                    "type": "string"
+                },
+                "broadcastListId": {
+                    "type": "string"
+                },
+                "channel": {
+                    "description": "\"whatsapp\" (default) or \"email\"",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/internal_messaging.BroadcastChannel"
+                        }
+                    ]
+                },
+                "scheduledFor": {
+                    "description": "nil/omitted means \"as soon as today's limit allows\"",
+                    "type": "string"
+                },
+                "subject": {
+                    "description": "required when channel is \"email\"",
                     "type": "string"
                 }
             }
@@ -13041,9 +14186,6 @@
             "type": "object",
             "properties": {
                 "adminEmail": {
-                    "type": "string"
-                },
-                "adminPassword": {
                     "type": "string"
                 },
                 "brandColor": {

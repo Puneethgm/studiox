@@ -423,7 +423,15 @@ func (h *Handler) forgotPassword(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		link := fmt.Sprintf("%s/reset-password?token=%s", h.frontendURL, token)
-		if err := h.mailer.SendPasswordReset(u.Email, link); err != nil {
+
+		var studioName string
+		if u.StudioID != nil {
+			if name, err := h.repo.GetStudioName(r.Context(), *u.StudioID); err == nil {
+				studioName = name
+			}
+		}
+
+		if err := h.mailer.SendPasswordReset(u.Email, fullName(u.FirstName, u.LastName), studioName, link); err != nil {
 			slog.Error("forgot password: failed to send email", "err", err)
 			httpx.WriteError(w, http.StatusInternalServerError, "email_failed", "could not send the reset email")
 			return

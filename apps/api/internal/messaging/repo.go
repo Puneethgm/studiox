@@ -1382,12 +1382,12 @@ func (r *Repo) EnqueueOutbound(ctx context.Context, j OutboundJob) (int64, error
 		j.ScheduledFor = time.Now().UTC()
 	}
 	row := r.pool.QueryRow(ctx, `
-		INSERT INTO outbound_jobs (studio_id, conversation_id, body, attachments,
+		INSERT INTO outbound_jobs (studio_id, conversation_id, subject, body, attachments,
 		                           template_name, source_kind, source_user_id, source_ref,
 		                           scheduled_for, next_attempt_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)
 		RETURNING id
-	`, j.StudioID, j.ConversationID, j.Body, atts,
+	`, j.StudioID, j.ConversationID, j.Subject, j.Body, atts,
 		nullIfEmpty(j.TemplateName), j.SourceKind, j.SourceUserID, nullIfEmpty(j.SourceRef),
 		j.ScheduledFor)
 	var id int64
@@ -1412,7 +1412,7 @@ func (r *Repo) ClaimOutboundBatch(ctx context.Context, n int) ([]OutboundJob, er
 		SET next_attempt_at = now() + INTERVAL '1 minute'  -- soft re-queue if worker dies
 		FROM picked
 		WHERE o.id = picked.id
-		RETURNING o.id, o.studio_id, o.conversation_id, o.body, o.attachments,
+		RETURNING o.id, o.studio_id, o.conversation_id, o.subject, o.body, o.attachments,
 		          o.template_name, o.source_kind, o.source_user_id, o.source_ref,
 		          o.scheduled_for, o.attempts
 	`, n)
@@ -1425,7 +1425,7 @@ func (r *Repo) ClaimOutboundBatch(ctx context.Context, n int) ([]OutboundJob, er
 		var j OutboundJob
 		var atts []byte
 		var tpl, srcRef *string
-		if err := rows.Scan(&j.ID, &j.StudioID, &j.ConversationID, &j.Body, &atts,
+		if err := rows.Scan(&j.ID, &j.StudioID, &j.ConversationID, &j.Subject, &j.Body, &atts,
 			&tpl, &j.SourceKind, &j.SourceUserID, &srcRef,
 			&j.ScheduledFor, &j.Attempts); err != nil {
 			return nil, fmt.Errorf("scan outbound: %w", err)

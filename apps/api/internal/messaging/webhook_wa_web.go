@@ -465,7 +465,7 @@ type waWebSender struct {
 	studioID uuid.UUID
 }
 
-func (s *waWebSender) SendText(ctx context.Context, _, _, recipient, body string, attachments []channels.Attachment) (*channels.SendResult, error) {
+func (s *waWebSender) SendText(ctx context.Context, _, _, recipient, _, body string, attachments []channels.Attachment) (*channels.SendResult, error) {
 	baseURL := waWebServiceURL()
 	sendURL := fmt.Sprintf("%s/sessions/%s/send", baseURL, s.studioID)
 

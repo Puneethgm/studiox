@@ -16,6 +16,7 @@ import { ConnectTwilio } from './ConnectTwilio';
 import { ConnectX } from './ConnectX';
 import { ConnectTelegram } from './ConnectTelegram';
 import { ConnectTelegramWeb } from './ConnectTelegramWeb';
+import { ConnectEmailSMTP } from './ConnectEmailSMTP';
 
 interface TabDef {
   kind: ChannelKind;
@@ -78,6 +79,12 @@ const TABS: TabDef[] = [
     kind: 'telegram',
     label: 'Telegram (Bot)',
     brand: '#26A5E4',
+    status: 'available',
+  },
+  {
+    kind: 'email_smtp',
+    label: 'Email (SMTP)',
+    brand: '#EA4335',
     status: 'available',
   },
 ];
@@ -272,6 +279,8 @@ function AvailablePanel({
           <ConnectTelegram studioId={studioId} showToast={showToast} />
         ) : kind === 'telegram_mtproto' ? (
           <ConnectTelegramWeb studioId={studioId} connected={channels.length > 0} showToast={showToast} />
+        ) : kind === 'email_smtp' ? (
+          <ConnectEmailSMTP studioId={studioId} showToast={showToast} />
         ) : (
           <ConnectMetaChannel studioId={studioId} kind={kind} showToast={showToast} />
         )}

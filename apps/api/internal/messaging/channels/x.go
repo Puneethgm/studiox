@@ -16,7 +16,7 @@ func NewXSender() *XSender {
 	return &XSender{}
 }
 
-func (s *XSender) SendText(ctx context.Context, accessToken, channelExternalID, recipient, body string, attachments []Attachment) (*SendResult, error) {
+func (s *XSender) SendText(ctx context.Context, accessToken, channelExternalID, recipient, _, body string, attachments []Attachment) (*SendResult, error) {
 	// Parse the access token JSON which contains all 4 OAuth 1.0a secrets.
 	var keys struct {
 		ConsumerKey       string `json:"consumer_key"`

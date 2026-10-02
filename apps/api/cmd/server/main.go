@@ -29,6 +29,7 @@ import (
 	"github.com/projectx/api/internal/integrations/crm"
 	"github.com/projectx/api/internal/integrations/embeddings"
 	"github.com/projectx/api/internal/integrations/glofox"
+	"github.com/projectx/api/internal/integrations/glofox/attendance"
 	"github.com/projectx/api/internal/integrations/glofox/firstsession"
 	"github.com/projectx/api/internal/integrations/google"
 	"github.com/projectx/api/internal/integrations/llm"
@@ -206,7 +207,7 @@ func main() {
 	// --- messaging (channels + inbox) ---
 	msgRepo := messaging.NewRepo(pool, cipher)
 	msgBus := messaging.NewInProcBus()
-	msgSvc := messaging.NewService(msgRepo, msgBus, cfg.PublicFormBaseURL, cfg.PublicAPIBaseURL)
+	msgSvc := messaging.NewService(msgRepo, msgBus, cfg.PublicFormBaseURL, cfg.PublicAPIBaseURL, studiosRepo, mailer, frontendURL)
 
 	// Wire DND job-cancellation callback into leads, keeping the import
 	// direction one-way (leads doesn't import messaging).
@@ -218,12 +219,19 @@ func main() {
 	twilioClient := channels.NewTwilioSMS()
 	xClient := channels.NewXSender()
 	telegramClient := channels.NewTelegramSender()
-	msgWorker := messaging.NewOutboundWorker(msgRepo, msgBus, whatsappClient, messengerClient, instagramClient, twilioClient, xClient, telegramClient,
+	emailClient := &channels.SMTPSender{}
+	msgWorker := messaging.NewOutboundWorker(msgRepo, msgBus, whatsappClient, messengerClient, instagramClient, twilioClient, xClient, telegramClient, emailClient,
 		log.With("component", "messaging_worker"))
 	go msgWorker.Run(rootCtx)
 
 	coldLeadScanner := messaging.NewColdLeadScanner(msgRepo, log.With("component", "cold_lead_scanner"))
 	go coldLeadScanner.Run(rootCtx)
+
+	// Broadcast worker: Manual Actions bulk-send — tops up each scheduled
+	// campaign's enqueued recipients every minute, respecting the studio's
+	// daily WhatsApp limit (resumes automatically once the limit resets).
+	broadcastWorker := messaging.NewBroadcastWorker(msgSvc, msgRepo, log.With("component", "broadcast_worker"))
+	go broadcastWorker.Run(rootCtx)
 
 	// Auto-contact worker: picks up lead_autocontact outbox items
 	autoWorker := messaging.NewAutoContactWorker(leadsRepo, msgRepo, msgSvc, studiosRepo, log.With("component", "autocontact_worker"))
@@ -252,6 +260,17 @@ func main() {
 		glofoxStudioID, cfg.Glofox.BranchID, log.With("component", "glofox_first_session"))
 	go firstSessionWorker.Run(rootCtx)
 
+	// Glofox attendance worker: per-studio, driven by crm_connections (not
+	// the platform-wide GLOFOX_* env vars that firstsession above uses) —
+	// polls every 15 min, once per studio that has connected its own
+	// Glofox account via the CRM connector, and stores a per-studio
+	// attended-class count for the Attendance page. Read-only — never
+	// sends anything.
+	attendanceRepo := attendance.NewRepo(pool)
+	attendanceWorker := attendance.New(crmRepo, attendanceRepo, log.With("component", "glofox_attendance"))
+	go attendanceWorker.Run(rootCtx)
+	attendanceHandler := attendance.NewHandler(attendanceRepo)
+
 	// AI answer cache — reuses the shared redisClient constructed above.
 	answerCache := messaging.NewAnswerCache(redisClient, cfg.Redis.AnswerCacheTTL)
 
@@ -272,6 +291,19 @@ func main() {
 	// ai_task_configs override key.
 	llmResolver := llm.NewResolver(llmRepo, claudeClient, cfg.Claude.APIURL, nil, studiosRepo)
 	crmHandler := crm.NewHandler(crmRepo, crmExecutor, llmRepo, llmResolver)
+
+	// As soon as a studio connects any CRM provider, give Glofox connections
+	// an immediate first poll instead of making the studio wait up to 15 min
+	// for attendanceWorker's shared ticker. TickStudio no-ops for any other
+	// provider, so this is safe to fire unconditionally.
+	crmHandler.OnConnected = func(studioID, _ uuid.UUID) {
+		tCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		if err := attendanceWorker.TickStudio(tCtx, studioID); err != nil {
+			log.Warn("Glofox | Attendance — immediate poll after connect failed, will catch up on next scheduled cycle",
+				"component", "glofox_attendance", "studio_id", studioID, "error", err.Error())
+		}
+	}
 
 	// Style worker: periodically distills each studio's own staff-authored
 	// replies into a short "communication style" writeup, shown/editable on
@@ -443,6 +475,7 @@ func main() {
 				r.Post("/social-posts/upload-image", studiosHandler.UploadSocialPostImage)
 				r.Post("/social-posts/{postId}/story-link-posted", studiosHandler.MarkStoryLinkPosted)
 				identityHandler.StudioRoutes(r)
+				attendanceHandler.AdminRoutes(r)
 				r.Route("/messaging", func(r chi.Router) {
 					msgHandler.AdminRoutes(r)
 				})

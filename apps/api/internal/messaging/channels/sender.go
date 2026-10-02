@@ -30,8 +30,9 @@ type Sender interface {
 	//   accessToken:        the studio's per-channel access token (decrypted)
 	//   channelExternalID:  e.g. WhatsApp phone_number_id
 	//   recipient:          e.g. customer phone in international format (no '+')
+	//   subject:            email subject line; ignored by every non-email channel
 	//   body:               UTF-8 text
-	SendText(ctx context.Context, accessToken, channelExternalID, recipient, body string, attachments []Attachment) (*SendResult, error)
+	SendText(ctx context.Context, accessToken, channelExternalID, recipient, subject, body string, attachments []Attachment) (*SendResult, error)
 }
 
 // ErrInvalidCredentials is returned by adapters when the credentials are

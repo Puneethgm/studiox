@@ -24,6 +24,7 @@ import (
 	"github.com/projectx/api/internal/leads"
 	"github.com/projectx/api/internal/messaging/channels"
 	"github.com/projectx/api/internal/platform/billing"
+	"github.com/projectx/api/internal/platform/mail"
 	"github.com/projectx/api/internal/studios"
 )
 
@@ -34,10 +35,19 @@ type Service struct {
 	bus               Bus
 	publicFormBaseURL string
 	publicAPIBaseURL  string
+	// studiosRepo and mailer are only used by EscalateAndNotify's
+	// best-effort escalation-alert email — nil-safe (mailer may be nil or
+	// disabled; studiosRepo is only needed when an alert is actually sent).
+	studiosRepo *studios.Repo
+	mailer      *mail.Sender
+	frontendURL string
 }
 
-func NewService(repo *Repo, bus Bus, publicFormBaseURL, publicAPIBaseURL string) *Service {
-	return &Service{repo: repo, bus: bus, publicFormBaseURL: publicFormBaseURL, publicAPIBaseURL: publicAPIBaseURL}
+func NewService(repo *Repo, bus Bus, publicFormBaseURL, publicAPIBaseURL string, studiosRepo *studios.Repo, mailer *mail.Sender, frontendURL string) *Service {
+	return &Service{
+		repo: repo, bus: bus, publicFormBaseURL: publicFormBaseURL, publicAPIBaseURL: publicAPIBaseURL,
+		studiosRepo: studiosRepo, mailer: mailer, frontendURL: frontendURL,
+	}
 }
 
 // ============================================================
@@ -153,6 +163,72 @@ func (s *Service) ConnectTelegramChannel(ctx context.Context, studioID uuid.UUID
 		DisplayHandle: displayHandle,
 		AccessToken:   string(creds),
 	})
+}
+
+type ConnectEmailSMTPInput struct {
+	Host     string
+	Port     int
+	User     string
+	Password string
+	From     string
+}
+
+// ConnectEmailSMTPChannel stores a studio's own outbound-email account.
+// Deliberately not the inbox pattern (no incoming email, no conversations,
+// no channels.Sender implementation) — an outbound-only credential vault a
+// studio connects once, that a future feature reads via
+// GetActiveEmailSMTPCredentials. Decoupled from the platform-wide
+// password-reset SMTP config in internal/platform/mail. Credentials are
+// verified against the real server (AUTH handshake, no message sent) before
+// being persisted.
+func (s *Service) ConnectEmailSMTPChannel(ctx context.Context, studioID uuid.UUID, in ConnectEmailSMTPInput) (*ChannelAccount, error) {
+	in.Host = strings.TrimSpace(in.Host)
+	in.User = strings.TrimSpace(in.User)
+	in.Password = strings.TrimSpace(in.Password)
+	in.From = strings.TrimSpace(in.From)
+
+	creds := channels.SMTPCredentials{
+		Host:     in.Host,
+		Port:     in.Port,
+		User:     in.User,
+		Password: in.Password,
+		From:     in.From,
+	}
+	if err := channels.SMTPVerify(ctx, creds); err != nil {
+		if errors.Is(err, channels.ErrInvalidCredentials) {
+			return nil, errors.New("invalid SMTP credentials")
+		}
+		return nil, fmt.Errorf("verify smtp credentials: %w", err)
+	}
+
+	encoded, err := json.Marshal(creds)
+	if err != nil {
+		return nil, fmt.Errorf("marshal credentials: %w", err)
+	}
+
+	return s.repo.CreateChannel(ctx, CreateChannelInput{
+		StudioID:      studioID,
+		Kind:          KindEmailSMTP,
+		BSP:           "smtp",
+		ExternalID:    in.User,
+		DisplayHandle: in.From,
+		AccessToken:   string(encoded),
+	})
+}
+
+// GetActiveEmailSMTPCredentials returns the studio's connected outbound-email
+// credentials, decrypted, for whatever feature needs to send through it.
+// Returns ErrNotFound if the studio hasn't connected one.
+func (s *Service) GetActiveEmailSMTPCredentials(ctx context.Context, studioID uuid.UUID) (*channels.SMTPCredentials, error) {
+	ch, err := s.repo.GetActiveChannelByKind(ctx, studioID, KindEmailSMTP)
+	if err != nil {
+		return nil, err
+	}
+	var creds channels.SMTPCredentials
+	if err := json.Unmarshal([]byte(ch.AccessToken), &creds); err != nil {
+		return nil, fmt.Errorf("unmarshal smtp credentials: %w", err)
+	}
+	return &creds, nil
 }
 
 func (s *Service) ListChannels(ctx context.Context, studioID uuid.UUID) ([]ChannelAccount, error) {
@@ -284,6 +360,8 @@ func (s *Service) CreateConversation(ctx context.Context, studioID uuid.UUID, in
 		idKind = IdentityFBPSID
 	} else if in.ChannelKind == KindInstagramMeta {
 		idKind = IdentityIGPSID
+	} else if in.ChannelKind == KindEmailSMTP {
+		idKind = IdentityEmail
 	}
 
 	identity, err := s.repo.FindOrCreateIdentity(ctx, tx, studioID, idKind, in.ContactValue, in.DisplayName)
@@ -2375,11 +2453,72 @@ func (s *Service) escalateForManualMembership(ctx context.Context, studioID, con
 	if err := s.repo.SetLeadNeedsManualFollowup(ctx, leadID, true); err != nil {
 		slog.Error("escalate for manual membership: failed to flag lead", "lead", leadID, "err", err)
 	}
-	if err := s.repo.EscalateConversation(ctx, studioID, convID, reason); err != nil {
+	if err := s.EscalateAndNotify(ctx, studioID, convID, reason); err != nil {
 		slog.Error("escalate for manual membership: failed to escalate conversation", "conv", convID, "err", err)
-		return
+	}
+}
+
+// EscalateAndNotify is the one call site every "this needs a human" trigger
+// goes through (decision-tree escalate_human node, explicit "talk to a
+// human" phrase, low-confidence AI answer, billing complaint, inactive
+// plan) — it marks the conversation, publishes the live-update event for
+// the inbox UI exactly as before, and best-effort emails the studio.
+//
+// The email send never blocks or fails this call: it's fired from a
+// detached goroutine (the inbound ctx may already be gone by the time SMTP
+// responds) with its own timeout, and any error is only logged.
+func (s *Service) EscalateAndNotify(ctx context.Context, studioID, convID uuid.UUID, reason string) error {
+	if err := s.repo.EscalateConversation(ctx, studioID, convID, reason); err != nil {
+		return err
 	}
 	s.bus.Publish(ctx, Event{Kind: EvtConversationEscalated, StudioID: studioID, ConversationID: convID, Reason: reason})
+
+	if s.mailer != nil && s.mailer.Enabled() && s.studiosRepo != nil {
+		go func() {
+			tCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := s.sendEscalationEmail(tCtx, studioID, convID, reason); err != nil {
+				slog.Warn("escalation alert email failed", "component", "escalation_email",
+					"studio_id", studioID, "conversation_id", convID, "error", err.Error())
+			}
+		}()
+	}
+	return nil
+}
+
+// sendEscalationEmail builds and sends the alert — real last-few-messages
+// transcript, not an AI summary (see mail.SendEscalationAlert's doc
+// comment for why), so it works identically whether or not the studio has
+// an AI provider configured.
+func (s *Service) sendEscalationEmail(ctx context.Context, studioID, convID uuid.UUID, reason string) error {
+	studio, err := s.studiosRepo.GetByID(ctx, studioID)
+	if err != nil {
+		return fmt.Errorf("get studio: %w", err)
+	}
+	if studio.ContactEmail == "" {
+		return fmt.Errorf("studio has no contact email on file")
+	}
+
+	conv, err := s.repo.GetConversation(ctx, studioID, convID)
+	if err != nil {
+		return fmt.Errorf("get conversation: %w", err)
+	}
+
+	msgs, err := s.repo.ListMessages(ctx, studioID, convID, 6)
+	if err != nil {
+		return fmt.Errorf("list messages: %w", err)
+	}
+	lines := make([]mail.EscalationMessageLine, 0, len(msgs))
+	for _, m := range msgs {
+		lines = append(lines, mail.EscalationMessageLine{FromLead: m.Direction == DirectionInbound, Body: m.Body})
+	}
+
+	link := fmt.Sprintf("%s/admin/studios/%s/inbox?tab=escalation&conversationId=%s",
+		strings.TrimRight(s.frontendURL, "/"), studioID, convID)
+
+	return s.mailer.SendEscalationAlert(
+		studio.ContactEmail, studio.Name, conv.ContactDisplayName, conv.ContactValue, reason, lines, link,
+	)
 }
 
 // buildPlanCheckoutBody creates a Stripe subscription checkout for the
@@ -2542,11 +2681,10 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 			continue
 		}
 		slog.Info("auto-contact: billing complaint detected, escalating", "lead_id", conv.LeadID, "conversation_id", conv.ID)
-		if err := s.repo.EscalateConversation(ctx, studioID, conv.ID, "Customer reported being charged twice"); err != nil {
+		if err := s.EscalateAndNotify(ctx, studioID, conv.ID, "Customer reported being charged twice"); err != nil {
 			slog.Warn("auto-contact: failed to escalate billing complaint", "err", err, "conversation_id", conv.ID)
 			break
 		}
-		s.bus.Publish(ctx, Event{Kind: EvtConversationEscalated, StudioID: studioID, ConversationID: conv.ID, Reason: "Customer reported being charged twice"})
 		_, _ = s.repo.EnqueueOutbound(ctx, OutboundJob{
 			StudioID:       studioID,
 			ConversationID: conv.ID,
@@ -3237,10 +3375,8 @@ func (s *Service) SendTrialPaymentLink(ctx context.Context, studioID, convID uui
 			if errFlag := s.repo.SetLeadNeedsManualFollowup(ctx, *leadID, true); errFlag != nil {
 				slog.Error("send trial payment link: failed to flag lead for manual followup", "lead", leadID, "err", errFlag)
 			}
-			if errEsc := s.repo.EscalateConversation(ctx, studioID, convID, "Trial plan is inactive — confirm the trial with the customer manually"); errEsc != nil {
+			if errEsc := s.EscalateAndNotify(ctx, studioID, convID, "Trial plan is inactive — confirm the trial with the customer manually"); errEsc != nil {
 				slog.Error("send trial payment link: failed to escalate conversation", "conv", convID, "err", errEsc)
-			} else {
-				s.bus.Publish(ctx, Event{Kind: EvtConversationEscalated, StudioID: studioID, ConversationID: convID, Reason: "Trial plan is inactive — confirm the trial with the customer manually"})
 			}
 		} else {
 			_, _, _, studioSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)

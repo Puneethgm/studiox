@@ -57,7 +57,7 @@ func TestTGWebConnected_Integration(t *testing.T) {
 
 	msgRepo := NewRepo(pool, cipher)
 	msgBus := NewInProcBus()
-	msgSvc := NewService(msgRepo, msgBus, "", "")
+	msgSvc := NewService(msgRepo, msgBus, "", "", nil, nil, "")
 	handler := NewHandler(msgSvc, msgBus, nil, nil, nil, "", nil)
 
 	t.Cleanup(func() {

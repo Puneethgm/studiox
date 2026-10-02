@@ -64,6 +64,14 @@ func (r *Repo) GetProvider(ctx context.Context, id uuid.UUID) (*Provider, error)
 	return scanProvider(row)
 }
 
+// GetProviderByName looks up a provider by its exact display name (e.g.
+// "Glofox") — used by workers that need a specific, known provider rather
+// than one a studio picked at connect-time.
+func (r *Repo) GetProviderByName(ctx context.Context, name string) (*Provider, error) {
+	row := r.pool.QueryRow(ctx, `SELECT `+providerColumns+` FROM crm_providers WHERE name = $1`, name)
+	return scanProvider(row)
+}
+
 func (r *Repo) ListProviders(ctx context.Context) ([]Provider, error) {
 	rows, err := r.pool.Query(ctx, `SELECT `+providerColumns+` FROM crm_providers ORDER BY created_at DESC`)
 	if err != nil {
@@ -327,6 +335,31 @@ func (r *Repo) GetActiveConnectionForStudio(ctx context.Context, studioID uuid.U
 		return nil, fmt.Errorf("get active connection for studio: %w", err)
 	}
 	return &c, nil
+}
+
+// ListActiveConnectionsByProvider returns every studio's active connection to
+// one provider — e.g. every studio that has connected its own Glofox
+// account. Used by workers that poll a third-party API per studio using
+// that studio's own credentials, instead of one platform-wide credential.
+func (r *Repo) ListActiveConnectionsByProvider(ctx context.Context, providerID uuid.UUID) ([]Connection, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, studio_id, crm_provider_id, credentials_enc, status, connected_at, updated_at
+		FROM crm_connections WHERE crm_provider_id = $1 AND status = 'active'
+	`, providerID)
+	if err != nil {
+		return nil, fmt.Errorf("list active connections by provider: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]Connection, 0)
+	for rows.Next() {
+		var c Connection
+		if err := rows.Scan(&c.ID, &c.StudioID, &c.CRMProviderID, &c.CredentialsEnc, &c.Status, &c.ConnectedAt, &c.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan connection: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 // DecryptCredentials returns the {field_key: value} map stored on c.

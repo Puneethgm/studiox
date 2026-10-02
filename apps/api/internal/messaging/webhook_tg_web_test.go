@@ -50,7 +50,7 @@ func TestTGWebInboundAndBackfill_Integration(t *testing.T) {
 
 	msgRepo := NewRepo(pool, cipher)
 	msgBus := NewInProcBus()
-	msgSvc := NewService(msgRepo, msgBus, "", "")
+	msgSvc := NewService(msgRepo, msgBus, "", "", nil, nil, "")
 	handler := NewHandler(msgSvc, msgBus, nil, nil, nil, "", nil)
 
 	// Seed a "connected" tg-web session the way tg-web's /internal/tg-web/connected

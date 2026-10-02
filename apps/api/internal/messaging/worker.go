@@ -28,6 +28,7 @@ type OutboundWorker struct {
 	twilio    channels.Sender
 	x         channels.Sender
 	telegram  channels.Sender
+	email     channels.Sender
 	log       *slog.Logger
 
 	waPaceMu   sync.Mutex
@@ -48,7 +49,7 @@ const (
 	defaultWhatsAppSendSpacing = 20 * time.Second
 )
 
-func NewOutboundWorker(repo *Repo, bus Bus, whatsapp, messenger, instagram, twilio, x, telegram channels.Sender, log *slog.Logger) *OutboundWorker {
+func NewOutboundWorker(repo *Repo, bus Bus, whatsapp, messenger, instagram, twilio, x, telegram, email channels.Sender, log *slog.Logger) *OutboundWorker {
 	return &OutboundWorker{
 		repo:       repo,
 		bus:        bus,
@@ -58,6 +59,7 @@ func NewOutboundWorker(repo *Repo, bus Bus, whatsapp, messenger, instagram, twil
 		twilio:     twilio,
 		x:          x,
 		telegram:   telegram,
+		email:      email,
 		log:        log,
 		waLastSent: make(map[uuid.UUID]time.Time),
 	}
@@ -336,6 +338,8 @@ func (w *OutboundWorker) dispatch(ctx context.Context, j OutboundJob) {
 		sender = &waWebSender{studioID: j.StudioID}
 	case KindTelegramMTProto:
 		sender = &tgWebSender{studioID: j.StudioID}
+	case KindEmailSMTP:
+		sender = w.email
 	default:
 		w.failJob(ctx, j, "no sender for channel kind: "+string(channel.Kind), true)
 		return
@@ -354,7 +358,7 @@ func (w *OutboundWorker) dispatch(ctx context.Context, j OutboundJob) {
 		}
 		w.paceWhatsAppSend(ctx, channel.ID, spacing)
 	}
-	res, err := sender.SendText(ctx, channel.AccessToken, channel.ExternalID, conv.ContactValue, j.Body, chAtts)
+	res, err := sender.SendText(ctx, channel.AccessToken, channel.ExternalID, conv.ContactValue, j.Subject, j.Body, chAtts)
 	if err != nil {
 		// Credential errors are terminal for this job; mark channel error too.
 		if errors.Is(err, channels.ErrInvalidCredentials) {
@@ -445,7 +449,7 @@ func backoffFor(attempts int) time.Duration {
 // testSender is a mock Sender for local development that logs messages instead of sending them.
 type testSender struct{}
 
-func (t *testSender) SendText(ctx context.Context, accessToken, channelExternalID, recipient, body string, attachments []channels.Attachment) (*channels.SendResult, error) {
+func (t *testSender) SendText(ctx context.Context, accessToken, channelExternalID, recipient, _, body string, attachments []channels.Attachment) (*channels.SendResult, error) {
 	// Always succeed in test mode with a fake external ID.
 	return &channels.SendResult{
 		ExternalID: "test-msg-" + time.Now().Format("20060102150405"),

@@ -243,7 +243,7 @@ export interface StudioSheetsSettings {
 
 // ===== Messaging =====
 
-export type ChannelKind = 'whatsapp_meta' | 'whatsapp_web' | 'instagram_meta' | 'messenger_meta' | 'x_dm' | 'sms' | 'google_ads' | 'telegram' | 'telegram_mtproto';
+export type ChannelKind = 'whatsapp_meta' | 'whatsapp_web' | 'instagram_meta' | 'messenger_meta' | 'x_dm' | 'sms' | 'google_ads' | 'telegram' | 'telegram_mtproto' | 'email_smtp';
 
 export type ChannelStatus = 'active' | 'paused' | 'disconnected' | 'error';
 
@@ -495,5 +495,20 @@ export interface DailyAnalyticsPoint {
   outboundMessagesSent: number;
   connectedLeads: number;
   convertedLeads: number;
+}
+
+// ===== Glofox attendance =====
+
+export interface GlofoxAttendanceRow {
+  glofoxUserId: string;
+  name: string;
+  phone: string;
+  email: string;
+  planName: string;
+  planLimit: number; // 0 means unlimited/unknown
+  planStart: string | null;
+  planEnd: string | null;
+  classesAttended: number;
+  updatedAt: string;
 }
 
