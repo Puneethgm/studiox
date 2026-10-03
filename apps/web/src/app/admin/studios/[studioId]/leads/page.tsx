@@ -96,7 +96,13 @@ export default async function LeadsPage({
 
   const [data, campaignsResp, sources] = await Promise.all([
     serverFetch<ListResp>(`/api/v1/studios/${studioId}/leads?${qs.toString()}`),
-    serverFetch<{ campaigns: Campaign[] }>(`/api/v1/studios/${studioId}/campaigns`),
+    // The campaigns list only feeds the filter + import dropdowns. A user with
+    // the Leads permission but not Campaigns gets a 403 here — show the page
+    // without those options instead of crashing it. Other errors still throw.
+    serverFetch<{ campaigns: Campaign[] }>(`/api/v1/studios/${studioId}/campaigns`).catch((err: unknown) => {
+      if (err instanceof Error && err.message.endsWith(': 403')) return { campaigns: [] as Campaign[] };
+      throw err;
+    }),
     serverFetch<string[]>(`/api/v1/studios/${studioId}/leads/sources`).catch(() => [] as string[]),
   ]);
   const campaigns = campaignsResp.campaigns || [];
