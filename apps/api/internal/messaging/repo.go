@@ -1397,16 +1397,31 @@ func (r *Repo) EnqueueOutbound(ctx context.Context, j OutboundJob) (int64, error
 	return id, nil
 }
 
-// ClaimOutboundBatch atomically reserves a batch of pending jobs whose
-// scheduled_for is due. Uses FOR UPDATE SKIP LOCKED to support multiple workers.
-func (r *Repo) ClaimOutboundBatch(ctx context.Context, n int) ([]OutboundJob, error) {
+// ClaimOutboundBatch atomically reserves pending jobs whose next_attempt_at is
+// due, at most perStudio per studio so one studio's backlog (or a stuck
+// channel retrying) can't crowd other studios out of the batch. Studios in
+// exclude are skipped entirely (the worker passes the ones it's still
+// sending for). Uses FOR UPDATE SKIP LOCKED to support multiple workers.
+func (r *Repo) ClaimOutboundBatch(ctx context.Context, perStudio int, exclude []uuid.UUID) ([]OutboundJob, error) {
+	// Passed as text[] (not []uuid.UUID): the pool's simple-protocol mode has
+	// no encode plan for a slice of uuid.UUID.
+	excludeIDs := make([]string, 0, len(exclude))
+	for _, id := range exclude {
+		excludeIDs = append(excludeIDs, id.String())
+	}
 	rows, err := r.pool.Query(ctx, `
-		WITH picked AS (
-			SELECT id FROM outbound_jobs
+		WITH ranked AS (
+			SELECT id, ROW_NUMBER() OVER (PARTITION BY studio_id ORDER BY id) AS rn
+			FROM outbound_jobs
 			WHERE status = 'pending' AND next_attempt_at <= now()
-			ORDER BY id
-			LIMIT $1
-			FOR UPDATE SKIP LOCKED
+			  AND NOT (studio_id = ANY($2::uuid[]))
+		),
+		picked AS (
+			SELECT o.id FROM outbound_jobs o
+			JOIN ranked r ON r.id = o.id
+			WHERE r.rn <= $1
+			ORDER BY o.id
+			FOR UPDATE OF o SKIP LOCKED
 		)
 		UPDATE outbound_jobs o
 		SET next_attempt_at = now() + INTERVAL '1 minute'  -- soft re-queue if worker dies
@@ -1415,7 +1430,7 @@ func (r *Repo) ClaimOutboundBatch(ctx context.Context, n int) ([]OutboundJob, er
 		RETURNING o.id, o.studio_id, o.conversation_id, o.subject, o.body, o.attachments,
 		          o.template_name, o.source_kind, o.source_user_id, o.source_ref,
 		          o.scheduled_for, o.attempts
-	`, n)
+	`, perStudio, excludeIDs)
 	if err != nil {
 		return nil, fmt.Errorf("claim outbound: %w", err)
 	}

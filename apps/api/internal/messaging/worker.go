@@ -19,6 +19,12 @@ import (
 // OutboundWorker drains the outbound_jobs queue and dispatches via the
 // channel adapter. Single in-process worker for now; multiple replicas would
 // race-safely thanks to FOR UPDATE SKIP LOCKED in ClaimOutboundBatch.
+//
+// Studios are isolated from each other: each studio's claimed jobs are sent
+// serially (in id order, so WhatsApp send-spacing still holds) on that
+// studio's own goroutine, and a studio that's still sending is skipped by the
+// next claim. A disconnected channel or a long pacing wait in one studio can
+// therefore never delay another studio's messages.
 type OutboundWorker struct {
 	repo      *Repo
 	bus       Bus
@@ -33,6 +39,15 @@ type OutboundWorker struct {
 
 	waPaceMu   sync.Mutex
 	waLastSent map[uuid.UUID]time.Time
+
+	busyMu sync.Mutex
+	busy   map[uuid.UUID]struct{} // studios with a send loop in flight
+	wg     sync.WaitGroup
+
+	// Seams so the per-studio scheduling can be tested without a DB or real
+	// channel adapters; the constructor wires them to the real thing.
+	claimFn    func(ctx context.Context, perStudio int, exclude []uuid.UUID) ([]OutboundJob, error)
+	dispatchFn func(ctx context.Context, j OutboundJob)
 }
 
 const (
@@ -50,7 +65,7 @@ const (
 )
 
 func NewOutboundWorker(repo *Repo, bus Bus, whatsapp, messenger, instagram, twilio, x, telegram, email channels.Sender, log *slog.Logger) *OutboundWorker {
-	return &OutboundWorker{
+	w := &OutboundWorker{
 		repo:       repo,
 		bus:        bus,
 		whatsapp:   whatsapp,
@@ -62,7 +77,11 @@ func NewOutboundWorker(repo *Repo, bus Bus, whatsapp, messenger, instagram, twil
 		email:      email,
 		log:        log,
 		waLastSent: make(map[uuid.UUID]time.Time),
+		busy:       make(map[uuid.UUID]struct{}),
 	}
+	w.claimFn = repo.ClaimOutboundBatch
+	w.dispatchFn = w.dispatch
+	return w
 }
 
 // paceWhatsAppSend blocks, if needed, so that consecutive sends on the same
@@ -120,13 +139,40 @@ func (w *OutboundWorker) Run(ctx context.Context) {
 }
 
 func (w *OutboundWorker) tick(ctx context.Context) {
-	jobs, err := w.repo.ClaimOutboundBatch(ctx, workerBatchSize)
+	w.busyMu.Lock()
+	exclude := make([]uuid.UUID, 0, len(w.busy))
+	for id := range w.busy {
+		exclude = append(exclude, id)
+	}
+	w.busyMu.Unlock()
+
+	jobs, err := w.claimFn(ctx, workerBatchSize, exclude)
 	if err != nil {
 		w.log.Error("claim outbound batch", "err", err)
 		return
 	}
+
+	byStudio := make(map[uuid.UUID][]OutboundJob)
 	for _, j := range jobs {
-		w.dispatch(ctx, j)
+		byStudio[j.StudioID] = append(byStudio[j.StudioID], j)
+	}
+	for studioID, studioJobs := range byStudio {
+		w.busyMu.Lock()
+		w.busy[studioID] = struct{}{}
+		w.busyMu.Unlock()
+
+		w.wg.Add(1)
+		go func(studioID uuid.UUID, studioJobs []OutboundJob) {
+			defer w.wg.Done()
+			defer func() {
+				w.busyMu.Lock()
+				delete(w.busy, studioID)
+				w.busyMu.Unlock()
+			}()
+			for _, j := range studioJobs {
+				w.dispatchFn(ctx, j)
+			}
+		}(studioID, studioJobs)
 	}
 }
 

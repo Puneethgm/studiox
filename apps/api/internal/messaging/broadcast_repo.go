@@ -289,8 +289,17 @@ func scanBroadcastCampaign(row pgx.Row) (BroadcastCampaign, error) {
 	return c, nil
 }
 
+// CancelBroadcastCampaign stops the campaign and also kills its jobs that
+// are already queued but not yet sent — otherwise cancelling would only stop
+// new recipients being enqueued while the existing ones kept sending/retrying.
 func (r *Repo) CancelBroadcastCampaign(ctx context.Context, studioID, campaignID uuid.UUID) error {
-	tag, err := r.pool.Exec(ctx, `
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("cancel broadcast campaign: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	tag, err := tx.Exec(ctx, `
 		UPDATE broadcast_campaigns SET status = 'canceled', updated_at = now()
 		WHERE id = $1 AND studio_id = $2 AND status IN ('scheduled','sending')
 	`, campaignID, studioID)
@@ -299,6 +308,15 @@ func (r *Repo) CancelBroadcastCampaign(ctx context.Context, studioID, campaignID
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE outbound_jobs SET status = 'dead', last_error = 'broadcast campaign canceled'
+		WHERE studio_id = $1 AND source_ref = $2 AND status = 'pending'
+	`, studioID, fmt.Sprintf("broadcast:%s", campaignID)); err != nil {
+		return fmt.Errorf("cancel broadcast campaign jobs: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("cancel broadcast campaign: %w", err)
 	}
 	return nil
 }
