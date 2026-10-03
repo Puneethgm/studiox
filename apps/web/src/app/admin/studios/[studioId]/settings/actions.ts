@@ -303,6 +303,61 @@ export async function saveWhatsAppDailyMessageLimit(studioId: string, limit: num
   return { ok: true };
 }
 
+export interface GlofoxFirstSessionResult {
+  ok: boolean;
+  error?: string;
+  data?: { enabled: boolean };
+}
+
+export async function getGlofoxFirstSession(studioId: string): Promise<GlofoxFirstSessionResult> {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/messaging/settings/glofox-first-session`, {
+      method: 'GET',
+      headers: {
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      },
+      cache: 'no-store',
+    });
+    if (!res.ok) {
+      return { ok: false, error: `HTTP ${res.status}` };
+    }
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (err: any) {
+    return { ok: false, error: err.message };
+  }
+}
+
+export async function saveGlofoxFirstSession(studioId: string, enabled: boolean): Promise<UpdateStudioResult> {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
+  const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/messaging/settings/glofox-first-session`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+    },
+    body: JSON.stringify({ enabled }),
+    cache: 'no-store',
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    return { ok: false, error: body?.error || `HTTP ${res.status}` };
+  }
+  return { ok: true };
+}
+
 export interface ColdLeadThresholdsResult {
   ok: boolean;
   error?: string;

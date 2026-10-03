@@ -9228,6 +9228,98 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/studios/{studioId}/messaging/settings/glofox-first-session": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Whether the automated \"congrats on your first session\" WhatsApp message is switched on for this studio. Off by default; nothing is sent until an admin turns it on.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Messaging - Channels"
+                ],
+                "summary": "Get Glofox first-session automation switch",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Turns the automated first-session WhatsApp message on or off for this studio. Turning it on only covers sessions attended from that moment onward, never past ones.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Messaging - Channels"
+                ],
+                "summary": "Set Glofox first-session automation switch",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Switch",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_messaging.setGlofoxFirstSessionReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/studios/{studioId}/messaging/settings/send-spacing": {
             "get": {
                 "security": [
@@ -14002,6 +14094,14 @@ const docTemplate = `{
             "properties": {
                 "whatsappDailyMessageLimit": {
                     "type": "integer"
+                }
+            }
+        },
+        "internal_messaging.setGlofoxFirstSessionReq": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
                 }
             }
         },

@@ -262,6 +262,15 @@ func (s *Service) SetWhatsAppDailyMessageLimit(ctx context.Context, studioID uui
 	return s.repo.SetWhatsAppDailyMessageLimit(ctx, studioID, limit)
 }
 
+func (s *Service) GetGlofoxFirstSessionEnabled(ctx context.Context, studioID uuid.UUID) (bool, error) {
+	enabled, _, err := s.repo.GetGlofoxFirstSessionSetting(ctx, studioID)
+	return enabled, err
+}
+
+func (s *Service) SetGlofoxFirstSessionEnabled(ctx context.Context, studioID uuid.UUID, enabled bool) error {
+	return s.repo.SetGlofoxFirstSessionEnabled(ctx, studioID, enabled)
+}
+
 func (s *Service) DisconnectChannel(ctx context.Context, studioID, id uuid.UUID) error {
 	// Look up the channel's kind before disconnecting so we know whether it
 	// needs a follow-up call to log out an external session (WhatsApp Web).

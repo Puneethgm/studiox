@@ -1271,6 +1271,11 @@ definitions:
       whatsappDailyMessageLimit:
         type: integer
     type: object
+  internal_messaging.setGlofoxFirstSessionReq:
+    properties:
+      enabled:
+        type: boolean
+    type: object
   internal_messaging.setSendSpacingReq:
     properties:
       whatsappSendSpacingSeconds:
@@ -8049,6 +8054,69 @@ paths:
       security:
       - CookieAuth: []
       summary: Set WhatsApp daily automated message limit
+      tags:
+      - Messaging - Channels
+  /api/v1/studios/{studioId}/messaging/settings/glofox-first-session:
+    get:
+      description: Whether the automated "congrats on your first session" WhatsApp
+        message is switched on for this studio. Off by default; nothing is sent until
+        an admin turns it on.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Get Glofox first-session automation switch
+      tags:
+      - Messaging - Channels
+    put:
+      consumes:
+      - application/json
+      description: Turns the automated first-session WhatsApp message on or off for
+        this studio. Turning it on only covers sessions attended from that moment
+        onward, never past ones.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: Switch
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_messaging.setGlofoxFirstSessionReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Set Glofox first-session automation switch
       tags:
       - Messaging - Channels
   /api/v1/studios/{studioId}/messaging/settings/send-spacing:

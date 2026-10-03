@@ -2301,6 +2301,38 @@ func (r *Repo) SetWhatsAppDailyMessageLimit(ctx context.Context, studioID uuid.U
 	return err
 }
 
+// GetGlofoxFirstSessionSetting returns whether the Glofox first-session
+// automation is switched on for this studio, and when it was switched on.
+func (r *Repo) GetGlofoxFirstSessionSetting(ctx context.Context, studioID uuid.UUID) (bool, *time.Time, error) {
+	var enabled bool
+	var enabledAt *time.Time
+	err := r.pool.QueryRow(ctx, `
+		SELECT glofox_first_session_enabled, glofox_first_session_enabled_at FROM studios WHERE id = $1
+	`, studioID).Scan(&enabled, &enabledAt)
+	if err != nil {
+		return false, nil, err
+	}
+	return enabled, enabledAt, nil
+}
+
+// SetGlofoxFirstSessionEnabled flips the switch. enabled_at is stamped only
+// on an off→on transition (re-saving "on" keeps the original time) and
+// cleared when turned off, so turning it back on never re-covers old sessions.
+func (r *Repo) SetGlofoxFirstSessionEnabled(ctx context.Context, studioID uuid.UUID, enabled bool) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE studios SET
+			glofox_first_session_enabled_at = CASE
+				WHEN $2 AND NOT glofox_first_session_enabled THEN now()
+				WHEN NOT $2 THEN NULL
+				ELSE glofox_first_session_enabled_at
+			END,
+			glofox_first_session_enabled = $2,
+			updated_at = now()
+		WHERE id = $1
+	`, studioID, enabled)
+	return err
+}
+
 // CountAutomatedWhatsAppSentToday counts automation/AI-sourced WhatsApp
 // messages this studio has already sent since the start of the current
 // Singapore-time day, across both WhatsApp channel kinds (Meta Cloud API and

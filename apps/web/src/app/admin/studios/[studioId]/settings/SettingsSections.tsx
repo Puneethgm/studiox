@@ -13,6 +13,8 @@ import {
   saveWhatsAppSendSpacing,
   getWhatsAppDailyMessageLimit,
   saveWhatsAppDailyMessageLimit,
+  getGlofoxFirstSession,
+  saveGlofoxFirstSession,
   getColdLeadThresholds,
   saveColdLeadThresholds,
   getInitialContactDelay,
@@ -482,6 +484,7 @@ export function IntegrationsSection({ studio, onChange }: { studio: Studio; onCh
   const [loading, setLoading] = useState(true);
   const [sendSpacing, setSendSpacing] = useState(20);
   const [dailyMessageLimit, setDailyMessageLimit] = useState(48);
+  const [glofoxFirstSession, setGlofoxFirstSession] = useState(false);
   const [coldNeverRepliedDays, setColdNeverRepliedDays] = useState(1);
   const [coldStalledDays, setColdStalledDays] = useState(7);
   const [initialDelayMinutes, setInitialDelayMinutes] = useState(0);
@@ -490,9 +493,10 @@ export function IntegrationsSection({ studio, onChange }: { studio: Studio; onCh
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [spacingRes, dailyLimitRes, coldRes, delayRes, aiDelayRes] = await Promise.all([
+      const [spacingRes, dailyLimitRes, glofoxRes, coldRes, delayRes, aiDelayRes] = await Promise.all([
         getWhatsAppSendSpacing(studio.id),
         getWhatsAppDailyMessageLimit(studio.id),
+        getGlofoxFirstSession(studio.id),
         getColdLeadThresholds(studio.id),
         getInitialContactDelay(studio.id),
         getAIReplyDelay(studio.id),
@@ -500,6 +504,7 @@ export function IntegrationsSection({ studio, onChange }: { studio: Studio; onCh
       if (cancelled) return;
       if (spacingRes.ok && spacingRes.data) setSendSpacing(spacingRes.data.whatsappSendSpacingSeconds);
       if (dailyLimitRes.ok && dailyLimitRes.data) setDailyMessageLimit(dailyLimitRes.data.whatsappDailyMessageLimit);
+      if (glofoxRes.ok && glofoxRes.data) setGlofoxFirstSession(glofoxRes.data.enabled);
       if (coldRes.ok && coldRes.data) {
         setColdNeverRepliedDays(coldRes.data.coldNeverRepliedDays);
         setColdStalledDays(coldRes.data.coldStalledDays);
@@ -595,6 +600,16 @@ export function IntegrationsSection({ studio, onChange }: { studio: Studio; onCh
               onSave={async (n) => {
                 const res = await saveWhatsAppDailyMessageLimit(studio.id, n);
                 if (res.ok) setDailyMessageLimit(n);
+                return res;
+              }}
+            />
+            <ToggleRow
+              label="Glofox First-Session Message"
+              description="Automatically WhatsApp members after their first attended Glofox session. Off by default. Turning it on only covers sessions attended from that moment on, never past ones."
+              checked={glofoxFirstSession}
+              onSave={async (v) => {
+                const res = await saveGlofoxFirstSession(studio.id, v);
+                if (res.ok) setGlofoxFirstSession(v);
                 return res;
               }}
             />

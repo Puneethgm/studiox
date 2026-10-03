@@ -24,7 +24,38 @@ import (
 	"github.com/projectx/api/internal/messaging"
 )
 
-const pollInterval = 30 * time.Minute
+const (
+	pollInterval = 30 * time.Minute
+
+	// maxLookback bounds how far back an attended session can be and still
+	// trigger a message, even right after the switch is turned on.
+	maxLookback = 3 * 24 * time.Hour
+
+	// maxNotifyPerTick is a safety cap: if something upstream ever makes
+	// many members eligible at once, at most this many are messaged per poll
+	// and the rest wait for later polls (the daily WhatsApp limit still applies).
+	maxNotifyPerTick = 20
+)
+
+// attendedSince returns the Glofox user IDs with at least one attended
+// booking that started at or after since. A booking whose start time is
+// missing or unparseable is NOT counted — unlike the earlier behaviour, where
+// every attended booking ever recorded counted and the first poll after a
+// deploy messaged the studio's whole history.
+func attendedSince(bookings []glofox.Booking, since time.Time) map[string]bool {
+	out := map[string]bool{}
+	for _, b := range bookings {
+		if !b.Attended {
+			continue
+		}
+		t, ok := b.ParsedTimeStart()
+		if !ok || t.Before(since) {
+			continue
+		}
+		out[b.UserID] = true
+	}
+	return out
+}
 
 // Worker polls Glofox every 30 minutes and fires a WhatsApp first-session message
 // for any member with an active plan who attended at least one session.
@@ -98,6 +129,24 @@ func (w *Worker) tick(ctx context.Context) {
 	tCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
+	// Opt-in per studio, default OFF. Checked every tick so switching it off
+	// in Settings takes effect on the next poll without a restart.
+	enabled, enabledAt, err := w.msgRepo.GetGlofoxFirstSessionSetting(tCtx, w.studioID)
+	if err != nil {
+		w.log.Warn("Glofox | First-session worker — failed to read studio setting, skipping this poll",
+			"component", "glofox_first_session", "error", err.Error())
+		return
+	}
+	if !enabled || enabledAt == nil {
+		w.log.Debug("Glofox | First-session worker — switched off for this studio, skipping",
+			"component", "glofox_first_session", "studio_id", w.studioID)
+		return
+	}
+	since := time.Now().Add(-maxLookback)
+	if enabledAt.After(since) {
+		since = *enabledAt
+	}
+
 	bookings, err := w.gf.ListBookings(tCtx)
 	if err != nil {
 		w.log.Warn("Glofox | First-session worker — failed to fetch bookings, will retry next poll",
@@ -105,22 +154,21 @@ func (w *Worker) tick(ctx context.Context) {
 		return
 	}
 
-	// Collect unique Glofox user IDs where at least one booking is attended.
-	attendedUsers := map[string]bool{}
-	for _, b := range bookings {
-		if b.Attended {
-			attendedUsers[b.UserID] = true
-		}
-	}
+	attendedUsers := attendedSince(bookings, since)
 
 	if len(attendedUsers) == 0 {
-		w.log.Debug("Glofox | First-session worker — no attended bookings in current batch",
+		w.log.Debug("Glofox | First-session worker — no recently attended bookings in current batch",
 			"component", "glofox_first_session", "total_bookings", len(bookings))
 		return
 	}
 
 	newlyNotified := 0
 	for userID := range attendedUsers {
+		if newlyNotified >= maxNotifyPerTick {
+			w.log.Warn("Glofox | First-session worker — per-poll cap reached, remaining members wait for the next poll",
+				"component", "glofox_first_session", "cap", maxNotifyPerTick)
+			break
+		}
 		notified, err := w.processUser(tCtx, userID)
 		if err != nil {
 			w.log.Warn("Glofox | First-session worker — failed to process member",

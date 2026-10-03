@@ -149,6 +149,8 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Put("/settings/send-spacing", h.setSendSpacing)
 	r.Get("/settings/daily-message-limit", h.getDailyMessageLimit)
 	r.Put("/settings/daily-message-limit", h.setDailyMessageLimit)
+	r.Get("/settings/glofox-first-session", h.getGlofoxFirstSession)
+	r.Put("/settings/glofox-first-session", h.setGlofoxFirstSession)
 	r.Get("/settings/cold-lead-thresholds", h.getColdLeadThresholds)
 	r.Put("/settings/cold-lead-thresholds", h.setColdLeadThresholds)
 	r.Get("/leads/cold", h.listColdLeads)
@@ -387,6 +389,63 @@ func (h *Handler) setDailyMessageLimit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"whatsappDailyMessageLimit": req.WhatsAppDailyMessageLimit})
+}
+
+// getGlofoxFirstSession godoc
+//
+//	@Summary		Get Glofox first-session automation switch
+//	@Description	Whether the automated "congrats on your first session" WhatsApp message is switched on for this studio. Off by default; nothing is sent until an admin turns it on.
+//	@Tags			Messaging - Channels
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/settings/glofox-first-session [get]
+func (h *Handler) getGlofoxFirstSession(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	enabled, err := h.svc.GetGlofoxFirstSessionEnabled(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"enabled": enabled})
+}
+
+type setGlofoxFirstSessionReq struct {
+	Enabled bool `json:"enabled"`
+}
+
+// setGlofoxFirstSession godoc
+//
+//	@Summary		Set Glofox first-session automation switch
+//	@Description	Turns the automated first-session WhatsApp message on or off for this studio. Turning it on only covers sessions attended from that moment onward, never past ones.
+//	@Tags			Messaging - Channels
+//	@Security		CookieAuth
+//	@Accept			json
+//	@Produce		json
+//	@Param			studioId	path		string						true	"Studio ID"
+//	@Param			body		body		setGlofoxFirstSessionReq	true	"Switch"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/settings/glofox-first-session [put]
+func (h *Handler) setGlofoxFirstSession(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	var req setGlofoxFirstSessionReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if err := h.svc.SetGlofoxFirstSessionEnabled(r.Context(), studioID, req.Enabled); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"enabled": req.Enabled})
 }
 
 // getColdLeadThresholds godoc
