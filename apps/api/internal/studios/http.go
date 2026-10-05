@@ -191,6 +191,24 @@ func (h *Handler) PublicRoutes(r chi.Router) {
 	r.Post("/public/leads/{leadId}/plan-payment-intent", h.publicCreatePlanPaymentIntent)
 }
 
+// isGlobalScope reports whether the request targets the "global" pseudo-studio,
+// either through a route param or a literal /studios/global/... path segment.
+// The path check matters: middleware on a parent router runs before the child
+// route's {id} param is resolved, and some global routes are literal paths
+// (e.g. PUT /me/studios/global/plans).
+func isGlobalScope(r *http.Request) bool {
+	if chi.URLParam(r, "studioId") == "global" || chi.URLParam(r, "id") == "global" {
+		return true
+	}
+	segs := strings.Split(r.URL.Path, "/")
+	for i := 0; i+1 < len(segs); i++ {
+		if segs[i] == "studios" && segs[i+1] == "global" {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *Handler) RequireActiveStudio(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c := identity.MustClaims(r.Context())
@@ -200,6 +218,14 @@ func (h *Handler) RequireActiveStudio(next http.Handler) http.Handler {
 		}
 		if c.StudioID == nil {
 			httpx.WriteError(w, http.StatusForbidden, "forbidden", "no studio bound to this user")
+			return
+		}
+
+		// "global" is the platform-wide pseudo-studio (platform Stripe keys, platform
+		// plans, global billing history, cross-studio social posts). It is only ever
+		// meant for the super-admin pages, so a studio-bound user must never reach it.
+		if isGlobalScope(r) {
+			httpx.WriteError(w, http.StatusForbidden, "forbidden", "platform-level settings are restricted to platform admins")
 			return
 		}
 
@@ -3174,6 +3200,12 @@ func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request) {
 	claims := identity.MustClaims(r.Context())
 	if claims.StudioID == nil || claims.StudioID.String() != studioID.String() {
 		httpx.WriteError(w, http.StatusForbidden, "forbidden", "you do not have permission to delete this studio")
+		return
+	}
+	// Deleting a studio is irreversible and cascades through every table, so it is
+	// limited to the studio's admin, not any staff member who knows the contact email.
+	if claims.Role != identity.RoleStudioAdmin {
+		httpx.WriteError(w, http.StatusForbidden, "forbidden", "only a studio admin can delete the studio")
 		return
 	}
 
