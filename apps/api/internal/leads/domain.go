@@ -89,8 +89,12 @@ type Lead struct {
 	// values to Glofox instead of a neutral placeholder birth date.
 	Gender      string     `json:"gender,omitempty"`
 	DateOfBirth *time.Time `json:"dateOfBirth,omitempty"`
-	CreatedAt   time.Time  `json:"createdAt"`
-	UpdatedAt   time.Time  `json:"updatedAt"`
+	// GlofoxMemberID is the external member/barcode ID from a Glofox member export
+	// (the "BarcodeID" column), set when the lead was bulk-imported from one — see
+	// ImportLeads/mapHeaders. Empty for leads from any other source.
+	GlofoxMemberID string    `json:"glofoxMemberId,omitempty"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 type StudioSheetsSettings struct {
@@ -137,6 +141,9 @@ var (
 	ErrLeadNotFound     = errors.New("lead not found")
 	ErrSlugTaken        = errors.New("slug already in use within this studio")
 	ErrInvalidPlan      = errors.New("fitness plan not offered by this campaign")
+	// ErrExternalSheetExists: this studio already imports from that spreadsheet + tab.
+	ErrExternalSheetExists   = errors.New("this spreadsheet and tab is already added")
+	ErrExternalSheetNotFound = errors.New("external sheet not found")
 )
 
 type AnalyticsSummary struct {

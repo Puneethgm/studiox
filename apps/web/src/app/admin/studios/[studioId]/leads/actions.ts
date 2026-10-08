@@ -41,6 +41,43 @@ export async function importLeadsAction(studioId: string, formData: FormData): P
   }
 }
 
+export interface EnableAutoContactResult {
+  ok: boolean;
+  error?: string;
+  enqueued?: number;
+  message?: string;
+}
+
+export async function enableAutoContactForStatusAction(studioId: string, statuses: string[]): Promise<EnableAutoContactResult> {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/leads/auto-contact/enable`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      },
+      body: JSON.stringify({ statuses }),
+      cache: 'no-store',
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      return { ok: false, error: data.error || `HTTP ${res.status}` };
+    }
+
+    revalidatePath(`/admin/studios/${studioId}/leads`);
+    return { ok: true, enqueued: data.enqueued, message: data.message };
+  } catch (err: any) {
+    return { ok: false, error: err.message || 'An unknown error occurred.' };
+  }
+}
+
 export type UpdatePipelineStatusResult = { ok: true } | { ok: false; error: string };
 
 // Minimal status-only PATCH for the pipeline board's drag-and-drop — every

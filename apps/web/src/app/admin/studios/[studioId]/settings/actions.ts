@@ -610,3 +610,78 @@ export async function saveExternalLeadsSheetSettings(
   revalidatePath(`/admin/studios/${studioId}/settings`);
   return { ok: true };
 }
+
+// ----- several external leads sheets per studio -----
+
+export type ExternalLeadsSheet = ExternalLeadsSheetSettingsData & { id: string };
+
+async function cookieHeaderValue(): Promise<string> {
+  const cookieStore = await cookies();
+  return cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+}
+
+export async function listExternalLeadsSheets(
+  studioId: string
+): Promise<{ ok: boolean; error?: string; sheets?: ExternalLeadsSheet[] }> {
+  const ck = await cookieHeaderValue();
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/leads/external-sheets`, {
+      headers: { ...(ck ? { Cookie: ck } : {}) },
+      cache: 'no-store',
+    });
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    const data = (await res.json()) as { sheets?: ExternalLeadsSheet[] };
+    return { ok: true, sheets: data.sheets ?? [] };
+  } catch (err: any) {
+    return { ok: false, error: err.message };
+  }
+}
+
+async function sendExternalLeadsSheet(
+  studioId: string,
+  method: 'POST' | 'PUT',
+  sheetId: string | null,
+  data: ExternalLeadsSheetSettingsData
+): Promise<{ ok: boolean; error?: string; details?: Record<string, string>; sheet?: ExternalLeadsSheet }> {
+  const ck = await cookieHeaderValue();
+  const url = `${API_BASE}/api/v1/studios/${studioId}/leads/external-sheets${sheetId ? `/${sheetId}` : ''}`;
+  const res = await fetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json', ...(ck ? { Cookie: ck } : {}) },
+    body: JSON.stringify(data),
+    cache: 'no-store',
+  });
+  type ErrBody = { error?: string; details?: Record<string, string> };
+  const body = (await res.json().catch(() => null)) as (ErrBody & Partial<ExternalLeadsSheet>) | null;
+  if (!res.ok) {
+    return { ok: false, error: body?.error ?? `HTTP ${res.status}`, details: body?.details };
+  }
+  revalidatePath(`/admin/studios/${studioId}/settings`);
+  return { ok: true, sheet: body as ExternalLeadsSheet };
+}
+
+export async function createExternalLeadsSheet(studioId: string, data: ExternalLeadsSheetSettingsData) {
+  return sendExternalLeadsSheet(studioId, 'POST', null, data);
+}
+
+export async function updateExternalLeadsSheet(studioId: string, sheetId: string, data: ExternalLeadsSheetSettingsData) {
+  return sendExternalLeadsSheet(studioId, 'PUT', sheetId, data);
+}
+
+export async function deleteExternalLeadsSheet(studioId: string, sheetId: string): Promise<{ ok: boolean; error?: string }> {
+  const ck = await cookieHeaderValue();
+  const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/leads/external-sheets/${sheetId}`, {
+    method: 'DELETE',
+    headers: { ...(ck ? { Cookie: ck } : {}) },
+    cache: 'no-store',
+  });
+  if (!res.ok && res.status !== 204) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    return { ok: false, error: body?.error ?? `HTTP ${res.status}` };
+  }
+  revalidatePath(`/admin/studios/${studioId}/settings`);
+  return { ok: true };
+}

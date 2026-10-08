@@ -95,7 +95,7 @@ func (w *Worker) importFromSheet(ctx context.Context, cfg leads.ExternalLeadsShe
 		return 0, nil
 	}
 
-	lastImported, err := w.repo.GetExternalSheetImportWatermark(ctx, cfg.SpreadsheetID, cfg.TabName)
+	lastImported, err := w.repo.GetExternalSheetImportWatermark(ctx, cfg.StudioID, cfg.SpreadsheetID, cfg.TabName)
 	if err != nil {
 		return 0, fmt.Errorf("get watermark: %w", err)
 	}

@@ -294,37 +294,21 @@ func (r *Repo) CreateLeadWithOutbox(ctx context.Context, l *Lead, destination st
 	row := tx.QueryRow(ctx, `
 		INSERT INTO leads (studio_id, campaign_id, name, first_name, last_name, email, phone, fitness_plan,
 		                   goals, source, status, currency, notes, contact_made, hot_lead, trial_purchased, auto_contact_stage,
-		                   assigned_to, trial_attended, member_sold, monthly_fee, offer, further_notes, referrer, user_agent, ip_address)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
+		                   assigned_to, trial_attended, member_sold, monthly_fee, offer, further_notes, referrer, user_agent, ip_address,
+		                   glofox_member_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
 		RETURNING id, status, contact_attempts, last_contacted_at, contact_made, hot_lead, trial_purchased, auto_contact_stage,
 		          assigned_to, trial_attended, member_sold, monthly_fee, currency, offer, further_notes, created_at, updated_at
 	`, l.StudioID, l.CampaignID, l.Name, l.FirstName, l.LastName, l.Email, l.Phone, l.FitnessPlan,
 		l.Goals, l.Source, l.Status, l.Currency, l.Notes, l.ContactMade, l.HotLead, l.TrialPurchased, l.AutoContactStage,
-		l.AssignedTo, l.TrialAttended, l.MemberSold, l.MonthlyFee, l.Offer, l.FurtherNotes, l.Referrer, l.UserAgent, ipText(l.IPAddress))
+		l.AssignedTo, l.TrialAttended, l.MemberSold, l.MonthlyFee, l.Offer, l.FurtherNotes, l.Referrer, l.UserAgent, ipText(l.IPAddress),
+		l.GlofoxMemberID)
 	if err := row.Scan(&l.ID, &l.Status, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage,
 		&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Currency, &l.Offer, &l.FurtherNotes, &l.CreatedAt, &l.UpdatedAt); err != nil {
 		return fmt.Errorf("insert lead: %w", err)
 	}
 
-	type leadPayload struct {
-		ID           string `json:"id"`
-		StudioID     string `json:"studioId"`
-		CampaignID   string `json:"campaignId"`
-		Name         string `json:"name"`
-		FirstName    string `json:"firstName"`
-		LastName     string `json:"lastName"`
-		Email        string `json:"email"`
-		Phone        string `json:"phone"`
-		FitnessPlan  string `json:"fitnessPlan"`
-		Goals        string `json:"goals"`
-		Source       string `json:"source"`
-		Status       string `json:"status"`
-		StudioName   string `json:"studioName"`
-		CampaignName string `json:"campaignName"`
-		StudioSlug   string `json:"studioSlug"`
-		CampaignSlug string `json:"campaignSlug"`
-	}
-	payload, err := json.Marshal(leadPayload{
+	payload, err := json.Marshal(leadAutoContactPayload{
 		ID: l.ID.String(), StudioID: l.StudioID.String(), CampaignID: l.CampaignID.String(),
 		Name: l.Name, FirstName: l.FirstName, LastName: l.LastName,
 		Email: l.Email, Phone: l.Phone, FitnessPlan: l.FitnessPlan,
@@ -368,6 +352,98 @@ func (r *Repo) CreateLeadWithOutbox(ctx context.Context, l *Lead, destination st
 	r.syncLeadToGlofoxAsync(l, l.Status)
 
 	return nil
+}
+
+// leadAutoContactPayload is the subset of a lead's fields the auto-contact worker needs
+// (json.Unmarshaled straight into a leads.Lead). Shared by CreateLeadWithOutbox and
+// EnqueueAutoContactForLeadsByStatus.
+type leadAutoContactPayload struct {
+	ID           string `json:"id"`
+	StudioID     string `json:"studioId"`
+	CampaignID   string `json:"campaignId"`
+	Name         string `json:"name"`
+	FirstName    string `json:"firstName"`
+	LastName     string `json:"lastName"`
+	Email        string `json:"email"`
+	Phone        string `json:"phone"`
+	FitnessPlan  string `json:"fitnessPlan"`
+	Goals        string `json:"goals"`
+	Source       string `json:"source"`
+	Status       string `json:"status"`
+	StudioName   string `json:"studioName"`
+	CampaignName string `json:"campaignName"`
+	StudioSlug   string `json:"studioSlug"`
+	CampaignSlug string `json:"campaignSlug"`
+}
+
+// EnqueueAutoContactForLeadsByStatus hands every existing lead at the given status over to
+// the AI auto-contact worker. Only never-contacted leads (contact_attempts = 0,
+// last_contacted_at IS NULL) without an already-queued job are eligible, so this is safe
+// to run more than once without double-messaging anyone.
+func (r *Repo) EnqueueAutoContactForLeadsByStatus(ctx context.Context, studioID uuid.UUID, status LeadStatus) (int, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	rows, err := tx.Query(ctx, `
+		SELECT l.id, l.studio_id, l.campaign_id, l.name, COALESCE(l.first_name, ''), COALESCE(l.last_name, ''),
+		       l.email, l.phone, l.fitness_plan, l.goals, l.source, l.status,
+		       s.name, c.name, s.slug, c.slug
+		FROM leads l
+		JOIN studios s ON s.id = l.studio_id
+		JOIN campaigns c ON c.id = l.campaign_id
+		WHERE l.studio_id = $1 AND l.status = $2
+		  AND l.contact_attempts = 0 AND l.last_contacted_at IS NULL
+		  AND NOT EXISTS (
+		    SELECT 1 FROM outbox o
+		    WHERE o.aggregate_type = 'lead' AND o.aggregate_id = l.id
+		      AND o.destination = 'lead_autocontact' AND o.status != 'dead'
+		  )
+	`, studioID, status)
+	if err != nil {
+		return 0, fmt.Errorf("select leads for bulk auto-contact: %w", err)
+	}
+
+	type scannedLead struct {
+		id      uuid.UUID
+		payload leadAutoContactPayload
+	}
+	var leads []scannedLead
+	for rows.Next() {
+		var sl scannedLead
+		if err := rows.Scan(&sl.id, &sl.payload.StudioID, &sl.payload.CampaignID, &sl.payload.Name, &sl.payload.FirstName, &sl.payload.LastName,
+			&sl.payload.Email, &sl.payload.Phone, &sl.payload.FitnessPlan, &sl.payload.Goals, &sl.payload.Source, &sl.payload.Status,
+			&sl.payload.StudioName, &sl.payload.CampaignName, &sl.payload.StudioSlug, &sl.payload.CampaignSlug); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("scan lead for bulk auto-contact: %w", err)
+		}
+		sl.payload.ID = sl.id.String()
+		leads = append(leads, sl)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("iterate leads for bulk auto-contact: %w", err)
+	}
+	rows.Close()
+
+	for _, sl := range leads {
+		payload, err := json.Marshal(sl.payload)
+		if err != nil {
+			return 0, fmt.Errorf("marshal lead payload: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO outbox (aggregate_type, aggregate_id, event_type, destination, payload)
+			VALUES ('lead', $1, 'lead.created', 'lead_autocontact', $2)
+		`, sl.id, string(payload)); err != nil {
+			return 0, fmt.Errorf("insert autocontact outbox: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit: %w", err)
+	}
+	return len(leads), nil
 }
 
 type ListLeadsFilter struct {
@@ -469,7 +545,7 @@ func (r *Repo) ListLeads(ctx context.Context, studioID uuid.UUID, f ListLeadsFil
 		       l.name, COALESCE(l.first_name, ''), COALESCE(l.last_name, ''), l.email, l.phone, l.fitness_plan, l.goals,
 		       l.source, l.status, l.currency, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage,
 		       COALESCE(l.assigned_to, ''), l.trial_attended, l.member_sold, l.monthly_fee, COALESCE(l.offer, ''), COALESCE(l.further_notes, ''),
-		       l.dnd_enabled, l.needs_manual_followup, l.created_at, l.updated_at
+		       l.dnd_enabled, l.needs_manual_followup, l.created_at, l.updated_at, l.glofox_member_id
 		FROM leads l
 		JOIN campaigns c ON c.id = l.campaign_id
 		JOIN studios s ON s.id = l.studio_id
@@ -489,7 +565,7 @@ func (r *Repo) ListLeads(ctx context.Context, studioID uuid.UUID, f ListLeadsFil
 		if err := rows.Scan(&l.ID, &l.StudioID, &l.StudioName, &l.StudioSlug, &l.CampaignID, &l.CampaignName, &l.CampaignSlug,
 			&l.Name, &l.FirstName, &l.LastName, &l.Email, &l.Phone, &l.FitnessPlan, &l.Goals,
 			&l.Source, &l.Status, &l.Currency, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage,
-			&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.DNDEnabled, &l.NeedsManualFollowup, &l.CreatedAt, &l.UpdatedAt); err != nil {
+			&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.DNDEnabled, &l.NeedsManualFollowup, &l.CreatedAt, &l.UpdatedAt, &l.GlofoxMemberID); err != nil {
 			return nil, 0, fmt.Errorf("scan lead: %w", err)
 		}
 		out = append(out, l)
@@ -503,7 +579,7 @@ func (r *Repo) GetLead(ctx context.Context, studioID, id uuid.UUID) (*Lead, erro
 		       l.name, COALESCE(l.first_name, ''), COALESCE(l.last_name, ''), l.email, l.phone, l.fitness_plan, l.goals,
 		       l.source, l.status, l.currency, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage,
 		       COALESCE(l.assigned_to, ''), l.trial_attended, l.member_sold, l.monthly_fee, COALESCE(l.offer, ''), COALESCE(l.further_notes, ''),
-		       l.dnd_enabled, l.needs_manual_followup, l.created_at, l.updated_at, COALESCE(l.gender, ''), l.date_of_birth
+		       l.dnd_enabled, l.needs_manual_followup, l.created_at, l.updated_at, COALESCE(l.gender, ''), l.date_of_birth, l.glofox_member_id
 		FROM leads l
 		JOIN campaigns c ON c.id = l.campaign_id
 		JOIN studios s ON s.id = l.studio_id
@@ -513,7 +589,7 @@ func (r *Repo) GetLead(ctx context.Context, studioID, id uuid.UUID) (*Lead, erro
 	if err := row.Scan(&l.ID, &l.StudioID, &l.StudioName, &l.StudioSlug, &l.CampaignID, &l.CampaignName, &l.CampaignSlug,
 		&l.Name, &l.FirstName, &l.LastName, &l.Email, &l.Phone, &l.FitnessPlan, &l.Goals,
 		&l.Source, &l.Status, &l.Currency, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage,
-		&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.DNDEnabled, &l.NeedsManualFollowup, &l.CreatedAt, &l.UpdatedAt, &l.Gender, &l.DateOfBirth); err != nil {
+		&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.DNDEnabled, &l.NeedsManualFollowup, &l.CreatedAt, &l.UpdatedAt, &l.Gender, &l.DateOfBirth, &l.GlofoxMemberID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrLeadNotFound
 		}
@@ -528,7 +604,7 @@ func (r *Repo) GetLeadTx(ctx context.Context, tx pgx.Tx, studioID, id uuid.UUID)
 		       l.name, COALESCE(l.first_name, ''), COALESCE(l.last_name, ''), l.email, l.phone, l.fitness_plan, l.goals,
 		       l.source, l.status, l.currency, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage,
 		       COALESCE(l.assigned_to, ''), l.trial_attended, l.member_sold, l.monthly_fee, COALESCE(l.offer, ''), COALESCE(l.further_notes, ''),
-		       l.dnd_enabled, l.needs_manual_followup, l.created_at, l.updated_at, COALESCE(l.gender, ''), l.date_of_birth
+		       l.dnd_enabled, l.needs_manual_followup, l.created_at, l.updated_at, COALESCE(l.gender, ''), l.date_of_birth, l.glofox_member_id
 		FROM leads l
 		JOIN campaigns c ON c.id = l.campaign_id
 		JOIN studios s ON s.id = l.studio_id
@@ -538,7 +614,7 @@ func (r *Repo) GetLeadTx(ctx context.Context, tx pgx.Tx, studioID, id uuid.UUID)
 	if err := row.Scan(&l.ID, &l.StudioID, &l.StudioName, &l.StudioSlug, &l.CampaignID, &l.CampaignName, &l.CampaignSlug,
 		&l.Name, &l.FirstName, &l.LastName, &l.Email, &l.Phone, &l.FitnessPlan, &l.Goals,
 		&l.Source, &l.Status, &l.Currency, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage,
-		&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.DNDEnabled, &l.NeedsManualFollowup, &l.CreatedAt, &l.UpdatedAt, &l.Gender, &l.DateOfBirth); err != nil {
+		&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.DNDEnabled, &l.NeedsManualFollowup, &l.CreatedAt, &l.UpdatedAt, &l.Gender, &l.DateOfBirth, &l.GlofoxMemberID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrLeadNotFound
 		}
@@ -1033,71 +1109,147 @@ func (r *Repo) SaveSheetsSettings(ctx context.Context, s *StudioSheetsSettings) 
 	return nil
 }
 
-// ----- external leads sheet settings (read-only, third-party sheet) -----
+// ----- external leads sheet settings (read-only, third-party sheets) -----
+// A studio can have several (one per spreadsheet + tab), each polled independently.
 
-func (r *Repo) GetExternalLeadsSheetSettings(ctx context.Context, studioID uuid.UUID) (*ExternalLeadsSheetSettings, error) {
-	row := r.pool.QueryRow(ctx, `
-		SELECT id, studio_id, spreadsheet_id, tab_name, name_column, first_name_column, last_name_column,
+const externalSheetColumns = `id, studio_id, spreadsheet_id, tab_name, name_column, first_name_column, last_name_column,
 		       email_column, phone_column, source_column, notes_column, date_column, hot_lead_column,
-		       trial_purchased_column, continue_ai_after_greeting, auto_contact_enabled, active, created_at, updated_at
-		FROM studio_external_leads_sheet_settings
-		WHERE studio_id = $1
-	`, studioID)
+		       trial_purchased_column, continue_ai_after_greeting, auto_contact_enabled, active, created_at, updated_at`
+
+func scanExternalSheet(row pgx.Row) (*ExternalLeadsSheetSettings, error) {
 	var s ExternalLeadsSheetSettings
 	if err := row.Scan(&s.ID, &s.StudioID, &s.SpreadsheetID, &s.TabName, &s.NameColumn, &s.FirstNameColumn,
 		&s.LastNameColumn, &s.EmailColumn, &s.PhoneColumn, &s.SourceColumn, &s.NotesColumn, &s.DateColumn,
 		&s.HotLeadColumn, &s.TrialPurchasedColumn, &s.ContinueAIAfterGreeting, &s.AutoContactEnabled, &s.Active,
 		&s.CreatedAt, &s.UpdatedAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("get external leads sheet settings: %w", err)
+		return nil, err
 	}
 	return &s, nil
 }
 
-func (r *Repo) SaveExternalLeadsSheetSettings(ctx context.Context, s *ExternalLeadsSheetSettings) error {
+// ListExternalLeadsSheets returns every external sheet the studio imports from, oldest first.
+func (r *Repo) ListExternalLeadsSheets(ctx context.Context, studioID uuid.UUID) ([]ExternalLeadsSheetSettings, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+externalSheetColumns+`
+		FROM studio_external_leads_sheet_settings
+		WHERE studio_id = $1
+		ORDER BY created_at ASC, id ASC
+	`, studioID)
+	if err != nil {
+		return nil, fmt.Errorf("list external leads sheets: %w", err)
+	}
+	defer rows.Close()
+	out := make([]ExternalLeadsSheetSettings, 0)
+	for rows.Next() {
+		s, err := scanExternalSheet(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan external leads sheet: %w", err)
+		}
+		out = append(out, *s)
+	}
+	return out, rows.Err()
+}
+
+// CreateExternalLeadsSheet adds a sheet. ErrExternalSheetExists if this studio already
+// imports from that spreadsheet + tab.
+func (r *Repo) CreateExternalLeadsSheet(ctx context.Context, s *ExternalLeadsSheetSettings) error {
 	row := r.pool.QueryRow(ctx, `
 		INSERT INTO studio_external_leads_sheet_settings
 			(studio_id, spreadsheet_id, tab_name, name_column, first_name_column, last_name_column,
 			 email_column, phone_column, source_column, notes_column, date_column, hot_lead_column,
 			 trial_purchased_column, continue_ai_after_greeting, auto_contact_enabled, active)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-		ON CONFLICT (studio_id) DO UPDATE
-		SET spreadsheet_id = EXCLUDED.spreadsheet_id,
-		    tab_name = EXCLUDED.tab_name,
-		    name_column = EXCLUDED.name_column,
-		    first_name_column = EXCLUDED.first_name_column,
-		    last_name_column = EXCLUDED.last_name_column,
-		    email_column = EXCLUDED.email_column,
-		    phone_column = EXCLUDED.phone_column,
-		    source_column = EXCLUDED.source_column,
-		    notes_column = EXCLUDED.notes_column,
-		    date_column = EXCLUDED.date_column,
-		    hot_lead_column = EXCLUDED.hot_lead_column,
-		    trial_purchased_column = EXCLUDED.trial_purchased_column,
-		    continue_ai_after_greeting = EXCLUDED.continue_ai_after_greeting,
-		    auto_contact_enabled = EXCLUDED.auto_contact_enabled,
-		    active = EXCLUDED.active,
-		    updated_at = now()
 		RETURNING id, created_at, updated_at
 	`, s.StudioID, s.SpreadsheetID, s.TabName, s.NameColumn, s.FirstNameColumn, s.LastNameColumn,
 		s.EmailColumn, s.PhoneColumn, s.SourceColumn, s.NotesColumn, s.DateColumn,
 		s.HotLeadColumn, s.TrialPurchasedColumn, s.ContinueAIAfterGreeting, s.AutoContactEnabled, s.Active)
 	if err := row.Scan(&s.ID, &s.CreatedAt, &s.UpdatedAt); err != nil {
-		return fmt.Errorf("save external leads sheet settings: %w", err)
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return ErrExternalSheetExists
+		}
+		return fmt.Errorf("create external leads sheet: %w", err)
 	}
 	return nil
+}
+
+// UpdateExternalLeadsSheet replaces one sheet's settings (scoped to the studio).
+// ErrExternalSheetNotFound if it isn't this studio's; ErrExternalSheetExists if the new
+// spreadsheet + tab duplicates another of the studio's sheets.
+func (r *Repo) UpdateExternalLeadsSheet(ctx context.Context, s *ExternalLeadsSheetSettings) error {
+	row := r.pool.QueryRow(ctx, `
+		UPDATE studio_external_leads_sheet_settings
+		SET spreadsheet_id = $3, tab_name = $4, name_column = $5, first_name_column = $6,
+		    last_name_column = $7, email_column = $8, phone_column = $9, source_column = $10,
+		    notes_column = $11, date_column = $12, hot_lead_column = $13, trial_purchased_column = $14,
+		    continue_ai_after_greeting = $15, auto_contact_enabled = $16, active = $17, updated_at = now()
+		WHERE id = $1 AND studio_id = $2
+		RETURNING created_at, updated_at
+	`, s.ID, s.StudioID, s.SpreadsheetID, s.TabName, s.NameColumn, s.FirstNameColumn, s.LastNameColumn,
+		s.EmailColumn, s.PhoneColumn, s.SourceColumn, s.NotesColumn, s.DateColumn,
+		s.HotLeadColumn, s.TrialPurchasedColumn, s.ContinueAIAfterGreeting, s.AutoContactEnabled, s.Active)
+	if err := row.Scan(&s.CreatedAt, &s.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrExternalSheetNotFound
+		}
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return ErrExternalSheetExists
+		}
+		return fmt.Errorf("update external leads sheet: %w", err)
+	}
+	return nil
+}
+
+// DeleteExternalLeadsSheet removes a sheet (scoped to the studio). Leads already imported
+// from it are kept; only the polling configuration is removed.
+func (r *Repo) DeleteExternalLeadsSheet(ctx context.Context, studioID, id uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM studio_external_leads_sheet_settings WHERE id = $1 AND studio_id = $2`, id, studioID)
+	if err != nil {
+		return fmt.Errorf("delete external leads sheet: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrExternalSheetNotFound
+	}
+	return nil
+}
+
+// GetExternalLeadsSheetSettings returns the studio's oldest external sheet, or nil if it has
+// none. Kept for the original single-sheet endpoints; new code uses ListExternalLeadsSheets.
+func (r *Repo) GetExternalLeadsSheetSettings(ctx context.Context, studioID uuid.UUID) (*ExternalLeadsSheetSettings, error) {
+	s, err := scanExternalSheet(r.pool.QueryRow(ctx, `SELECT `+externalSheetColumns+`
+		FROM studio_external_leads_sheet_settings
+		WHERE studio_id = $1
+		ORDER BY created_at ASC, id ASC
+		LIMIT 1
+	`, studioID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get external leads sheet settings: %w", err)
+	}
+	return s, nil
+}
+
+// SaveExternalLeadsSheetSettings is the original single-sheet save: it updates the studio's
+// oldest external sheet, or creates the first one. Kept so older clients keep working.
+func (r *Repo) SaveExternalLeadsSheetSettings(ctx context.Context, s *ExternalLeadsSheetSettings) error {
+	existing, err := r.GetExternalLeadsSheetSettings(ctx, s.StudioID)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return r.CreateExternalLeadsSheet(ctx, s)
+	}
+	s.ID = existing.ID
+	return r.UpdateExternalLeadsSheet(ctx, s)
 }
 
 // ListActiveExternalLeadsSheetSettings returns every studio's external-sheet
 // config where polling is enabled. Used by the inbound import worker to know
 // which spreadsheets to poll.
 func (r *Repo) ListActiveExternalLeadsSheetSettings(ctx context.Context) ([]ExternalLeadsSheetSettings, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT id, studio_id, spreadsheet_id, tab_name, name_column, first_name_column, last_name_column,
-		       email_column, phone_column, source_column, notes_column, date_column, hot_lead_column,
-		       trial_purchased_column, continue_ai_after_greeting, auto_contact_enabled, active, created_at, updated_at
+	rows, err := r.pool.Query(ctx, `SELECT `+externalSheetColumns+`
 		FROM studio_external_leads_sheet_settings
 		WHERE active = true AND spreadsheet_id != ''
 	`)
@@ -1108,14 +1260,11 @@ func (r *Repo) ListActiveExternalLeadsSheetSettings(ctx context.Context) ([]Exte
 
 	var out []ExternalLeadsSheetSettings
 	for rows.Next() {
-		var s ExternalLeadsSheetSettings
-		if err := rows.Scan(&s.ID, &s.StudioID, &s.SpreadsheetID, &s.TabName, &s.NameColumn, &s.FirstNameColumn,
-			&s.LastNameColumn, &s.EmailColumn, &s.PhoneColumn, &s.SourceColumn, &s.NotesColumn, &s.DateColumn,
-			&s.HotLeadColumn, &s.TrialPurchasedColumn, &s.ContinueAIAfterGreeting, &s.AutoContactEnabled, &s.Active,
-			&s.CreatedAt, &s.UpdatedAt); err != nil {
+		s, err := scanExternalSheet(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan external leads sheet settings: %w", err)
 		}
-		out = append(out, s)
+		out = append(out, *s)
 	}
 	return out, rows.Err()
 }
@@ -1123,12 +1272,12 @@ func (r *Repo) ListActiveExternalLeadsSheetSettings(ctx context.Context) ([]Exte
 // GetExternalSheetImportWatermark returns the last row number already
 // imported for a given spreadsheet+tab (1 if never polled before, i.e. start
 // at the first data row).
-func (r *Repo) GetExternalSheetImportWatermark(ctx context.Context, spreadsheetID, tabName string) (int, error) {
+func (r *Repo) GetExternalSheetImportWatermark(ctx context.Context, studioID uuid.UUID, spreadsheetID, tabName string) (int, error) {
 	var lastRow int
 	err := r.pool.QueryRow(ctx, `
 		SELECT last_row_imported FROM external_sheet_import_log
-		WHERE spreadsheet_id = $1 AND tab_name = $2
-	`, spreadsheetID, tabName).Scan(&lastRow)
+		WHERE studio_id = $1 AND spreadsheet_id = $2 AND tab_name = $3
+	`, studioID, spreadsheetID, tabName).Scan(&lastRow)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 1, nil
@@ -1142,7 +1291,7 @@ func (r *Repo) SetExternalSheetImportWatermark(ctx context.Context, spreadsheetI
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO external_sheet_import_log (spreadsheet_id, tab_name, last_row_imported, studio_id)
 		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (spreadsheet_id, tab_name) DO UPDATE
+		ON CONFLICT (studio_id, spreadsheet_id, tab_name) DO UPDATE
 		SET last_row_imported = EXCLUDED.last_row_imported, updated_at = now()
 	`, spreadsheetID, tabName, rowNum, studioID)
 	if err != nil {

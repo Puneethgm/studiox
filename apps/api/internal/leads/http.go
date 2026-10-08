@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -38,6 +40,7 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Patch("/campaigns/{id}", h.patchCampaign)
 
 	r.Get("/leads", h.listLeads)
+	r.Get("/leads/export", h.exportLeads)
 	r.Get("/leads/stats", h.leadStats)
 	r.Get("/analytics", h.getAnalytics)
 	r.Get("/analytics/daily", h.getDailyAnalytics)
@@ -45,7 +48,12 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Post("/leads/sheets-settings", h.saveSheetsSettings)
 	r.Get("/leads/external-sheet-settings", h.getExternalLeadsSheetSettings)
 	r.Post("/leads/external-sheet-settings", h.saveExternalLeadsSheetSettings)
+	r.Get("/leads/external-sheets", h.listExternalLeadsSheets)
+	r.Post("/leads/external-sheets", h.createExternalLeadsSheet)
+	r.Put("/leads/external-sheets/{sheetId}", h.updateExternalLeadsSheet)
+	r.Delete("/leads/external-sheets/{sheetId}", h.deleteExternalLeadsSheet)
 	r.Post("/leads/import", h.importLeads)
+	r.Post("/leads/auto-contact/enable", h.enableAutoContactForStatus)
 	r.Get("/leads/sources", h.listUniqueSources)
 	r.Get("/leads/{id}", h.getLead)
 	r.Patch("/leads/{id}", h.patchLead)
@@ -349,13 +357,10 @@ func (h *Handler) patchCampaign(w http.ResponseWriter, r *http.Request) {
 //	@Failure		500				{object}	httpx.ErrorResponse
 //	@Router			/api/v1/admin/leads [get]
 //	@Router			/api/v1/studios/{studioId}/leads [get]
-func (h *Handler) listLeads(w http.ResponseWriter, r *http.Request) {
-	studioID, ok := h.resolveStudioID(w, r)
-	if !ok {
-		return
-	}
-	q := r.URL.Query()
-
+//
+// parseListLeadsFilter reads every filter listLeads and exportLeads both support, so the
+// two can never drift apart.
+func parseListLeadsFilter(q url.Values) ListLeadsFilter {
 	f := ListLeadsFilter{}
 	if v := q.Get("campaignId"); v != "" {
 		id, err := uuid.Parse(v)
@@ -429,6 +434,15 @@ func (h *Handler) listLeads(w http.ResponseWriter, r *http.Request) {
 	if v := q.Get("search"); v != "" {
 		f.Search = v
 	}
+	return f
+}
+
+func (h *Handler) listLeads(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := h.resolveStudioID(w, r)
+	if !ok {
+		return
+	}
+	f := parseListLeadsFilter(r.URL.Query())
 
 	list, total, err := h.svc.ListLeads(r.Context(), studioID, f)
 	if err != nil {
@@ -439,6 +453,74 @@ func (h *Handler) listLeads(w http.ResponseWriter, r *http.Request) {
 		"leads": list,
 		"total": total,
 	})
+}
+
+// exportLeadsMaxRows bounds a single export against an unexpectedly huge result set.
+const exportLeadsMaxRows = 20000
+
+// exportLeads streams every lead matching listLeads' filters as an .xlsx file, paging
+// past the repo's 200-row-per-call cap until it has everything or hits exportLeadsMaxRows.
+func (h *Handler) exportLeads(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := h.resolveStudioID(w, r)
+	if !ok {
+		return
+	}
+	f := parseListLeadsFilter(r.URL.Query())
+	f.Offset = 0
+
+	var all []Lead
+	for {
+		f.Limit = 200
+		f.Offset = len(all)
+		page, total, err := h.svc.ListLeads(r.Context(), studioID, f)
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+			return
+		}
+		all = append(all, page...)
+		if len(page) == 0 || len(all) >= total || len(all) >= exportLeadsMaxRows {
+			break
+		}
+	}
+
+	xf := excelize.NewFile()
+	defer func() { _ = xf.Close() }()
+	const sheet = "Leads"
+	xf.SetSheetName(xf.GetSheetName(0), sheet)
+
+	headers := []string{
+		"Name", "Email", "Phone", "Campaign", "Source", "Attempts",
+		"Last Contacted", "Needs Follow-up", "Hot Lead", "Trial Purchased",
+		"Contact Made", "Status", "Created At", "Glofox Member ID",
+	}
+	for i, hdr := range headers {
+		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+		_ = xf.SetCellValue(sheet, cell, hdr)
+	}
+
+	const dateLayout = "2006-01-02 15:04"
+	for i, l := range all {
+		row := i + 2
+		lastContacted := ""
+		if l.LastContactedAt != nil {
+			lastContacted = l.LastContactedAt.Format(dateLayout)
+		}
+		values := []any{
+			l.Name, l.Email, l.Phone, l.CampaignName, l.Source, l.ContactAttempts,
+			lastContacted, l.NeedsManualFollowup, l.HotLead, l.TrialPurchased,
+			l.ContactMade, string(l.Status), l.CreatedAt.Format(dateLayout), l.GlofoxMemberID,
+		}
+		for col, v := range values {
+			cell, _ := excelize.CoordinatesToCellName(col+1, row)
+			_ = xf.SetCellValue(sheet, cell, v)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="leads-export-%s.xlsx"`, time.Now().Format("2006-01-02")))
+	if err := xf.Write(w); err != nil {
+		slog.Error("export leads: failed to write workbook", "studio_id", studioID, "err", err)
+	}
 }
 
 // leadStats godoc
@@ -1105,21 +1187,21 @@ func (h *Handler) saveSheetsSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 type saveExternalLeadsSheetSettingsReq struct {
-	SpreadsheetID   string `json:"spreadsheetId"`
-	TabName         string `json:"tabName"`
-	NameColumn      string `json:"nameColumn"`
-	FirstNameColumn string `json:"firstNameColumn"`
-	LastNameColumn  string `json:"lastNameColumn"`
-	EmailColumn     string `json:"emailColumn"`
-	PhoneColumn     string `json:"phoneColumn"`
-	SourceColumn    string `json:"sourceColumn"`
-	NotesColumn     string `json:"notesColumn"`
-	DateColumn      string `json:"dateColumn"`
-	HotLeadColumn   string `json:"hotLeadColumn"`
-	TrialPurchasedColumn string `json:"trialPurchasedColumn"`
-	ContinueAIAfterGreeting bool `json:"continueAiAfterGreeting"`
-	AutoContactEnabled *bool `json:"autoContactEnabled"`
-	Active          bool   `json:"active"`
+	SpreadsheetID           string `json:"spreadsheetId"`
+	TabName                 string `json:"tabName"`
+	NameColumn              string `json:"nameColumn"`
+	FirstNameColumn         string `json:"firstNameColumn"`
+	LastNameColumn          string `json:"lastNameColumn"`
+	EmailColumn             string `json:"emailColumn"`
+	PhoneColumn             string `json:"phoneColumn"`
+	SourceColumn            string `json:"sourceColumn"`
+	NotesColumn             string `json:"notesColumn"`
+	DateColumn              string `json:"dateColumn"`
+	HotLeadColumn           string `json:"hotLeadColumn"`
+	TrialPurchasedColumn    string `json:"trialPurchasedColumn"`
+	ContinueAIAfterGreeting bool   `json:"continueAiAfterGreeting"`
+	AutoContactEnabled      *bool  `json:"autoContactEnabled"`
+	Active                  bool   `json:"active"`
 }
 
 // getExternalLeadsSheetSettings godoc
@@ -1152,8 +1234,8 @@ func (h *Handler) getExternalLeadsSheetSettings(w http.ResponseWriter, r *http.R
 			"emailColumn": "C", "phoneColumn": "D", "sourceColumn": "", "notesColumn": "", "dateColumn": "",
 			"hotLeadColumn": "", "trialPurchasedColumn": "",
 			"continueAiAfterGreeting": true,
-			"autoContactEnabled": true,
-			"active": false,
+			"autoContactEnabled":      true,
+			"active":                  false,
 		})
 		return
 	}
@@ -1193,21 +1275,21 @@ func (h *Handler) saveExternalLeadsSheetSettings(w http.ResponseWriter, r *http.
 		autoContactEnabled = *req.AutoContactEnabled
 	}
 	settings, err := h.svc.SaveExternalLeadsSheetSettings(r.Context(), studioID, ExternalLeadsSheetSettings{
-		SpreadsheetID:   req.SpreadsheetID,
-		TabName:         req.TabName,
-		NameColumn:      req.NameColumn,
-		FirstNameColumn: req.FirstNameColumn,
-		LastNameColumn:  req.LastNameColumn,
-		EmailColumn:     req.EmailColumn,
-		PhoneColumn:     req.PhoneColumn,
-		SourceColumn:    req.SourceColumn,
-		NotesColumn:     req.NotesColumn,
-		DateColumn:      req.DateColumn,
-		HotLeadColumn:   req.HotLeadColumn,
-		TrialPurchasedColumn: req.TrialPurchasedColumn,
+		SpreadsheetID:           req.SpreadsheetID,
+		TabName:                 req.TabName,
+		NameColumn:              req.NameColumn,
+		FirstNameColumn:         req.FirstNameColumn,
+		LastNameColumn:          req.LastNameColumn,
+		EmailColumn:             req.EmailColumn,
+		PhoneColumn:             req.PhoneColumn,
+		SourceColumn:            req.SourceColumn,
+		NotesColumn:             req.NotesColumn,
+		DateColumn:              req.DateColumn,
+		HotLeadColumn:           req.HotLeadColumn,
+		TrialPurchasedColumn:    req.TrialPurchasedColumn,
 		ContinueAIAfterGreeting: req.ContinueAIAfterGreeting,
-		AutoContactEnabled: autoContactEnabled,
-		Active:          req.Active,
+		AutoContactEnabled:      autoContactEnabled,
+		Active:                  req.Active,
 	})
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
@@ -1216,10 +1298,183 @@ func (h *Handler) saveExternalLeadsSheetSettings(w http.ResponseWriter, r *http.
 	httpx.JSON(w, http.StatusOK, settings)
 }
 
+// externalSheetFromReq converts a request body to a sheet config (autoContactEnabled
+// defaults to true when omitted, as in the single-sheet endpoint).
+func externalSheetFromReq(req saveExternalLeadsSheetSettingsReq) ExternalLeadsSheetSettings {
+	autoContactEnabled := true
+	if req.AutoContactEnabled != nil {
+		autoContactEnabled = *req.AutoContactEnabled
+	}
+	return ExternalLeadsSheetSettings{
+		SpreadsheetID:           req.SpreadsheetID,
+		TabName:                 req.TabName,
+		NameColumn:              req.NameColumn,
+		FirstNameColumn:         req.FirstNameColumn,
+		LastNameColumn:          req.LastNameColumn,
+		EmailColumn:             req.EmailColumn,
+		PhoneColumn:             req.PhoneColumn,
+		SourceColumn:            req.SourceColumn,
+		NotesColumn:             req.NotesColumn,
+		DateColumn:              req.DateColumn,
+		HotLeadColumn:           req.HotLeadColumn,
+		TrialPurchasedColumn:    req.TrialPurchasedColumn,
+		ContinueAIAfterGreeting: req.ContinueAIAfterGreeting,
+		AutoContactEnabled:      autoContactEnabled,
+		Active:                  req.Active,
+	}
+}
+
+// writeExternalSheetError maps the external-sheet repo errors to HTTP responses.
+func writeExternalSheetError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, ErrExternalSheetExists):
+		httpx.WriteError(w, http.StatusConflict, "sheet_exists", "this spreadsheet and tab is already added")
+	case errors.Is(err, ErrExternalSheetNotFound):
+		httpx.WriteError(w, http.StatusNotFound, "not_found", "sheet not found")
+	default:
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+	}
+}
+
+// listExternalLeadsSheets godoc
+//
+//	@Summary		List external leads sheets
+//	@Description	Returns every external Google Sheet the studio imports leads from (several are allowed, each with its own tab, column mapping and auto-contact options), oldest first.
+//	@Tags			Leads
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Success		200			{object}	map[string]interface{}	"{sheets: ExternalLeadsSheetSettings[]}"
+//	@Failure		400			{object}	httpx.ErrorResponse	"missing/invalid studioId"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/leads/external-sheets [get]
+func (h *Handler) listExternalLeadsSheets(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := h.resolveStudioID(w, r)
+	if !ok {
+		return
+	}
+	sheets, err := h.svc.ListExternalLeadsSheets(r.Context(), studioID)
+	if err != nil {
+		writeExternalSheetError(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"sheets": sheets})
+}
+
+// createExternalLeadsSheet godoc
+//
+//	@Summary		Add an external leads sheet
+//	@Description	Adds another external Google Sheet for the studio to import leads from. `spreadsheetId` (an ID or a full URL) is required. Returns 409 if the studio already imports that spreadsheet and tab.
+//	@Tags			Leads
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			studioId	path		string								true	"Studio ID"
+//	@Param			body		body		saveExternalLeadsSheetSettingsReq	true	"Sheet settings"
+//	@Success		201			{object}	ExternalLeadsSheetSettings
+//	@Failure		400			{object}	httpx.ErrorResponse	"validation failed"
+//	@Failure		409			{object}	httpx.ErrorResponse	"spreadsheet and tab already added"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/leads/external-sheets [post]
+func (h *Handler) createExternalLeadsSheet(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := h.resolveStudioID(w, r)
+	if !ok {
+		return
+	}
+	var req saveExternalLeadsSheetSettingsReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if strings.TrimSpace(req.SpreadsheetID) == "" {
+		httpx.WriteValidationError(w, map[string]string{"spreadsheetId": "required"})
+		return
+	}
+	sheet, err := h.svc.CreateExternalLeadsSheet(r.Context(), studioID, externalSheetFromReq(req))
+	if err != nil {
+		writeExternalSheetError(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, sheet)
+}
+
+// updateExternalLeadsSheet godoc
+//
+//	@Summary		Update an external leads sheet
+//	@Description	Replaces one external sheet's settings (spreadsheet, tab, column mapping, auto-contact and import flags). Returns 404 if the sheet isn't this studio's, 409 if the new spreadsheet and tab duplicates another of its sheets.
+//	@Tags			Leads
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			studioId	path		string								true	"Studio ID"
+//	@Param			sheetId		path		string								true	"Sheet ID"
+//	@Param			body		body		saveExternalLeadsSheetSettingsReq	true	"Sheet settings"
+//	@Success		200			{object}	ExternalLeadsSheetSettings
+//	@Failure		400			{object}	httpx.ErrorResponse	"validation failed"
+//	@Failure		404			{object}	httpx.ErrorResponse	"sheet not found"
+//	@Failure		409			{object}	httpx.ErrorResponse	"spreadsheet and tab already added"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/leads/external-sheets/{sheetId} [put]
+func (h *Handler) updateExternalLeadsSheet(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := h.resolveStudioID(w, r)
+	if !ok {
+		return
+	}
+	sheetID, err := uuid.Parse(chi.URLParam(r, "sheetId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid sheet id")
+		return
+	}
+	var req saveExternalLeadsSheetSettingsReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if strings.TrimSpace(req.SpreadsheetID) == "" {
+		httpx.WriteValidationError(w, map[string]string{"spreadsheetId": "required"})
+		return
+	}
+	sheet, err := h.svc.UpdateExternalLeadsSheet(r.Context(), studioID, sheetID, externalSheetFromReq(req))
+	if err != nil {
+		writeExternalSheetError(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, sheet)
+}
+
+// deleteExternalLeadsSheet godoc
+//
+//	@Summary		Remove an external leads sheet
+//	@Description	Stops importing from one external sheet. Leads already imported from it are kept.
+//	@Tags			Leads
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Param			sheetId		path		string	true	"Sheet ID"
+//	@Success		204			"removed"
+//	@Failure		400			{object}	httpx.ErrorResponse	"invalid sheet id"
+//	@Failure		404			{object}	httpx.ErrorResponse	"sheet not found"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/leads/external-sheets/{sheetId} [delete]
+func (h *Handler) deleteExternalLeadsSheet(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := h.resolveStudioID(w, r)
+	if !ok {
+		return
+	}
+	sheetID, err := uuid.Parse(chi.URLParam(r, "sheetId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid sheet id")
+		return
+	}
+	if err := h.svc.DeleteExternalLeadsSheet(r.Context(), studioID, sheetID); err != nil {
+		writeExternalSheetError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // importLeads godoc
 //
 //	@Summary		Import leads from a file
-//	@Description	Bulk-imports leads for the resolved studio from an uploaded .csv, .xlsx, or .xls file (multipart form, 10MB max), assigning them to the given default campaign. Mounted at both the super-admin prefix and the studio-scoped prefix; see resolveStudioID note on createCampaign above regarding studioId resolution at the super-admin prefix.
+//	@Description	Bulk-imports leads for the resolved studio from an uploaded .csv, .xlsx, or .xls file (multipart form, 10MB max), assigning them to the given default campaign. Mounted at both the super-admin prefix and the studio-scoped prefix; see resolveStudioID note on createCampaign above regarding studioId resolution at the super-admin prefix. Imported leads are never handed to the AI auto-contact worker — use POST .../leads/auto-contact/enable afterwards to explicitly connect leads of a chosen status.
 //	@Tags			Leads
 //	@Accept			multipart/form-data
 //	@Produce		json
@@ -1302,6 +1557,56 @@ func (h *Handler) importLeads(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{
 		"imported": count,
 		"message":  fmt.Sprintf("Successfully imported %d leads", count),
+	})
+}
+
+// enableAutoContactForStatus godoc
+//
+//	@Summary		Bulk-enable AI auto-contact by status
+//	@Description	The Leads page's "Enable AI" control: connects every current lead at any of the given statuses (that hasn't already been contacted) to the AI auto-contact worker. Safe to call more than once — a lead already contacted or already queued is skipped. Mounted at both the super-admin prefix and the studio-scoped prefix; see resolveStudioID note on createCampaign above regarding studioId resolution at the super-admin prefix.
+//	@Tags			Leads
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			studioId	path		string						true	"Studio ID"
+//	@Param			request		body		object{statuses=[]string}	true	"Lead statuses to connect, e.g. [\"new\", \"contacted\"]"
+//	@Success		200			{object}	map[string]interface{}		"{enqueued: int, message: string}"
+//	@Failure		400			{object}	httpx.ErrorResponse		"missing/invalid studioId or statuses"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/admin/leads/auto-contact/enable [post]
+//	@Router			/api/v1/studios/{studioId}/leads/auto-contact/enable [post]
+func (h *Handler) enableAutoContactForStatus(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := h.resolveStudioID(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Statuses []string `json:"statuses"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if len(req.Statuses) == 0 {
+		httpx.WriteValidationError(w, map[string]string{"statuses": "at least one status is required"})
+		return
+	}
+	statuses := make([]LeadStatus, 0, len(req.Statuses))
+	for _, s := range req.Statuses {
+		status := LeadStatus(strings.ToLower(strings.TrimSpace(s)))
+		if !status.Valid() {
+			httpx.WriteValidationError(w, map[string]string{"statuses": fmt.Sprintf("invalid lead status %q", s)})
+			return
+		}
+		statuses = append(statuses, status)
+	}
+	enqueued, err := h.svc.EnableAutoContactForLeadsByStatuses(r.Context(), studioID, statuses)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"enqueued": enqueued,
+		"message":  fmt.Sprintf("Enabled AI for %d lead(s)", enqueued),
 	})
 }
 

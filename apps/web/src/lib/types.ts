@@ -227,6 +227,9 @@ export interface Lead {
   dndEnabled: boolean;
   referrer?: string;
   autoContactStage?: string;
+  // Set when this lead was bulk-imported from a Glofox member export (the
+  // "BarcodeID" column) — see apps/api/internal/leads/service.go mapHeaders.
+  glofoxMemberId?: string;
   createdAt: string;
   updatedAt: string;
 }

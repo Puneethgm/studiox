@@ -23,8 +23,11 @@ import {
   saveAIReplyDelay,
   getSheetsSettings,
   saveSheetsSettings,
-  getExternalLeadsSheetSettings,
-  saveExternalLeadsSheetSettings,
+  listExternalLeadsSheets,
+  createExternalLeadsSheet,
+  updateExternalLeadsSheet,
+  deleteExternalLeadsSheet,
+  type ExternalLeadsSheet,
   type ExternalLeadsSheetSettingsData,
 } from './actions';
 import {
@@ -60,11 +63,18 @@ function SectionHeader({ title, description }: { title: string; description: str
 
 async function uploadImage(studioId: string, file: File): Promise<string> {
   const formData = new FormData();
-  formData.append('image', file);
+  // Must be 'file' — the backend handler reads r.FormFile("file"); sending it as
+  // 'image' made every upload here 400 before it ever reached S3/disk.
+  formData.append('file', file);
   const res = await fetch(`/api/v1/studios/${studioId}/social-posts/upload-image`, { method: 'POST', body: formData });
-  if (!res.ok) throw new Error('Upload failed');
-  const { url } = await res.json();
-  return url as string;
+  if (!res.ok) {
+    const body = await res.json().catch(() => null) as { error?: string } | null;
+    throw new Error(body?.error ?? 'Upload failed');
+  }
+  // The endpoint returns { mediaUrl }, not { url } — reading `url` here silently
+  // saved "undefined" as the logo, which is the second half of this same bug.
+  const { mediaUrl } = await res.json();
+  return mediaUrl as string;
 }
 
 const COUNTRY_CODES = [
@@ -670,35 +680,23 @@ export function SheetsSection({ studio }: { studio: Studio }) {
   const [tabName, setTabName] = useState('Leads');
   const [active, setActive] = useState(false);
 
-  const [ext, setExt] = useState<ExternalLeadsSheetSettingsData>({
-    spreadsheetId: '',
-    tabName: 'Sheet1',
-    nameColumn: '',
-    firstNameColumn: 'A',
-    lastNameColumn: 'B',
-    emailColumn: 'C',
-    phoneColumn: 'D',
-    sourceColumn: '',
-    notesColumn: '',
-    dateColumn: '',
-    hotLeadColumn: '',
-    trialPurchasedColumn: '',
-    continueAiAfterGreeting: true,
-    autoContactEnabled: true,
-    active: false,
-  });
+  const [extSheets, setExtSheets] = useState<ExternalLeadsSheet[]>([]);
+  const [newSheetId, setNewSheetId] = useState('');
+  const [newSheetTab, setNewSheetTab] = useState('Sheet1');
+  const [addingSheet, setAddingSheet] = useState(false);
+  const [addError, setAddError] = useState('');
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [sheetsRes, extRes] = await Promise.all([getSheetsSettings(studio.id), getExternalLeadsSheetSettings(studio.id)]);
+      const [sheetsRes, extRes] = await Promise.all([getSheetsSettings(studio.id), listExternalLeadsSheets(studio.id)]);
       if (cancelled) return;
       if (sheetsRes.ok && sheetsRes.data) {
         setSpreadsheetId(sheetsRes.data.spreadsheetId || '');
         setTabName(sheetsRes.data.tabName || 'Leads');
         setActive(sheetsRes.data.active);
       }
-      if (extRes.ok && extRes.data) setExt(extRes.data);
+      if (extRes.ok && extRes.sheets) setExtSheets(extRes.sheets);
       setLoading(false);
     })();
     return () => {
@@ -718,38 +716,81 @@ export function SheetsSection({ studio }: { studio: Studio }) {
     return { ok: false, error: bestError(res) };
   }
 
-  async function saveExt(patch: Partial<ExternalLeadsSheetSettingsData>) {
-    const next = { ...ext, ...patch };
-    // Send only the fields the API's saveExternalLeadsSheetSettingsReq
-    // struct actually declares — not `next` itself, which also carries
-    // whatever extra fields the GET response included (e.g. `id`,
-    // `studioId`) that aren't part of ExternalLeadsSheetSettingsData's own
-    // type. The API's JSON decoder rejects unknown fields outright, so
-    // spreading the raw fetched object into the request body 400'd on
-    // every save — an explicit whitelist can't leak fields like that again.
-    const body: ExternalLeadsSheetSettingsData = {
-      spreadsheetId: next.spreadsheetId,
-      tabName: next.tabName,
-      nameColumn: next.nameColumn,
-      firstNameColumn: next.firstNameColumn,
-      lastNameColumn: next.lastNameColumn,
-      emailColumn: next.emailColumn,
-      phoneColumn: next.phoneColumn,
-      sourceColumn: next.sourceColumn,
-      notesColumn: next.notesColumn,
-      dateColumn: next.dateColumn,
-      hotLeadColumn: next.hotLeadColumn,
-      trialPurchasedColumn: next.trialPurchasedColumn,
-      continueAiAfterGreeting: next.continueAiAfterGreeting,
-      autoContactEnabled: next.autoContactEnabled,
-      active: next.active,
+  // Only the fields the API's request struct declares — the API's JSON decoder rejects
+  // unknown fields, and a fetched sheet also carries `id`, `studioId`, timestamps.
+  function sheetBody(sheet: ExternalLeadsSheetSettingsData): ExternalLeadsSheetSettingsData {
+    return {
+      spreadsheetId: sheet.spreadsheetId,
+      tabName: sheet.tabName,
+      nameColumn: sheet.nameColumn,
+      firstNameColumn: sheet.firstNameColumn,
+      lastNameColumn: sheet.lastNameColumn,
+      emailColumn: sheet.emailColumn,
+      phoneColumn: sheet.phoneColumn,
+      sourceColumn: sheet.sourceColumn,
+      notesColumn: sheet.notesColumn,
+      dateColumn: sheet.dateColumn,
+      hotLeadColumn: sheet.hotLeadColumn,
+      trialPurchasedColumn: sheet.trialPurchasedColumn,
+      continueAiAfterGreeting: sheet.continueAiAfterGreeting,
+      autoContactEnabled: sheet.autoContactEnabled,
+      active: sheet.active,
     };
-    const res = await saveExternalLeadsSheetSettings(studio.id, body);
+  }
+
+  async function saveExtSheet(id: string, patch: Partial<ExternalLeadsSheetSettingsData>) {
+    const current = extSheets.find((x) => x.id === id);
+    if (!current) return { ok: false, error: 'Sheet not found' };
+    const next = { ...current, ...patch };
+    const res = await updateExternalLeadsSheet(studio.id, id, sheetBody(next));
     if (res.ok) {
-      setExt(next);
+      setExtSheets((list) => list.map((x) => (x.id === id ? { ...next, ...(res.sheet ?? {}) } : x)));
       return { ok: true };
     }
     return { ok: false, error: bestError(res) };
+  }
+
+  async function removeExtSheet(id: string) {
+    const res = await deleteExternalLeadsSheet(studio.id, id);
+    if (res.ok) setExtSheets((list) => list.filter((x) => x.id !== id));
+    return res;
+  }
+
+  async function addExtSheet() {
+    setAddError('');
+    if (!newSheetId.trim()) {
+      setAddError('Enter a spreadsheet ID or URL.');
+      return;
+    }
+    setAddingSheet(true);
+    try {
+      const res = await createExternalLeadsSheet(studio.id, {
+        spreadsheetId: newSheetId.trim(),
+        tabName: newSheetTab.trim() || 'Sheet1',
+        nameColumn: '',
+        firstNameColumn: 'A',
+        lastNameColumn: 'B',
+        emailColumn: 'C',
+        phoneColumn: 'D',
+        sourceColumn: '',
+        notesColumn: '',
+        dateColumn: '',
+        hotLeadColumn: '',
+        trialPurchasedColumn: '',
+        continueAiAfterGreeting: true,
+        autoContactEnabled: true,
+        active: false,
+      });
+      if (res.ok && res.sheet) {
+        setExtSheets((list) => [...list, res.sheet as ExternalLeadsSheet]);
+        setNewSheetId('');
+        setNewSheetTab('Sheet1');
+      } else {
+        setAddError(bestError(res));
+      }
+    } finally {
+      setAddingSheet(false);
+    }
   }
 
   if (loading) {
@@ -789,72 +830,170 @@ export function SheetsSection({ studio }: { studio: Studio }) {
         />
       </SettingsCard>
 
-      <SettingsCard title="External Leads Sheet (Import)">
-        <EditableTextRow
-          label="Spreadsheet ID or URL"
-          description="Required before import can be turned on."
-          value={ext.spreadsheetId}
-          onSave={(v) => saveExt({ spreadsheetId: v })}
-        />
-        <ToggleRow
-          label="Enable import"
-          description="Poll a third-party company's read-only Google Sheet for new rows."
-          checked={ext.active}
-          disabled={!ext.spreadsheetId}
-          disabledHint="Set a Spreadsheet ID above first."
-          onSave={(v) => saveExt({ active: v })}
-        />
-        <EditableTextRow
-          label="Tab name"
-          value={ext.tabName}
-          disabled={!ext.spreadsheetId}
-          disabledHint="Set a Spreadsheet ID above first."
-          onSave={(v) => saveExt({ tabName: v })}
-        />
-        <ToggleRow
-          label="Auto-contact new leads"
-          description="Automatically start the WhatsApp outreach flow for imported leads."
-          checked={ext.autoContactEnabled}
-          disabled={!ext.spreadsheetId}
-          disabledHint="Set a Spreadsheet ID above first."
-          onSave={(v) => saveExt({ autoContactEnabled: v })}
-        />
-        <ToggleRow
-          label="Continue AI after greeting"
-          description="Let the AI keep replying after the initial greeting, instead of handing off to staff."
-          checked={ext.continueAiAfterGreeting}
-          disabled={!ext.spreadsheetId}
-          disabledHint="Set a Spreadsheet ID above first."
-          onSave={(v) => saveExt({ continueAiAfterGreeting: v })}
-        />
-      </SettingsCard>
+      <div>
+        <h4 className="mb-1 text-xs font-bold uppercase tracking-wide text-zinc-400">External Leads Sheets (Import)</h4>
+        <p className="mb-3 text-xs text-zinc-400">
+          Add as many Google Sheets as you need. Each one is polled on its own and its new rows become leads, using its
+          own tab, column mapping and options.
+        </p>
+        <div className="space-y-3">
+          {extSheets.map((sheet, i) => (
+            <ExternalSheetBlock
+              key={sheet.id}
+              index={i + 1}
+              sheet={sheet}
+              onSave={(patch) => saveExtSheet(sheet.id, patch)}
+              onRemove={() => removeExtSheet(sheet.id)}
+            />
+          ))}
+          {extSheets.length === 0 && (
+            <p className="rounded-xl border border-dashed border-zinc-200 px-4 py-3 text-xs text-zinc-400 dark:border-zinc-800">
+              No external sheets yet. Add one below.
+            </p>
+          )}
+        </div>
 
-      <SettingsCard title="Column Mapping">
-        {(
-          [
-            ['nameColumn', 'Full name column', 'e.g. A'],
-            ['firstNameColumn', 'First name column', undefined],
-            ['lastNameColumn', 'Last name column', undefined],
-            ['emailColumn', 'Email column', undefined],
-            ['phoneColumn', 'Phone column', undefined],
-            ['sourceColumn', 'Source column', undefined],
-            ['notesColumn', 'Notes column', undefined],
-            ['dateColumn', 'Date column', undefined],
-            ['hotLeadColumn', 'Hot lead column', undefined],
-            ['trialPurchasedColumn', 'Trial purchased column', undefined],
-          ] as [keyof ExternalLeadsSheetSettingsData, string, string | undefined][]
-        ).map(([field, label, placeholder]) => (
-          <EditableTextRow
-            key={field}
-            label={label}
-            placeholder={placeholder}
-            value={String(ext[field] ?? '')}
-            disabled={!ext.spreadsheetId}
-            disabledHint="Set a Spreadsheet ID above first."
-            onSave={(v) => saveExt({ [field]: v } as Partial<ExternalLeadsSheetSettingsData>)}
-          />
-        ))}
-      </SettingsCard>
+        <div className="mt-3 rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
+          <p className="mb-3 text-sm font-semibold text-zinc-800 dark:text-zinc-100">Add another sheet</p>
+          <div className="grid gap-3 sm:grid-cols-[1fr_180px_auto]">
+            <Input
+              value={newSheetId}
+              onChange={(e) => setNewSheetId(e.target.value)}
+              placeholder="Spreadsheet ID or URL"
+              invalid={!!addError}
+            />
+            <Input value={newSheetTab} onChange={(e) => setNewSheetTab(e.target.value)} placeholder="Tab name" />
+            <Button type="button" onClick={addExtSheet} disabled={addingSheet} suppressHydrationWarning>
+              {addingSheet ? 'Adding…' : 'Add sheet'}
+            </Button>
+          </div>
+          {addError && <p className="mt-2 text-xs font-medium text-red-500">{addError}</p>}
+        </div>
+      </div>
     </div>
+  );
+}
+
+const EXT_MAPPING_FIELDS: [keyof ExternalLeadsSheetSettingsData, string, string | undefined][] = [
+  ['nameColumn', 'Full name column', 'e.g. A'],
+  ['firstNameColumn', 'First name column', undefined],
+  ['lastNameColumn', 'Last name column', undefined],
+  ['emailColumn', 'Email column', undefined],
+  ['phoneColumn', 'Phone column', undefined],
+  ['sourceColumn', 'Source column', undefined],
+  ['notesColumn', 'Notes column', undefined],
+  ['dateColumn', 'Date column', undefined],
+  ['hotLeadColumn', 'Hot lead column', undefined],
+  ['trialPurchasedColumn', 'Trial purchased column', undefined],
+];
+
+// One external leads sheet: its connection settings, options and column mapping, plus a
+// remove button. Collapsed by default when there are several, so the page stays short.
+function ExternalSheetBlock({
+  index,
+  sheet,
+  onSave,
+  onRemove,
+}: {
+  index: number;
+  sheet: ExternalLeadsSheet;
+  onSave: (patch: Partial<ExternalLeadsSheetSettingsData>) => Promise<{ ok: boolean; error?: string }>;
+  onRemove: () => Promise<{ ok: boolean; error?: string }>;
+}) {
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [error, setError] = useState('');
+  const shortId = sheet.spreadsheetId.length > 14 ? `${sheet.spreadsheetId.slice(0, 6)}…${sheet.spreadsheetId.slice(-6)}` : sheet.spreadsheetId;
+
+  async function remove() {
+    setRemoving(true);
+    setError('');
+    const res = await onRemove();
+    setRemoving(false);
+    if (!res.ok) setError(res.error ?? 'Failed to remove');
+  }
+
+  return (
+    <details className="group rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950" open={index === 1}>
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
+        <span className="min-w-0">
+          <span className="block text-sm font-semibold text-zinc-800 dark:text-zinc-100">
+            Sheet {index} · {sheet.tabName || 'Sheet1'}
+          </span>
+          <span className="block truncate text-xs text-zinc-400">{shortId}</span>
+        </span>
+        <span
+          className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+            sheet.active
+              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+              : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-900 dark:text-zinc-400'
+          }`}
+        >
+          {sheet.active ? 'Importing' : 'Paused'}
+        </span>
+      </summary>
+
+      <div className="space-y-4 border-t border-zinc-100 p-4 dark:border-zinc-800">
+        <SettingsCard>
+          <EditableTextRow label="Spreadsheet ID or URL" value={sheet.spreadsheetId} onSave={(v) => onSave({ spreadsheetId: v })} />
+          <ToggleRow
+            label="Enable import"
+            description="Poll this Google Sheet for new rows."
+            checked={sheet.active}
+            onSave={(v) => onSave({ active: v })}
+          />
+          <EditableTextRow label="Tab name" value={sheet.tabName} onSave={(v) => onSave({ tabName: v })} />
+          <ToggleRow
+            label="Auto-contact new leads"
+            description="Automatically start the WhatsApp outreach flow for leads imported from this sheet."
+            checked={sheet.autoContactEnabled}
+            onSave={(v) => onSave({ autoContactEnabled: v })}
+          />
+          <ToggleRow
+            label="Continue AI after greeting"
+            description="Let the AI keep replying after the initial greeting, instead of handing off to staff."
+            checked={sheet.continueAiAfterGreeting}
+            onSave={(v) => onSave({ continueAiAfterGreeting: v })}
+          />
+        </SettingsCard>
+
+        <SettingsCard title="Column Mapping">
+          {EXT_MAPPING_FIELDS.map(([field, label, placeholder]) => (
+            <EditableTextRow
+              key={field}
+              label={label}
+              placeholder={placeholder}
+              value={String(sheet[field] ?? '')}
+              onSave={(v) => onSave({ [field]: v } as Partial<ExternalLeadsSheetSettingsData>)}
+            />
+          ))}
+        </SettingsCard>
+
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs text-zinc-400">Removing a sheet stops importing from it. Leads already imported are kept.</p>
+          {confirmRemove ? (
+            <span className="flex shrink-0 items-center gap-2">
+              <Button type="button" variant="outline" onClick={() => setConfirmRemove(false)} suppressHydrationWarning>
+                Keep
+              </Button>
+              <Button
+                type="button"
+                onClick={remove}
+                disabled={removing}
+                className="bg-red-600 text-white hover:bg-red-700"
+                suppressHydrationWarning
+              >
+                {removing ? 'Removing…' : 'Yes, remove'}
+              </Button>
+            </span>
+          ) : (
+            <Button type="button" variant="outline" onClick={() => setConfirmRemove(true)} className="shrink-0" suppressHydrationWarning>
+              Remove sheet
+            </Button>
+          )}
+        </div>
+        {error && <p className="text-xs font-medium text-red-500">{error}</p>}
+      </div>
+    </details>
   );
 }

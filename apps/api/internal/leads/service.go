@@ -476,24 +476,28 @@ func (s *Service) GetExternalLeadsSheetSettings(ctx context.Context, studioID uu
 	return s.repo.GetExternalLeadsSheetSettings(ctx, studioID)
 }
 
-func (s *Service) SaveExternalLeadsSheetSettings(ctx context.Context, studioID uuid.UUID, in ExternalLeadsSheetSettings) (*ExternalLeadsSheetSettings, error) {
+// normalizeExternalSheet cleans a sheet config from the API: spreadsheet URL -> ID, trimmed
+// upper-cased column letters, and the same defaults the single-sheet version always used.
+func normalizeExternalSheet(studioID uuid.UUID, in ExternalLeadsSheetSettings) *ExternalLeadsSheetSettings {
+	col := func(v string) string { return strings.ToUpper(strings.TrimSpace(v)) }
 	settings := &ExternalLeadsSheetSettings{
-		StudioID:        studioID,
-		SpreadsheetID:   extractSpreadsheetID(in.SpreadsheetID),
-		TabName:         strings.TrimSpace(in.TabName),
-		NameColumn:      strings.ToUpper(strings.TrimSpace(in.NameColumn)),
-		FirstNameColumn: strings.ToUpper(strings.TrimSpace(in.FirstNameColumn)),
-		LastNameColumn:  strings.ToUpper(strings.TrimSpace(in.LastNameColumn)),
-		EmailColumn:     strings.ToUpper(strings.TrimSpace(in.EmailColumn)),
-		PhoneColumn:     strings.ToUpper(strings.TrimSpace(in.PhoneColumn)),
-		SourceColumn:    strings.ToUpper(strings.TrimSpace(in.SourceColumn)),
-		NotesColumn:     strings.ToUpper(strings.TrimSpace(in.NotesColumn)),
-		DateColumn:      strings.ToUpper(strings.TrimSpace(in.DateColumn)),
-		HotLeadColumn:   strings.ToUpper(strings.TrimSpace(in.HotLeadColumn)),
-		TrialPurchasedColumn: strings.ToUpper(strings.TrimSpace(in.TrialPurchasedColumn)),
+		ID:                      in.ID,
+		StudioID:                studioID,
+		SpreadsheetID:           extractSpreadsheetID(in.SpreadsheetID),
+		TabName:                 strings.TrimSpace(in.TabName),
+		NameColumn:              col(in.NameColumn),
+		FirstNameColumn:         col(in.FirstNameColumn),
+		LastNameColumn:          col(in.LastNameColumn),
+		EmailColumn:             col(in.EmailColumn),
+		PhoneColumn:             col(in.PhoneColumn),
+		SourceColumn:            col(in.SourceColumn),
+		NotesColumn:             col(in.NotesColumn),
+		DateColumn:              col(in.DateColumn),
+		HotLeadColumn:           col(in.HotLeadColumn),
+		TrialPurchasedColumn:    col(in.TrialPurchasedColumn),
 		ContinueAIAfterGreeting: in.ContinueAIAfterGreeting,
-		AutoContactEnabled: in.AutoContactEnabled,
-		Active:          in.Active,
+		AutoContactEnabled:      in.AutoContactEnabled,
+		Active:                  in.Active,
 	}
 	if settings.TabName == "" {
 		settings.TabName = "Sheet1"
@@ -512,10 +516,47 @@ func (s *Service) SaveExternalLeadsSheetSettings(ctx context.Context, studioID u
 	if settings.PhoneColumn == "" {
 		settings.PhoneColumn = "D"
 	}
+	return settings
+}
+
+// SaveExternalLeadsSheetSettings is the original single-sheet save (updates the studio's
+// oldest sheet, or creates the first). Kept for older clients.
+func (s *Service) SaveExternalLeadsSheetSettings(ctx context.Context, studioID uuid.UUID, in ExternalLeadsSheetSettings) (*ExternalLeadsSheetSettings, error) {
+	settings := normalizeExternalSheet(studioID, in)
 	if err := s.repo.SaveExternalLeadsSheetSettings(ctx, settings); err != nil {
 		return nil, err
 	}
 	return settings, nil
+}
+
+// ListExternalLeadsSheets returns all of the studio's external import sheets.
+func (s *Service) ListExternalLeadsSheets(ctx context.Context, studioID uuid.UUID) ([]ExternalLeadsSheetSettings, error) {
+	return s.repo.ListExternalLeadsSheets(ctx, studioID)
+}
+
+// CreateExternalLeadsSheet adds another external import sheet to the studio.
+func (s *Service) CreateExternalLeadsSheet(ctx context.Context, studioID uuid.UUID, in ExternalLeadsSheetSettings) (*ExternalLeadsSheetSettings, error) {
+	in.ID = uuid.Nil
+	settings := normalizeExternalSheet(studioID, in)
+	if err := s.repo.CreateExternalLeadsSheet(ctx, settings); err != nil {
+		return nil, err
+	}
+	return settings, nil
+}
+
+// UpdateExternalLeadsSheet changes one of the studio's external import sheets.
+func (s *Service) UpdateExternalLeadsSheet(ctx context.Context, studioID, id uuid.UUID, in ExternalLeadsSheetSettings) (*ExternalLeadsSheetSettings, error) {
+	in.ID = id
+	settings := normalizeExternalSheet(studioID, in)
+	if err := s.repo.UpdateExternalLeadsSheet(ctx, settings); err != nil {
+		return nil, err
+	}
+	return settings, nil
+}
+
+// DeleteExternalLeadsSheet stops importing from one sheet (already imported leads are kept).
+func (s *Service) DeleteExternalLeadsSheet(ctx context.Context, studioID, id uuid.UUID) error {
+	return s.repo.DeleteExternalLeadsSheet(ctx, studioID, id)
 }
 
 // ----- helpers -----
@@ -575,6 +616,9 @@ func randomSuffix(n int) string {
 	return strings.ToLower(enc)[:n]
 }
 
+// ImportLeads creates a lead for each data row. It never hands an imported lead to the AI
+// auto-contact worker — see the Leads page's "Enable AI" control (EnqueueAutoContactForLeadsByStatus)
+// for that, which lets the studio explicitly pick a status to connect afterwards.
 func (s *Service) ImportLeads(ctx context.Context, studioID uuid.UUID, defaultCampaignID uuid.UUID, rows [][]string) (int, error) {
 	if len(rows) < 2 {
 		return 0, fmt.Errorf("no data rows found")
@@ -619,17 +663,19 @@ func (s *Service) ImportLeads(ctx context.Context, studioID uuid.UUID, defaultCa
 		notes := getVal("notes", 6)
 		statusStr := getVal("status", 7)
 		name := getVal("name", -1)
+		glofoxMemberID := getVal("glofoxMemberId", -1)
+		membershipExpiry := getVal("membershipExpiry", -1)
 
 		if email == "" && phone == "" {
 			// Skip rows without any contact info
 			continue
 		}
 
-		// If name is empty but first/last name are provided
-		if name == "" {
+		// Prefer First/Last Name columns (unambiguous header match) over the generic
+		// "name" field, which can land on the wrong column for an unrecognized format.
+		if firstName != "" || lastName != "" {
 			name = strings.TrimSpace(firstName + " " + lastName)
-		} else if firstName == "" && lastName == "" {
-			// Split full name
+		} else if name != "" {
 			parts := strings.SplitN(name, " ", 2)
 			firstName = parts[0]
 			if len(parts) > 1 {
@@ -650,38 +696,59 @@ func (s *Service) ImportLeads(ctx context.Context, studioID uuid.UUID, defaultCa
 			phone = phoneRe.FindString(phone)
 		}
 
-		// Determine status
+		// A platform status value wins as-is; otherwise try Glofox's Active/Inactive/
+		// Trial-style values, then the plan-name "trial" heuristic.
 		status := StatusNew
 		if statusStr != "" {
-			sTemp := LeadStatus(strings.ToLower(statusStr))
+			sTemp := LeadStatus(strings.ToLower(strings.TrimSpace(statusStr)))
 			if sTemp.Valid() {
 				status = sTemp
+			} else if gfStatus, ok := glofoxStatusToLeadStatus(statusStr); ok {
+				status = gfStatus
 			}
-		} else if strings.Contains(strings.ToLower(plan), "trial") {
+		}
+		if status == StatusNew && strings.Contains(strings.ToLower(plan), "trial") {
 			status = StatusTrialBooked
+		}
+		// Some Glofox exports have no status column or "trial" wording at all — fall
+		// back to the membership itself: "Presale" hasn't started yet (trial-stage);
+		// otherwise a future expiry means member, past/missing means dropped.
+		if status == StatusNew {
+			if strings.Contains(strings.ToLower(plan), "presale") {
+				status = StatusTrialBooked
+			} else if membershipExpiry != "" {
+				if expiry, ok := parseGlofoxExpiryDate(membershipExpiry); ok {
+					if expiry.After(time.Now()) {
+						status = StatusMember
+					} else {
+						status = StatusDropped
+					}
+				}
+			}
 		}
 
 		// Map to a Lead structure
 		l := &Lead{
-			StudioID:     studioID,
-			StudioName:   defaultCamp.StudioName,
-			StudioSlug:   defaultCamp.StudioSlug,
-			CampaignID:   defaultCamp.ID,
-			CampaignName: defaultCamp.Name,
-			CampaignSlug: defaultCamp.Slug,
-			Name:         name,
-			FirstName:    firstName,
-			LastName:     lastName,
-			Email:        email,
-			Phone:        phone,
-			FitnessPlan:  plan,
-			Goals:        goals,
-			Notes:        notes,
-			Status:       status,
-			Source:       "import",
+			StudioID:       studioID,
+			StudioName:     defaultCamp.StudioName,
+			StudioSlug:     defaultCamp.StudioSlug,
+			CampaignID:     defaultCamp.ID,
+			CampaignName:   defaultCamp.Name,
+			CampaignSlug:   defaultCamp.Slug,
+			Name:           name,
+			FirstName:      firstName,
+			LastName:       lastName,
+			Email:          email,
+			Phone:          phone,
+			FitnessPlan:    plan,
+			Goals:          goals,
+			Notes:          notes,
+			Status:         status,
+			Source:         "import",
+			GlofoxMemberID: glofoxMemberID,
 		}
 
-		if err := s.repo.CreateLeadWithOutbox(ctx, l, sheetsDestination, false); err != nil {
+		if err := s.repo.CreateLeadWithOutbox(ctx, l, sheetsDestination, true); err != nil {
 			return importedCount, fmt.Errorf("row %d import: %w", rIdx, err)
 		}
 		importedCount++
@@ -690,33 +757,123 @@ func (s *Service) ImportLeads(ctx context.Context, studioID uuid.UUID, defaultCa
 	return importedCount, nil
 }
 
+// mapHeaders fuzzy-matches an import file's header row onto lead fields. Alongside
+// the platform's own CSV export, this also recognizes a Glofox member export as-is
+// (BarcodeID, Client Name, Status, Membership Tier, Phone, Email Address, Joined On,
+// Location, Next AutoPay Date, Next AutoPay Amount, Lifetime Sales, Is New Member?)
+// so a studio can re-upload that file directly from Leads > Import without
+// reformatting it first — see glofoxStatusToLeadStatus for how its Active/Inactive
+// style status column translates to the platform's own lead-status values.
 func mapHeaders(headerRow []string) map[string]int {
 	mapping := make(map[string]int)
+	// set only fills a key on its first match, so a later column that coincidentally
+	// contains the same word (e.g. "Membership Name", "Email Consent") can't overwrite
+	// the real one.
+	set := func(key string, i int) {
+		if _, exists := mapping[key]; !exists {
+			mapping[key] = i
+		}
+	}
 	for i, h := range headerRow {
 		h = strings.ToLower(strings.TrimSpace(h))
-		if strings.Contains(h, "first") && strings.Contains(h, "name") {
-			mapping["firstName"] = i
-		} else if strings.Contains(h, "last") && strings.Contains(h, "name") {
-			mapping["lastName"] = i
-		} else if h == "name" || strings.Contains(h, "full name") {
-			mapping["name"] = i
-		} else if strings.Contains(h, "email") {
-			mapping["email"] = i
-		} else if strings.Contains(h, "phone") || strings.Contains(h, "number") || strings.Contains(h, "contact") {
-			mapping["phone"] = i
-		} else if strings.Contains(h, "plan") {
-			mapping["plan"] = i
-		} else if strings.Contains(h, "goal") {
-			mapping["goals"] = i
-		} else if strings.Contains(h, "note") {
-			mapping["notes"] = i
-		} else if strings.Contains(h, "status") {
-			mapping["status"] = i
-		} else if strings.Contains(h, "campaign") {
-			mapping["campaign"] = i
+		switch {
+		case strings.Contains(h, "barcode") || strings.Contains(h, "member id") || strings.Contains(h, "memberid"):
+			set("glofoxMemberId", i)
+		case strings.Contains(h, "first") && strings.Contains(h, "name"):
+			set("firstName", i)
+		case strings.Contains(h, "last") && strings.Contains(h, "name"):
+			set("lastName", i)
+		// Matches "Client Name"/"Full Name" but never a qualified name column
+		// ("Membership Name", "Plan Name", ...), which names something else entirely.
+		case strings.Contains(h, "name") &&
+			!strings.Contains(h, "membership") && !strings.Contains(h, "plan") &&
+			!strings.Contains(h, "campaign") && !strings.Contains(h, "product") &&
+			!strings.Contains(h, "tier") && !strings.Contains(h, "class"):
+			set("name", i)
+		// Excludes "Email Consent"/"Email Opt-in" style columns, which hold a
+		// true/false flag, not an address.
+		case strings.Contains(h, "email") && !strings.Contains(h, "consent") && !strings.Contains(h, "opt"):
+			set("email", i)
+		// Excludes "Last Contacted" (an activity timestamp) matching on
+		// "contact" while still catching "Contact"/"Contact Number" columns.
+		case strings.Contains(h, "phone") || strings.Contains(h, "mobile") ||
+			(strings.Contains(h, "number") && !strings.Contains(h, "credit")) ||
+			(strings.Contains(h, "contact") && !strings.Contains(h, "contacted")):
+			set("phone", i)
+		// "Membership Tier" (Glofox) and a plain "Plan" column both mean the same
+		// thing here: what the person is signed up for.
+		case strings.Contains(h, "plan") || strings.Contains(h, "membership tier") || strings.Contains(h, "tier"):
+			set("plan", i)
+		case strings.Contains(h, "expiry") || strings.Contains(h, "expire"):
+			set("membershipExpiry", i)
+		case strings.Contains(h, "goal"):
+			set("goals", i)
+		case strings.Contains(h, "note"):
+			set("notes", i)
+		case strings.Contains(h, "status"):
+			set("status", i)
+		case strings.Contains(h, "campaign"):
+			set("campaign", i)
 		}
 	}
 	return mapping
+}
+
+// glofoxStatusToLeadStatus translates a Glofox member-export status value (Active,
+// Inactive, Cancelled, Expired, Frozen, Pending, Trial, ...) into one of this
+// platform's own lead statuses. Returns "", false for anything it doesn't
+// recognize (including the platform's own new/contacted/trial_booked/member/
+// dropped/paused values — those are handled separately, unchanged, by the caller)
+// so a column that already holds a valid platform status is never second-guessed.
+func glofoxStatusToLeadStatus(raw string) (LeadStatus, bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "active", "paid", "current":
+		return StatusMember, true
+	case "trial", "trialing", "pending":
+		return StatusTrialBooked, true
+	case "inactive", "cancelled", "canceled", "expired", "frozen", "lapsed", "suspended":
+		return StatusDropped, true
+	default:
+		return "", false
+	}
+}
+
+// parseGlofoxExpiryDate parses a Glofox "Membership Expiry Date" value —
+// observed as DD/MM/YYYY (e.g. "02/10/2026") — returning ok=false for a
+// blank or unrecognized value rather than guessing.
+func parseGlofoxExpiryDate(raw string) (time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, false
+	}
+	t, err := time.Parse("02/01/2006", raw)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
+}
+
+// EnableAutoContactForLeadsByStatuses is the Leads page's "Enable AI" control: connects
+// every current lead at any of the given statuses to the AI auto-contact worker. See
+// EnqueueAutoContactForLeadsByStatus for the per-status eligibility rule.
+func (s *Service) EnableAutoContactForLeadsByStatuses(ctx context.Context, studioID uuid.UUID, statuses []LeadStatus) (int, error) {
+	if len(statuses) == 0 {
+		return 0, fmt.Errorf("at least one status is required")
+	}
+	for _, status := range statuses {
+		if !status.Valid() {
+			return 0, fmt.Errorf("invalid status %q", status)
+		}
+	}
+	total := 0
+	for _, status := range statuses {
+		n, err := s.repo.EnqueueAutoContactForLeadsByStatus(ctx, studioID, status)
+		if err != nil {
+			return total, err
+		}
+		total += n
+	}
+	return total, nil
 }
 
 func (s *Service) BookTrialSlot(ctx context.Context, leadID uuid.UUID, slot string) error {

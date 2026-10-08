@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Inbox, Users, TrendingUp, Database } from 'lucide-react';
+import { Inbox, Users, TrendingUp, Database, Download } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Pagination } from '@/components/ui/Pagination';
@@ -10,6 +10,7 @@ import type { Lead, LeadStatus, Campaign } from '@/lib/types';
 import { LEAD_STATUSES, LEAD_STATUS_LABELS } from '@/lib/types';
 import { LeadFilters } from './LeadFilters';
 import { ImportLeadsButton } from './ImportLeadsButton';
+import { EnableAIButton } from './EnableAIButton';
 import { AutoRefresh } from '@/components/AutoRefresh';
 import { HeaderActions } from '@/components/HeaderActions';
 
@@ -91,6 +92,9 @@ export default async function LeadsPage({
   if (sp.duration) qs.set('duration', sp.duration);
   if (sp.startDate) qs.set('startDate', sp.startDate);
   if (sp.endDate) qs.set('endDate', sp.endDate);
+  // Export needs exactly these filters, no pagination — snapshot before
+  // limit/offset are added below so it always matches what's on screen.
+  const exportQs = qs.toString();
   qs.set('limit', String(PAGE_SIZE));
   qs.set('offset', String(offset));
 
@@ -117,7 +121,20 @@ export default async function LeadsPage({
           Live
         </div>
 
+        <EnableAIButton studioId={studioId} />
+
         <ImportLeadsButton studioId={studioId} campaigns={campaigns} />
+
+        <a href={`/api/v1/studios/${studioId}/leads/export${exportQs ? `?${exportQs}` : ''}`}>
+          <Button
+            variant="ghost"
+            size="sm"
+            leftIcon={<Download className="h-3.5 w-3.5" />}
+            className="rounded-xl border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-bold text-zinc-700 hover:bg-white/20 dark:text-zinc-200 dark:hover:bg-neutral-800/50 shadow-sm shrink-0"
+          >
+            Export
+          </Button>
+        </a>
 
         <Link href={`/admin/studios/${studioId}/settings`}>
           <Button

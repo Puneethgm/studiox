@@ -102,6 +102,7 @@ export default async function LeadDetailPage({
               <Field label="Phone" value={lead.phone} />
               <Field label="Fitness plan" value={lead.fitnessPlan} />
               <Field label="Source" value={lead.source} />
+              {lead.glofoxMemberId && <Field label="Glofox Member ID" value={lead.glofoxMemberId} />}
               <Field label="Assigned to" value={lead.assignedTo ?? ''} />
               <Field label="Offer" value={lead.offer ?? ''} />
               <Field label="Monthly membership fee" value={lead.monthlyFee ? `$${lead.monthlyFee}` : '—'} />
