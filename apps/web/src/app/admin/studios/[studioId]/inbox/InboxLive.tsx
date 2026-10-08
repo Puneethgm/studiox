@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import {
   Check,
@@ -37,7 +37,7 @@ import {
 import { cn } from '@/lib/cn';
 import { brandInitials } from '@/lib/color';
 import { ApiError, api } from '@/lib/api';
-import { formatTime, relativeTime } from '@/lib/datetime';
+import { formatTime, relativeTime, formatChatListTimestamp, formatDayDivider, dayKey } from '@/lib/datetime';
 import type {
   ChannelKind,
   Conversation,
@@ -51,6 +51,7 @@ import type {
 import { ContactDetailsPanel } from './ContactDetailsPanel';
 import { BroadcastsPanel } from './BroadcastsPanel';
 import { HeaderActions } from '@/components/HeaderActions';
+import { jobFailureReason } from '@/lib/jobFailureReason';
 
 // Strip @c.us / @lid / @s.whatsapp.net suffixes from WA chat IDs for display
 function displayContact(value: string): string {
@@ -142,31 +143,6 @@ interface PendingJob {
   attempts: number;
   status: string;
   lastError?: string;
-}
-
-// Friendlier copy for known failure reasons. The wa-web sender's errors
-// arrive as "wa-web send failed <code>: {...raw json...}" — extract just
-// the underlying message instead of showing that whole blob with escaped
-// quotes and braces, and special-case the ones with a clean known meaning.
-function jobFailureReason(lastError?: string): string {
-  if (!lastError) return 'Send failed';
-  if (lastError === 'daily_limit_exceeded') return 'WhatsApp daily message limit reached';
-
-  const jsonStart = lastError.indexOf('{');
-  if (jsonStart !== -1) {
-    try {
-      const parsed = JSON.parse(lastError.slice(jsonStart));
-      const inner: string = parsed?.error || parsed?.message || '';
-      if (inner) {
-        if (/not registered on whatsapp/i.test(inner)) return 'Not registered on WhatsApp';
-        if (/rate limit/i.test(inner)) return 'WhatsApp rate limit hit';
-        return inner;
-      }
-    } catch {
-      // Not valid JSON after all — fall through to the raw string below.
-    }
-  }
-  return lastError;
 }
 
 type InboxTab = 'conversations' | 'escalation' | 'automated_messages' | 'snippets' | 'trigger_links';
@@ -1526,7 +1502,7 @@ export function InboxLive({
                                 className="shrink-0 text-[9px] font-semibold text-zinc-400"
                                 suppressHydrationWarning
                               >
-                                {relativeTime(c.lastMessageAt)}
+                                {formatChatListTimestamp(c.lastMessageAt)}
                               </span>
                             </div>
                             
@@ -1707,9 +1683,22 @@ export function InboxLive({
                         </div>
                       ) : (
                         <ul className="space-y-3">
-                          {messages.map((m) => (
-                            <MessageBubble key={m.id} msg={m} />
-                          ))}
+                          {messages.map((m, i) => {
+                            const prev = i > 0 ? messages[i - 1] : undefined;
+                            const showDivider = !prev || dayKey(m.sentAt) !== dayKey(prev.sentAt);
+                            return (
+                              <Fragment key={m.id}>
+                                {showDivider && (
+                                  <li className="flex justify-center py-1" suppressHydrationWarning>
+                                    <span className="rounded-full bg-zinc-100 px-3 py-1 text-[10px] font-bold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                                      {formatDayDivider(m.sentAt)}
+                                    </span>
+                                  </li>
+                                )}
+                                <MessageBubble msg={m} />
+                              </Fragment>
+                            );
+                          })}
                           <li ref={messagesEndRef} className="h-2" />
                         </ul>
                       )}
@@ -2432,9 +2421,16 @@ export function InboxLive({
                               </div>
                             </div>
                           ) : (
-                            <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold text-white bg-violet-400">
-                              Scheduled
-                            </span>
+                            <div>
+                              <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold text-white bg-violet-400">
+                                Scheduled
+                              </span>
+                              {job.lastError && job.attempts > 0 && (
+                                <div className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold mt-1 max-w-[160px]">
+                                  Retrying: {jobFailureReason(job.lastError)}
+                                </div>
+                              )}
+                            </div>
                           )}
                           <div className="text-[10px] text-zinc-400 font-medium mt-1">{job.attempts} attempt{job.attempts === 1 ? '' : 's'}</div>
                         </td>

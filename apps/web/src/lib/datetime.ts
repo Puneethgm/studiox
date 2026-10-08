@@ -65,3 +65,38 @@ export function relativeTime(iso: string | Date): string {
 function toDate(v: string | Date): Date {
   return v instanceof Date ? v : new Date(v);
 }
+
+function startOfDay(d: Date): number {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+/** Calendar days between `iso` and now (0 = today, 1 = yesterday, ...). Can be negative for a future date. */
+function daysAgo(iso: string | Date): number {
+  const d = toDate(iso);
+  return Math.round((startOfDay(new Date()) - startOfDay(d)) / 86400000);
+}
+
+/** WhatsApp Web–style conversation-list timestamp: time for today, "Yesterday", weekday
+ * name for the rest of the past week, short date beyond that. */
+export function formatChatListTimestamp(iso: string | Date): string {
+  const d = daysAgo(iso);
+  if (d <= 0) return formatTime(iso);
+  if (d === 1) return 'Yesterday';
+  if (d < 7) return toDate(iso).toLocaleDateString(LOCALE, { weekday: 'long' });
+  return formatDate(iso);
+}
+
+/** WhatsApp Web–style day-divider label: "Today" / "Yesterday" / weekday / short date. */
+export function formatDayDivider(iso: string | Date): string {
+  const d = daysAgo(iso);
+  if (d <= 0) return 'Today';
+  if (d === 1) return 'Yesterday';
+  if (d < 7) return toDate(iso).toLocaleDateString(LOCALE, { weekday: 'long' });
+  return formatDate(iso);
+}
+
+/** Calendar-day key (e.g. "2026-10-07") for grouping messages by day. */
+export function dayKey(iso: string | Date): string {
+  const d = toDate(iso);
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}

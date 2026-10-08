@@ -5484,6 +5484,186 @@
                 }
             }
         },
+        "/api/v1/studios/{studioId}/knowledge-base/gaps": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Returns the studio's knowledge gaps — customer questions the AI escalated to a human instead of guessing, because the knowledge base had no solid match. Optional ?status=open|resolved|dismissed filter; omitted returns all.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Knowledge Base"
+                ],
+                "summary": "List questions the AI couldn't answer from the knowledge base",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "open | resolved | dismissed",
+                        "name": "status",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{gaps: KnowledgeGap[]}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/studios/{studioId}/knowledge-base/gaps/{gapId}/dismiss": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Closes a knowledge gap without adding anything to the knowledge base (e.g. it was off-topic or a near-duplicate of another question).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Knowledge Base"
+                ],
+                "summary": "Dismiss a knowledge gap",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Knowledge gap ID",
+                        "name": "gapId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/studios/{studioId}/knowledge-base/gaps/{gapId}/resolve": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Records the answer and appends it as a Q/A pair to the studio's \"Learned Answers\" knowledge-base document, then re-embeds — the AI can use it starting with the next message. `answer` is required.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Knowledge Base"
+                ],
+                "summary": "Answer a knowledge gap and add it to the knowledge base",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Knowledge gap ID",
+                        "name": "gapId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The answer to add to the knowledge base",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_studios.resolveKnowledgeGapReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_studios.KnowledgeGap"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid id or empty answer",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "not found, or already resolved/dismissed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/studios/{studioId}/knowledge-base/ocr": {
             "post": {
                 "security": [
@@ -5896,6 +6076,246 @@
                     },
                     "400": {
                         "description": "validation failed or missing/invalid studioId",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/studios/{studioId}/leads/external-sheets": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Returns every external Google Sheet the studio imports leads from (several are allowed, each with its own tab, column mapping and auto-contact options), oldest first.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Leads"
+                ],
+                "summary": "List external leads sheets",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "{sheets: ExternalLeadsSheetSettings[]}",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "missing/invalid studioId",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Adds another external Google Sheet for the studio to import leads from. `spreadsheetId` (an ID or a full URL) is required. Returns 409 if the studio already imports that spreadsheet and tab.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Leads"
+                ],
+                "summary": "Add an external leads sheet",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Sheet settings",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_leads.saveExternalLeadsSheetSettingsReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/internal_leads.ExternalLeadsSheetSettings"
+                        }
+                    },
+                    "400": {
+                        "description": "validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "spreadsheet and tab already added",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/studios/{studioId}/leads/external-sheets/{sheetId}": {
+            "put": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Replaces one external sheet's settings (spreadsheet, tab, column mapping, auto-contact and import flags). Returns 404 if the sheet isn't this studio's, 409 if the new spreadsheet and tab duplicates another of its sheets.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Leads"
+                ],
+                "summary": "Update an external leads sheet",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sheet ID",
+                        "name": "sheetId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Sheet settings",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_leads.saveExternalLeadsSheetSettingsReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_leads.ExternalLeadsSheetSettings"
+                        }
+                    },
+                    "400": {
+                        "description": "validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "sheet not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "spreadsheet and tab already added",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Stops importing from one external sheet. Leads already imported from it are kept.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Leads"
+                ],
+                "summary": "Remove an external leads sheet",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Studio ID",
+                        "name": "studioId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Sheet ID",
+                        "name": "sheetId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "removed"
+                    },
+                    "400": {
+                        "description": "invalid sheet id",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "sheet not found",
                         "schema": {
                             "$ref": "#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse"
                         }
@@ -10797,7 +11217,7 @@
         },
         "/api/v1/webhooks/meta/data-deletion": {
             "post": {
-                "description": "Handles Meta's GDPR/CCPA data-deletion request callback: decodes the `signed_request` payload and acknowledges it with a confirmation URL. Signature verification of the signed request is not yet implemented. No session/API-key auth — this is an unauthenticated callback URL configured in the Meta App dashboard.",
+                "description": "Handles Meta's GDPR/CCPA data-deletion request callback: decodes the `signed_request` payload and acknowledges it with a confirmation URL. The signed request's HMAC is verified with the app secret (invalid -\u003e 400). It only acknowledges: no data is deleted. No session/API-key auth — this is an unauthenticated callback URL configured in the Meta App dashboard.",
                 "consumes": [
                     "application/json"
                 ],
@@ -11207,7 +11627,7 @@
         },
         "/api/v1/webhooks/twilio": {
             "post": {
-                "description": "Receives inbound SMS (and any MMS media attachments) from Twilio as an application/x-www-form-urlencoded webhook, then dispatches the message to the messaging service. Responds with an empty TwiML document. Always responds 200 on downstream handling errors so Twilio doesn't retry indefinitely. No session/API-key auth — Twilio webhooks are not currently signature-verified here.",
+                "description": "Receives inbound SMS (and any MMS media attachments) from Twilio as an application/x-www-form-urlencoded webhook, then dispatches the message to the messaging service. Responds with an empty TwiML document. Always responds 200 on downstream handling errors so Twilio doesn't retry indefinitely. No session/API-key auth — authenticated by Twilio's `X-Twilio-Signature` (HMAC-SHA1, using the matching channel's auth token); requests with a missing or invalid signature get 403.",
                 "consumes": [
                     "application/x-www-form-urlencoded"
                 ],
@@ -11236,7 +11656,7 @@
         },
         "/api/v1/webhooks/x": {
             "get": {
-                "description": "Handles both halves of X's Account Activity webhook. On GET, responds to X's CRC challenge by HMAC-SHA256-signing the `crc_token` query param with the connected channel's consumer secret and returning the base64-encoded `response_token`. On POST, decodes the `direct_message_events` payload and dispatches each inbound (non-self) message_create event to the messaging service, always returning 200. No session/API-key auth — GET is authenticated implicitly by the shared consumer secret used to answer the CRC challenge; POST performs no signature verification.",
+                "description": "Handles both halves of X's Account Activity webhook. On GET, responds to X's CRC challenge by HMAC-SHA256-signing the `crc_token` query param with the connected channel's consumer secret and returning the base64-encoded `response_token`. On POST, decodes the `direct_message_events` payload and dispatches each inbound (non-self) message_create event to the messaging service, always returning 200. No session/API-key auth — GET is authenticated implicitly by the shared consumer secret used to answer the CRC challenge; POST is verified against the `x-twitter-webhooks-signature` HMAC (consumer secret of any connected X channel); an invalid or missing signature gets 401.",
                 "consumes": [
                     "application/json"
                 ],
@@ -11272,7 +11692,7 @@
                 }
             },
             "post": {
-                "description": "Handles both halves of X's Account Activity webhook. On GET, responds to X's CRC challenge by HMAC-SHA256-signing the `crc_token` query param with the connected channel's consumer secret and returning the base64-encoded `response_token`. On POST, decodes the `direct_message_events` payload and dispatches each inbound (non-self) message_create event to the messaging service, always returning 200. No session/API-key auth — GET is authenticated implicitly by the shared consumer secret used to answer the CRC challenge; POST performs no signature verification.",
+                "description": "Handles both halves of X's Account Activity webhook. On GET, responds to X's CRC challenge by HMAC-SHA256-signing the `crc_token` query param with the connected channel's consumer secret and returning the base64-encoded `response_token`. On POST, decodes the `direct_message_events` payload and dispatches each inbound (non-self) message_create event to the messaging service, always returning 200. No session/API-key auth — GET is authenticated implicitly by the shared consumer secret used to answer the CRC challenge; POST is verified against the `x-twitter-webhooks-signature` HMAC (consumer secret of any connected X channel); an invalid or missing signature gets 401.",
                 "consumes": [
                     "application/json"
                 ],
@@ -14204,6 +14624,48 @@
                 }
             }
         },
+        "internal_studios.KnowledgeGap": {
+            "type": "object",
+            "properties": {
+                "answer": {
+                    "type": "string"
+                },
+                "conversationId": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "leadId": {
+                    "type": "string"
+                },
+                "leadName": {
+                    "type": "string"
+                },
+                "question": {
+                    "type": "string"
+                },
+                "resolvedAt": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "\"open\" | \"resolved\" | \"dismissed\"",
+                    "type": "string"
+                },
+                "studioId": {
+                    "type": "string"
+                },
+                "timesAsked": {
+                    "type": "integer"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_studios.SocialPost": {
             "type": "object",
             "properties": {
@@ -14400,6 +14862,14 @@
             "properties": {
                 "programStartDate": {
                     "description": "ProgramStartDate is \"YYYY-MM-DD\" — Week 1's first day of a week-by-week\nprogram document (see ParseProgramSchedule). Should be the same weekday\nas the document's own \"Monday\"/first-listed day so week/day-of-week\narithmetic lines up; the AI worker assumes this without re-validating it.",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_studios.resolveKnowledgeGapReq": {
+            "type": "object",
+            "properties": {
+                "answer": {
                     "type": "string"
                 }
             }

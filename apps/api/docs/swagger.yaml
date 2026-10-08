@@ -1346,6 +1346,34 @@ definitions:
       url:
         type: string
     type: object
+  internal_studios.KnowledgeGap:
+    properties:
+      answer:
+        type: string
+      conversationId:
+        type: string
+      createdAt:
+        type: string
+      id:
+        type: string
+      leadId:
+        type: string
+      leadName:
+        type: string
+      question:
+        type: string
+      resolvedAt:
+        type: string
+      status:
+        description: '"open" | "resolved" | "dismissed"'
+        type: string
+      studioId:
+        type: string
+      timesAsked:
+        type: integer
+      updatedAt:
+        type: string
+    type: object
   internal_studios.SocialPost:
     properties:
       campaign:
@@ -1484,6 +1512,11 @@ definitions:
           program document (see ParseProgramSchedule). Should be the same weekday
           as the document's own "Monday"/first-listed day so week/day-of-week
           arithmetic lines up; the AI worker assumes this without re-validating it.
+        type: string
+    type: object
+  internal_studios.resolveKnowledgeGapReq:
+    properties:
+      answer:
         type: string
     type: object
   internal_studios.studioResponse:
@@ -5500,6 +5533,128 @@ paths:
       summary: Set initial contact delay
       tags:
       - Messaging Settings
+  /api/v1/studios/{studioId}/knowledge-base/gaps:
+    get:
+      description: Returns the studio's knowledge gaps — customer questions the AI
+        escalated to a human instead of guessing, because the knowledge base had no
+        solid match. Optional ?status=open|resolved|dismissed filter; omitted returns
+        all.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: open | resolved | dismissed
+        in: query
+        name: status
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{gaps: KnowledgeGap[]}'
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: List questions the AI couldn't answer from the knowledge base
+      tags:
+      - Knowledge Base
+  /api/v1/studios/{studioId}/knowledge-base/gaps/{gapId}/dismiss:
+    post:
+      description: Closes a knowledge gap without adding anything to the knowledge
+        base (e.g. it was off-topic or a near-duplicate of another question).
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: Knowledge gap ID
+        in: path
+        name: gapId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Dismiss a knowledge gap
+      tags:
+      - Knowledge Base
+  /api/v1/studios/{studioId}/knowledge-base/gaps/{gapId}/resolve:
+    post:
+      consumes:
+      - application/json
+      description: Records the answer and appends it as a Q/A pair to the studio's
+        "Learned Answers" knowledge-base document, then re-embeds — the AI can use
+        it starting with the next message. `answer` is required.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: Knowledge gap ID
+        in: path
+        name: gapId
+        required: true
+        type: string
+      - description: The answer to add to the knowledge base
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_studios.resolveKnowledgeGapReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_studios.KnowledgeGap'
+        "400":
+          description: invalid id or empty answer
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "404":
+          description: not found, or already resolved/dismissed
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Answer a knowledge gap and add it to the knowledge base
+      tags:
+      - Knowledge Base
   /api/v1/studios/{studioId}/knowledge-base/ocr:
     post:
       consumes:
@@ -5939,6 +6094,168 @@ paths:
       security:
       - CookieAuth: []
       summary: Save external leads sheet import settings
+      tags:
+      - Leads
+  /api/v1/studios/{studioId}/leads/external-sheets:
+    get:
+      description: Returns every external Google Sheet the studio imports leads from
+        (several are allowed, each with its own tab, column mapping and auto-contact
+        options), oldest first.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{sheets: ExternalLeadsSheetSettings[]}'
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: missing/invalid studioId
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: List external leads sheets
+      tags:
+      - Leads
+    post:
+      consumes:
+      - application/json
+      description: Adds another external Google Sheet for the studio to import leads
+        from. `spreadsheetId` (an ID or a full URL) is required. Returns 409 if the
+        studio already imports that spreadsheet and tab.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: Sheet settings
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_leads.saveExternalLeadsSheetSettingsReq'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_leads.ExternalLeadsSheetSettings'
+        "400":
+          description: validation failed
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "409":
+          description: spreadsheet and tab already added
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Add an external leads sheet
+      tags:
+      - Leads
+  /api/v1/studios/{studioId}/leads/external-sheets/{sheetId}:
+    delete:
+      description: Stops importing from one external sheet. Leads already imported
+        from it are kept.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: Sheet ID
+        in: path
+        name: sheetId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: removed
+        "400":
+          description: invalid sheet id
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "404":
+          description: sheet not found
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Remove an external leads sheet
+      tags:
+      - Leads
+    put:
+      consumes:
+      - application/json
+      description: Replaces one external sheet's settings (spreadsheet, tab, column
+        mapping, auto-contact and import flags). Returns 404 if the sheet isn't this
+        studio's, 409 if the new spreadsheet and tab duplicates another of its sheets.
+      parameters:
+      - description: Studio ID
+        in: path
+        name: studioId
+        required: true
+        type: string
+      - description: Sheet ID
+        in: path
+        name: sheetId
+        required: true
+        type: string
+      - description: Sheet settings
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_leads.saveExternalLeadsSheetSettingsReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_leads.ExternalLeadsSheetSettings'
+        "400":
+          description: validation failed
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "404":
+          description: sheet not found
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "409":
+          description: spreadsheet and tab already added
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_projectx_api_internal_platform_httpx.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Update an external leads sheet
       tags:
       - Leads
   /api/v1/studios/{studioId}/leads/import:
@@ -9122,9 +9439,9 @@ paths:
       - application/json
       description: 'Handles Meta''s GDPR/CCPA data-deletion request callback: decodes
         the `signed_request` payload and acknowledges it with a confirmation URL.
-        Signature verification of the signed request is not yet implemented. No session/API-key
-        auth — this is an unauthenticated callback URL configured in the Meta App
-        dashboard.'
+        The signed request''s HMAC is verified with the app secret (invalid -> 400).
+        It only acknowledges: no data is deleted. No session/API-key auth — this is
+        an unauthenticated callback URL configured in the Meta App dashboard.'
       produces:
       - application/json
       responses:
@@ -9451,8 +9768,9 @@ paths:
         as an application/x-www-form-urlencoded webhook, then dispatches the message
         to the messaging service. Responds with an empty TwiML document. Always responds
         200 on downstream handling errors so Twilio doesn't retry indefinitely. No
-        session/API-key auth — Twilio webhooks are not currently signature-verified
-        here.
+        session/API-key auth — authenticated by Twilio's `X-Twilio-Signature` (HMAC-SHA1,
+        using the matching channel's auth token); requests with a missing or invalid
+        signature get 403.
       produces:
       - text/xml
       responses:
@@ -9477,8 +9795,9 @@ paths:
         On POST, decodes the `direct_message_events` payload and dispatches each inbound
         (non-self) message_create event to the messaging service, always returning
         200. No session/API-key auth — GET is authenticated implicitly by the shared
-        consumer secret used to answer the CRC challenge; POST performs no signature
-        verification.
+        consumer secret used to answer the CRC challenge; POST is verified against
+        the `x-twitter-webhooks-signature` HMAC (consumer secret of any connected
+        X channel); an invalid or missing signature gets 401.
       parameters:
       - description: X CRC challenge token (GET only)
         in: query
@@ -9508,8 +9827,9 @@ paths:
         On POST, decodes the `direct_message_events` payload and dispatches each inbound
         (non-self) message_create event to the messaging service, always returning
         200. No session/API-key auth — GET is authenticated implicitly by the shared
-        consumer secret used to answer the CRC challenge; POST performs no signature
-        verification.
+        consumer secret used to answer the CRC challenge; POST is verified against
+        the `x-twitter-webhooks-signature` HMAC (consumer secret of any connected
+        X channel); an invalid or missing signature gets 401.
       parameters:
       - description: X CRC challenge token (GET only)
         in: query

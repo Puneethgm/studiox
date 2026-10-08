@@ -119,12 +119,13 @@ denied there (fail closed). Attendance is effectively admin-only.
   requests with 500. Prod Redis has no volume, so a restart logs everyone out.
 - Passwords are bcrypt cost 12. Login/password/forgot/reset are rate-limited to
   10 requests per minute per IP (in-memory, resets on restart).
-- **Teammates** are created by an admin with the fixed default password
-  `password123` and a forced reset at first login (`password_reset_required` blocks
-  everything except the `/auth/*` and `/permissions` routes until changed). A welcome
-  email is sent best-effort.
-- **Studio admins** created by a super-admin get the same default + forced reset; self-signup
-  admins (public Stripe provisioning) choose their own password.
+- **Teammates** are created by an admin with a **random one-time password** (16 characters,
+  unique per user, emailed to them) and a forced reset at first login (`password_reset_required`
+  blocks everything except the `/auth/*` and `/permissions` routes until changed). The forced-reset
+  screen asks for that temporary password plus the new one. A welcome email is sent best-effort.
+- **Studio admins** created by a super-admin also get a random password, plus a welcome email with a
+  1-hour reset link (if the link is missed they use **Forgot password**); self-signup admins
+  (public Stripe provisioning) choose their own password.
 - **Forgot password**: `POST /auth/forgot-password` returns 404 if the email has no
   active account (deliberately reveals existence). With SMTP on it emails a link
   `${FRONTEND_URL}/reset-password?token=...` valid 1 hour; only the SHA-256 hash is
@@ -198,9 +199,14 @@ denied there (fail closed). Attendance is effectively admin-only.
 
 `POST /leads/import` (max 10 MB, `.csv/.xlsx/.xls`, first sheet) with a default campaign.
 Headers are matched case-insensitively by substring (first/last name, name, email,
-phone/number/contact, plan, goal, note, status). If no header maps, positional columns apply.
-Rows with neither email nor phone are skipped. Status from the file if valid, else
+phone/number/contact, plan, goal, note, status, barcode/member id). If no header maps,
+positional columns apply. Rows with neither email nor phone are skipped. Status from the file
+if it's a valid platform status, else translated from a Glofox-style value (`Active`→`member`,
+`Trial`/`Pending`→`trial_booked`, `Inactive`/`Cancelled`/`Expired`/`Frozen`→`dropped`), else
 `trial_booked` when the plan text contains "trial", else `new`; source `import`.
+**A Glofox member export can be uploaded as-is**: `BarcodeID`/`Client Name`/`Membership Tier`
+map to member ID/name/plan automatically, and the BarcodeID is kept on the lead
+(`leads.glofox_member_id`, shown on the lead detail page) — nothing needs reformatting first.
 **Gotchas:** no de-duplication; not transactional; a "campaign" column is ignored; every row
 queues auto-contact (WhatsApp/SMS) if it has a phone and a channel exists.
 
@@ -264,8 +270,8 @@ Five tabs: **Conversations** (sub-filters all/unread/recents/starred, per-channe
 | `whatsapp_meta` | form: WABA id, phone number id, display number, access token | `/webhooks/meta/whatsapp` (HMAC verified; studio app secret or app secret) | Graph API |
 | `whatsapp_web` | QR via wa-web | wa-web -> `/internal/wa-web/inbound` | wa-web `/sessions/:id/send` |
 | `instagram_meta`, `messenger_meta` | form | Meta webhooks | Graph API |
-| `sms` | Twilio SID, token, number | `/webhooks/twilio` (**no signature check**) | Twilio |
-| `x_dm` | four OAuth1 keys | `/webhooks/x` (**POST not signature-verified**) | X API |
+| `sms` | Twilio SID, token, number | `/webhooks/twilio` (verified with `X-Twilio-Signature`) | Twilio |
+| `x_dm` | four OAuth1 keys | `/webhooks/x` (POST verified with `x-twitter-webhooks-signature`) | X API |
 | `telegram` (bot) | bot token; platform calls `getMe` + `setWebhook` | `/webhooks/telegram/{botID}` + secret-token header | Bot API |
 | `telegram_mtproto` | QR via tg-web (+2FA) | tg-web -> `/internal/tg-web/*` | tg-web |
 | `email_smtp` | host/port/user/password/from (verified with a real AUTH handshake) | none (outbound only) | SMTP |
@@ -304,7 +310,7 @@ Every send is a row in `outbound_jobs` handled by one worker (`internal/messagin
    the job is `dead` (`daily_limit_exceeded`). A lookup error fails open.
 5. **Spacing:** default 20 s between WhatsApp messages on the same channel (0-300 s, per studio),
    tracked in memory per channel (lost on restart).
-6. **Retry:** up to 6 attempts with backoff `2^n` seconds capped at 30 min. Dead immediately on:
+6. **Retry:** up to 6 attempts with backoff `2^n` seconds capped at 30 min. **Network-level failures** (DNS lookup, connection refused/reset, timeouts reaching wa-web/Meta/SMTP) are treated as transient: up to 12 attempts with 30 s, 1 m, 2 m, 4 m, 8 m, then 10 m waits (about 85 minutes) before a job is dead-lettered. Dead immediately on:
    invalid credentials (channel marked `error`), DND, daily limit, deleted channel, unknown kind.
    Dead jobs can be revived from Manual Actions. The `failed` status exists but is never written.
 7. **Message sources:** `customer`, `studio_user`, `automation`, `ai`. Staff replies skip DND,
@@ -342,12 +348,12 @@ prefers Meta, then WhatsApp Web; email needs SMTP). Statuses: `scheduled`, `send
 
 **Worker.** Every minute it takes due `scheduled`/`sending` campaigns and enqueues pending
 recipients: at most 200 per tick, and for WhatsApp at most the studio's remaining daily
-allowance, resuming the next Singapore day automatically. Email ignores the daily cap. Each
+allowance (limit minus messages already **sent today and messages queued but not yet sent**), resuming the next Singapore day automatically. Email ignores the daily cap. Each
 recipient gets a conversation and an `outbound_jobs` row (`broadcast:<campaignId>`), so the normal
 pipeline (DND, spacing, retries) applies. A recipient with no email on an email campaign is marked failed.
 
 **Cancel** sets the campaign `canceled` and marks its pending jobs `dead` in one transaction;
-already-sent messages are unaffected. **Gotcha:** "completed" means all recipients were
+already-sent messages are unaffected. **Automatic retry:** when a broadcast message dies for a temporary reason (network/DNS trouble, the daily limit, the channel offline), its recipient goes back to `pending` and the campaign re-opens as `sending`, so the worker queues it again as allowance frees up, up to 5 times per recipient (`retry_count`). Permanent failures (number not on WhatsApp, Do Not Disturb, bad credentials) stay failed. **Gotcha:** "completed" means all recipients were
 **queued**, not delivered. The recipients view joins each recipient to its job to show the real
 state (`pending/sent/failed/dead`). If the channel disappears after scheduling, the campaign
 stays as it is indefinitely.
@@ -367,19 +373,20 @@ The AI worker reacts to each inbound `customer` message. First match wins:
 4. Skip if a bot-owned `autoContactStage` (menu flow) owns the lead, or an automation/AI reply already exists.
 5. **Greeting:** the first message of a new conversation gets the studio's greeting plus a fixed
    "you're chatting with <Studio>'s AI assistant" line, and nothing else.
-6. **Human-request phrases** escalate with a canned handoff reply.
+6. **Human-request phrases** escalate with a canned handoff reply. **Complaints, negative feedback and bad-review threats** ("disappointed", "unacceptable", "refund", "leave a bad review"...) escalate the same way with an apologetic handoff, before any other handling; the classifier's `complaint_or_feedback` intent covers politely worded criticism when retrieval is available.
 7. **Intent keyword overrides** ("trial" -> booking inquiry; "become a member", "sign me up" -> ready to buy).
 8. **Retrieval** (needs a Gemini key): classify intent/sentiment, expand the query, embed, hybrid
    search (vector + full-text, fused by RRF), Gemini rerank to the top 4, plus similar past messages and staff style examples.
 9. **Decision tree:** a matching node replies **without calling the LLM**.
 10. **Shortcuts:** booking and membership menus ("1. Book a Trial 2. Become a Member"), payment
     links on buy wording, "yes" to a trial or plan-change offer.
-11. **Low-confidence escalation** for pricing/general questions when fewer than 2 chunks matched.
-12. Otherwise **build the prompt and call the model waterfall**.
+11. **Class requests go to a person:** a request to book, cancel, reschedule, move or extend a class/session/credits (trial wording excluded, since trials have their own flow) escalates immediately, before the booking menu shortcut. The AI has no booking system and must never claim it booked anything.
+12. **Low-confidence escalation** for pricing/general questions, and for any question or request about classes/sessions/the timetable, when fewer than 2 knowledge-base chunks matched (needs retrieval, i.e. a Gemini key). The exact question is logged to `knowledge_gaps` (best-effort — never blocks the handoff) and surfaces on the Knowledge Base page's **Needs Answers** tab (see below).
+13. Otherwise **build the prompt and call the model waterfall**.
 
 **Prompt** (one flat text): role and absolute rules, today's date/timezone, the verified program
-session for today (if a program start date and schedule exist), greeting rule, knowledge-base
-chunks (or the whole KB text if retrieval is unavailable), active plans (SGD), lead line, menu
+session for today (if a program start date and schedule exist), a no-greeting rule, knowledge-base
+chunks (or the whole KB text if retrieval is unavailable) with an "answer only from this, otherwise hand off" rule, a "you cannot book/cancel/reschedule classes and must never say you have" rule, active plans (SGD), lead line, menu
 instructions by lead status, response strategy by intent, the learned style profile and examples,
 tone, "2-4 sentences", past context and the last 15 messages.
 
@@ -388,9 +395,9 @@ order (defaults apply if none are configured). Keys: the studio's own, then the 
 Mistral is used for **OCR only**. Every attempt is logged to `llm_usage_logs`. If all providers
 fail, nothing is sent and nothing is retried.
 
-**Post-processing and sending:** the greeting word is enforced in code (time of day from the
-recipient's phone number via libphonenumber, else the studio timezone), motivation questions are
-stripped for booking inquiries, and replies carry `source=ai`.
+**Post-processing and sending:** a leading "Good morning/afternoon/evening/night" is stripped from the
+model's reply in code (the AI no longer uses time-of-day greetings; the studio's own configured first-message
+greeting is unchanged), motivation questions are stripped for booking inquiries, and replies carry `source=ai`.
 
 **Cache:** Redis `studio:<id>:ai:<kind>:<sha256(prompt)>`, TTL `AI_ANSWER_CACHE_TTL` (30 min).
 Prompts embed history, so hits are mostly Test Chat and template generation.
@@ -412,6 +419,15 @@ for Stripe and channel tokens** (the UI shows only the last 4 characters).
 
 - **Instructions tab:** greeting message, free-text instructions, uploaded documents, program
   schedule start date. Edits **autosave** about 900 ms after the last change and then trigger a sync.
+- **Needs Answers tab:** every question the AI escalated instead of guessing (the low-confidence
+  handoff above), newest first, with a badge showing how many are still open. Repeat asks of the
+  same question while unanswered just bump a counter instead of piling up duplicates
+  (`knowledge_gaps`, partial unique index on `(studio_id, lower(btrim(question)))` scoped to
+  `status='open'`). Clicking **Add answer** appends a `Q: ... / A: ...` block to a single accumulating
+  knowledge-base document ("Learned Answers (from customer questions)") and re-runs the normal
+  embedding sync — the AI can use it starting with the next message, no separate save step.
+  **Dismiss** closes a gap (off-topic, duplicate) without touching the knowledge base.
+  `GET/POST /api/v1/studios/{id}/knowledge-base/gaps[/{gapId}/resolve|/dismiss]`.
 - **Documents:** `.pdf .docx .pptx .xlsx .txt .csv .json .md` are parsed in Next; images go
   through Mistral OCR (needs the studio's Mistral key) with a review dialog. A per-document
   "domain" tag exists but **has no effect on retrieval** today.
@@ -466,8 +482,10 @@ for Stripe and channel tokens** (the UI shows only the last 4 characters).
   backoff, then dead. A super-admin uploads the service-account credentials once. Studios that enable sync
   later are **not back-filled**. One-way only. The 21-column layout (A-U) runs from Lead ID through Status,
   with "Predicted Revenue Won" = monthly fee x 9.
-- **Inbound external sheet** (Settings -> External Leads Sheet): read-only polling every 15 s, with
-  configurable column letters, a per-sheet **watermark** (only rows beyond the last imported row), and
+- **Inbound external sheets** (Settings -> Google Sheets -> External Leads Sheets): a studio can add **several**
+  sheets (or several tabs of one), each with its own tab, column mapping and options (`GET/POST /leads/external-sheets`,
+  `PUT/DELETE /leads/external-sheets/{sheetId}`); the same spreadsheet + tab can't be added twice to one studio. Read-only polling every 15 s of
+  every active sheet, with configurable column letters, a per-sheet (and per-studio) **watermark** (only rows beyond the last imported row), and
   the oldest active campaign as target. If a date column is set, **only the current calendar month's** rows
   import (older rows are skipped permanently). Auto-contact is skipped when disabled, trial purchased, or
   the hot-lead cell is HOT/COLD. "Continue AI after greeting" only applies to leads whose source is
@@ -503,7 +521,7 @@ env-configured client. Mindbody sync creates the lead and only **logs** a price 
 ### Meta, Google, Stripe, SMTP, S3
 
 - **Meta:** WhatsApp Cloud, Instagram, Messenger webhooks with HMAC verification (per-studio app secret
-  overrides the platform one). The **data-deletion callback does not verify its signature or delete anything**.
+  overrides the platform one). The data-deletion callback now verifies its `signed_request` but **only acknowledges**; it deletes nothing.
 - **Google:** OAuth for Ads (per-studio client id/secret/developer token), Sheets service account.
 - **Stripe:** see [section 8](#8-social-planner-payments-reviews).
 - **SMTP:** plain `net/smtp`, HTML only, synchronous, no queue or retry. Used for password reset,
@@ -660,13 +678,14 @@ Ordered roughly by impact. None of these was changed while writing this guide.
 2. **Studio account deletion** (`DELETE /me/studios/{id}/delete-account`) is a hard cascading delete.
    It checks only that the caller belongs to the studio and supplies the studio's contact email, not that
    the caller is an admin. Restrict to `studio_admin`.
-3. **Fixed default teammate password** (`password123`) until first login. Anyone who knows a new
-   teammate's email can log in during that window.
+3. ~~Fixed default teammate password~~ **Fixed**: new accounts get a random one-time password.
+   Accounts created **before** this change that never logged in still have `password123`.
 4. **Provider and Meta/Google secrets are stored unencrypted on `studios`** (Gemini, Groq, Claude,
    Mistral keys, Meta app secret, Google client secret and developer token). Stripe secrets, channel tokens,
    CRM credentials and per-model LLM keys are encrypted.
-5. **Unverified webhooks:** Twilio and the X POST webhook have no signature check; the Meta data-deletion
-   callback neither verifies its signed request nor deletes data (it logs the raw request).
+5. ~~Unverified webhooks~~ **Fixed**: Twilio (`X-Twilio-Signature`), X POST (`x-twitter-webhooks-signature`)
+   and the Meta data-deletion callback (`signed_request`) are now verified. The Meta callback still only
+   **acknowledges**: it deletes nothing (Meta's user id doesn't map to our contact ids), so deletion remains manual.
 6. **Public reviews endpoint** accepts unauthenticated writes with no rate limit or moderation.
 7. **No encryption-key rotation** for `TOKEN_ENCRYPTION_KEY`; it also protects the session cookie.
 8. A password reset does not revoke existing sessions; `forgot-password` reveals whether an email exists.

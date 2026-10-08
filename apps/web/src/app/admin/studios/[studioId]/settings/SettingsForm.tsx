@@ -836,11 +836,13 @@ export function SettingsForm({
                         const file = e.target.files?.[0]; if (!file) return;
                         setMediaUploading('image');
                         try {
-                          const fd = new FormData(); fd.append('image', file);
+                          // 'file' — the backend reads r.FormFile("file"); 'image' 400s before upload.
+                          const fd = new FormData(); fd.append('file', file);
                           const res = await fetch(`/api/v1/studios/${studio.id}/social-posts/upload-image`, { method: 'POST', body: fd });
                           if (!res.ok) throw new Error('Upload failed');
-                          const { url } = await res.json();
-                          setBookingHeroImageUrl(url);
+                          // Endpoint returns { mediaUrl }, not { url }.
+                          const { mediaUrl } = await res.json();
+                          setBookingHeroImageUrl(mediaUrl);
                         } catch { alert('Upload failed'); }
                         finally { setMediaUploading(null); }
                       }}

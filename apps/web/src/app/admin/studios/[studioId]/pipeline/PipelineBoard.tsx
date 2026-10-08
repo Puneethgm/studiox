@@ -138,9 +138,6 @@ export function PipelineBoard({
   const [activeColdLead, setActiveColdLead] = useState<ColdLead | null>(null);
   const [pending, setPending] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
-  // Paused is rarely used day-to-day — when nothing's actually paused, that
-  // column slot shows Cold Leads instead of an empty "no leads yet" column.
-  const showPausedColumn = (counts.paused ?? 0) > 0;
   const router = useRouter();
 
   const sensors = useSensors(
@@ -225,22 +222,20 @@ export function PipelineBoard({
         </div>
       )}
       <div className="flex-1 overflow-x-auto pb-2">
-        <div className="grid h-full min-w-[1300px] grid-cols-6 gap-4 xl:min-w-0">
-          {LEAD_STATUSES.map((status) =>
-            status === 'paused' && !showPausedColumn ? (
-              <ColdColumn key="cold" studioId={studioId} leads={coldLeads} onRemove={(id) => setColdLeads((prev) => prev.filter((l) => l.conversationId !== id))} />
-            ) : (
-              <PipelineColumn
-                key={status}
-                status={status}
-                count={counts[status] ?? 0}
-                leads={byStatus[status]}
-                overflow={overflowCounts[status] ?? 0}
-                studioId={studioId}
-                pending={pending}
-              />
-            ),
-          )}
+        {/* Cold always gets its own column — it used to share a slot with Paused. */}
+        <div className="grid h-full min-w-[1500px] grid-cols-7 gap-4 xl:min-w-0">
+          {LEAD_STATUSES.map((status) => (
+            <PipelineColumn
+              key={status}
+              status={status}
+              count={counts[status] ?? 0}
+              leads={byStatus[status]}
+              overflow={overflowCounts[status] ?? 0}
+              studioId={studioId}
+              pending={pending}
+            />
+          ))}
+          <ColdColumn key="cold" studioId={studioId} leads={coldLeads} onRemove={(id) => setColdLeads((prev) => prev.filter((l) => l.conversationId !== id))} />
         </div>
       </div>
       <DragOverlay>
