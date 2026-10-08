@@ -3,6 +3,7 @@ package messaging
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -410,20 +411,33 @@ func (r *Repo) MarkRecipientFailed(ctx context.Context, recipientID uuid.UUID, r
 // recipients left — failed ones don't block completion, they're surfaced
 // via total_count vs enqueued_count in the UI instead).
 func (r *Repo) AdvanceBroadcastCampaignProgress(ctx context.Context, campaignID uuid.UUID) error {
+	// "Completed" has to mean every recipient has actually been sent to (or
+	// permanently failed) — not just that every recipient has been handed an
+	// outbound_jobs row. A recipient whose job is still sitting at
+	// outbound_jobs.status = 'pending' (queued, mid-retry-backoff, or simply
+	// not yet picked up by the outbound worker) is still in flight: counting
+	// it as done let a campaign with hundreds of contacts and a daily send
+	// limit show "Completed" the moment the LAST batch was enqueued, even
+	// though that batch's messages hadn't actually gone out yet.
 	_, err := r.pool.Exec(ctx, `
 		UPDATE broadcast_campaigns c
 		SET enqueued_count = sub.enqueued,
 		    status = CASE
-		        WHEN sub.pending = 0 THEN 'completed'
+		        WHEN sub.unfinished = 0 THEN 'completed'
 		        WHEN sub.enqueued > 0 THEN 'sending'
 		        ELSE c.status
 		    END,
 		    updated_at = now()
 		FROM (
 		    SELECT
-		        count(*) FILTER (WHERE status = 'enqueued') AS enqueued,
-		        count(*) FILTER (WHERE status = 'pending') AS pending
-		    FROM broadcast_campaign_recipients WHERE campaign_id = $1
+		        count(*) FILTER (WHERE r.status = 'enqueued') AS enqueued,
+		        count(*) FILTER (
+		            WHERE r.status = 'pending'
+		               OR (r.status = 'enqueued' AND (oj.status IS NULL OR oj.status = 'pending'))
+		        ) AS unfinished
+		    FROM broadcast_campaign_recipients r
+		    LEFT JOIN outbound_jobs oj ON oj.id = r.outbound_job_id
+		    WHERE r.campaign_id = $1
 		) sub
 		WHERE c.id = $1
 	`, campaignID)
@@ -431,6 +445,51 @@ func (r *Repo) AdvanceBroadcastCampaignProgress(ctx context.Context, campaignID 
 		return fmt.Errorf("advance broadcast campaign progress: %w", err)
 	}
 	return nil
+}
+
+// RequeueBroadcastRecipientForJob puts the broadcast recipient whose outbound job just
+// died back to 'pending' (and re-opens a completed campaign), so the broadcast worker
+// queues it again as daily allowance frees up. It is a no-op (false) when the job is not
+// a recipient's current job, the campaign was cancelled, or the recipient has already
+// been retried maxRetries times. The dead job row is kept as history.
+func (r *Repo) RequeueBroadcastRecipientForJob(ctx context.Context, jobID int64, reason string, maxRetries int) (bool, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("requeue broadcast recipient: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var campaignID uuid.UUID
+	err = tx.QueryRow(ctx, `
+		UPDATE broadcast_campaign_recipients r
+		SET status = 'pending', outbound_job_id = NULL, enqueued_at = NULL,
+		    retry_count = r.retry_count + 1, last_error = $2
+		FROM broadcast_campaigns c
+		WHERE r.outbound_job_id = $1
+		  AND r.status = 'enqueued'
+		  AND r.retry_count < $3
+		  AND c.id = r.campaign_id
+		  AND c.status IN ('scheduled', 'sending', 'completed')
+		RETURNING r.campaign_id
+	`, jobID, reason, maxRetries).Scan(&campaignID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("requeue broadcast recipient: %w", err)
+	}
+
+	// A completed campaign has work again: the worker only looks at scheduled/sending ones.
+	if _, err := tx.Exec(ctx, `
+		UPDATE broadcast_campaigns SET status = 'sending', updated_at = now()
+		WHERE id = $1 AND status = 'completed'
+	`, campaignID); err != nil {
+		return false, fmt.Errorf("reopen broadcast campaign: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("requeue broadcast recipient: %w", err)
+	}
+	return true, nil
 }
 
 // BroadcastRecipientDetail is one recipient's real delivery state for the
@@ -444,6 +503,10 @@ type BroadcastRecipientDetail struct {
 	Email  string     `json:"email"`
 	Status string     `json:"status"` // "pending" | "sent" | "failed" | "dead"
 	SentAt *time.Time `json:"sentAt"`
+	// Reason is the raw error behind a non-sent status (the job's last error, or the
+	// recipient's own error when no job exists), e.g. "number ... is not registered on
+	// WhatsApp". The web UI turns it into a short human message.
+	Reason string `json:"reason,omitempty"`
 }
 
 // ListBroadcastCampaignRecipients is studio-scoped via the join to
@@ -453,7 +516,8 @@ func (r *Repo) ListBroadcastCampaignRecipients(ctx context.Context, studioID, ca
 	rows, err := r.pool.Query(ctx, `
 		SELECT bc.name, bc.phone, bc.email,
 		       COALESCE(oj.status, bcr.status) AS status,
-		       oj.sent_at
+		       oj.sent_at,
+		       COALESCE(NULLIF(oj.last_error, ''), bcr.last_error, '') AS reason
 		FROM broadcast_campaign_recipients bcr
 		JOIN broadcast_campaigns c ON c.id = bcr.campaign_id AND c.studio_id = $1
 		JOIN broadcast_contacts bc ON bc.id = bcr.broadcast_contact_id
@@ -469,7 +533,7 @@ func (r *Repo) ListBroadcastCampaignRecipients(ctx context.Context, studioID, ca
 	out := make([]BroadcastRecipientDetail, 0)
 	for rows.Next() {
 		var d BroadcastRecipientDetail
-		if err := rows.Scan(&d.Name, &d.Phone, &d.Email, &d.Status, &d.SentAt); err != nil {
+		if err := rows.Scan(&d.Name, &d.Phone, &d.Email, &d.Status, &d.SentAt, &d.Reason); err != nil {
 			return nil, fmt.Errorf("scan broadcast campaign recipient: %w", err)
 		}
 		out = append(out, d)

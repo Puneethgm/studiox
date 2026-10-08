@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/Label';
 import { Badge } from '@/components/ui/Badge';
 import { ApiError, api } from '@/lib/api';
 import { formatDateTime } from '@/lib/datetime';
+import { jobFailureReason } from '@/lib/jobFailureReason';
 
 interface BroadcastList {
   id: string;
@@ -31,6 +32,7 @@ interface BroadcastRecipientDetail {
   email: string;
   status: 'pending' | 'sent' | 'failed' | 'dead';
   sentAt: string | null;
+  reason?: string;
 }
 
 interface BroadcastCampaign {
@@ -657,6 +659,11 @@ export function BroadcastsPanel({ studioId }: { studioId: string }) {
                         <td className="px-5 py-2 text-zinc-500 dark:text-zinc-400">{viewingCampaign.channel === 'email' ? (r.email || '—') : r.phone}</td>
                         <td className="px-5 py-2">
                           <Badge tone={RECIPIENT_STATUS_TONE[r.status]}>{RECIPIENT_STATUS_LABEL[r.status]}</Badge>
+                          {r.status !== 'sent' && r.reason && (
+                            <div className="mt-1 text-[10px] font-semibold text-zinc-500 dark:text-zinc-400">
+                              {jobFailureReason(r.reason)}
+                            </div>
+                          )}
                         </td>
                         <td className="px-5 py-2 text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
                           {r.sentAt ? formatDateTime(r.sentAt) : '—'}

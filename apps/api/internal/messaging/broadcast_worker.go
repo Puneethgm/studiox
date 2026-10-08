@@ -97,15 +97,21 @@ func (w *BroadcastWorker) tickCampaign(ctx context.Context, c BroadcastCampaign)
 					"component", "broadcast_worker", "campaign_id", c.ID, "error", err.Error())
 				return
 			}
-			remaining := limit - sentToday
-			if remaining <= 0 {
-				// Limit reached for today — do nothing. Next poll (today, once
-				// something frees up, or tomorrow once the SGT day rolls over
-				// and the count resets) picks up right where this left off.
+			// Queued-but-unsent jobs already own part of today's allowance. Without
+			// subtracting them, spaced-out sends make every tick look like it has
+			// room and the campaign queues far more than the daily cap.
+			pending, err := w.repo.CountPendingAutomatedWhatsApp(ctx, c.StudioID)
+			if err != nil {
+				w.log.Warn("Broadcast worker — failed to count queued sends, skipping this tick",
+					"component", "broadcast_worker", "campaign_id", c.ID, "error", err.Error())
 				return
 			}
-			if remaining < batchSize {
-				batchSize = remaining
+			batchSize = broadcastAllowance(limit, sentToday, pending, batchSize)
+			if batchSize <= 0 {
+				// Allowance used up for today — do nothing. A later tick (as queued
+				// jobs send, or tomorrow once the SGT day rolls over and the sent
+				// count resets) picks up right where this left off.
+				return
 			}
 		}
 	}
@@ -208,4 +214,21 @@ func (w *BroadcastWorker) resolveChannelKind(ctx context.Context, studioID uuid.
 		return KindWhatsAppWeb
 	}
 	return ""
+}
+
+// broadcastAllowance returns how many more recipients may be queued right now:
+// the daily limit minus what has already been sent today and what is queued waiting
+// to send, capped at the per-tick batch size. limit <= 0 means unlimited. Never negative.
+func broadcastAllowance(limit, sentToday, pending, batchCap int) int {
+	if limit <= 0 {
+		return batchCap
+	}
+	remaining := limit - sentToday - pending
+	if remaining <= 0 {
+		return 0
+	}
+	if remaining < batchCap {
+		return remaining
+	}
+	return batchCap
 }

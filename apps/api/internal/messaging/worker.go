@@ -3,11 +3,14 @@ package messaging
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"math"
+	"net"
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -54,6 +57,13 @@ const (
 	workerPollInterval = 2 * time.Second
 	workerBatchSize    = 10
 	maxAttempts        = 6
+
+	// Transient network failures (DNS, connection refused/reset, timeouts talking to
+	// wa-web, Meta, SMTP...) say nothing about the job itself, so they get a much longer
+	// retry window than a real send failure: about an hour and a half in total (see
+	// transientBackoffFor) instead of about a minute.
+	maxTransientAttempts = 12
+	maxTransientBackoff  = 10 * time.Minute
 
 	// defaultWhatsAppSendSpacing throttles consecutive WhatsApp sends on the
 	// same channel so bulk sends (sheet import, fresh connect, etc.) don't
@@ -412,6 +422,10 @@ func (w *OutboundWorker) dispatch(ctx context.Context, j OutboundJob) {
 			w.failJob(ctx, j, "credentials: "+err.Error(), true)
 			return
 		}
+		if isTransientNetworkError(err) {
+			w.failJobWithBackoff(ctx, j, err.Error(), j.Attempts+1 >= maxTransientAttempts, transientBackoffFor(j.Attempts+1))
+			return
+		}
 		w.failJob(ctx, j, err.Error(), j.Attempts+1 >= maxAttempts)
 		return
 	}
@@ -471,7 +485,10 @@ func (w *OutboundWorker) dispatch(ctx context.Context, j OutboundJob) {
 }
 
 func (w *OutboundWorker) failJob(ctx context.Context, j OutboundJob, errMsg string, dead bool) {
-	backoff := backoffFor(j.Attempts + 1)
+	w.failJobWithBackoff(ctx, j, errMsg, dead, backoffFor(j.Attempts+1))
+}
+
+func (w *OutboundWorker) failJobWithBackoff(ctx context.Context, j OutboundJob, errMsg string, dead bool, backoff time.Duration) {
 	if dead {
 		w.log.Error("outbound job dead-lettered", "job_id", j.ID, "attempts", j.Attempts+1, "err", errMsg)
 	} else {
@@ -480,7 +497,81 @@ func (w *OutboundWorker) failJob(ctx context.Context, j OutboundJob, errMsg stri
 	}
 	if err := w.repo.MarkOutboundFailed(ctx, j.ID, errMsg, backoff, dead); err != nil {
 		w.log.Error("mark outbound failed", "job_id", j.ID, "err", err)
+		return
 	}
+
+	// A broadcast message that died for a temporary reason (network, daily limit, channel
+	// offline) goes back to its campaign's queue instead of staying failed, so the
+	// broadcast keeps working through its list as allowance and connectivity allow.
+	if dead && strings.HasPrefix(j.SourceRef, "broadcast:") && isRetryableBroadcastFailure(errMsg) {
+		requeued, err := w.repo.RequeueBroadcastRecipientForJob(ctx, j.ID, errMsg, maxBroadcastRetries)
+		if err != nil {
+			w.log.Error("requeue broadcast recipient", "job_id", j.ID, "err", err)
+		} else if requeued {
+			w.log.Info("broadcast recipient requeued after temporary failure", "job_id", j.ID, "reason", errMsg)
+		}
+	}
+}
+
+// maxBroadcastRetries is how many times one broadcast recipient is automatically
+// re-queued after its message died for a temporary reason.
+const maxBroadcastRetries = 5
+
+// isRetryableBroadcastFailure reports whether a dead-lettered message failed for a
+// reason that may pass (network/DNS trouble, today's daily limit, channel offline), as
+// opposed to one that will never succeed for this recipient (number not on WhatsApp,
+// Do Not Disturb, bad credentials, deleted channel, unsupported kind).
+func isRetryableBroadcastFailure(errMsg string) bool {
+	m := strings.ToLower(errMsg)
+	for _, permanent := range []string{"not registered", "dnd enabled", "credentials", "channel lookup", "no sender for channel"} {
+		if strings.Contains(m, permanent) {
+			return false
+		}
+	}
+	for _, temporary := range []string{
+		"daily_limit_exceeded", "no active channel", "session not connected",
+		"dial tcp", "lookup ", "server misbehaving", "no such host", "connection refused",
+		"connection reset", "i/o timeout", "context deadline exceeded", "eof",
+	} {
+		if strings.Contains(m, temporary) {
+			return true
+		}
+	}
+	return false
+}
+
+// transientBackoffFor spaces retries of network failures: 30s, 1m, 2m, 4m, 8m, then
+// 10m each, which with maxTransientAttempts covers roughly 85 minutes.
+func transientBackoffFor(attempts int) time.Duration {
+	if attempts < 1 {
+		attempts = 1
+	}
+	d := 30 * time.Second * time.Duration(math.Pow(2, float64(attempts-1)))
+	if d > maxTransientBackoff || d <= 0 {
+		d = maxTransientBackoff
+	}
+	return d
+}
+
+// isTransientNetworkError reports whether err is a network-level failure reaching a
+// service (DNS lookup failed, connection refused/reset, dial or read timeout) rather
+// than a response saying the send itself was rejected. A cancelled context (shutdown)
+// is not transient. Application errors such as "wa-web send failed 500: session not
+// connected" are not transient either; they keep the normal short retry.
+func isTransientNetworkError(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return false
+	}
+	var dnsErr *net.DNSError
+	var opErr *net.OpError
+	if errors.As(err, &dnsErr) || errors.As(err, &opErr) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	return errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED)
 }
 
 // Exponential backoff capped at 30 minutes.
