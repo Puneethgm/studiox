@@ -485,10 +485,12 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 			if session.Customer != nil {
 				custID = session.Customer.ID
 			}
-			if _, err := h.applyMembershipConfirmed(ctx, studio, *leadID, planIDStr, session.AmountTotal, session.ID, subID, custID, session.Metadata["old_subscription_id"], receiptURL); err != nil {
+			if result, err := h.applyMembershipConfirmed(ctx, studio, *leadID, planIDStr, session.AmountTotal, session.ID, subID, custID, session.Metadata["old_subscription_id"], receiptURL); err != nil {
 				slog.Warn("stripe lead status update failed", "err", err)
 			} else {
 				slog.Info("stripe lead status updated to member", "phone", customerPhone)
+				h.escalateConversationForPurchase(ctx, studio, convID, customerName, customerPhone,
+					fmt.Sprintf("Customer became a Member — Plan: %s", result.PlanName))
 			}
 		} else {
 			_, updateErr := h.svc.repo.Pool().Exec(ctx, `
@@ -507,7 +509,7 @@ func (h *StripeWebhookHandler) handleCheckoutComplete(ctx context.Context, sessi
 				if session.Customer != nil {
 					custID = session.Customer.ID
 				}
-				h.recordTrialSubscription(ctx, studio.ID, *leadID, string(session.Currency), session.ID, custID, receiptURL, session.AmountTotal)
+				h.recordTrialSubscription(ctx, studio, *leadID, string(session.Currency), session.ID, custID, receiptURL, session.AmountTotal, convID, name, customerPhone)
 
 				// Schedule a 2-day post-trial follow-up to push membership.
 				// This fires after the trial session and nudges the lead to join.
@@ -623,6 +625,9 @@ func (h *StripeWebhookHandler) handleMembershipOneTimePaymentSucceeded(ctx conte
 		INSERT INTO outbound_jobs (studio_id, conversation_id, source_kind, body, scheduled_for, next_attempt_at)
 		VALUES ($1, $2, 'automation', $3, now(), now())
 	`, studio.ID, convID, message)
+
+	h.escalateConversationForPurchase(ctx, studio, convID, name, "",
+		fmt.Sprintf("Customer became a Member — Plan: %s", result.PlanName))
 }
 
 func (h *StripeWebhookHandler) handlePaymentIntentSucceeded(ctx context.Context, pi *stripe.PaymentIntent) {
@@ -701,12 +706,14 @@ func (h *StripeWebhookHandler) handlePaymentIntentSucceeded(ctx context.Context,
 	if pi.Customer != nil {
 		custID = pi.Customer.ID
 	}
-	h.recordTrialSubscription(ctx, studioID, leadIDStr, string(pi.Currency), pi.ID, custID, receiptURL, pi.Amount)
 
-	var convID string
+	var convID, leadPhone string
 	_ = h.svc.repo.Pool().QueryRow(ctx, `
 		SELECT id FROM conversations WHERE lead_id = $1 ORDER BY created_at DESC LIMIT 1
 	`, leadIDStr).Scan(&convID)
+	_ = h.svc.repo.Pool().QueryRow(ctx, "SELECT phone FROM leads WHERE id = $1", leadIDStr).Scan(&leadPhone)
+	h.recordTrialSubscription(ctx, studio, leadIDStr, string(pi.Currency), pi.ID, custID, receiptURL, pi.Amount, convID, name, leadPhone)
+
 	if convID == "" {
 		slog.Warn("stripe trial payment: no conversation found for lead — confirmation message dropped", "lead_id", leadIDStr)
 		return
@@ -973,6 +980,9 @@ func (h *StripeWebhookHandler) handleFirstMembershipInvoice(ctx context.Context,
 		INSERT INTO outbound_jobs (studio_id, conversation_id, source_kind, body, scheduled_for, next_attempt_at)
 		VALUES ($1, $2, 'automation', $3, now(), now())
 	`, studio.ID, convID, message)
+
+	h.escalateConversationForPurchase(ctx, studio, convID, name, "",
+		fmt.Sprintf("Customer became a Member — Plan: %s", result.PlanName))
 }
 
 // handleMemberInvoiceFailed flags a member subscription past_due when a
@@ -1150,26 +1160,78 @@ func (h *StripeWebhookHandler) applyMembershipConfirmed(ctx context.Context, stu
 // (same convention IsTrialPlanActive/ResolveTrialAmountSGD use) — every
 // studio gets one seeded at creation, but skip quietly if it's ever missing
 // rather than fail the webhook over a non-critical record.
-func (h *StripeWebhookHandler) recordTrialSubscription(ctx context.Context, studioID uuid.UUID, leadID, currency, paymentID, custID, receiptURL string, amountPaid int64) {
+// recordTrialSubscription records the real subscription row AND escalates the
+// conversation to a human — a confirmed Trial payment is a real money event, same
+// as a membership purchase (see escalateConversationForPurchase), so staff should
+// always be notified a trial was just booked, not just have the lead's status
+// silently updated and a receipt sent with nobody told. convID/contactName/
+// contactPhone may be empty (escalateConversationForPurchase no-ops without a
+// conversation id) — callers that don't have them yet just skip the escalation.
+func (h *StripeWebhookHandler) recordTrialSubscription(ctx context.Context, studio *Studio, leadID, currency, paymentID, custID, receiptURL string, amountPaid int64, convID, contactName, contactPhone string) {
 	var planID uuid.UUID
 	var planName string
 	if err := h.svc.repo.Pool().QueryRow(ctx, `
 		SELECT id, plan_name FROM plans WHERE studio_id = $1 AND plan_name = 'Trial' LIMIT 1
-	`, studioID).Scan(&planID, &planName); err != nil {
-		slog.Warn("stripe trial payment: no Trial plan found, skipping subscription record", "studio_id", studioID, "err", err)
-		return
+	`, studio.ID).Scan(&planID, &planName); err != nil {
+		slog.Warn("stripe trial payment: no Trial plan found, skipping subscription record", "studio_id", studio.ID, "err", err)
+		planName = "Trial"
 	}
 	if currency == "" {
 		currency = "SGD"
 	}
-	if _, err := h.svc.repo.Pool().Exec(ctx, `
-		INSERT INTO user_subscriptions
-			(studio_id, lead_id, plan_id, plan_name, amount_paid, currency, payment_id,
-			 payment_status, subscription_status, stripe_customer_id, receipt_url)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 'paid', 'completed', $8, $9)
-	`, studioID, leadID, planID, planName, amountPaid, strings.ToUpper(currency), paymentID, custID, receiptURL); err != nil {
-		slog.Warn("stripe: failed to record trial subscription", "err", err, "lead_id", leadID)
+	if planID != uuid.Nil {
+		if _, err := h.svc.repo.Pool().Exec(ctx, `
+			INSERT INTO user_subscriptions
+				(studio_id, lead_id, plan_id, plan_name, amount_paid, currency, payment_id,
+				 payment_status, subscription_status, stripe_customer_id, receipt_url)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, 'paid', 'completed', $8, $9)
+		`, studio.ID, leadID, planID, planName, amountPaid, strings.ToUpper(currency), paymentID, custID, receiptURL); err != nil {
+			slog.Warn("stripe: failed to record trial subscription", "err", err, "lead_id", leadID)
+		}
 	}
+
+	h.escalateConversationForPurchase(ctx, studio, convID, contactName, contactPhone,
+		fmt.Sprintf("Customer purchased a Trial — Plan: %s", planName))
+}
+
+// escalateConversationForPurchase marks the conversation escalated the moment a real
+// Trial or Membership payment is confirmed, so a human sees it and follows up
+// personally — a real money event, not something that should just silently update a
+// lead's status and send an automated receipt with nobody on staff ever notified.
+// Mirrors messaging.Repo.EscalateConversation's effect (shows in the Inbox's
+// Escalation tab, turns AI auto-reply off for this conversation) without importing
+// the messaging package, which already imports studios and would cycle back.
+// Best-effort and non-blocking: a failure here must never affect the payment itself
+// having already gone through.
+func (h *StripeWebhookHandler) escalateConversationForPurchase(ctx context.Context, studio *Studio, convID, contactName, contactPhone, reason string) {
+	if convID == "" {
+		return
+	}
+	tag, err := h.svc.repo.Pool().Exec(ctx, `
+		UPDATE conversations
+		SET escalated_at = now(), escalated_reason = $2, ai_enabled = false, updated_at = now()
+		WHERE id = $1 AND escalated_at IS NULL
+	`, convID, reason)
+	if err != nil {
+		slog.Warn("stripe: failed to escalate conversation after purchase", "conv_id", convID, "err", err)
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		// Already escalated for something else, or the conversation vanished — either
+		// way there's nothing new to mark, so skip the email too.
+		return
+	}
+	slog.Info("stripe: conversation escalated after confirmed purchase", "conv_id", convID, "reason", reason)
+
+	if h.svc.mailer == nil || !h.svc.mailer.Enabled() || studio.ContactEmail == "" {
+		return
+	}
+	go func() {
+		link := fmt.Sprintf("%s/admin/studios/%s/inbox?tab=escalation&conversationId=%s", strings.TrimRight(h.svc.frontendURL, "/"), studio.ID.String(), convID)
+		if err := h.svc.mailer.SendEscalationAlert(studio.ContactEmail, studio.Name, contactName, contactPhone, reason, nil, link); err != nil {
+			slog.Warn("stripe: failed to send purchase-escalation email", "conv_id", convID, "err", err)
+		}
+	}()
 }
 
 // Removed direct sendWhatsAppMessage in favor of outbound_jobs queue

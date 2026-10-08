@@ -5,8 +5,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
+	"runtime/debug"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/projectx/api/internal/decisiontree"
@@ -129,6 +133,14 @@ func (w *AIWorker) listenStudio(ctx context.Context, studioID uuid.UUID, ch <-ch
 					continue
 				}
 				go func(msgID uuid.UUID) {
+					// Without recover(), a panic anywhere in handleMessage kills this
+					// goroutine silently — no error logged, no reply sent, no trace.
+					defer func() {
+						if r := recover(); r != nil {
+							w.log.Error("ai handle message panicked", "message_id", msgID, "studio_id", studioID,
+								"panic", r, "stack", string(debug.Stack()))
+						}
+					}()
 					if err := w.handleMessage(ctx, studioID, msgID); err != nil {
 						w.log.Error("ai handle message", "err", err)
 					}
@@ -186,6 +198,13 @@ func (w *AIWorker) summarizeConversation(ctx context.Context, studioID, convID u
 	if err != nil {
 		return fmt.Errorf("fetch message history: %w", err)
 	}
+	return w.summarizeMessagesInto(ctx, studioID, convID, studio, history)
+}
+
+// summarizeMessagesInto builds a summarization prompt from an arbitrary message slice,
+// runs it through the LLM waterfall, and stores the result. Shared by summarizeConversation
+// (backfill) and ensureRollingSummary (live conversations).
+func (w *AIWorker) summarizeMessagesInto(ctx context.Context, studioID, convID uuid.UUID, studio *studios.Studio, history []Message) error {
 	if len(history) == 0 {
 		return nil
 	}
@@ -215,6 +234,46 @@ func (w *AIWorker) summarizeConversation(ctx context.Context, studioID, convID u
 // summarization has no Message/decision-tree/KB context to gather.
 func (w *AIWorker) runSummaryWaterfall(ctx context.Context, studioID uuid.UUID, studio *studios.Studio, prompt string) (text string, sourceRef string) {
 	return llmWaterfall(ctx, w.studiosRepo, w.llmRepo, w.msgRepo, w.claude, w.claudeAPIURL, w.log, studioID, studio, prompt, w.answerCache, "summary")
+}
+
+// aiHistoryWindow is how many recent messages handleMessage loads as the model's
+// immediate context. rollingSummaryRefreshEvery bounds how often ensureRollingSummary
+// re-summarizes a long conversation (every Nth message past the window) instead of on
+// every turn.
+const (
+	aiHistoryWindow            = 15
+	rollingSummaryRefreshEvery = 5
+)
+
+// ensureRollingSummary keeps ai_context_summary caught up for a live conversation once it
+// grows past aiHistoryWindow, so older turns aren't simply lost once they fall out of the
+// recency window. Best-effort and fire-and-forget — a failed or skipped refresh just means
+// the next reply falls back to the recency window alone.
+func (w *AIWorker) ensureRollingSummary(ctx context.Context, studioID uuid.UUID, convID uuid.UUID, studio *studios.Studio) {
+	// Capped at 500 (ListMessages' own max) so the "every Nth message" gate below keeps
+	// working for a very long-running conversation instead of freezing at a smaller cap.
+	full, err := w.msgRepo.ListMessages(ctx, studioID, convID, 500)
+	if err != nil {
+		w.log.Warn("ai: rolling summary — failed to load full history", "conversation_id", convID, "err", err)
+		return
+	}
+	if !shouldRefreshRollingSummary(len(full)) {
+		return
+	}
+	older := full[:len(full)-aiHistoryWindow]
+	if err := w.summarizeMessagesInto(ctx, studioID, convID, studio, older); err != nil {
+		w.log.Warn("ai: rolling summary failed", "conversation_id", convID, "err", err)
+	}
+}
+
+// shouldRefreshRollingSummary reports whether to (re-)summarize: never while everything
+// fits in the window, then once on first crossing it, then every rollingSummaryRefreshEvery
+// messages after that.
+func shouldRefreshRollingSummary(total int) bool {
+	if total <= aiHistoryWindow {
+		return false
+	}
+	return total == aiHistoryWindow+1 || total%rollingSummaryRefreshEvery == 0
 }
 
 // llmWaterfall is a Redis-cache-first wrapper around llmWaterfallUncached:
@@ -540,14 +599,17 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		geminiModel = models[0]
 	}
 
-	// Fetch last 15 messages as the immediate recent window. 5 was too
-	// short — the model would forget questions/offers it made only a few
-	// turns back and repeat itself.
-	history, err := w.msgRepo.ListMessages(ctx, studioID, conv.ID, 15)
+	// Recent-message window for the model's immediate context; ensureRollingSummary
+	// (below) covers anything further back so a long conversation doesn't lose it.
+	history, err := w.msgRepo.ListMessages(ctx, studioID, conv.ID, aiHistoryWindow)
 	if err != nil {
 		w.log.Error("fetch message history for ai context failed", "err", err)
 		history = []Message{*msg}
 	}
+
+	go func() { // best-effort, off the critical path
+		w.ensureRollingSummary(context.Background(), studioID, conv.ID, studio)
+	}()
 
 	// Send greeting on the very first inbound message of a new conversation.
 	// "First" = only one message in history (the current one) and a greeting is configured.
@@ -592,6 +654,9 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	// kbConfident tracks whether retrieval found high-confidence chunks.
 	// Used to gate hallucination: if false, the prompt instructs the AI not to guess.
 	kbConfident := false
+	// retrievalRan is true once the knowledge-base retrieval pipeline actually ran for this
+	// message (it needs a Gemini key). kbConfident is only meaningful when it did.
+	retrievalRan := false
 
 	lowerBody := strings.ToLower(msg.Body)
 
@@ -640,6 +705,18 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		return nil
 	}
 
+	// A complaint, negative feedback or a bad-review threat goes to a person right away,
+	// before any other handling — the AI must not reply to, argue with or smooth over an
+	// unhappy customer. Works without any API key (the classifier adds a second check below).
+	if isComplaintOrNegativeFeedback(msg.Body) {
+		w.log.Info("ai worker: complaint or negative feedback detected, escalating",
+			"studio_id", studioID, "conversation_id", conv.ID)
+		w.escalateWithHandoff(ctx, studioID, conv.ID,
+			"Customer complaint or negative feedback",
+			complaintHandoffBody, "complaint_handoff", replyDelay)
+		return nil
+	}
+
 	// Keyword override: runs before LLM classification so it works even when Gemini is not configured.
 	// "trail" is a typo for "trial" that LLMs classify as hiking/off-topic.
 	if strings.Contains(lowerBody, "trail") ||
@@ -654,6 +731,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	}
 
 	if apiKey != "" && msg.Body != "" {
+		retrievalRan = true
 		// Step 1+2 in parallel: classify intent and expand query simultaneously.
 		// Neither depends on the other so we save one full LLM round-trip.
 		type classifyResult struct {
@@ -821,6 +899,17 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 			skipTreeForOptionReply = true
 			w.log.Info("ai worker: bare option reply detected, skipping decision tree", "lead_id", lead.ID, "status", lead.Status, "message", msg.Body)
 		}
+	}
+
+	// The classifier can spot politely or diplomatically worded criticism that the phrase
+	// check above can't, so escalate on its complaint_or_feedback label too.
+	if intent == "complaint_or_feedback" {
+		w.log.Info("ai worker: classifier flagged a complaint or feedback, escalating",
+			"studio_id", studioID, "conversation_id", conv.ID)
+		w.escalateWithHandoff(ctx, studioID, conv.ID,
+			"Customer complaint or negative feedback",
+			complaintHandoffBody, "complaint_handoff", replyDelay)
+		return nil
 	}
 
 	// Decision tree: check if the studio has an active tree that matches this message.
@@ -995,6 +1084,20 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		}
 	}
 
+	// The AI can't book, cancel, move or check availability for a class, so any such
+	// request goes straight to a person (trial booking has its own flow and is excluded).
+	// Runs before the booking shortcut below, which would otherwise answer "I booked two
+	// classes today..." with the Book a Trial / Become a Member menu.
+	if isClassActionRequest(msg.Body) {
+		w.log.Info("ai worker: class booking/change request, escalating to a human",
+			"studio_id", studioID, "conversation_id", conv.ID)
+		w.escalateWithHandoff(ctx, studioID, conv.ID,
+			"Customer asked to book or change a class (the AI can't do this)",
+			"Thanks for letting us know! I can't book or change classes myself, so I've asked a team member to help you with this. They'll be with you shortly!",
+			"class_request_handoff", replyDelay)
+		return nil
+	}
+
 	// Booking shortcut: when customer says "trail"/"book trial" and the bot isn't mid-flow,
 	// jump directly into the automation stage machine instead of using AI.
 	if intent == "booking_inquiry" {
@@ -1079,20 +1182,58 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		}
 	}
 
+	// A bare "1"/"2" reply (or clear trial/member keyword) to our own menu is handled
+	// deterministically, not left for the LLM — and lead-independent on purpose, since
+	// detectOptionChoice/updateLeadStatus below only run for a lead-linked conversation.
+	// SendTrialPaymentLink handles a nil lead safely (escalating if it can't process the
+	// trial, e.g. Stripe not configured).
+	if lastOutboundSentOurMenu(history) {
+		wantsTrial, wantsMember := parseMenuChoice(msg.Body)
+		if wantsTrial && !wantsMember {
+			firstName := conv.ContactDisplayName
+			if lead != nil && lead.FirstName != "" {
+				firstName = lead.FirstName
+			} else if lead != nil && lead.Name != "" {
+				firstName = lead.Name
+			}
+			if firstName == "" {
+				firstName = "there"
+			}
+			if lead != nil {
+				if err := w.leadsRepo.UpdateAutoContactStage(ctx, studioID, lead.ID, "awaiting_options"); err != nil {
+					w.log.Warn("menu-choice shortcut: failed to set awaiting_options", "lead", lead.ID, "err", err)
+				}
+			}
+			if _, err := w.msgSvc.SendTrialPaymentLink(ctx, studioID, conv.ID, conv.LeadID, firstName); err != nil {
+				w.log.Error("menu-choice shortcut: failed to send trial payment link", "err", err, "conv", conv.ID)
+			} else {
+				w.bus.Publish(ctx, Event{Kind: EvtOutboundJobEnqueued, StudioID: studioID, ConversationID: conv.ID})
+				w.log.Info("menu-choice shortcut triggered (trial)", "conv", conv.ID, "lead_linked", lead != nil)
+			}
+			return nil
+		}
+		// No leadless membership-checkout flow exists (checkout links are built
+		// per-lead), so escalate instead of guessing — same principle as the trial
+		// case above, just without a link to offer.
+		if wantsMember && !wantsTrial && lead == nil {
+			w.escalateWithHandoff(ctx, studioID, conv.ID,
+				"Customer wants to become a member — no lead on this conversation to build a checkout link for",
+				"That's great to hear! Let me get one of our team members to help you sign up — they'll be with you shortly.",
+				"menu_choice_no_lead_member_handoff", replyDelay)
+			w.log.Info("menu-choice shortcut triggered (member, no lead -> escalated)", "conv", conv.ID)
+			return nil
+		}
+	}
+
 	// "Yes to trial" shortcut: skip AI and send the payment link directly
-	// when either (a) the customer explicitly asks to buy/pay — that alone
-	// is unambiguous, no prior offer needed — or (b) they give a bare
+	// when either (a) the customer explicitly asks to buy/pay — but not when
+	// that's phrased as a question ("how do I pay?", "what's the payment
+	// link?" are asking, not confirming) — or (b) they give a bare
 	// affirmation ("yes"/"keen") replying to a bot message that had just
 	// offered a trial.
 	if lead != nil {
 		lowerMsg := strings.ToLower(strings.TrimSpace(msg.Body))
-		explicitPurchaseIntent := strings.Contains(lowerMsg, "buy") ||
-			strings.Contains(lowerMsg, "purchase") ||
-			strings.Contains(lowerMsg, "how to pay") ||
-			strings.Contains(lowerMsg, "how do i pay") ||
-			strings.Contains(lowerMsg, "payment link") ||
-			strings.Contains(lowerMsg, "pay for") ||
-			strings.Contains(lowerMsg, "checkout")
+		explicitPurchaseIntent := isExplicitPurchaseIntent(lowerMsg)
 		isAffirmative := lowerMsg == "yes" || lowerMsg == "yeah" || lowerMsg == "sure" ||
 			lowerMsg == "ok" || lowerMsg == "okay" || lowerMsg == "yep" || lowerMsg == "yup" ||
 			lowerMsg == "y" || lowerMsg == "keen" || lowerMsg == "im keen" || lowerMsg == "i'm keen" ||
@@ -1196,37 +1337,25 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		}
 	}
 
-	// Don't guess on a factual question we don't have solid grounding for —
-	// hand off to a human instead of generating an unfounded answer. Scoped
-	// to pricing/general factual questions specifically: small talk,
-	// objections, and booking-flow messages continue through the AI as
-	// normal even with a low knowledge-base match, since those don't
-	// depend on KB grounding to answer well and would escalate needlessly
-	// otherwise (e.g. "thanks!" always has kbConfident=false).
-	if !kbConfident && (intent == "pricing_question" || intent == "general_question") {
-		w.log.Info("ai worker: low KB confidence on factual question, escalating instead of guessing",
-			"studio_id", studioID, "conversation_id", conv.ID, "intent", intent)
-		if err := w.msgSvc.EscalateAndNotify(ctx, studioID, conv.ID, "AI uncertain — insufficient knowledge base match"); err != nil {
-			w.log.Warn("failed to mark conversation escalated (low confidence)", "studio_id", studioID, "err", err)
-		} else {
-			handoffBody := "That's a great question — let me get one of our team members to help you with the details. They'll be with you shortly!"
-			if _, err := w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
-				StudioID:       studioID,
-				ConversationID: conv.ID,
-				Body:           handoffBody,
-				SourceKind:     SourceAI,
-				SourceRef:      "low_confidence_handoff",
-				ScheduledFor:   time.Now().UTC().Add(replyDelay),
-			}); err != nil {
-				w.log.Error("failed to enqueue low-confidence handoff message", "err", err, "conv_id", conv.ID)
-			} else {
-				w.bus.Publish(ctx, Event{
-					Kind:           EvtOutboundJobEnqueued,
-					StudioID:       studioID,
-					ConversationID: conv.ID,
-				})
-			}
-		}
+	// Low-confidence pricing/general/class questions escalate instead of guessing. Small
+	// talk and booking-flow messages are exempt — they don't depend on KB grounding.
+	lowConfidenceFactual := intent == "pricing_question" || intent == "general_question"
+	lowConfidenceClass := retrievalRan && isClassRelatedQuery(msg.Body)
+	if !kbConfident && (lowConfidenceFactual || lowConfidenceClass) {
+		w.log.Info("ai worker: low KB confidence on a factual/class question, escalating instead of guessing",
+			"studio_id", studioID, "conversation_id", conv.ID, "intent", intent, "class_related", lowConfidenceClass)
+		w.escalateKnowledgeGap(ctx, studioID, conv, lead, msg.Body,
+			"AI uncertain — insufficient knowledge base match", "low_confidence_handoff", replyDelay)
+		return nil
+	}
+
+	// Provider-agnostic hard gate, checked before the prompt is built: if nothing in the
+	// knowledge base covers the question, escalate regardless of which model would answer.
+	if !kbCoversQuestion(availableKnowledgeText(kbChunks, studio), msg.Body) {
+		w.log.Info("ai worker: knowledge base has no coverage for this question, escalating before calling any model",
+			"studio_id", studioID, "conversation_id", conv.ID)
+		w.escalateKnowledgeGap(ctx, studioID, conv, lead, msg.Body,
+			"No knowledge base coverage for this question", "no_kb_coverage_handoff", replyDelay)
 		return nil
 	}
 
@@ -1236,7 +1365,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		w.log.Warn("fetch conversation ai summary failed", "err", err)
 		aiContextSummary = ""
 	}
-	prompt, expectedGreeting := w.buildPrompt(ctx, history, semanticHistory, styleExamples, conv, lead, studio, plans, sentiment, keywords, kbChunks, intent, kbConfident, aiContextSummary, "")
+	prompt := w.buildPrompt(ctx, history, semanticHistory, styleExamples, conv, lead, studio, plans, sentiment, keywords, kbChunks, intent, kbConfident, aiContextSummary)
 
 	var resp string
 	var sourceRef string
@@ -1345,14 +1474,33 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		w.answerCache.Set(ctx, studioID, "incoming_reply", prompt, resp, sourceRef)
 	}
 
+	// Second, provider-agnostic safety net for studios without Gemini (where the
+	// low-confidence check above never runs): escalate if the reply itself reads as
+	// "I don't know" rather than sending it.
+	if looksLikeAIDoesNotKnow(resp) {
+		w.log.Info("ai worker: reply indicates the AI doesn't know the answer, escalating instead of sending it",
+			"studio_id", studioID, "conversation_id", conv.ID, "source", sourceRef)
+		w.escalateKnowledgeGap(ctx, studioID, conv, lead, msg.Body,
+			"AI's own reply indicated it doesn't know the answer", "ai_uncertain_handoff", replyDelay)
+		return nil
+	}
+
 	// Post-process: strip motivation questions when customer clearly wants to book.
 	// Groq's smaller models ignore the prompt instruction reliably, so we enforce it here.
-	if intent == "booking_inquiry" {
+	if intent == "booking_inquiry" || historyAlreadyAskedAboutGoals(history) {
 		resp = stripMotivationQuestions(resp)
 	}
 
-	// Enforce the correct greeting word — see enforceGreeting's doc comment.
-	resp = enforceGreeting(resp, expectedGreeting)
+	// Never open with a time-of-day greeting — see stripTimeGreeting's doc comment.
+	resp = stripTimeGreeting(resp)
+
+	// Don't re-greet by name on every turn of an active exchange — the prompt
+	// already instructs this (see conversationResumedAfterGap's use in
+	// buildPrompt), but models don't follow it reliably, so it's enforced
+	// here too, same reasoning as stripTimeGreeting above.
+	if !conversationResumedAfterGap(history, 2*time.Hour) {
+		resp = stripNameGreeting(resp)
+	}
 
 	w.log.Info("ai response generated", "message_id", msg.ID, "response_len", len(resp), "channel", channel.Kind, "model", sourceRef)
 
@@ -1385,18 +1533,32 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	return nil
 }
 
-// greetingTZOverride is an IANA zone name that, when set, wins over both the
-// recipient's phone-derived timezone and the studio's own — see
-// resolveGreetingLocation. Only Test Chat sets it (to the admin's own
-// browser/system timezone); real conversations always pass "".
-// buildPrompt returns the composed prompt plus the greeting word (e.g.
-// "Good afternoon") it instructed the model to open with, or "" if no
-// greeting was requested. Callers use the latter to enforce the correct
-// word on the model's actual output — see the call site's comment for why
-// trusting the instruction alone isn't reliable enough.
-func (w *AIWorker) buildPrompt(ctx context.Context, history []Message, semanticHistory []SemanticMatch, styleExamples []StyleExample, conv *Conversation, lead *leads.Lead, studio *studios.Studio, plans []Plan, sentiment int, keywords []string, kbChunks []string, intent string, kbConfident bool, aiContextSummary string, greetingTZOverride string) (string, string) {
+// availableKnowledgeText is exactly what gets shown to the model as "KNOWLEDGE BASE:"
+// — reranked chunks if retrieval ran and found any, otherwise the studio's whole raw
+// text and document uploads (the no-retrieval fallback). Shared by buildPrompt and
+// kbCoversQuestion's pre-check so the two can never drift apart: whatever the model
+// is actually shown is exactly what the pre-check judges coverage against.
+func availableKnowledgeText(kbChunks []string, studio *studios.Studio) string {
+	if len(kbChunks) > 0 {
+		return strings.Join(kbChunks, "\n\n")
+	}
+	if studio == nil {
+		return ""
+	}
+	kbText := studio.KnowledgeBase
+	for _, f := range studio.KnowledgeBaseFiles {
+		if f.Text != "" {
+			kbText += fmt.Sprintf("\n\nDocument (%s):\n%s", f.Name, f.Text)
+		}
+	}
+	return kbText
+}
+
+// buildPrompt composes the full prompt for a customer reply. It never asks the model to
+// open with a time-of-day greeting ("Good morning" etc.); stripTimeGreeting removes one if
+// the model adds it anyway.
+func (w *AIWorker) buildPrompt(ctx context.Context, history []Message, semanticHistory []SemanticMatch, styleExamples []StyleExample, conv *Conversation, lead *leads.Lead, studio *studios.Studio, plans []Plan, sentiment int, keywords []string, kbChunks []string, intent string, kbConfident bool, aiContextSummary string) string {
 	var sb strings.Builder
-	var expectedGreeting string
 
 	// ── System role ──────────────────────────────────────────────────────────
 	sb.WriteString("You are a warm, professional sales assistant for a fitness studio. ")
@@ -1475,51 +1637,34 @@ func (w *AIWorker) buildPrompt(ctx context.Context, history []Message, semanticH
 	// scannable than a paragraph even unrendered.
 	sb.WriteString("If the customer asks about a schedule, timetable, or weekly class/session plan: first check whether the knowledge base below actually contains real schedule information — specific days, session names, or times. Only if it does, format that part of your answer as a markdown table (e.g. `| Day | Session | Time |`) instead of prose, using ONLY the days/sessions/times explicitly stated there — never invent or assume a class exists on a day, or at a time, that isn't mentioned. If a day/session IS listed but one specific detail about it (e.g. the time) isn't stated, just leave that detail out of the table rather than inventing it or refusing the whole answer — show what's actually known. Reserve \"I don't have that on file\" for when there is NO real schedule information at all to work with, or the customer asks about a day/class that's genuinely not covered anywhere.\n\n")
 
-	// Only greet if this is the first message or there has been a gap of 1+ hour
-	var lastOutboundAt time.Time
-	for i := len(history) - 1; i >= 0; i-- {
-		if history[i].Direction == DirectionOutbound {
-			lastOutboundAt = history[i].SentAt
-			break
-		}
-	}
-	isFirstContact := lastOutboundAt.IsZero()
-	isLongGap := !lastOutboundAt.IsZero() && now.Sub(lastOutboundAt) > time.Hour
-
-	if isFirstContact || isLongGap {
-		// The greeting's time-of-day is the recipient's local time (from
-		// their phone number's country) for a real conversation, or the
-		// admin's own browser/system time for Test Chat (greetingTZOverride)
-		// — see resolveGreetingLocation. Falls back to the studio's timezone
-		// (loc, above) when neither is available.
-		hour := now.In(resolveGreetingLocation(greetingTZOverride, conv, loc)).Hour()
-		expectedGreeting = greetingWord(hour)
-		sb.WriteString(fmt.Sprintf("Open your reply with '%s'. ", expectedGreeting))
+	// No time-of-day greeting, ever — go straight to the answer.
+	sb.WriteString("Do NOT open with a greeting such as Good morning/afternoon/evening/night — jump straight into the answer. ")
+	// Name-greeting ("Hi Puneeth!") on every single turn of an active
+	// back-and-forth reads as robotic and repetitive — only resume with one
+	// when the customer has actually come back after a real pause.
+	if conversationResumedAfterGap(history, 2*time.Hour) {
+		sb.WriteString("The customer is resuming this conversation after a pause of more than 2 hours, so it's fine to greet them by name again. ")
 	} else {
-		sb.WriteString("Do NOT start with a greeting like Good morning/afternoon/evening/night — jump straight into the response. ")
+		sb.WriteString("This is an active, ongoing exchange (no real pause since the last message) — do NOT greet the customer by name again (no \"Hi [name]!\"); jump straight into the answer, same as you would mid-conversation with a person standing in front of you. ")
 	}
 	sb.WriteString("\n\n")
 
 	// ── Knowledge base ───────────────────────────────────────────────────────
-	kbText := ""
-	if len(kbChunks) > 0 {
-		kbText = strings.Join(kbChunks, "\n\n")
-	} else if studio != nil {
-		kbText = studio.KnowledgeBase
-		for _, f := range studio.KnowledgeBaseFiles {
-			if f.Text != "" {
-				kbText += fmt.Sprintf("\n\nDocument (%s):\n%s", f.Name, f.Text)
-			}
-		}
-	}
+	kbText := availableKnowledgeText(kbChunks, studio)
 
 	if kbText != "" {
 		sb.WriteString("KNOWLEDGE BASE:\n\"\"\"\n")
 		sb.WriteString(kbText)
 		sb.WriteString("\n\"\"\"\n")
-		sb.WriteString("Use the knowledge base above to answer factual questions. If it doesn't fully cover the exact question, answer helpfully using what IS there — but never invent a specific fact (a day, time, price, date, or policy) that isn't actually stated above. If the knowledge base above is unrelated to what the customer is asking (e.g. it's about something else entirely, not this topic), treat that the same as having no information — do not use it as a basis to construct a plausible-sounding invented answer. If a specific detail truly isn't in the knowledge base, say so plainly (e.g. \"I don't have that on file\") rather than guessing or making one up — that's more useful to the customer than a confident wrong answer, and better than a blanket \"someone will follow up\" for something you could otherwise answer. ")
+		sb.WriteString("Answer ONLY from the knowledge base above and the plans below. Reply to exactly what the customer asked and nothing else. Never invent a specific fact (a day, time, price, date, class, instructor or policy) that isn't stated above, and never fill a gap with something plausible. If the knowledge base doesn't clearly answer the question — or it is about a different topic than the one asked — do not guess: say a team member will help with that, and keep it to one short sentence. If you genuinely can't tell what the customer is asking, ask ONE short clarifying question instead of answering something else. ")
 		sb.WriteString("You can see your own earlier replies in RECENT CONVERSATION below — do NOT restate pricing, promotions, or programme details you've already told the customer in this conversation; assume they remember it and only repeat something if they explicitly ask again. Keep replies short and move the conversation forward instead of re-explaining what's already covered.\n\n")
 	}
+
+	// ── Classes ──────────────────────────────────────────────────────────────
+	// This assistant has no booking system. It must never claim to have booked, cancelled,
+	// moved or confirmed anything — the real conversations showed it saying "locking you in
+	// for Friday" when nothing was booked.
+	sb.WriteString("You CANNOT book, cancel, reschedule or check live availability for classes, and you must NEVER say or imply that you have (no \"locking you in\", \"booked\", \"confirmed\", \"I've changed it\"). Any request to do those, or a class question the knowledge base doesn't answer, belongs to a team member.\n\n")
 
 	// ── Plans ────────────────────────────────────────────────────────────────
 	if len(plans) > 0 {
@@ -1626,6 +1771,9 @@ func (w *AIWorker) buildPrompt(ctx context.Context, history []Message, semanticH
 	default:
 		if lead != nil && lead.Status == leads.StatusMember {
 			sb.WriteString("Customer is an existing member. Answer their question helpfully and directly using the CURRENT PLAN and knowledge base context above. If their question is at all about their plan/membership, state their current plan and monthly fee, then ask if they'd like to change or upgrade it. Do not ask fitness-goal/qualifying questions, they've already signed up.\n")
+		} else if historyAlreadyAskedAboutGoals(history) || (lead != nil && lead.Goals != "") {
+			// The qualifying question is one-time, not repeated every turn.
+			sb.WriteString("Answer the question helpfully and concisely. Do NOT ask about their fitness goals or motivations again — that was already asked earlier in this conversation (or is already on file). Move the conversation forward instead, e.g. toward booking a trial, without repeating that question.\n")
 		} else {
 			sb.WriteString("Answer the question helpfully and concisely. Then ask one qualifying question to understand their fitness goals.\n")
 		}
@@ -1703,21 +1851,40 @@ func (w *AIWorker) buildPrompt(ctx context.Context, history []Message, semanticH
 	}
 	sb.WriteString("Assistant: ")
 
-	return sb.String(), expectedGreeting
+	return sb.String()
 }
 
+// isLikelyQuestion mirrors the question/short-choice heuristic
+// processInboundLeadAutomation already uses (service.go) to stop a bare
+// keyword match from misreading a genuine question as a definitive choice.
+func isLikelyQuestion(text string) bool {
+	return strings.Contains(text, "?") ||
+		strings.HasPrefix(text, "what") ||
+		strings.HasPrefix(text, "how") ||
+		strings.HasPrefix(text, "when") ||
+		strings.HasPrefix(text, "where") ||
+		strings.HasPrefix(text, "why") ||
+		strings.HasPrefix(text, "is ") ||
+		strings.HasPrefix(text, "are ") ||
+		strings.HasPrefix(text, "do ") ||
+		strings.HasPrefix(text, "can ")
+}
+
+// detectOptionChoice reads a reply as a definitive trial/member choice. A bare keyword
+// (outside of an explicit phrase like "book a trial") only counts when the message both
+// isn't a question and is short (≤8 words) — mirrors service.go's processInboundLeadAutomation.
 func (w *AIWorker) detectOptionChoice(body string, status leads.LeadStatus) (leads.LeadStatus, bool) {
 	text := strings.ToLower(strings.TrimSpace(body))
+	isQuestion := isLikelyQuestion(text)
+	isShortChoice := !isQuestion && len(strings.Fields(text)) <= 8
 
 	if status == leads.StatusTrialBooked {
 		hasMemberKeywords := text == "1" ||
 			strings.Contains(text, "become a member") ||
-			strings.Contains(text, "ready") ||
-			strings.Contains(text, "yes")
+			(isShortChoice && (strings.Contains(text, "ready") || strings.Contains(text, "yes")))
 		hasDroppedKeywords := text == "2" ||
 			strings.Contains(text, "not right now") ||
-			strings.Contains(text, "no") ||
-			strings.Contains(text, "later")
+			(isShortChoice && (strings.Contains(text, "no") || strings.Contains(text, "later")))
 
 		if hasMemberKeywords && hasDroppedKeywords {
 			return "", false
@@ -1738,16 +1905,15 @@ func (w *AIWorker) detectOptionChoice(body string, status leads.LeadStatus) (lea
 		strings.Contains(text, "take trial") ||
 		strings.Contains(text, "trial booked") ||
 		strings.Contains(text, "trial booking") ||
-		strings.Contains(text, "trial") ||
 		strings.Contains(text, "book trail") ||
-		strings.Contains(text, "trail") // common typo for "trial"
+		(isShortChoice && (strings.Contains(text, "trial") || strings.Contains(text, "trail"))) // "trail": common typo for "trial"
 
 	hasMemberKeywords := text == "2" ||
 		strings.Contains(text, "become a member") ||
 		strings.Contains(text, "become member") ||
 		strings.Contains(text, "becoming a member") ||
 		strings.Contains(text, "membership") ||
-		strings.Contains(text, "member")
+		(isShortChoice && strings.Contains(text, "member"))
 
 	// If both types of keywords are present (e.g. asking a question comparing them), it's ambiguous.
 	if hasTrialKeywords && hasMemberKeywords {
@@ -1865,54 +2031,97 @@ func (w *AIWorker) scheduleTrialFollowup(ctx context.Context, studioID uuid.UUID
 	}
 }
 
-var greetingPrefixes = []string{"Good morning", "Good afternoon", "Good evening", "Good night"}
+// leadingTimeGreeting matches an opening "Good morning/afternoon/evening/night" plus the
+// punctuation after it.
+var leadingTimeGreeting = regexp.MustCompile(`(?i)^\s*good\s+(morning|afternoon|evening|night)\b[\s,!.:;-]*`)
 
-// enforceGreeting corrects the model's opening greeting word if it doesn't
-// match expectedGreeting. Models reliably OPEN a reply with some greeting
-// when instructed to (see buildPrompt), but don't reliably pick the correct
-// one from the instruction — same class of unreliability documented on
-// stripMotivationQuestions below, just for the greeting instead. Only
-// replaces an existing leading greeting phrase; doesn't prepend one if the
-// model skipped the greeting entirely; that's a separate failure mode.
-func enforceGreeting(resp, expectedGreeting string) string {
-	if expectedGreeting == "" {
+// stripTimeGreeting removes a leading time-of-day greeting the model added despite being
+// told not to. Never returns an empty reply: one that's only a greeting is left as is.
+func stripTimeGreeting(resp string) string {
+	loc := leadingTimeGreeting.FindStringIndex(resp)
+	if loc == nil {
 		return resp
 	}
-	trimmed := strings.TrimLeft(resp, " \t\n")
-	lower := strings.ToLower(trimmed)
-	for _, g := range greetingPrefixes {
-		if strings.HasPrefix(lower, strings.ToLower(g)) {
-			if strings.EqualFold(g, expectedGreeting) {
-				return resp
+	rest := strings.TrimLeft(resp[loc[1]:], " \t")
+	if rest == "" {
+		return resp
+	}
+	r, size := utf8.DecodeRuneInString(rest)
+	return string(unicode.ToUpper(r)) + rest[size:]
+}
+
+// leadingNameGreeting matches a leading "Hi X!" / "Hey X," / "Hello X", X being a
+// capitalized word (optionally two, e.g. "Hi John Smith!"). Not tied to the lead's stored
+// name — the model often greets with an invented friendlier variant instead of echoing it
+// verbatim. (?i) is scoped to just the greeting word so [A-Z] still means "capitalized",
+// distinguishing a real name from an ordinary word like "trainer". The name is letters-only
+// so a trailing "'s" (e.g. "Hi Puneeth's trainer...") blocks the match instead of being
+// misread as a greeting.
+var leadingNameGreeting = regexp.MustCompile(`^\s*(?i:hi|hey|hello)\s+[A-Z][a-zA-Z]*(?:\s+[A-Z][a-zA-Z]*)?([\s,!.:;-]|$)`)
+
+// stripNameGreeting removes a leading name-greeting the model added despite being told not
+// to re-greet mid-conversation. Never returns an empty reply.
+func stripNameGreeting(resp string) string {
+	loc := leadingNameGreeting.FindStringIndex(resp)
+	if loc == nil {
+		return resp
+	}
+	rest := strings.TrimLeft(resp[loc[1]:], " \t")
+	if rest == "" {
+		return resp
+	}
+	r, size := utf8.DecodeRuneInString(rest)
+	return string(unicode.ToUpper(r)) + rest[size:]
+}
+
+// motivationPhrases are the fitness-goal/qualifying-question phrasings the prompt
+// asks the model to use. Shared by stripMotivationQuestions (strips them from a
+// reply) and historyAlreadyAskedAboutGoals (detects that one was already asked
+// earlier in this conversation, so buildPrompt stops instructing the model to ask
+// it again on every single turn — the qualifying question is a one-time thing, not
+// a tic to repeat on every reply).
+var motivationPhrases = []string{
+	"what motivated you",
+	"what are your fitness goals",
+	"what are your main fitness goals",
+	"what are your goals",
+	"goals or motivations",
+	"are you looking to lose weight",
+	"are you looking to gain",
+	"gain strength",
+	"improve overall health",
+	"why do you want to",
+	"tell me what motivated",
+	"before we get started, can you tell me",
+	"before we proceed, can you tell",
+	"before we book",
+	"before we do that, can you tell",
+}
+
+// historyAlreadyAskedAboutGoals reports whether an earlier outbound message in this
+// conversation already asked the customer about their fitness goals/motivations —
+// so the prompt should not instruct the model to ask it again (and the post-
+// processing strip below applies even outside the booking_inquiry intent).
+func historyAlreadyAskedAboutGoals(history []Message) bool {
+	for _, m := range history {
+		if m.Direction != DirectionOutbound {
+			continue
+		}
+		lower := strings.ToLower(m.Body)
+		for _, phrase := range motivationPhrases {
+			if strings.Contains(lower, phrase) {
+				return true
 			}
-			leadingSpace := resp[:len(resp)-len(trimmed)]
-			return leadingSpace + expectedGreeting + trimmed[len(g):]
 		}
 	}
-	return resp
+	return false
 }
 
 // stripMotivationQuestions removes sentences asking about fitness goals/motivations
-// when the customer has already expressed intent to book — the LLM ignores the prompt
-// instruction reliably, so we enforce it at the output layer.
+// when the customer has already expressed intent to book, or already been asked
+// earlier in this same conversation — the LLM ignores the prompt instruction
+// reliably, so we enforce it at the output layer.
 func stripMotivationQuestions(resp string) string {
-	motivationPhrases := []string{
-		"what motivated you",
-		"what are your fitness goals",
-		"what are your goals",
-		"goals or motivations",
-		"are you looking to lose weight",
-		"are you looking to gain",
-		"gain strength",
-		"improve overall health",
-		"why do you want to",
-		"tell me what motivated",
-		"before we get started, can you tell me",
-		"before we proceed, can you tell",
-		"before we book",
-		"before we do that, can you tell",
-	}
-
 	lower := strings.ToLower(resp)
 	hasMotivation := false
 	for _, phrase := range motivationPhrases {

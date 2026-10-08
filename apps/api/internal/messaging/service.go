@@ -1981,6 +1981,12 @@ func (s *Service) EnqueueReply(ctx context.Context, in SendInput) (int64, error)
 		_ = s.repo.SetLeadNeedsManualFollowup(ctx, *conv.LeadID, false)
 	}
 
+	// A human has taken over — cancel any other pending automated send for this
+	// conversation so it doesn't land on top of the reply just sent.
+	if _, err := s.repo.CancelPendingAutomatedJobsForConversation(ctx, in.StudioID, in.ConversationID); err != nil {
+		slog.Warn("manual reply: failed to cancel pending automated jobs", "conversation_id", in.ConversationID, "err", err)
+	}
+
 	s.bus.Publish(ctx, Event{
 		Kind:           EvtOutboundJobEnqueued,
 		StudioID:       in.StudioID,
@@ -2536,9 +2542,11 @@ func (s *Service) sendEscalationEmail(ctx context.Context, studioID, convID uuid
 // new signup), it's tagged in the session metadata so the webhook cancels
 // that subscription once the new one is confirmed — otherwise the customer
 // would end up billed on both the old and new plan.
-func (s *Service) buildPlanCheckoutBody(ctx context.Context, tx pgx.Tx, studioID, leadID uuid.UUID, selectedPlan Plan, oldSubscriptionID string) string {
+func (s *Service) buildPlanCheckoutBody(ctx context.Context, tx pgx.Tx, studioID, convID, leadID uuid.UUID, selectedPlan Plan, oldSubscriptionID string) string {
 	secretKey, _, studioName, studioSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
 	if errStripe != nil || secretKey == "" {
+		s.escalateForManualMembership(ctx, studioID, convID, leadID,
+			fmt.Sprintf("Can't send a membership payment link — Stripe isn't configured for this studio (plan: %s)", selectedPlan.PlanName))
 		return "Thank you! Our team will reach out to you shortly."
 	}
 
@@ -2625,6 +2633,8 @@ func (s *Service) buildPlanCheckoutBody(ctx context.Context, tx pgx.Tx, studioID
 		}
 		return fmt.Sprintf("Great choice! You selected the %s Plan. To %s, please subscribe here:\n%s", selectedPlan.PlanName, verb, checkoutURL)
 	}
+	s.escalateForManualMembership(ctx, studioID, convID, leadID,
+		fmt.Sprintf("Couldn't create a Stripe checkout session for the %s plan — customer picked it but no payment link could be generated", selectedPlan.PlanName))
 	return "Thank you! Our team will reach out to you shortly to finalize your membership."
 }
 
@@ -2855,7 +2865,7 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 				}
 			} else {
 				targetStage = "completed"
-				outboundBody = s.buildPlanCheckoutBody(ctx, tx, studioID, *conv.LeadID, plans[selectedIndex], "")
+				outboundBody = s.buildPlanCheckoutBody(ctx, tx, studioID, conv.ID, *conv.LeadID, plans[selectedIndex], "")
 			}
 		} else {
 			targetStage = "completed"
@@ -2879,7 +2889,7 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 				var oldSubID string
 				_ = tx.QueryRow(ctx, "SELECT stripe_subscription_id FROM leads WHERE id = $1", *conv.LeadID).Scan(&oldSubID)
 				targetStage = "completed"
-				outboundBody = s.buildPlanCheckoutBody(ctx, tx, studioID, *conv.LeadID, plans[selectedIndex], oldSubID)
+				outboundBody = s.buildPlanCheckoutBody(ctx, tx, studioID, conv.ID, *conv.LeadID, plans[selectedIndex], oldSubID)
 			}
 		} else {
 			targetStage = "completed"
@@ -3399,7 +3409,14 @@ func (s *Service) SendTrialPaymentLink(ctx context.Context, studioID, convID uui
 					body = fmt.Sprintf("Hi %s! Great choice. Here's your secure trial booking link:\n\n%s\n\nWe look forward to seeing you!", firstName, detailsURL)
 				}
 			} else {
+				// Stripe not configured — flag and escalate instead of a silent holding message.
 				body = fmt.Sprintf("Hi %s! Great choice. Our team will reach out to you within 24 hours to schedule your trial. We look forward to seeing you!", firstName)
+				if errFlag := s.repo.SetLeadNeedsManualFollowup(ctx, *leadID, true); errFlag != nil {
+					slog.Error("send trial payment link: failed to flag lead for manual followup", "lead", leadID, "err", errFlag)
+				}
+				if errEsc := s.EscalateAndNotify(ctx, studioID, convID, "Can't send a trial payment link — Stripe isn't configured for this studio"); errEsc != nil {
+					slog.Error("send trial payment link: failed to escalate conversation", "conv", convID, "err", errEsc)
+				}
 			}
 		}
 	} else {
@@ -3409,7 +3426,11 @@ func (s *Service) SendTrialPaymentLink(ctx context.Context, studioID, convID uui
 		if err == nil && checkoutURL != "" {
 			body = fmt.Sprintf("Hi %s! Great choice. Here's your secure trial booking link for %s:\n\n%s\n\nWe look forward to seeing you!", firstName, studioName, checkoutURL)
 		} else {
+			// Stripe not configured — escalate instead of a silent holding message.
 			body = fmt.Sprintf("Hi %s! Great choice. Our team will reach out to you within 24 hours to confirm your trial. We look forward to seeing you!", firstName)
+			if errEsc := s.EscalateAndNotify(ctx, studioID, convID, "Can't send a trial payment link — Stripe isn't configured for this studio"); errEsc != nil {
+				slog.Error("send trial payment link: failed to escalate conversation", "conv", convID, "err", errEsc)
+			}
 		}
 	}
 

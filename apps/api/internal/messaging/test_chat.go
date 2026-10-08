@@ -142,13 +142,13 @@ func (w *AIWorker) TestChat(ctx context.Context, studioID uuid.UUID, req TestCha
 	// answering the question just asked.
 	history = append(history, Message{Direction: DirectionInbound, Body: req.Message, SentAt: now})
 
-	prompt, expectedGreeting := w.buildPrompt(ctx, history, nil, styleExamples, nil, nil, studio, plans, sentiment, nil, kbChunks, intent, len(kbChunks) >= 2, "", req.Timezone)
+	prompt := w.buildPrompt(ctx, history, nil, styleExamples, nil, nil, studio, plans, sentiment, nil, kbChunks, intent, len(kbChunks) >= 2, "")
 
 	reply, _ := llmWaterfall(ctx, w.studiosRepo, w.llmRepo, w.msgRepo, w.claude, w.claudeAPIURL, w.log, studioID, studio, prompt, w.answerCache, "test_chat")
 	if reply == "" {
 		return "", nil, ErrNoProviderConfigured
 	}
-	reply = enforceGreeting(reply, expectedGreeting)
+	reply = stripTimeGreeting(reply)
 	return reply, sources, nil
 }
 

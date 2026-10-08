@@ -1749,6 +1749,22 @@ func (r *Repo) CancelPendingJobsForConversation(ctx context.Context, studioID, c
 	return int(tag.RowsAffected()), nil
 }
 
+// CancelPendingAutomatedJobsForConversation deletes every still-pending automated/AI/Manual-
+// Actions job for a conversation, but never a studio_user-sourced one — so a staff member's
+// manual reply cancels any stale follow-up/nudge without touching their own just-enqueued
+// reply. Returns the number of jobs removed.
+func (r *Repo) CancelPendingAutomatedJobsForConversation(ctx context.Context, studioID, conversationID uuid.UUID) (int, error) {
+	tag, err := r.pool.Exec(ctx, `
+		DELETE FROM outbound_jobs
+		WHERE studio_id = $1 AND conversation_id = $2 AND status = 'pending'
+		  AND source_kind IN ('automation', 'ai')
+	`, studioID, conversationID)
+	if err != nil {
+		return 0, fmt.Errorf("cancel pending automated jobs: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 // CancelPendingJobsForLead deletes every still-pending outbound job across
 // ALL of a lead's conversations (a lead may have more than one channel).
 // Used when Do Not Disturb is turned on. Returns the number of jobs removed.
@@ -2352,6 +2368,28 @@ func (r *Repo) CountAutomatedWhatsAppSentToday(ctx context.Context, studioID uui
 		  AND o.sent_at >= $2
 		  AND o.sent_at < $3
 	`, studioID, start, end).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// CountPendingAutomatedWhatsApp counts automation/AI-sourced WhatsApp jobs that are
+// queued but not yet sent. They will consume today's daily allowance as soon as they go
+// out, so the broadcast scheduler must treat them as already spent; otherwise, because
+// sends are spaced out, it keeps seeing "plenty left" and queues far past the cap.
+func (r *Repo) CountPendingAutomatedWhatsApp(ctx context.Context, studioID uuid.UUID) (int, error) {
+	var count int
+	err := r.pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM outbound_jobs o
+		JOIN conversations c ON c.id = o.conversation_id
+		JOIN channel_accounts ch ON ch.id = c.channel_account_id
+		WHERE o.studio_id = $1
+		  AND o.status = 'pending'
+		  AND o.source_kind IN ('automation', 'ai')
+		  AND ch.kind IN ('whatsapp_meta', 'whatsapp_web')
+	`, studioID).Scan(&count)
 	if err != nil {
 		return 0, err
 	}

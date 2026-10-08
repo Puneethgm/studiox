@@ -19,6 +19,26 @@ type KnowledgeBaseFile struct {
 	Platform string `json:"platform"` // "all","whatsapp","instagram","facebook","sms"
 }
 
+// KnowledgeGap is a question a customer asked that the AI couldn't answer from the
+// knowledge base and had to hand off to a human instead of guessing (see
+// messaging.AIWorker's low-confidence escalation). Surfaced on the Knowledge Base
+// page's "Needs Answers" tab so staff can see exactly what was missed and add the
+// answer straight into the knowledge base.
+type KnowledgeGap struct {
+	ID             uuid.UUID  `json:"id"`
+	StudioID       uuid.UUID  `json:"studioId"`
+	ConversationID *uuid.UUID `json:"conversationId,omitempty"`
+	LeadID         *uuid.UUID `json:"leadId,omitempty"`
+	LeadName       string     `json:"leadName,omitempty"`
+	Question       string     `json:"question"`
+	Status         string     `json:"status"` // "open" | "resolved" | "dismissed"
+	TimesAsked     int        `json:"timesAsked"`
+	Answer         string     `json:"answer,omitempty"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
+	ResolvedAt     *time.Time `json:"resolvedAt,omitempty"`
+}
+
 type Studio struct {
 	ID                   uuid.UUID           `json:"id"`
 	Slug                 string              `json:"slug"`
@@ -95,6 +115,7 @@ type Studio struct {
 }
 
 var (
-	ErrNotFound  = errors.New("studio not found")
-	ErrSlugTaken = errors.New("studio slug already in use")
+	ErrNotFound   = errors.New("studio not found")
+	ErrSlugTaken  = errors.New("studio slug already in use")
+	ErrValidation = errors.New("validation failed")
 )

@@ -10,7 +10,7 @@ import (
 // Leads set. Not per-studio configurable (unlike the day thresholds it
 // applies) — this is an operational cadence, not a business setting, so it
 // lives in code like workerPollInterval does.
-const coldScanInterval = 15 * time.Minute
+const coldScanInterval = 2 * time.Hour
 
 // ColdLeadScanner periodically recomputes which conversations qualify as
 // "cold" (see RecomputeColdLeads) for every studio and persists the result
