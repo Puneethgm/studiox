@@ -121,9 +121,11 @@ func ClassifyIntent(ctx context.Context, apiKey, model, message string) (intent 
 
 Message: "%s"
 
+Use complaint_or_feedback for any complaint, negative feedback, dissatisfaction, bad experience, refund demand, or mention of leaving a bad review — including politely or diplomatically worded criticism.
+
 Reply with ONLY valid JSON — no markdown, no explanation:
 {
-  "intent": "<one of: pricing_question | booking_inquiry | objection | ready_to_buy | general_question | off_topic>",
+  "intent": "<one of: pricing_question | booking_inquiry | objection | ready_to_buy | complaint_or_feedback | general_question | off_topic>",
   "sentiment": <-1 for negative, 0 for neutral, 1 for positive>,
   "confidence": <float 0.0 to 1.0>
 }`, message)

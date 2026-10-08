@@ -231,3 +231,84 @@ export async function updateProgramStartDate(studioId: string, programStartDate:
   revalidatePath(`/admin/studios/${studioId}/knowledge-base`);
   return { ok: true };
 }
+
+// ----- knowledge gaps ("Needs Answers" tab) -----
+
+export interface KnowledgeGap {
+  id: string;
+  studioId: string;
+  conversationId?: string;
+  leadId?: string;
+  leadName?: string;
+  question: string;
+  status: 'open' | 'resolved' | 'dismissed';
+  timesAsked: number;
+  answer?: string;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt?: string;
+}
+
+async function kbCookieHeader(): Promise<string> {
+  const cookieStore = await cookies();
+  return cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+}
+
+export async function listKnowledgeGaps(
+  studioId: string,
+  status: 'open' | 'resolved' | 'dismissed' | '' = 'open'
+): Promise<{ ok: boolean; error?: string; gaps?: KnowledgeGap[] }> {
+  const ck = await kbCookieHeader();
+  try {
+    const qs = status ? `?status=${status}` : '';
+    const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/knowledge-base/gaps${qs}`, {
+      headers: { ...(ck ? { Cookie: ck } : {}) },
+      cache: 'no-store',
+    });
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    const data = (await res.json()) as { gaps?: KnowledgeGap[] };
+    return { ok: true, gaps: data.gaps ?? [] };
+  } catch (err: any) {
+    return { ok: false, error: err.message };
+  }
+}
+
+export async function resolveKnowledgeGap(
+  studioId: string,
+  gapId: string,
+  answer: string
+): Promise<{ ok: boolean; error?: string; gap?: KnowledgeGap }> {
+  const ck = await kbCookieHeader();
+  const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/knowledge-base/gaps/${gapId}/resolve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(ck ? { Cookie: ck } : {}) },
+    body: JSON.stringify({ answer }),
+    cache: 'no-store',
+  });
+  type ErrBody = { error?: string; details?: Record<string, string> };
+  const body = (await res.json().catch(() => null)) as (ErrBody & Partial<KnowledgeGap>) | null;
+  if (!res.ok) {
+    const detail = body?.details ? Object.values(body.details)[0] : undefined;
+    return { ok: false, error: detail ?? body?.error ?? `HTTP ${res.status}` };
+  }
+  revalidatePath(`/admin/studios/${studioId}/knowledge-base`);
+  return { ok: true, gap: body as KnowledgeGap };
+}
+
+export async function dismissKnowledgeGap(studioId: string, gapId: string): Promise<{ ok: boolean; error?: string }> {
+  const ck = await kbCookieHeader();
+  const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/knowledge-base/gaps/${gapId}/dismiss`, {
+    method: 'POST',
+    headers: { ...(ck ? { Cookie: ck } : {}) },
+    cache: 'no-store',
+  });
+  if (!res.ok && res.status !== 204) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    return { ok: false, error: body?.error ?? `HTTP ${res.status}` };
+  }
+  revalidatePath(`/admin/studios/${studioId}/knowledge-base`);
+  return { ok: true };
+}

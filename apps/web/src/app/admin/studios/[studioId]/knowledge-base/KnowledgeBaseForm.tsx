@@ -2,14 +2,15 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
-import { Database, FileText, Trash2, Upload, AlertCircle, CheckCircle, ChevronDown, Sparkles, Loader2, MessageCircle } from 'lucide-react';
+import { Database, FileText, Trash2, Upload, AlertCircle, CheckCircle, ChevronDown, Sparkles, Loader2, MessageCircle, HelpCircle } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Label, FieldHint } from '@/components/ui/Label';
 import { Dialog, DialogHeader } from '@/components/ui/Dialog';
 import { api } from '@/lib/api';
 import type { Studio } from '@/lib/types';
-import { parseDocument, ocrImage, updateKnowledgeBase, updateCommunicationStyle, updateStyleRefreshInterval, updateProgramStartDate } from './actions';
+import { parseDocument, ocrImage, updateKnowledgeBase, updateCommunicationStyle, updateStyleRefreshInterval, updateProgramStartDate, listKnowledgeGaps } from './actions';
 import { TestChatDrawer } from './TestChatDrawer';
+import { NeedsAnswersTab } from './NeedsAnswersTab';
 
 type KBFile = { name: string; url: string; text: string; platform: string };
 
@@ -96,8 +97,8 @@ function AutosaveIndicator({ status }: { status: 'idle' | 'saving' | 'saved' | '
   );
 }
 
-type KBSection = 'instructions' | 'style';
-const VALID_SECTIONS: KBSection[] = ['instructions', 'style'];
+type KBSection = 'instructions' | 'needs-answers' | 'style';
+const VALID_SECTIONS: KBSection[] = ['instructions', 'needs-answers', 'style'];
 
 export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
   const router = useRouter();
@@ -123,6 +124,20 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  // Open-question count for the "Needs Answers" tab badge — just the count, not the
+  // full list (NeedsAnswersTab fetches and polls its own list when it's active).
+  const [openGapCount, setOpenGapCount] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const res = await listKnowledgeGaps(studio.id, 'open');
+      if (!cancelled && res.ok) setOpenGapCount((res.gaps ?? []).length);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [studio.id]);
 
   // Images go through OCR + a review popup instead of the silent
   // document-parse-and-add flow below — extracted text can be wrong, so the
@@ -457,6 +472,7 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
         {(
           [
             { id: 'instructions', label: 'Instructions & Documents', icon: Database },
+            { id: 'needs-answers', label: 'Needs Answers', icon: HelpCircle },
             { id: 'style', label: 'Communication Style', icon: Sparkles },
           ] as const
         ).map((item) => {
@@ -475,6 +491,11 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
             >
               <Icon className="h-4 w-4" />
               {item.label}
+              {item.id === 'needs-answers' && !!openGapCount && (
+                <span className="rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-black leading-none text-white">
+                  {openGapCount}
+                </span>
+              )}
             </button>
           );
         })}
@@ -673,6 +694,10 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
           </div>
         </div>
       </div>
+      )}
+
+      {activeSection === 'needs-answers' && (
+        <NeedsAnswersTab studioId={studio.id} />
       )}
 
       {activeSection === 'style' && (

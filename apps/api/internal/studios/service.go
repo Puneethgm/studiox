@@ -341,7 +341,13 @@ func (s *Service) CreateStudioWithAdmin(ctx context.Context, in CreateStudioInpu
 	usingDefaultPassword := in.AdminPassword == ""
 	plainPassword := in.AdminPassword
 	if usingDefaultPassword {
-		plainPassword = identity.DefaultTeammatePassword
+		// Random per studio, never a shared fixed value; the admin must reset it
+		// at first login (must_reset_password is set below).
+		generated, genErr := identity.GenerateTempPassword()
+		if genErr != nil {
+			return nil, nil, genErr
+		}
+		plainPassword = generated
 	}
 	hash, err := identity.HashPassword(plainPassword)
 	if err != nil {
@@ -779,4 +785,90 @@ func (s *Service) GetPlatformSetting(ctx context.Context, key string) (string, e
 
 func (s *Service) UpdatePlatformSetting(ctx context.Context, key, value string, actorID *uuid.UUID) error {
 	return s.repo.UpdatePlatformSetting(ctx, key, value, actorID)
+}
+
+// ============================================================
+// knowledge_gaps
+// ============================================================
+
+// learnedAnswersFileName is the single synthetic knowledge-base document that
+// accumulates every answer added from the "Needs Answers" tab, as plain Q/A text —
+// it's just another entry in KnowledgeBaseFiles, so it's chunked, embedded and
+// searched exactly like an uploaded document, and visible/editable on the regular
+// Knowledge Base page like any other file.
+const learnedAnswersFileName = "Learned Answers (from customer questions)"
+
+func (s *Service) ListKnowledgeGaps(ctx context.Context, studioID uuid.UUID, status string) ([]KnowledgeGap, error) {
+	return s.repo.ListKnowledgeGaps(ctx, studioID, status)
+}
+
+// ResolveKnowledgeGap records the answer on the gap, appends it as a Q/A pair to the
+// studio's "Learned Answers" knowledge-base document, and re-runs the same embedding
+// sync a manual Knowledge Base edit would (Service.Update's kbChanged path) — so the
+// AI can use it on the very next message, no separate "save" step needed.
+func (s *Service) ResolveKnowledgeGap(ctx context.Context, studioID, gapID uuid.UUID, answer string, actorID *uuid.UUID) (*KnowledgeGap, error) {
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
+		return nil, ErrValidation
+	}
+
+	gap, err := s.repo.GetKnowledgeGap(ctx, studioID, gapID)
+	if err != nil {
+		return nil, err
+	}
+	if gap.Status != "open" {
+		return nil, ErrNotFound
+	}
+
+	studio, err := s.repo.GetByID(ctx, studioID)
+	if err != nil {
+		return nil, err
+	}
+
+	qaBlock := fmt.Sprintf("Q: %s\nA: %s\n\n", strings.TrimSpace(gap.Question), answer)
+	files := make([]KnowledgeBaseFile, len(studio.KnowledgeBaseFiles))
+	copy(files, studio.KnowledgeBaseFiles)
+	found := false
+	for i := range files {
+		if files[i].Name == learnedAnswersFileName {
+			files[i].Text += qaBlock
+			found = true
+			break
+		}
+	}
+	if !found {
+		files = append(files, KnowledgeBaseFile{Name: learnedAnswersFileName, Text: qaBlock, Platform: "all"})
+	}
+
+	if err := s.repo.MarkKnowledgeGapResolved(ctx, studioID, gapID, answer, actorID); err != nil {
+		return nil, err
+	}
+
+	// Reuses the full Update path (validation + the kbChanged→asyncSyncKnowledgeChunks
+	// trigger) with every other field carried over unchanged from the current studio —
+	// this is purely a knowledge-base append, nothing else about the studio is touched.
+	if _, err := s.Update(ctx, studioID, UpdateStudioInput{
+		Name: studio.Name, BrandColor: studio.BrandColor, LogoURL: studio.LogoURL,
+		ContactEmail: studio.ContactEmail, ContactPhone: studio.ContactPhone,
+		Active: studio.Active, ManagedBy1Hero: studio.ManagedBy1Hero,
+		AvailabilitySlots: studio.AvailabilitySlots, AvailabilityTimezone: studio.AvailabilityTimezone,
+		GeminiAPIKey: studio.GeminiAPIKey, GroqAPIKey: studio.GroqAPIKey,
+		MetaAppID: studio.MetaAppID, MetaAppSecret: studio.MetaAppSecret,
+		GoogleClientID: studio.GoogleClientID, GoogleClientSecret: studio.GoogleClientSecret,
+		GoogleDeveloperToken: studio.GoogleDeveloperToken, SocialPlannerEnabled: studio.SocialPlannerEnabled,
+		KnowledgeBase: studio.KnowledgeBase, KnowledgeBaseFiles: files,
+		GreetingMessage: studio.GreetingMessage, TrialAmountSGD: studio.TrialAmountSGD,
+		BookingHeroImageURL: studio.BookingHeroImageURL, BookingHeroVideoURL: studio.BookingHeroVideoURL,
+		TrialConfirmationMessage: studio.TrialConfirmationMessage, MembershipConfirmationMessage: studio.MembershipConfirmationMessage,
+		TrialGlofoxMembershipID: studio.TrialGlofoxMembershipID, TrialGlofoxPlanCode: studio.TrialGlofoxPlanCode,
+		MembershipGlofoxMembershipID: studio.MembershipGlofoxMembershipID, MembershipGlofoxPlanCode: studio.MembershipGlofoxPlanCode,
+	}, actorID); err != nil {
+		return nil, fmt.Errorf("append learned answer to knowledge base: %w", err)
+	}
+
+	return s.repo.GetKnowledgeGap(ctx, studioID, gapID)
+}
+
+func (s *Service) DismissKnowledgeGap(ctx context.Context, studioID, gapID uuid.UUID) error {
+	return s.repo.MarkKnowledgeGapDismissed(ctx, studioID, gapID)
 }

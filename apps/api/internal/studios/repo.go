@@ -794,3 +794,123 @@ func (r *Repo) SearchKnowledgeChunksHybrid(ctx context.Context, studioID uuid.UU
 	}
 	return results, rows.Err()
 }
+
+// ============================================================
+// knowledge_gaps — questions the AI escalated instead of guessing
+// ============================================================
+
+// CreateKnowledgeGap logs a question the AI couldn't answer confidently and had to
+// hand off to a human. Repeat asks of the same (trimmed, case-insensitive) question
+// while it's still open just bump times_asked instead of creating duplicate rows —
+// see the partial unique index idx_knowledge_gaps_open_dedupe. Best-effort: called
+// from the hot path of handling an inbound message, so a failure here must never
+// block the escalation reply itself — callers should log and continue, not fail.
+func (r *Repo) CreateKnowledgeGap(ctx context.Context, studioID uuid.UUID, conversationID, leadID *uuid.UUID, question string) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO knowledge_gaps (studio_id, conversation_id, lead_id, question)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (studio_id, lower(btrim(question))) WHERE status = 'open'
+		DO UPDATE SET times_asked = knowledge_gaps.times_asked + 1, updated_at = now(),
+		              conversation_id = EXCLUDED.conversation_id, lead_id = EXCLUDED.lead_id
+	`, studioID, conversationID, leadID, question)
+	if err != nil {
+		return fmt.Errorf("create knowledge gap: %w", err)
+	}
+	return nil
+}
+
+func scanKnowledgeGap(row pgx.Row) (*KnowledgeGap, error) {
+	var g KnowledgeGap
+	var leadName *string
+	if err := row.Scan(&g.ID, &g.StudioID, &g.ConversationID, &g.LeadID, &leadName, &g.Question,
+		&g.Status, &g.TimesAsked, &g.Answer, &g.CreatedAt, &g.UpdatedAt, &g.ResolvedAt); err != nil {
+		return nil, err
+	}
+	if leadName != nil {
+		g.LeadName = *leadName
+	}
+	return &g, nil
+}
+
+const knowledgeGapColumns = `g.id, g.studio_id, g.conversation_id, g.lead_id, l.name,
+	g.question, g.status, g.times_asked, g.answer, g.created_at, g.updated_at, g.resolved_at`
+
+// ListKnowledgeGaps returns the studio's knowledge gaps, newest first. status filters
+// to "open"/"resolved"/"dismissed"; empty string returns all of them.
+func (r *Repo) ListKnowledgeGaps(ctx context.Context, studioID uuid.UUID, status string) ([]KnowledgeGap, error) {
+	query := `SELECT ` + knowledgeGapColumns + `
+		FROM knowledge_gaps g LEFT JOIN leads l ON l.id = g.lead_id
+		WHERE g.studio_id = $1`
+	args := []any{studioID}
+	if status != "" {
+		query += ` AND g.status = $2`
+		args = append(args, status)
+	}
+	query += ` ORDER BY g.created_at DESC`
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list knowledge gaps: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]KnowledgeGap, 0)
+	for rows.Next() {
+		g, err := scanKnowledgeGap(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan knowledge gap: %w", err)
+		}
+		out = append(out, *g)
+	}
+	return out, rows.Err()
+}
+
+// GetKnowledgeGap fetches one gap, scoped to the studio.
+func (r *Repo) GetKnowledgeGap(ctx context.Context, studioID, gapID uuid.UUID) (*KnowledgeGap, error) {
+	g, err := scanKnowledgeGap(r.pool.QueryRow(ctx, `
+		SELECT `+knowledgeGapColumns+`
+		FROM knowledge_gaps g LEFT JOIN leads l ON l.id = g.lead_id
+		WHERE g.id = $1 AND g.studio_id = $2
+	`, gapID, studioID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get knowledge gap: %w", err)
+	}
+	return g, nil
+}
+
+// MarkKnowledgeGapResolved stores the answer and marks the gap resolved. The caller
+// (Service.ResolveKnowledgeGap) is responsible for actually adding the answer into
+// the studio's knowledge base — this just records that it was handled.
+func (r *Repo) MarkKnowledgeGapResolved(ctx context.Context, studioID, gapID uuid.UUID, answer string, actorID *uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE knowledge_gaps
+		SET status = 'resolved', answer = $3, resolved_by = $4, resolved_at = now(), updated_at = now()
+		WHERE id = $1 AND studio_id = $2 AND status = 'open'
+	`, gapID, studioID, answer, actorID)
+	if err != nil {
+		return fmt.Errorf("mark knowledge gap resolved: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// MarkKnowledgeGapDismissed closes a gap without adding anything to the knowledge
+// base — e.g. it was off-topic or a duplicate the dedupe index didn't catch.
+func (r *Repo) MarkKnowledgeGapDismissed(ctx context.Context, studioID, gapID uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE knowledge_gaps SET status = 'dismissed', updated_at = now()
+		WHERE id = $1 AND studio_id = $2 AND status = 'open'
+	`, gapID, studioID)
+	if err != nil {
+		return fmt.Errorf("mark knowledge gap dismissed: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

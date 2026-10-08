@@ -1849,6 +1849,120 @@ func (h *Handler) GetKnowledgeSyncStatus(w http.ResponseWriter, r *http.Request)
 	httpx.JSON(w, http.StatusOK, map[string]any{"status": status, "updatedAt": updatedAt})
 }
 
+// listKnowledgeGaps godoc
+//
+//	@Summary		List questions the AI couldn't answer from the knowledge base
+//	@Description	Returns the studio's knowledge gaps — customer questions the AI escalated to a human instead of guessing, because the knowledge base had no solid match. Optional ?status=open|resolved|dismissed filter; omitted returns all.
+//	@Tags			Knowledge Base
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Param			status		query		string	false	"open | resolved | dismissed"
+//	@Success		200			{object}	map[string]interface{}	"{gaps: KnowledgeGap[]}"
+//	@Failure		400			{object}	httpx.ErrorResponse
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/knowledge-base/gaps [get]
+func (h *Handler) ListKnowledgeGapsRoute(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "studioId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	gaps, err := h.svc.ListKnowledgeGaps(r.Context(), id, r.URL.Query().Get("status"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"gaps": gaps})
+}
+
+type resolveKnowledgeGapReq struct {
+	Answer string `json:"answer"`
+}
+
+// resolveKnowledgeGap godoc
+//
+//	@Summary		Answer a knowledge gap and add it to the knowledge base
+//	@Description	Records the answer and appends it as a Q/A pair to the studio's "Learned Answers" knowledge-base document, then re-embeds — the AI can use it starting with the next message. `answer` is required.
+//	@Tags			Knowledge Base
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			studioId	path		string					true	"Studio ID"
+//	@Param			gapId		path		string					true	"Knowledge gap ID"
+//	@Param			body		body		resolveKnowledgeGapReq	true	"The answer to add to the knowledge base"
+//	@Success		200			{object}	KnowledgeGap
+//	@Failure		400			{object}	httpx.ErrorResponse	"invalid id or empty answer"
+//	@Failure		404			{object}	httpx.ErrorResponse	"not found, or already resolved/dismissed"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/knowledge-base/gaps/{gapId}/resolve [post]
+func (h *Handler) ResolveKnowledgeGapRoute(w http.ResponseWriter, r *http.Request) {
+	studioID, err := uuid.Parse(chi.URLParam(r, "studioId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid studio id")
+		return
+	}
+	gapID, err := uuid.Parse(chi.URLParam(r, "gapId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid gap id")
+		return
+	}
+	var req resolveKnowledgeGapReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	c := identity.MustClaims(r.Context())
+	gap, err := h.svc.ResolveKnowledgeGap(r.Context(), studioID, gapID, req.Answer, &c.UserID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrValidation):
+			httpx.WriteValidationError(w, map[string]string{"answer": "required"})
+		case errors.Is(err, ErrNotFound):
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "gap not found, or already handled")
+		default:
+			httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		}
+		return
+	}
+	httpx.JSON(w, http.StatusOK, gap)
+}
+
+// dismissKnowledgeGap godoc
+//
+//	@Summary		Dismiss a knowledge gap
+//	@Description	Closes a knowledge gap without adding anything to the knowledge base (e.g. it was off-topic or a near-duplicate of another question).
+//	@Tags			Knowledge Base
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			studioId	path	string	true	"Studio ID"
+//	@Param			gapId		path	string	true	"Knowledge gap ID"
+//	@Success		204
+//	@Failure		400	{object}	httpx.ErrorResponse
+//	@Failure		404	{object}	httpx.ErrorResponse
+//	@Failure		500	{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/knowledge-base/gaps/{gapId}/dismiss [post]
+func (h *Handler) DismissKnowledgeGapRoute(w http.ResponseWriter, r *http.Request) {
+	studioID, err := uuid.Parse(chi.URLParam(r, "studioId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid studio id")
+		return
+	}
+	gapID, err := uuid.Parse(chi.URLParam(r, "gapId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid gap id")
+		return
+	}
+	if err := h.svc.DismissKnowledgeGap(r.Context(), studioID, gapID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "gap not found, or already handled")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *Handler) GetInitialContactDelay(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "studioId"))
 	if err != nil {
