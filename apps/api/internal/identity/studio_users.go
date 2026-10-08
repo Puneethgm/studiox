@@ -10,15 +10,26 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// CreateStudioUser creates a studio_staff teammate. It never takes a
-// password — every teammate starts with DefaultTeammatePassword and
-// must_reset_password = true (spec: identity/studio-users). Returns
-// ErrEmailTaken or ErrUsernameTaken (the latter only within this studio —
-// see the partial unique index on users(studio_id, username)).
+// CreateStudioUser creates a studio_staff teammate with a freshly generated
+// one-time password (discarded — use CreateStudioUserWithPassword when the
+// caller needs to tell the teammate what it is).
 func (r *Repo) CreateStudioUser(ctx context.Context, studioID uuid.UUID, username, firstName, lastName, email string, roleID uuid.UUID, createdBy *uuid.UUID) (uuid.UUID, error) {
-	passwordHash, err := HashPassword(DefaultTeammatePassword)
+	pw, err := GenerateTempPassword()
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("hash default password: %w", err)
+		return uuid.Nil, err
+	}
+	return r.CreateStudioUserWithPassword(ctx, studioID, username, firstName, lastName, email, roleID, createdBy, pw)
+}
+
+// CreateStudioUserWithPassword creates a studio_staff teammate whose password is
+// the given temporary one, with must_reset_password = true (spec: identity/studio-users).
+// The password is never chosen by the creating admin: callers pass the output of
+// GenerateTempPassword. Returns ErrEmailTaken or ErrUsernameTaken (the latter only
+// within this studio — see the partial unique index on users(studio_id, username)).
+func (r *Repo) CreateStudioUserWithPassword(ctx context.Context, studioID uuid.UUID, username, firstName, lastName, email string, roleID uuid.UUID, createdBy *uuid.UUID, tempPassword string) (uuid.UUID, error) {
+	passwordHash, err := HashPassword(tempPassword)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("hash temp password: %w", err)
 	}
 
 	row := r.pool.QueryRow(ctx, `

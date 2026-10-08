@@ -110,7 +110,12 @@ func (h *Handler) createStudioUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	c := MustClaims(r.Context())
-	userID, err := h.repo.CreateStudioUser(r.Context(), studioID, req.Username, req.FirstName, req.LastName, req.Email, roleID, &c.UserID)
+	tempPassword, err := GenerateTempPassword()
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to create user")
+		return
+	}
+	userID, err := h.repo.CreateStudioUserWithPassword(r.Context(), studioID, req.Username, req.FirstName, req.LastName, req.Email, roleID, &c.UserID, tempPassword)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrUsernameTaken):
@@ -137,7 +142,7 @@ func (h *Handler) createStudioUser(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("create studio user: failed to look up studio name for welcome email", "err", err)
 		} else {
 			loginLink := h.frontendURL + "/login"
-			if err := h.mailer.SendTeammateWelcome(u.Email, studioName, role.Name, req.Username, DefaultTeammatePassword, loginLink); err != nil {
+			if err := h.mailer.SendTeammateWelcome(u.Email, studioName, role.Name, req.Username, tempPassword, loginLink); err != nil {
 				slog.Warn("create studio user: failed to send welcome email", "err", err)
 			}
 		}

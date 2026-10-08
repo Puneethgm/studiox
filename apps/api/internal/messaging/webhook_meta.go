@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -73,7 +74,7 @@ func (h *MetaWebhookHandler) Verify(w http.ResponseWriter, r *http.Request) {
 // HandleDataDeletion godoc
 //
 //	@Summary		Meta data deletion callback
-//	@Description	Handles Meta's GDPR/CCPA data-deletion request callback: decodes the `signed_request` payload and acknowledges it with a confirmation URL. Signature verification of the signed request is not yet implemented. No session/API-key auth — this is an unauthenticated callback URL configured in the Meta App dashboard.
+//	@Description	Handles Meta's GDPR/CCPA data-deletion request callback: decodes the `signed_request` payload and acknowledges it with a confirmation URL. The signed request's HMAC is verified with the app secret (invalid -> 400). It only acknowledges: no data is deleted. No session/API-key auth — this is an unauthenticated callback URL configured in the Meta App dashboard.
 //	@Tags			Webhooks
 //	@Accept			json
 //	@Produce		json
@@ -97,24 +98,62 @@ func (h *MetaWebhookHandler) HandleDataDeletion(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Parse the signed request (format: base64_signature.base64_payload)
-	parts := strings.Split(req.SignedRequest, ".")
-	if len(parts) != 2 {
-		log.Warn("invalid signed request format")
-		httpx.JSON(w, http.StatusOK, map[string]string{"url": ""})
+	// Verify the signed request (format: base64url(signature).base64url(payload),
+	// signature = HMAC-SHA256(payload part, app secret)) before trusting anything in it.
+	userID, ok := verifyMetaSignedRequest(req.SignedRequest, h.appSecret)
+	if !ok {
+		log.Warn("data deletion request has an invalid signature, rejecting")
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_request", "invalid signed request")
 		return
 	}
 
-	// For now, we just acknowledge the deletion request
-	// In production, you would verify the signature using your app secret
-	// and then delete the user's data from your database
+	// Acknowledge only. This does not delete anything: Meta's user_id is an
+	// app-scoped id that doesn't map to our per-channel contact ids, so deletion
+	// still has to be handled manually per DATA_DELETION_PROCEDURES.md. The raw
+	// signed request is deliberately not logged (it contains personal data).
+	log.Info("verified data deletion request received", "meta_user_id", userID)
 
-	log.Info("data deletion request received", "request", req.SignedRequest)
-
-	// Return confirmation to Meta
+	sum := sha256.Sum256([]byte(userID))
 	httpx.JSON(w, http.StatusOK, map[string]string{
-		"url": "https://1herosocial.ai/privacy",
+		"url":               "https://1herosocial.ai/privacy",
+		"confirmation_code": hex.EncodeToString(sum[:8]),
 	})
+}
+
+// verifyMetaSignedRequest validates a Facebook signed_request and returns the
+// user_id inside it. Meta base64url-encodes both parts (with or without padding).
+func verifyMetaSignedRequest(signed, secret string) (userID string, ok bool) {
+	if secret == "" {
+		return "", false
+	}
+	parts := strings.Split(signed, ".")
+	if len(parts) != 2 {
+		return "", false
+	}
+	sig, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[0], "="))
+	if err != nil {
+		return "", false
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(parts[1]))
+	if subtle.ConstantTimeCompare(sig, mac.Sum(nil)) != 1 {
+		return "", false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
+	if err != nil {
+		return "", false
+	}
+	var payload struct {
+		Algorithm string `json:"algorithm"`
+		UserID    string `json:"user_id"`
+	}
+	if json.Unmarshal(raw, &payload) != nil || payload.UserID == "" {
+		return "", false
+	}
+	if payload.Algorithm != "" && !strings.EqualFold(payload.Algorithm, "HMAC-SHA256") {
+		return "", false
+	}
+	return payload.UserID, true
 }
 
 // Receive godoc

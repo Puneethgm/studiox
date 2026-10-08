@@ -320,7 +320,7 @@ func main() {
 		cfg.Meta.WebhookVerifyToken, cfg.Meta.AppSecret,
 		log.With("component", "meta_webhook"))
 
-	twilioWebhook := messaging.NewTwilioWebhookHandler(msgSvc, log.With("component", "twilio_webhook"))
+	twilioWebhook := messaging.NewTwilioWebhookHandler(msgSvc, cfg.PublicAPIBaseURL, log.With("component", "twilio_webhook"))
 	xWebhook := messaging.NewTwitterWebhookHandler(msgSvc, log.With("component", "x_webhook"))
 	telegramWebhook := messaging.NewTelegramWebhookHandler(msgSvc, log.With("component", "telegram_webhook"))
 
@@ -449,6 +449,9 @@ func main() {
 				r.Post("/knowledge-base/test-chat", aiWorker.TestChatHandler)
 				r.Get("/knowledge-base/sync-status", studiosHandler.GetKnowledgeSyncStatus)
 				r.Post("/knowledge-base/ocr", studiosHandler.OCRKnowledgeBaseImage)
+				r.Get("/knowledge-base/gaps", studiosHandler.ListKnowledgeGapsRoute)
+				r.Post("/knowledge-base/gaps/{gapId}/resolve", studiosHandler.ResolveKnowledgeGapRoute)
+				r.Post("/knowledge-base/gaps/{gapId}/dismiss", studiosHandler.DismissKnowledgeGapRoute)
 				r.Get("/google-oauth/login", googleOAuth.LoginHandler)
 				r.Get("/stripe-oauth/login", studiosHandler.StripeConnectRedirect)
 				r.Get("/initial-contact-delay", studiosHandler.GetInitialContactDelay)

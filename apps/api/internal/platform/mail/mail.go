@@ -153,14 +153,13 @@ func (s *Sender) SendStudioWelcome(toEmail, studioName, loginLink, resetLink str
 }
 
 // SendTeammateWelcome emails a newly-added studio teammate (identity's
-// CreateStudioUser) their login details right away. Unlike
+// CreateStudioUserWithPassword) their login details right away. Unlike
 // SendStudioWelcome/SendPasswordReset, this one shows the password in
-// plaintext deliberately — every teammate starts with the same shared
-// DefaultTeammatePassword (see identity/domain.go), not a secret generated
-// for them individually, so there's nothing a reset link would protect
-// here that this email doesn't already imply. must_reset_password is still
-// forced server-side, and the email says so, but the account is usable
-// immediately without a round trip through a reset link.
+// plaintext deliberately: it is a random one-time password generated for this
+// teammate alone (identity.GenerateTempPassword), so the account is usable
+// immediately without a round trip through a reset link. must_reset_password
+// is still forced server-side, and the email says so, so the password stops
+// working as soon as they choose their own.
 func (s *Sender) SendTeammateWelcome(toEmail, studioName, roleName, username, password, loginLink string) error {
 	html := fmt.Sprintf(`<!doctype html>
 <html>

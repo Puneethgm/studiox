@@ -58,7 +58,7 @@ func main() {
 			"Demo Fitness Studio",
 			"Front Desk",
 			"puneeth.g",
-			"password123",
+			"Sample-temp-pw-Xk7q",
 			"https://1herosocial.ai/login",
 		)
 	default:

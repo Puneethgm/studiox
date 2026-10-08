@@ -26,11 +26,11 @@ func (r Role) Valid() bool {
 	return false
 }
 
-// DefaultTeammatePassword is set on every studio_staff user created via
-// CreateStudioUser — never chosen by the creating admin. must_reset_password
-// is always true alongside it, and every request except logout/me/password
-// is blocked until the teammate changes it (see RequirePasswordSet).
-const DefaultTeammatePassword = "password123"
+// New studio_staff accounts (and studio admins created by a super-admin) get a
+// random one-time password from GenerateTempPassword, never chosen by the creating
+// admin and never shared between users. must_reset_password is always true
+// alongside it, and every request except logout/me/password is blocked until the
+// user changes it (see RequirePasswordSet).
 
 // fullName joins first/last name pointers (either may be nil — only
 // studio_staff users collect these; a studio_admin or super_admin may have

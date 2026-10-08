@@ -771,16 +771,14 @@ function Topbar({
   );
 }
 
-// Full-screen forced reset for a teammate still on the default password
-// (identity.DefaultTeammatePassword server-side). Reuses the existing
-// change-password Server Action + endpoint — the teammate does know their
-// "current" password, it's just the well-known default, so this asks for
-// only the two fields the user actually needs to fill in (new + confirm),
-// same as any other "reset your password" flow.
-const DEFAULT_TEAMMATE_PASSWORD = 'password123'; // must match identity.DefaultTeammatePassword (apps/api)
-
+// Full-screen forced reset for an account still on its one-time temporary
+// password (the random one emailed when the account was created). Reuses the
+// existing change-password Server Action + endpoint, which needs the current
+// password, so the user types the temporary one from the email plus the two
+// new-password fields.
 function ForcedPasswordResetScreen({ me }: { me: Me }) {
   const router = useRouter();
+  const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
@@ -789,6 +787,10 @@ function ForcedPasswordResetScreen({ me }: { me: Me }) {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError('');
+    if (!currentPassword) {
+      setError('Enter the temporary password from your welcome email.');
+      return;
+    }
     if (newPassword.length < 8) {
       setError('Password must be at least 8 characters.');
       return;
@@ -800,7 +802,7 @@ function ForcedPasswordResetScreen({ me }: { me: Me }) {
     setSaving(true);
     try {
       const res = await changeMyPassword({
-        currentPassword: DEFAULT_TEAMMATE_PASSWORD,
+        currentPassword,
         newPassword,
         confirmPassword,
       });
@@ -837,6 +839,18 @@ function ForcedPasswordResetScreen({ me }: { me: Me }) {
         </p>
         <form onSubmit={onSubmit} className="mt-8 space-y-3">
           <div>
+            <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Temporary password</label>
+            <Input
+              type="password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              placeholder="From your welcome email"
+              invalid={!!error}
+              autoFocus
+              autoComplete="current-password"
+            />
+          </div>
+          <div>
             <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">New password</label>
             <Input
               type="password"
@@ -844,7 +858,7 @@ function ForcedPasswordResetScreen({ me }: { me: Me }) {
               onChange={(e) => setNewPassword(e.target.value)}
               placeholder="At least 8 characters"
               invalid={!!error}
-              autoFocus
+              autoComplete="new-password"
             />
           </div>
           <div>
