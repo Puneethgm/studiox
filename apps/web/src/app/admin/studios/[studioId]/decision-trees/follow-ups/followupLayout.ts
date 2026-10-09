@@ -10,6 +10,10 @@ export interface StepDraft {
   delayValue: number;
   delayUnit: 'minutes' | 'hours' | 'days';
   messageTemplate: string;
+  // Link to a saved message_templates row; templateName is denormalized
+  // for display so the card doesn't need the full templates list.
+  templateId?: string | null;
+  templateName?: string | null;
 }
 
 export interface FollowupStepCardData {

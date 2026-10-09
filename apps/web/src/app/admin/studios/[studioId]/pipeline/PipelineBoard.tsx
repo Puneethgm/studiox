@@ -14,14 +14,14 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
-import { ArrowRight, Inbox, MessageSquareText, AlertCircle, Snowflake, Loader2, CheckCircle2 } from 'lucide-react';
+import { ArrowRight, Inbox, MessageSquareText, AlertCircle, Snowflake, CheckCircle2 } from 'lucide-react';
 import { brandInitials } from '@/lib/color';
 import { cn } from '@/lib/cn';
 import { relativeTime } from '@/lib/datetime';
-import { api } from '@/lib/api';
 import type { ColdLead, Lead, LeadStatus } from '@/lib/types';
 import { LEAD_STATUSES, LEAD_STATUS_LABELS } from '@/lib/types';
 import { updatePipelineStatus, movePipelineColdLead } from '../leads/actions';
+import { ReengageModal } from './ReengageModal';
 
 // Per-status visual config
 const COLUMN_CONFIG: Record<LeadStatus, {
@@ -209,7 +209,7 @@ export function PipelineBoard({
         [targetStatus]: prev[targetStatus].filter((l) => l.id !== lead.id),
         [fromStatus]: [lead, ...prev[fromStatus]],
       }));
-      setError(`Couldn't move ${lead.name}: ${res.error}`);
+      setError(`Couldn't move ${lead.name || lead.phone || 'contact'}: ${res.error}`);
     }
   }
 
@@ -380,7 +380,7 @@ function ColdColumn({
   onRemove: (conversationId: string) => void;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [sending, setSending] = useState(false);
+  const [showModal, setShowModal] = useState(false);
   const [result, setResult] = useState<string | null>(null);
 
   function toggleOne(conversationId: string) {
@@ -392,23 +392,11 @@ function ColdColumn({
     });
   }
 
-  async function reEngage() {
-    if (selected.size === 0) return;
-    setSending(true);
-    setResult(null);
-    try {
-      const res = await api<{ sent: number }>(`/api/v1/studios/${studioId}/messaging/leads/cold/re-engage`, {
-        method: 'POST',
-        json: { conversationIds: Array.from(selected) },
-      });
-      selected.forEach((id) => onRemove(id));
-      setSelected(new Set());
-      setResult(`Sent to ${res.sent}.`);
-    } catch (e) {
-      setResult(e instanceof Error ? e.message : 'Failed to re-engage');
-    } finally {
-      setSending(false);
-    }
+  function handleSent(sentIds: string[], sentCount: number) {
+    sentIds.forEach((id) => onRemove(id));
+    setSelected(new Set());
+    setShowModal(false);
+    setResult(`Sent to ${sentCount}.`);
   }
 
   return (
@@ -440,11 +428,10 @@ function ColdColumn({
           </button>
           <button
             type="button"
-            onClick={reEngage}
-            disabled={selected.size === 0 || sending}
+            onClick={() => setShowModal(true)}
+            disabled={selected.size === 0}
             className="flex items-center gap-1 rounded-full bg-amber-500 px-2.5 py-1 text-[10px] font-bold text-white disabled:opacity-50"
           >
-            {sending && <Loader2 className="h-3 w-3 animate-spin" />}
             Re-engage {selected.size > 0 ? `(${selected.size})` : ''}
           </button>
         </div>
@@ -479,6 +466,15 @@ function ColdColumn({
           </div>
         )}
       </div>
+
+      {showModal && (
+        <ReengageModal
+          studioId={studioId}
+          conversationIds={Array.from(selected)}
+          onClose={() => setShowModal(false)}
+          onSent={handleSent}
+        />
+      )}
     </section>
   );
 }
@@ -609,7 +605,8 @@ function LeadCardVisual({
   isPending?: boolean;
   dragging?: boolean;
 }) {
-  const av = avatarColor(lead.name);
+  const displayName = lead.name || lead.phone || 'Unknown contact';
+  const av = avatarColor(displayName);
 
   const content = (
     <div
@@ -632,11 +629,11 @@ function LeadCardVisual({
           style={{ background: av }}
           aria-hidden
         >
-          {brandInitials(lead.name)}
+          {brandInitials(displayName)}
         </span>
         <div className="min-w-0 flex-1">
           <div className="truncate text-[13px] font-bold leading-tight text-zinc-900 transition-colors group-hover:text-brand-600 dark:text-zinc-100">
-            {lead.name}
+            {displayName}
           </div>
           <div className="truncate text-[10px] font-semibold leading-tight text-zinc-400">
             {lead.email}

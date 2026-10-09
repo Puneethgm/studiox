@@ -3,11 +3,14 @@ package messaging
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/projectx/api/internal/leads"
 	"github.com/projectx/api/internal/studios"
@@ -205,7 +208,12 @@ func (w *AutoContactWorker) processItem(ctx context.Context, it leads.OutboxItem
 			w.log.Error("load followup steps failed", "studio", l.StudioID, "err", err)
 		}
 		for _, s := range steps {
-			body := renderGreeting(s.MessageTemplate, studio, l)
+			text, err := resolveFollowupText(ctx, w.msgRepo, l.StudioID, s)
+			if err != nil {
+				w.log.Error("resolve followup text failed", "lead", l.ID, "step", s.StepOrder, "err", err)
+				continue
+			}
+			body := renderGreeting(text, studio, l)
 			if _, err := w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
 				StudioID:       l.StudioID,
 				ConversationID: conv.ID,
@@ -231,6 +239,21 @@ func renderGreeting(template string, studio *studios.Studio, l leads.Lead) strin
 	body = strings.ReplaceAll(body, "{{lead_first_name}}", firstName(l.Name))
 	body = strings.ReplaceAll(body, "{{lead_status}}", string(l.Status))
 	return body
+}
+
+// resolveFollowupText returns a step's raw message text, preferring a
+// linked template's current Body over the step's own MessageTemplate.
+func resolveFollowupText(ctx context.Context, repo *Repo, studioID uuid.UUID, step FollowupStep) (string, error) {
+	if step.TemplateID != nil {
+		tmpl, err := repo.GetTemplate(ctx, studioID, *step.TemplateID)
+		if err == nil {
+			return tmpl.Body, nil
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return "", err
+		}
+	}
+	return step.MessageTemplate, nil
 }
 
 var nonDigit = regexp.MustCompile(`[^0-9]+`)

@@ -1,6 +1,6 @@
 'use client';
 
-import { Clock, Plus, Trash2 } from 'lucide-react';
+import { Clock, FileText, Plus, Trash2 } from 'lucide-react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { Badge } from '@/components/ui/Badge';
 import { cn } from '@/lib/cn';
@@ -49,9 +49,16 @@ export function FollowupStepCard({ data }: NodeProps & { data: FollowupStepCardD
       <div className="mt-2">
         <Badge tone="neutral" className="max-w-full truncate normal-case">{delaySummary(step)}</Badge>
       </div>
-      <p className="mt-1.5 truncate text-[11px] text-zinc-400" title={step.messageTemplate}>
-        {step.messageTemplate || 'No message yet — click to edit'}
-      </p>
+      {step.templateId ? (
+        <p className="mt-1.5 flex items-center gap-1 truncate text-[11px] text-violet-500" title={step.templateName ?? undefined}>
+          <FileText className="h-3 w-3 shrink-0" />
+          {step.templateName || 'Saved template'}
+        </p>
+      ) : (
+        <p className="mt-1.5 truncate text-[11px] text-zinc-400" title={step.messageTemplate}>
+          {step.messageTemplate || 'No message yet — click to edit'}
+        </p>
+      )}
 
       {isLast && (
         <button

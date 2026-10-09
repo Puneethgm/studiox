@@ -154,6 +154,7 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Get("/settings/cold-lead-thresholds", h.getColdLeadThresholds)
 	r.Put("/settings/cold-lead-thresholds", h.setColdLeadThresholds)
 	r.Get("/leads/cold", h.listColdLeads)
+	r.Get("/leads/cold/reengage-prefs", h.getReengagePrefs)
 	r.Post("/leads/cold/re-engage", h.reEngageColdLeads)
 	r.Post("/leads/cold/move", h.moveColdLead)
 	r.Post("/channels/whatsapp", h.connectWhatsApp)
@@ -177,6 +178,7 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Post("/conversations/{id}/dnd", h.setConversationDND)
 	r.Post("/conversations/{id}/star", h.setConversationStarred)
 	r.Post("/conversations/{id}/resolve-escalation", h.resolveConversationEscalation)
+	r.Get("/escalations/stats", h.getEscalationStats)
 	r.Delete("/conversations/{id}", h.deleteConversation)
 
 	// Templates
@@ -536,19 +538,21 @@ func (h *Handler) listColdLeads(w http.ResponseWriter, r *http.Request) {
 }
 
 type reEngageColdLeadsReq struct {
-	ConversationIDs []string `json:"conversationIds"`
+	ConversationIDs []string   `json:"conversationIds"`
+	Message         string     `json:"message"`
+	TemplateID      *uuid.UUID `json:"templateId"`
 }
 
 // reEngageColdLeads godoc
 //
 //	@Summary		Re-engage selected cold conversations
-//	@Description	Resends the studio's opening greeting into each given conversation (resetting the lead's automation stage back to awaiting_interest when a lead is attached — the same entry point a brand-new lead gets) and re-schedules the no-reply follow-up cascade. Works for backfilled WhatsApp Web history too, which has a conversation but no lead.
+//	@Description	Sends an opening message into each given conversation (resetting the lead's automation stage back to awaiting_interest when a lead is attached) and re-schedules the follow-up cascade. templateId or message overrides the studio's plain greeting_message and is remembered for next time.
 //	@Tags			Messaging - Leads
 //	@Security		CookieAuth
 //	@Accept			json
 //	@Produce		json
 //	@Param			studioId	path		string					true	"Studio ID"
-//	@Param			body		body		reEngageColdLeadsReq	true	"Conversation IDs to re-engage"
+//	@Param			body		body		reEngageColdLeadsReq	true	"Conversation IDs to re-engage, plus an optional message/templateId override"
 //	@Success		200			{object}	map[string]interface{}
 //	@Failure		400			{object}	httpx.ErrorResponse	"invalid JSON or conversation id"
 //	@Failure		500			{object}	httpx.ErrorResponse
@@ -575,12 +579,49 @@ func (h *Handler) reEngageColdLeads(w http.ResponseWriter, r *http.Request) {
 		}
 		convIDs = append(convIDs, id)
 	}
-	sent, err := h.svc.ReEngageColdLeads(r.Context(), studioID, convIDs)
+	sent, err := h.svc.ReEngageColdLeads(r.Context(), studioID, convIDs, req.Message, req.TemplateID)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"sent": sent})
+}
+
+// getReengagePrefs godoc
+//
+//	@Summary		Get the Re-engage modal's pre-fill
+//	@Description	Returns the admin's last-used re-engage message/templateId for this studio (empty if never customized), plus the studio's plain greeting_message to fall back to.
+//	@Tags			Messaging - Leads
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/leads/cold/reengage-prefs [get]
+func (h *Handler) getReengagePrefs(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	prefs, err := h.svc.repo.GetReengagePrefs(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	studio, err := h.studiosRepo.GetByID(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	greeting := studio.GreetingMessage
+	if greeting == "" {
+		greeting = defaultGreetingTemplate
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"message":         prefs.Message,
+		"templateId":      prefs.TemplateID,
+		"defaultGreeting": greeting,
+	})
 }
 
 type moveColdLeadReq struct {
@@ -1407,6 +1448,30 @@ func (h *Handler) resolveConversationEscalation(w http.ResponseWriter, r *http.R
 	httpx.NoContent(w)
 }
 
+// getEscalationStats godoc
+//
+//	@Summary		Get escalation Dashboard KPI snapshot
+//	@Description	Returns how many conversations are currently escalated and how many are currently resolved (escalated at some point, then resolved, and not escalated again since).
+//	@Tags			Messaging - Conversations
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Success		200			{object}	EscalationStats
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/escalations/stats [get]
+func (h *Handler) getEscalationStats(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	stats, err := h.svc.GetEscalationStats(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, stats)
+}
+
 // ============================================================
 // no-reply follow-up cadence
 // ============================================================
@@ -1437,15 +1502,16 @@ func (h *Handler) listFollowupSteps(w http.ResponseWriter, r *http.Request) {
 
 type replaceFollowupStepsReq struct {
 	Steps []struct {
-		DelayMinutes    int    `json:"delayMinutes"`
-		MessageTemplate string `json:"messageTemplate"`
+		DelayMinutes    int        `json:"delayMinutes"`
+		MessageTemplate string     `json:"messageTemplate"`
+		TemplateID      *uuid.UUID `json:"templateId"`
 	} `json:"steps"`
 }
 
 // replaceFollowupSteps godoc
 //
 //	@Summary		Replace no-reply follow-up steps
-//	@Description	Replaces the entire cadence of automated follow-up messages sent when a lead does not reply. Each step requires a positive delay in minutes and a non-empty message template.
+//	@Description	Replaces the entire cadence of automated follow-up messages sent when a lead does not reply. Each step requires a positive delay in minutes, and either a templateId (linking to a saved message_templates row) or a non-empty messageTemplate fallback text.
 //	@Tags			Messaging - Follow-ups
 //	@Security		CookieAuth
 //	@Accept			json
@@ -1471,10 +1537,10 @@ func (h *Handler) replaceFollowupSteps(w http.ResponseWriter, r *http.Request) {
 		if s.DelayMinutes <= 0 {
 			errs[fmt.Sprintf("steps[%d].delayMinutes", i)] = "must be greater than 0"
 		}
-		if strings.TrimSpace(s.MessageTemplate) == "" {
-			errs[fmt.Sprintf("steps[%d].messageTemplate", i)] = "required"
+		if s.TemplateID == nil && strings.TrimSpace(s.MessageTemplate) == "" {
+			errs[fmt.Sprintf("steps[%d].messageTemplate", i)] = "required when no template is selected"
 		}
-		steps = append(steps, FollowupStep{DelayMinutes: s.DelayMinutes, MessageTemplate: s.MessageTemplate})
+		steps = append(steps, FollowupStep{DelayMinutes: s.DelayMinutes, MessageTemplate: s.MessageTemplate, TemplateID: s.TemplateID})
 	}
 	if len(errs) > 0 {
 		httpx.WriteValidationError(w, errs)

@@ -799,13 +799,32 @@ func (r *Repo) EscalateConversation(ctx context.Context, studioID, convID uuid.U
 // auto-reply, moving the conversation back into the regular Inbox list. Also
 // resets the decision-tree stage to root — a human just intervened, so the
 // next message should start fresh rather than resume mid-branch.
+//
+// Also stamps escalation_resolved_at, which (unlike escalated_at) is never
+// cleared, so GetEscalationStats can still count it as resolved later.
 func (r *Repo) ResolveConversationEscalation(ctx context.Context, studioID, convID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE conversations SET escalated_at = NULL, escalated_reason = NULL, ai_enabled = true,
-		       current_tree_node_id = NULL, updated_at = now()
+		       current_tree_node_id = NULL, escalation_resolved_at = now(), updated_at = now()
 		WHERE studio_id = $1 AND id = $2
 	`, studioID, convID)
 	return err
+}
+
+// GetEscalationStats returns the Dashboard's currently-escalated vs.
+// currently-resolved counts.
+func (r *Repo) GetEscalationStats(ctx context.Context, studioID uuid.UUID) (escalated, resolved int, err error) {
+	err = r.pool.QueryRow(ctx, `
+		SELECT
+			COUNT(*) FILTER (WHERE escalated_at IS NOT NULL),
+			COUNT(*) FILTER (WHERE escalated_at IS NULL AND escalation_resolved_at IS NOT NULL)
+		FROM conversations
+		WHERE studio_id = $1
+	`, studioID).Scan(&escalated, &resolved)
+	if err != nil {
+		return 0, 0, fmt.Errorf("get escalation stats: %w", err)
+	}
+	return escalated, resolved, nil
 }
 
 // SetConversationTreeNode records the decision-tree node a conversation last
@@ -906,6 +925,8 @@ type CreateMessageInput struct {
 	SourceRef      string
 	Body           string
 	Attachments    []Attachment
+	SenderJID      string
+	SenderName     string
 	ExternalID     string
 	InReplyTo      string
 	Status         MessageStatus
@@ -932,12 +953,14 @@ func (r *Repo) InsertMessage(ctx context.Context, tx pgx.Tx, in CreateMessageInp
 	row := tx.QueryRow(ctx, `
 		INSERT INTO messages (conversation_id, studio_id, direction, source_kind,
 		                      source_user_id, source_ref, body, attachments,
+		                      sender_jid, sender_name,
 		                      external_id, in_reply_to, status, sent_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		ON CONFLICT (conversation_id, external_id) DO NOTHING
 		RETURNING id, created_at
 	`, in.ConversationID, in.StudioID, in.Direction, in.SourceKind,
 		in.SourceUserID, in.SourceRef, in.Body, atts,
+		nullIfEmpty(in.SenderJID), nullIfEmpty(in.SenderName),
 		nullIfEmpty(in.ExternalID), nullIfEmpty(in.InReplyTo), in.Status, in.SentAt)
 
 	out := &Message{
@@ -949,6 +972,8 @@ func (r *Repo) InsertMessage(ctx context.Context, tx pgx.Tx, in CreateMessageInp
 		SourceRef:      in.SourceRef,
 		Body:           in.Body,
 		Attachments:    in.Attachments,
+		SenderJID:      in.SenderJID,
+		SenderName:     in.SenderName,
 		ExternalID:     in.ExternalID,
 		InReplyTo:      in.InReplyTo,
 		Status:         in.Status,
@@ -1009,12 +1034,14 @@ func (r *Repo) InsertMessageBackfill(ctx context.Context, tx pgx.Tx, in CreateMe
 	row := tx.QueryRow(ctx, `
 		INSERT INTO messages (conversation_id, studio_id, direction, source_kind,
 		                      source_user_id, source_ref, body, attachments,
+		                      sender_jid, sender_name,
 		                      external_id, in_reply_to, status, sent_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		ON CONFLICT (conversation_id, external_id) DO NOTHING
 		RETURNING id, created_at
 	`, in.ConversationID, in.StudioID, in.Direction, in.SourceKind,
 		in.SourceUserID, in.SourceRef, in.Body, atts,
+		nullIfEmpty(in.SenderJID), nullIfEmpty(in.SenderName),
 		nullIfEmpty(in.ExternalID), nullIfEmpty(in.InReplyTo), in.Status, in.SentAt)
 
 	out := &Message{
@@ -1026,6 +1053,8 @@ func (r *Repo) InsertMessageBackfill(ctx context.Context, tx pgx.Tx, in CreateMe
 		SourceRef:      in.SourceRef,
 		Body:           in.Body,
 		Attachments:    in.Attachments,
+		SenderJID:      in.SenderJID,
+		SenderName:     in.SenderName,
 		ExternalID:     in.ExternalID,
 		InReplyTo:      in.InReplyTo,
 		Status:         in.Status,
@@ -1063,11 +1092,13 @@ func (r *Repo) ListMessages(ctx context.Context, studioID, conversationID uuid.U
 	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT sub.id, sub.conversation_id, sub.studio_id, sub.direction, sub.source_kind, sub.source_user_id,
-		       sub.source_ref, sub.body, sub.attachments, sub.external_id, sub.in_reply_to, sub.status,
+		       sub.source_ref, sub.body, sub.attachments, sub.sender_jid, sub.sender_name,
+		       sub.external_id, sub.in_reply_to, sub.status,
 		       sub.failure_reason, sub.sent_at, sub.delivered_at, sub.read_at, sub.created_at
 		FROM (
 			SELECT id, conversation_id, studio_id, direction, source_kind, source_user_id,
-			       source_ref, body, attachments, external_id, in_reply_to, status,
+			       source_ref, body, attachments, sender_jid, sender_name,
+			       external_id, in_reply_to, status,
 			       failure_reason, sent_at, delivered_at, read_at, created_at
 			FROM messages
 			WHERE studio_id = $1 AND conversation_id = $2
@@ -1085,9 +1116,10 @@ func (r *Repo) ListMessages(ctx context.Context, studioID, conversationID uuid.U
 	for rows.Next() {
 		var m Message
 		var atts []byte
-		var srcRef, externalID, inReplyTo *string
+		var srcRef, externalID, inReplyTo, senderJID, senderName *string
 		if err := rows.Scan(&m.ID, &m.ConversationID, &m.StudioID, &m.Direction, &m.SourceKind,
-			&m.SourceUserID, &srcRef, &m.Body, &atts, &externalID, &inReplyTo, &m.Status,
+			&m.SourceUserID, &srcRef, &m.Body, &atts, &senderJID, &senderName,
+			&externalID, &inReplyTo, &m.Status,
 			&m.FailureReason, &m.SentAt, &m.DeliveredAt, &m.ReadAt, &m.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
@@ -1100,6 +1132,12 @@ func (r *Repo) ListMessages(ctx context.Context, studioID, conversationID uuid.U
 		if inReplyTo != nil {
 			m.InReplyTo = *inReplyTo
 		}
+		if senderJID != nil {
+			m.SenderJID = *senderJID
+		}
+		if senderName != nil {
+			m.SenderName = *senderName
+		}
 		if len(atts) > 0 {
 			_ = json.Unmarshal(atts, &m.Attachments)
 		}
@@ -1111,16 +1149,18 @@ func (r *Repo) ListMessages(ctx context.Context, studioID, conversationID uuid.U
 func (r *Repo) GetMessageByID(ctx context.Context, studioID, id uuid.UUID) (*Message, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, conversation_id, studio_id, direction, source_kind, source_user_id,
-			   source_ref, body, attachments, external_id, in_reply_to, status,
+			   source_ref, body, attachments, sender_jid, sender_name,
+			   external_id, in_reply_to, status,
 			   failure_reason, sent_at, delivered_at, read_at, created_at
 		FROM messages
 		WHERE studio_id = $1 AND id = $2
 	`, studioID, id)
 	var m Message
 	var atts []byte
-	var srcRef, externalID, inReplyTo *string
+	var srcRef, externalID, inReplyTo, senderJID, senderName *string
 	if err := row.Scan(&m.ID, &m.ConversationID, &m.StudioID, &m.Direction, &m.SourceKind,
-		&m.SourceUserID, &srcRef, &m.Body, &atts, &externalID, &inReplyTo, &m.Status,
+		&m.SourceUserID, &srcRef, &m.Body, &atts, &senderJID, &senderName,
+		&externalID, &inReplyTo, &m.Status,
 		&m.FailureReason, &m.SentAt, &m.DeliveredAt, &m.ReadAt, &m.CreatedAt); err != nil {
 		return nil, fmt.Errorf("get message: %w", err)
 	}
@@ -1132,6 +1172,12 @@ func (r *Repo) GetMessageByID(ctx context.Context, studioID, id uuid.UUID) (*Mes
 	}
 	if inReplyTo != nil {
 		m.InReplyTo = *inReplyTo
+	}
+	if senderJID != nil {
+		m.SenderJID = *senderJID
+	}
+	if senderName != nil {
+		m.SenderName = *senderName
 	}
 	if len(atts) > 0 {
 		_ = json.Unmarshal(atts, &m.Attachments)
@@ -1563,6 +1609,36 @@ func (r *Repo) UpdateTemplate(ctx context.Context, mt *MessageTemplate) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// GetTemplate fetches a single template scoped to the studio.
+func (r *Repo) GetTemplate(ctx context.Context, studioID, id uuid.UUID) (*MessageTemplate, error) {
+	var mt MessageTemplate
+	var atts []byte
+	var waName, waLang *string
+	err := r.pool.QueryRow(ctx, `
+		SELECT id, studio_id, name, body, channel_kinds, attachments,
+		       whatsapp_template_name, whatsapp_template_lang, created_at, updated_at
+		FROM message_templates
+		WHERE studio_id = $1 AND id = $2
+	`, studioID, id).Scan(&mt.ID, &mt.StudioID, &mt.Name, &mt.Body, &mt.ChannelKinds, &atts,
+		&waName, &waLang, &mt.CreatedAt, &mt.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get template: %w", err)
+	}
+	if waName != nil {
+		mt.WhatsAppTemplateName = *waName
+	}
+	if waLang != nil {
+		mt.WhatsAppTemplateLang = *waLang
+	}
+	if len(atts) > 0 {
+		_ = json.Unmarshal(atts, &mt.Attachments)
+	}
+	return &mt, nil
 }
 
 func (r *Repo) DeleteTemplate(ctx context.Context, studioID, id uuid.UUID) error {
@@ -2064,10 +2140,9 @@ func (r *Repo) CreateLeadFromColdConversation(ctx context.Context, studioID, con
 		defaultPlan = fitnessPlans[0]
 	}
 
-	leadName := cleanPhone
-	if contactName != "" {
-		leadName = contactName
-	}
+	// Blank rather than phone digits — otherwise it leaks into outbound
+	// {{lead_name}} substitution (see renderGreeting).
+	leadName := contactName
 	leadID := uuid.New()
 	if _, err := r.pool.Exec(ctx, `
 		INSERT INTO leads (id, studio_id, campaign_id, name, first_name, last_name,
@@ -2108,6 +2183,36 @@ func (r *Repo) GetColdLeadContext(ctx context.Context, studioID, conversationID 
 	c.LeadID = leadID
 	c.ConversationID = conversationID
 	return &c, nil
+}
+
+// GetReengagePrefs returns a studio's last-used re-engage customization, or
+// a zero value if they've never customized it.
+func (r *Repo) GetReengagePrefs(ctx context.Context, studioID uuid.UUID) (ReengagePrefs, error) {
+	var p ReengagePrefs
+	err := r.pool.QueryRow(ctx, `
+		SELECT message, template_id FROM studio_reengage_prefs WHERE studio_id = $1
+	`, studioID).Scan(&p.Message, &p.TemplateID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ReengagePrefs{}, nil
+		}
+		return ReengagePrefs{}, fmt.Errorf("get reengage prefs: %w", err)
+	}
+	return p, nil
+}
+
+// UpsertReengagePrefs records what an admin just used for Re-engage.
+func (r *Repo) UpsertReengagePrefs(ctx context.Context, studioID uuid.UUID, message string, templateID *uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO studio_reengage_prefs (studio_id, message, template_id, updated_at)
+		VALUES ($1, $2, $3, now())
+		ON CONFLICT (studio_id) DO UPDATE
+		SET message = $2, template_id = $3, updated_at = now()
+	`, studioID, message, templateID)
+	if err != nil {
+		return fmt.Errorf("upsert reengage prefs: %w", err)
+	}
+	return nil
 }
 
 // SetLeadStatus updates a lead's pipeline status directly — used when a
@@ -2151,7 +2256,7 @@ func (r *Repo) MarkLeadContacted(ctx context.Context, leadID uuid.UUID) error {
 
 func (r *Repo) ListFollowupSteps(ctx context.Context, studioID uuid.UUID) ([]FollowupStep, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, step_order, delay_minutes, message_template
+		SELECT id, step_order, delay_minutes, message_template, template_id
 		FROM studio_followup_steps
 		WHERE studio_id = $1
 		ORDER BY step_order
@@ -2163,8 +2268,12 @@ func (r *Repo) ListFollowupSteps(ctx context.Context, studioID uuid.UUID) ([]Fol
 	steps := make([]FollowupStep, 0)
 	for rows.Next() {
 		var s FollowupStep
-		if err := rows.Scan(&s.ID, &s.StepOrder, &s.DelayMinutes, &s.MessageTemplate); err != nil {
+		var messageTemplate *string
+		if err := rows.Scan(&s.ID, &s.StepOrder, &s.DelayMinutes, &messageTemplate, &s.TemplateID); err != nil {
 			return nil, fmt.Errorf("scan followup step: %w", err)
+		}
+		if messageTemplate != nil {
+			s.MessageTemplate = *messageTemplate
 		}
 		steps = append(steps, s)
 	}
@@ -2186,9 +2295,9 @@ func (r *Repo) ReplaceFollowupSteps(ctx context.Context, studioID uuid.UUID, ste
 	}
 	for i, s := range steps {
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO studio_followup_steps (studio_id, step_order, delay_minutes, message_template)
-			VALUES ($1, $2, $3, $4)
-		`, studioID, i+1, s.DelayMinutes, s.MessageTemplate); err != nil {
+			INSERT INTO studio_followup_steps (studio_id, step_order, delay_minutes, message_template, template_id)
+			VALUES ($1, $2, $3, $4, $5)
+		`, studioID, i+1, s.DelayMinutes, nullIfEmpty(s.MessageTemplate), s.TemplateID); err != nil {
 			return fmt.Errorf("insert followup step: %w", err)
 		}
 	}

@@ -21,7 +21,7 @@ const (
 	KindGoogleAds       ChannelKind = "google_ads"
 	KindTelegram        ChannelKind = "telegram"
 	KindTelegramMTProto ChannelKind = "telegram_mtproto" // QR-linked via tg-web/teleproto (no bot needed)
-	KindEmailSMTP       ChannelKind = "email_smtp"        // studio's own outbound-email account; outbound-only, no inbox
+	KindEmailSMTP       ChannelKind = "email_smtp"       // studio's own outbound-email account; outbound-only, no inbox
 )
 
 func (k ChannelKind) Valid() bool {
@@ -181,23 +181,29 @@ type Attachment struct {
 }
 
 type Message struct {
-	ID             uuid.UUID     `json:"id"`
-	ConversationID uuid.UUID     `json:"conversationId"`
-	StudioID       uuid.UUID     `json:"studioId"`
-	Direction      Direction     `json:"direction"`
-	SourceKind     SourceKind    `json:"sourceKind"`
-	SourceUserID   *uuid.UUID    `json:"sourceUserId,omitempty"`
-	SourceRef      string        `json:"sourceRef,omitempty"`
-	Body           string        `json:"body"`
-	Attachments    []Attachment  `json:"attachments,omitempty"`
-	ExternalID     string        `json:"externalId,omitempty"`
-	InReplyTo      string        `json:"inReplyTo,omitempty"`
-	Status         MessageStatus `json:"status"`
-	FailureReason  string        `json:"failureReason,omitempty"`
-	SentAt         time.Time     `json:"sentAt"`
-	DeliveredAt    *time.Time    `json:"deliveredAt,omitempty"`
-	ReadAt         *time.Time    `json:"readAt,omitempty"`
-	CreatedAt      time.Time     `json:"createdAt"`
+	ID             uuid.UUID    `json:"id"`
+	ConversationID uuid.UUID    `json:"conversationId"`
+	StudioID       uuid.UUID    `json:"studioId"`
+	Direction      Direction    `json:"direction"`
+	SourceKind     SourceKind   `json:"sourceKind"`
+	SourceUserID   *uuid.UUID   `json:"sourceUserId,omitempty"`
+	SourceRef      string       `json:"sourceRef,omitempty"`
+	Body           string       `json:"body"`
+	Attachments    []Attachment `json:"attachments,omitempty"`
+	// SenderJID/SenderName identify the specific group member who sent this
+	// message — only ever set for a WhatsApp group conversation, where
+	// SourceKind/ConversationID alone can't distinguish one member from
+	// another. Empty for 1:1 DMs.
+	SenderJID     string        `json:"senderJid,omitempty"`
+	SenderName    string        `json:"senderName,omitempty"`
+	ExternalID    string        `json:"externalId,omitempty"`
+	InReplyTo     string        `json:"inReplyTo,omitempty"`
+	Status        MessageStatus `json:"status"`
+	FailureReason string        `json:"failureReason,omitempty"`
+	SentAt        time.Time     `json:"sentAt"`
+	DeliveredAt   *time.Time    `json:"deliveredAt,omitempty"`
+	ReadAt        *time.Time    `json:"readAt,omitempty"`
+	CreatedAt     time.Time     `json:"createdAt"`
 }
 
 // ----- outbound job -----
@@ -232,6 +238,19 @@ type OutboundJob struct {
 	SentAt         *time.Time
 }
 
+// EscalationStats is the Dashboard's escalated/resolved KPI snapshot.
+type EscalationStats struct {
+	Escalated int `json:"escalated"`
+	Resolved  int `json:"resolved"`
+}
+
+// ReengagePrefs is the admin's last-used text/template for Pipeline's
+// Cold-column "Re-engage" action.
+type ReengagePrefs struct {
+	Message    string     `json:"message"`
+	TemplateID *uuid.UUID `json:"templateId,omitempty"`
+}
+
 // ----- follow-up cadence -----
 
 // FollowupStep is one step of a studio's configurable no-reply follow-up
@@ -242,6 +261,9 @@ type FollowupStep struct {
 	StepOrder       int       `json:"stepOrder"`
 	DelayMinutes    int       `json:"delayMinutes"`
 	MessageTemplate string    `json:"messageTemplate"`
+	// TemplateID optionally links to a saved message_templates row; when set
+	// it's the source of truth and MessageTemplate is just a fallback.
+	TemplateID *uuid.UUID `json:"templateId,omitempty"`
 }
 
 // ----- errors -----

@@ -949,8 +949,8 @@ func (s *Service) HandleInboundSMS(ctx context.Context, messageSid, from, to, bo
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// 2. Identity: use phone.
-	identity, err := s.repo.FindOrCreateIdentity(ctx, tx, channel.StudioID, IdentityPhone, from, from)
+	// 2. Identity: use phone. SMS has no contact-name field, so "" not from.
+	identity, err := s.repo.FindOrCreateIdentity(ctx, tx, channel.StudioID, IdentityPhone, from, "")
 	if err != nil {
 		return err
 	}
@@ -991,9 +991,9 @@ func (s *Service) HandleInboundSMS(ctx context.Context, messageSid, from, to, bo
 			defaultPlan = fitnessPlans[0]
 		}
 
-		// No existing lead, create one automatically
+		// No existing lead, create one automatically.
 		leadID := uuid.New()
-		displayName := from
+		displayName := ""
 
 		_, err = tx.Exec(ctx, `
 			INSERT INTO leads (id, studio_id, campaign_id, name, first_name, last_name, email, phone, fitness_plan, status, source, auto_contact_stage, created_at, updated_at)
@@ -1235,7 +1235,7 @@ func randomHex(n int) (string, error) {
 // the same identity → conversation → message → lead pattern as
 // HandleInboundSMS, and the same inbound/outbound branching
 // handleWAWebBackfillOne already used for historical import.
-func (s *Service) HandleInboundWAWeb(ctx context.Context, studioID uuid.UUID, from, body, externalID string, fromMe bool, sentAt time.Time, pushName string) error {
+func (s *Service) HandleInboundWAWeb(ctx context.Context, studioID uuid.UUID, from, body, externalID string, fromMe bool, sentAt time.Time, pushName, participantJID, participantName string) error {
 	// 1. Resolve the whatsapp_web channel for this studio.
 	channel, err := s.repo.GetActiveChannelByKind(ctx, studioID, KindWhatsAppWeb)
 	if err != nil || channel == nil {
@@ -1381,13 +1381,8 @@ func (s *Service) HandleInboundWAWeb(ctx context.Context, studioID uuid.UUID, fr
 					defaultPlan = fitnessPlans[0]
 				}
 				leadID = uuid.New()
-				// Prefer WhatsApp's own pushName over the bare phone digits when
-				// we already have one on this very first message, so the lead
-				// never needs a later placeholder-name fixup at all.
-				leadName := cleanPhone
-				if displayName != "" {
-					leadName = displayName
-				}
+				// pushName if we have one; blank otherwise, not the phone digits.
+				leadName := displayName
 				_, err = tx.Exec(ctx, `
 					INSERT INTO leads (id, studio_id, campaign_id, name, first_name, last_name,
 					                   email, phone, fitness_plan, status, source,
@@ -1452,6 +1447,8 @@ func (s *Service) HandleInboundWAWeb(ctx context.Context, studioID uuid.UUID, fr
 		Direction:      direction,
 		SourceKind:     sourceKind,
 		Body:           body,
+		SenderJID:      participantJID,
+		SenderName:     participantName,
 		ExternalID:     externalID,
 		SentAt:         sentAt,
 	})
@@ -1544,10 +1541,8 @@ func (s *Service) HandleInboundTGWeb(ctx context.Context, studioID uuid.UUID, ch
 			if len(fitnessPlans) > 0 {
 				defaultPlan = fitnessPlans[0]
 			}
+			// Blank rather than the raw Telegram chat ID, not a real name.
 			leadName := displayName
-			if leadName == "" {
-				leadName = chatID
-			}
 			leadID := uuid.New()
 			_, err = tx.Exec(ctx, `
 				INSERT INTO leads (id, studio_id, campaign_id, name, first_name, last_name,
@@ -2123,14 +2118,40 @@ func (s *Service) ListColdLeads(ctx context.Context, studioID uuid.UUID) ([]Cold
 	return s.repo.ListColdLeads(ctx, studioID)
 }
 
-// ReEngageColdLeads resends the studio's opening greeting to each given
-// lead and resets their automation stage to awaiting_interest — the same
-// "reply 1 for trial / 2 for membership" entry point a brand-new lead gets,
-// mirroring autocontact_worker's initial-contact flow (greeting template +
-// follow-up cascade) rather than inventing a separate message. Best-effort
-// per lead: one lead failing (e.g. no conversation on record) doesn't stop
-// the rest. Returns how many were actually re-sent.
-func (s *Service) ReEngageColdLeads(ctx context.Context, studioID uuid.UUID, conversationIDs []uuid.UUID) (int, error) {
+// GetEscalationStats returns the Dashboard's escalated/resolved KPI snapshot
+// — see Repo.GetEscalationStats.
+func (s *Service) GetEscalationStats(ctx context.Context, studioID uuid.UUID) (EscalationStats, error) {
+	escalated, resolved, err := s.repo.GetEscalationStats(ctx, studioID)
+	if err != nil {
+		return EscalationStats{}, err
+	}
+	return EscalationStats{Escalated: escalated, Resolved: resolved}, nil
+}
+
+// ReEngageColdLeads resends an opening greeting to each given lead and
+// resets their automation stage to awaiting_interest — the same "reply 1 for
+// trial / 2 for membership" entry point a brand-new lead gets, mirroring
+// autocontact_worker's initial-contact flow (greeting template + follow-up
+// cascade) rather than inventing a separate message. Best-effort per lead:
+// one lead failing (e.g. no conversation on record) doesn't stop the rest.
+// Returns how many were actually re-sent.
+//
+// overrideTemplateID / overrideMessage customize what gets sent instead of
+// the studio's plain greeting_message, and are remembered for next time.
+func (s *Service) ReEngageColdLeads(ctx context.Context, studioID uuid.UUID, conversationIDs []uuid.UUID, overrideMessage string, overrideTemplateID *uuid.UUID) (int, error) {
+	hasOverride := overrideTemplateID != nil || strings.TrimSpace(overrideMessage) != ""
+	var overrideText string
+	if hasOverride {
+		resolved, err := resolveFollowupText(ctx, s.repo, studioID, FollowupStep{TemplateID: overrideTemplateID, MessageTemplate: overrideMessage})
+		if err != nil {
+			return 0, fmt.Errorf("resolve re-engage override: %w", err)
+		}
+		overrideText = resolved
+		if err := s.repo.UpsertReengagePrefs(ctx, studioID, overrideMessage, overrideTemplateID); err != nil {
+			slog.Warn("re-engage: save prefs failed", "studio_id", studioID, "err", err)
+		}
+	}
+
 	sent := 0
 	for _, convID := range conversationIDs {
 		cl, err := s.repo.GetColdLeadContext(ctx, studioID, convID)
@@ -2166,9 +2187,12 @@ func (s *Service) ReEngageColdLeads(ctx context.Context, studioID uuid.UUID, con
 
 		studio := &studios.Studio{Name: cl.StudioName, GreetingMessage: cl.StudioGreeting}
 		lead := leads.Lead{Name: cl.ContactName, Status: leads.LeadStatus(cl.LeadStatus)}
-		template := studio.GreetingMessage
-		if template == "" {
-			template = defaultGreetingTemplate
+		template := overrideText
+		if !hasOverride {
+			template = studio.GreetingMessage
+			if template == "" {
+				template = defaultGreetingTemplate
+			}
 		}
 		body := renderGreeting(template, studio, lead)
 		refKey := "conv:" + convID.String()
@@ -2202,7 +2226,12 @@ func (s *Service) ReEngageColdLeads(ctx context.Context, studioID uuid.UUID, con
 			slog.Warn("re-engage: load followup steps failed", "studio_id", studioID, "err", err)
 		}
 		for _, step := range steps {
-			stepBody := renderGreeting(step.MessageTemplate, studio, lead)
+			text, err := resolveFollowupText(ctx, s.repo, studioID, step)
+			if err != nil {
+				slog.Warn("re-engage: resolve followup text failed", "conversation_id", convID, "step", step.StepOrder, "err", err)
+				continue
+			}
+			stepBody := renderGreeting(text, studio, lead)
 			if _, err := s.repo.EnqueueOutbound(ctx, OutboundJob{
 				StudioID:       studioID,
 				ConversationID: cl.ConversationID,

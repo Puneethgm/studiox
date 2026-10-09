@@ -316,6 +316,9 @@ export interface Message {
   sourceRef?: string;
   body: string;
   attachments?: Attachment[];
+  // Only set for a WhatsApp group message — the specific member who sent it.
+  senderJid?: string;
+  senderName?: string;
   externalId?: string;
   inReplyTo?: string;
   status: MessageStatus;
@@ -365,6 +368,21 @@ export interface FollowupStep {
   stepOrder: number;
   delayMinutes: number;
   messageTemplate: string;
+  // Optional link to a saved message_templates row (Inbox "Snippets"). When
+  // set, the linked template's body is what actually gets sent —
+  // messageTemplate is the fallback text used only if the template is later
+  // deleted.
+  templateId?: string | null;
+}
+
+// A saved reusable message (Inbox "Snippets" tab). Mirrors the backend's
+// MessageTemplate struct.
+export interface MessageTemplate {
+  id: string;
+  name: string;
+  body: string;
+  channelKinds: string[];
+  createdAt: string;
 }
 
 // ===== Trial Payment Page Builder =====

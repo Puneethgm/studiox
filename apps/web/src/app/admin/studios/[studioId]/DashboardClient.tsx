@@ -23,6 +23,7 @@ import {
   ShoppingCart,
   Link2,
   Target,
+  AlertTriangle,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -100,10 +101,22 @@ export default function DashboardClient({
   const [loadingAnalytics, setLoadingAnalytics] = useState(false);
   const [dailyAnalytics, setDailyAnalytics] = useState<DailyAnalyticsPoint[]>([]);
   const [logoError, setLogoError] = useState(false);
+  const [escalationStats, setEscalationStats] = useState<{ escalated: number; resolved: number } | null>(null);
 
   useEffect(() => {
     setLogoError(false);
   }, [studio.logoUrl]);
+
+  // No cross-studio aggregate endpoint yet — skip on the global view.
+  useEffect(() => {
+    if (studio.id === 'global') {
+      setEscalationStats(null);
+      return;
+    }
+    api<{ escalated: number; resolved: number }>(`/api/v1/studios/${studio.id}/messaging/escalations/stats`)
+      .then(setEscalationStats)
+      .catch(() => setEscalationStats(null));
+  }, [studio.id]);
 
   // ROI Calculator inputs
   const [adSpend, setAdSpend] = useState<number>(500);
@@ -292,7 +305,7 @@ export default function DashboardClient({
       {activeTab === 'overview' && (
         <>
           {/* Top Stats */}
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             <StatCard
               label="Campaigns"
               value={campaigns.length}
@@ -316,6 +329,23 @@ export default function DashboardClient({
               hint="Based on trial booking rate"
               color="emerald"
             />
+            {escalationStats && (
+              <StatCard
+                label="Escalations"
+                value={
+                  <span className="flex items-baseline gap-2">
+                    {escalationStats.escalated}
+                    <span className="text-sm font-bold text-zinc-400 dark:text-zinc-500">
+                      / {escalationStats.resolved} resolved
+                    </span>
+                  </span>
+                }
+                icon={<AlertTriangle className="h-5 w-5" />}
+                href={`/admin/studios/${studio.id}/inbox?tab=escalation`}
+                hint="Needs a human right now, vs. already resolved"
+                color="rose"
+              />
+            )}
           </div>
 
           {/* Funnel widgets */}
