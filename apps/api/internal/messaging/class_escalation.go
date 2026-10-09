@@ -236,6 +236,27 @@ func kbCoversQuestion(availableKnowledge, body string) bool {
 // parseMenuChoice reads a reply to our own "1. Book a Trial / 2. Become a Member"
 // menu and reports which option (if any) it picked. Extracted so the trial/member
 // distinction has one definition instead of being re-derived at each call site.
+// looksReadyToBuy is a provider-agnostic fallback for the "ready_to_buy" intent
+// classification, which needs Gemini and simply never runs without it — a studio with
+// only Groq/Claude configured had no guardrail at all against the free-form AI inventing
+// a fake payment link or a fake escalation promise when a customer explicitly asks to buy.
+// Matched more liberally than isExplicitPurchaseIntent (no question guard) because the only
+// thing this triggers is the same safe "1. Book a Trial / 2. Become a Member" menu — not an
+// actual payment link — so a false positive just shows that menu a little early.
+func looksReadyToBuy(lowerMsg string) bool {
+	phrases := []string{
+		"send me a link", "send the link", "send a link", "payment link", "link to buy",
+		"how do i pay", "how to pay", "want to buy", "want to purchase", "ready to buy",
+		"want to sign up", "sign up", "want to join", "sign me up", "become a member", "ready to join",
+	}
+	for _, p := range phrases {
+		if strings.Contains(lowerMsg, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // isExplicitPurchaseIntent reports whether an already-lowercased message explicitly asks
 // to buy/pay for a trial — but not when that's phrased as a question ("how do I pay?",
 // "what's the payment link?" are asking, not confirming).

@@ -2993,11 +2993,13 @@ function ChannelAvatar({ kind, name, active, hideBadgeOnMobile }: { kind: Channe
 function MessageBubble({ msg }: { msg: Message }) {
   const isOutbound = msg.direction === 'outbound';
   const sourceTag = sourceTagFor(msg.sourceKind);
+  const senderLabel = isOutbound ? 'You' : msg.senderName || 'Contact';
   return (
     <li className={cn('flex flex-col gap-0.5 animate-in', isOutbound ? 'items-end' : 'items-start')}>
-      {/* Sender label */}
+      {/* Sender label — in a group chat this is the specific member who sent
+          this message, not the group's own name */}
       <span className="px-1 text-[9px] font-black uppercase tracking-wider text-zinc-400">
-        {isOutbound ? 'You' : 'Contact'}
+        {senderLabel}
       </span>
       <div
         className={cn(

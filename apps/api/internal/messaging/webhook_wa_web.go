@@ -249,6 +249,11 @@ func (h *Handler) waWebInbound(w http.ResponseWriter, r *http.Request) {
 		Timestamp int64  `json:"timestamp"`
 		FromMe    bool   `json:"fromMe"`
 		PushName  string `json:"pushName"`
+		// Only ever set for a group message — the actual sending member,
+		// distinct from PushName above (which for a group is the group's
+		// own subject, not any individual member's name).
+		ParticipantJID  string `json:"participantJid"`
+		ParticipantName string `json:"participantName"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "bad_json", err.Error())
@@ -263,7 +268,7 @@ func (h *Handler) waWebInbound(w http.ResponseWriter, r *http.Request) {
 	if p.Timestamp > 0 {
 		sentAt = time.Unix(p.Timestamp, 0).UTC()
 	}
-	if err := h.svc.HandleInboundWAWeb(r.Context(), studioID, p.From, p.Text, p.MessageID, p.FromMe, sentAt, p.PushName); err != nil {
+	if err := h.svc.HandleInboundWAWeb(r.Context(), studioID, p.From, p.Text, p.MessageID, p.FromMe, sentAt, p.PushName, p.ParticipantJID, p.ParticipantName); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}

@@ -545,13 +545,27 @@ export class SessionManager {
 
         const remoteJid = msg.key?.remoteJid || '';
         const isGroup = remoteJid.endsWith('@g.us');
-        // For a group, the name that matters is the GROUP's, not whichever
-        // member happens to have sent this particular message — pushName is
-        // always that individual member's own name, never the group's.
-        // Resolve the real group subject via a separate Baileys call; if
-        // that lookup fails for any reason, fall back to the old (wrong but
-        // non-empty) behavior rather than sending no name at all.
+        // For a group, the CONVERSATION's name is the group's own subject,
+        // not whichever member happens to have sent this particular message
+        // — pushName is always that individual member's own name, never the
+        // group's. Resolve the real group subject via a separate Baileys
+        // call; if that lookup fails for any reason, fall back to the old
+        // (wrong but non-empty) behavior rather than sending no name at all.
         let displayName = !msg.key?.fromMe ? (msg.pushName || undefined) : undefined;
+        // Which specific member sent THIS message — separate from the
+        // conversation-level displayName above. msg.key.participant is only
+        // present on group messages (Baileys sets it to the sender's own
+        // JID within the group); msg.pushName on a group message is already
+        // that member's own name (not the group's), so capture it here
+        // before displayName gets overwritten with the group subject below.
+        // Without this, every message in a group looked identical in the
+        // Inbox — no way to tell which member actually sent which one.
+        let participantJid;
+        let participantName;
+        if (isGroup && msg.key?.participant) {
+          participantJid = await resolveJid(sock, msg.key.participant, entry.lidToPhone, this.log);
+          participantName = msg.pushName || undefined;
+        }
         if (isGroup) {
           const subject = await this._resolveGroupSubject(sock, entry, remoteJid);
           displayName = subject || displayName;
@@ -574,6 +588,10 @@ export class SessionManager {
           // For a group, this is the resolved group subject instead (see
           // isGroup above), not any individual member's name.
           pushName: displayName,
+          // Only ever set for a group message — the actual sending member,
+          // distinct from the group-level pushName above.
+          participantJid,
+          participantName,
         });
       }
     });
@@ -795,12 +813,12 @@ export class SessionManager {
     }, intervalMs);
   }
 
-  async _forwardInbound(studioId, { from, text, messageId, timestamp, fromMe, pushName }) {
+  async _forwardInbound(studioId, { from, text, messageId, timestamp, fromMe, pushName, participantJid, participantName }) {
     try {
       const res = await fetch(`${this.projectxApiUrl}/internal/wa-web/inbound`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ studioId, from, text, messageId, timestamp, fromMe: !!fromMe, pushName }),
+        body: JSON.stringify({ studioId, from, text, messageId, timestamp, fromMe: !!fromMe, pushName, participantJid, participantName }),
       });
       const body = await res.text();
       this.log.info({ studioId, from, status: res.status, body }, 'wa-web: forwarded inbound');

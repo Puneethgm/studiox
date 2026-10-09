@@ -479,3 +479,28 @@ func TestIsExplicitPurchaseIntent(t *testing.T) {
 		}
 	}
 }
+
+// Real incident: a studio with no Gemini key configured (so the "ready_to_buy" intent
+// classifier never runs) got "Send me a link to buy?" and replied with a made-up promise
+// ("I'll pass this over to a team member who can securely share the purchase link") —
+// nothing was ever actually escalated, because the membership shortcut that exists
+// precisely to stop this had no fallback for studios without Gemini.
+func TestLooksReadyToBuy(t *testing.T) {
+	cases := []struct {
+		msg  string
+		want bool
+	}{
+		{"Send me a link to buy ?", true}, // the exact real message
+		{"I want to become a member", true},
+		{"how do I sign up?", true},
+		{"ready to join!", true},
+		{"what's the weather like", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		lower := strings.ToLower(strings.TrimSpace(c.msg))
+		if got := looksReadyToBuy(lower); got != c.want {
+			t.Errorf("looksReadyToBuy(%q) = %v, want %v", c.msg, got, c.want)
+		}
+	}
+}

@@ -1144,8 +1144,13 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	// shortcut above does — otherwise the LLM free-generates its own
 	// membership pitch, including inventing a fake payment link and asking
 	// for a "transaction ID" (a flow that doesn't exist anywhere in this
-	// codebase), instead of sending the real Stripe checkout link.
-	if intent == "ready_to_buy" {
+	// codebase), instead of sending the real Stripe checkout link. intent
+	// only gets set to "ready_to_buy" when Gemini is configured — looksReadyToBuy
+	// is the provider-agnostic fallback for everyone else (real incident: a
+	// studio without Gemini got a reply promising "I'll pass this over to a
+	// team member who can securely share the purchase link" for "Send me a
+	// link to buy?" — nothing was ever actually escalated).
+	if intent == "ready_to_buy" || looksReadyToBuy(lowerBody) {
 		notInActiveFlow := true
 		if lead != nil {
 			stage := lead.AutoContactStage
