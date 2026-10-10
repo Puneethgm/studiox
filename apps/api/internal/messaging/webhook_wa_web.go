@@ -16,6 +16,48 @@ import (
 	"github.com/projectx/api/internal/platform/httpx"
 )
 
+// doInternalPostWithRetry POSTs to an internal service (wa-web, tg-web) with
+// a few quick retries on a transient network error — observed live in
+// production: Docker's embedded DNS resolver (127.0.0.11) intermittently
+// returns "server misbehaving" for a "wa-web" lookup even with no load and
+// no burst, seconds apart, well outside any connection-pool explanation.
+// That's a genuine DNS-resolver flake, not something raising
+// MaxIdleConnsPerHost fixes — so absorb it here with a short retry instead
+// of spending one of the job's own limited attempts on it.
+func doInternalPostWithRetry(ctx context.Context, url string, data []byte, headers map[string]string) (*http.Response, error) {
+	const maxRetries = 3
+	backoff := 300 * time.Millisecond
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			timer := time.NewTimer(backoff)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
+			backoff *= 2
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if !isTransientNetworkError(err) {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
 func waWebServiceURL() string {
 	if u := os.Getenv("WA_WEB_SERVICE_URL"); u != "" {
 		return u
@@ -524,13 +566,10 @@ func (s *waWebSender) SendText(ctx context.Context, _, _, recipient, _, body str
 	// phone.
 	doSend := func(p sendPayload) (string, error) {
 		data, _ := json.Marshal(p)
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, sendURL, bytes.NewReader(data))
-		if err != nil {
-			return "", err
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("x-internal-key", waWebInternalKey())
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := doInternalPostWithRetry(ctx, sendURL, data, map[string]string{
+			"Content-Type":   "application/json",
+			"x-internal-key": waWebInternalKey(),
+		})
 		if err != nil {
 			return "", err
 		}
