@@ -596,6 +596,18 @@ export class SessionManager {
       }
     });
 
+    // Baileys' delivery/read ack events for messages we sent. Mirrors what
+    // Meta's WhatsApp Cloud API webhook already gives us (see
+    // Service.HandleStatus) so the Inbox's tick icons work for WA-Web too.
+    sock.ev.on('messages.update', (updates) => {
+      for (const { key, update } of updates) {
+        if (!key?.fromMe || !key?.id || update?.status == null) continue;
+        const status = { 0: 'failed', 3: 'delivered', 4: 'read', 5: 'read' }[update.status];
+        if (!status) continue; // PENDING/SERVER_ACK — no-op
+        this._forwardStatus(studioId, { messageId: key.id, status });
+      }
+    });
+
     // Buffer Baileys' automatic post-pairing history push. Fires in one or
     // more chunks (`syncType`-dependent) shortly after a fresh QR link. Does
     // NOT trust `isLatest` to mean "sync is fully done" — see
@@ -824,6 +836,18 @@ export class SessionManager {
       this.log.info({ studioId, from, status: res.status, body }, 'wa-web: forwarded inbound');
     } catch (err) {
       this.log.error({ err, studioId }, 'wa-web: forward inbound failed');
+    }
+  }
+
+  async _forwardStatus(studioId, { messageId, status }) {
+    try {
+      await fetch(`${this.projectxApiUrl}/internal/wa-web/message-status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studioId, messageId, status }),
+      });
+    } catch (err) {
+      this.log.error({ err, studioId, messageId }, 'wa-web: forward status failed');
     }
   }
 }

@@ -275,6 +275,39 @@ func (h *Handler) waWebInbound(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// waWebMessageStatus godoc
+//
+//	@Summary		Record a WhatsApp Web delivery/read ack
+//	@Description	Called by the wa-web Node service on a Baileys messages.update ack (delivered/read/failed) for a message we sent — mirrors Service.HandleStatus for the Meta Cloud API channel so the Inbox's tick icons work for WA-Web too. Internal-only (Docker-network only, not exposed via nginx).
+//	@Tags			Messaging - Internal
+//	@Accept			json
+//	@Produce		json
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		400	{object}	httpx.ErrorResponse	"invalid body or studioId"
+//	@Failure		500	{object}	httpx.ErrorResponse
+//	@Router			/internal/wa-web/message-status [post]
+func (h *Handler) waWebMessageStatus(w http.ResponseWriter, r *http.Request) {
+	var p struct {
+		StudioID  string `json:"studioId"`
+		MessageID string `json:"messageId"`
+		Status    string `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_json", err.Error())
+		return
+	}
+	studioID, err := uuid.Parse(p.StudioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid studioId")
+		return
+	}
+	if err := h.svc.HandleWAWebStatus(r.Context(), studioID, p.MessageID, p.Status); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // waWebContactName godoc
 //
 //	@Summary		Record a WhatsApp Web contact's display name

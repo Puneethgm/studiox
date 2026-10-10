@@ -1906,25 +1906,76 @@ func (s *Service) HandleStatus(ctx context.Context, st channels.WhatsAppWebhookS
 		return nil
 	}
 	ts := channels.ParseTimestamp(st.Timestamp)
+	var studioID, convID, msgID uuid.UUID
+	var err error
 	switch st.Status {
 	case "delivered":
-		_, err := s.repo.Pool().Exec(ctx, `
+		err = s.repo.Pool().QueryRow(ctx, `
 			UPDATE messages SET delivered_at = $2, status = 'delivered'
 			WHERE external_id = $1 AND direction = 'outbound'
-		`, st.ID, ts)
-		return err
+			RETURNING id, conversation_id, studio_id
+		`, st.ID, ts).Scan(&msgID, &convID, &studioID)
 	case "read":
-		_, err := s.repo.Pool().Exec(ctx, `
+		err = s.repo.Pool().QueryRow(ctx, `
 			UPDATE messages SET read_at = $2, status = 'read'
 			WHERE external_id = $1 AND direction = 'outbound'
-		`, st.ID, ts)
-		return err
+			RETURNING id, conversation_id, studio_id
+		`, st.ID, ts).Scan(&msgID, &convID, &studioID)
 	case "failed":
-		_, err := s.repo.Pool().Exec(ctx, `
+		err = s.repo.Pool().QueryRow(ctx, `
 			UPDATE messages SET status = 'failed' WHERE external_id = $1 AND direction = 'outbound'
-		`, st.ID)
+			RETURNING id, conversation_id, studio_id
+		`, st.ID).Scan(&msgID, &convID, &studioID)
+	default:
+		return nil
+	}
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil // no matching outbound message — nothing to notify
+		}
 		return err
 	}
+	s.bus.Publish(ctx, Event{Kind: EvtMessageStatusUpdated, StudioID: studioID, ConversationID: convID, MessageID: &msgID})
+	return nil
+}
+
+// HandleWAWebStatus is HandleStatus's WA-Web equivalent — Baileys' message
+// IDs aren't globally unique like Meta's wamid, so this also scopes by
+// studio_id.
+func (s *Service) HandleWAWebStatus(ctx context.Context, studioID uuid.UUID, messageID, status string) error {
+	if messageID == "" || status == "" {
+		return nil
+	}
+	var convID, msgID uuid.UUID
+	var err error
+	switch status {
+	case "delivered":
+		err = s.repo.Pool().QueryRow(ctx, `
+			UPDATE messages SET delivered_at = now(), status = 'delivered'
+			WHERE external_id = $1 AND studio_id = $2 AND direction = 'outbound'
+			RETURNING id, conversation_id
+		`, messageID, studioID).Scan(&msgID, &convID)
+	case "read":
+		err = s.repo.Pool().QueryRow(ctx, `
+			UPDATE messages SET read_at = now(), status = 'read'
+			WHERE external_id = $1 AND studio_id = $2 AND direction = 'outbound'
+			RETURNING id, conversation_id
+		`, messageID, studioID).Scan(&msgID, &convID)
+	case "failed":
+		err = s.repo.Pool().QueryRow(ctx, `
+			UPDATE messages SET status = 'failed' WHERE external_id = $1 AND studio_id = $2 AND direction = 'outbound'
+			RETURNING id, conversation_id
+		`, messageID, studioID).Scan(&msgID, &convID)
+	default:
+		return nil
+	}
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	s.bus.Publish(ctx, Event{Kind: EvtMessageStatusUpdated, StudioID: studioID, ConversationID: convID, MessageID: &msgID})
 	return nil
 }
 

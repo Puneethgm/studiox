@@ -18,8 +18,9 @@ import (
 type EventKind string
 
 const (
-	EvtMessageReceived       EventKind = "message.received" // inbound from customer
-	EvtMessageSent           EventKind = "message.sent"     // outbound delivered to channel
+	EvtMessageReceived       EventKind = "message.received"       // inbound from customer
+	EvtMessageSent           EventKind = "message.sent"           // outbound delivered to channel
+	EvtMessageStatusUpdated  EventKind = "message.status_updated" // delivered/read/failed ack — see HandleStatus/HandleWAWebStatus
 	EvtConversationUpdated   EventKind = "conversation.updated"
 	EvtConversationEscalated EventKind = "conversation.escalated" // EscalateConversation just fired — see repo.go
 	EvtOutboundJobEnqueued   EventKind = "outbound_job.enqueued"

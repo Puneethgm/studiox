@@ -236,6 +236,7 @@ func (h *Handler) InternalRoutes(r chi.Router) {
 	r.Post("/wa-web/connected", h.waWebConnected)
 	r.Post("/wa-web/disconnected", h.waWebDisconnected)
 	r.Post("/wa-web/inbound", h.waWebInbound)
+	r.Post("/wa-web/message-status", h.waWebMessageStatus)
 	r.Get("/wa-web/studios", h.waWebStudios)
 	r.Post("/wa-web/backfill-running", h.waWebBackfillRunning)
 	r.Post("/wa-web/backfill", h.waWebBackfill)

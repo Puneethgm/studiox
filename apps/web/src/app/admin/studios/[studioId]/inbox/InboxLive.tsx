@@ -107,7 +107,7 @@ const CHANNEL_BADGE: Record<ChannelKind, { label: string; color: string }> = {
 };
 
 interface SSEEvent {
-  kind: 'message.received' | 'message.sent' | 'conversation.updated';
+  kind: 'message.received' | 'message.sent' | 'message.status_updated' | 'conversation.updated';
   studioId: string;
   conversationId: string;
   messageId?: string;
@@ -621,6 +621,7 @@ export function InboxLive({
     }
     es.addEventListener('message.received', onEvent);
     es.addEventListener('message.sent', onEvent);
+    es.addEventListener('message.status_updated', onEvent);
     es.addEventListener('conversation.updated', onEvent);
 
     return () => {
