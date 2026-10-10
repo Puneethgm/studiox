@@ -74,6 +74,19 @@ func main() {
 	log := logger.New(cfg.LogLevel)
 	slog.SetDefault(log)
 
+	// http.DefaultClient (used for every internal wa-web/tg-web/Meta call)
+	// defaults to 2 idle connections per host. A burst of concurrent sends
+	// to the same internal service (e.g. a Manual Actions batch) blows past
+	// that, so most of them open a brand-new connection — and therefore a
+	// brand-new DNS lookup for that hostname — all at once. Docker's
+	// embedded DNS resolver can't reliably answer that many simultaneous
+	// lookups from one container and returns "server misbehaving" for some
+	// of them. Raising this lets concurrent sends reuse pooled connections
+	// instead.
+	if t, ok := http.DefaultTransport.(*http.Transport); ok {
+		t.MaxIdleConnsPerHost = 32
+	}
+
 	rootCtx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
