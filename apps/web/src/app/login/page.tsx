@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/Input';
 import { FieldError, Label } from '@/components/ui/Label';
 import { ApiError, api } from '@/lib/api';
 import { withAlpha } from '@/lib/color';
+import { sanitizeNextPath } from '@/lib/sessionGuard';
 import type { Me } from '@/lib/types';
 
 const noiseSvgDataUri =
@@ -52,7 +53,16 @@ export default function LoginPage() {
         method: 'POST',
         json: { email, password },
       });
-      if (me.studioId) {
+      // A dead-session redirect (idle timeout, revoked session) tags the
+      // login URL with ?next=<path they were on> — read via window.location
+      // rather than useSearchParams so this stays a plain client page with
+      // no Suspense boundary. Sanitized again here even though the server
+      // side already validated it, since nothing stops a user from editing
+      // the URL by hand.
+      const next = sanitizeNextPath(new URLSearchParams(window.location.search).get('next'));
+      if (next) {
+        router.push(next);
+      } else if (me.studioId) {
         // studio_admin and studio_staff are both scoped to one studio —
         // only super_admin (no studioId) belongs on the bare /admin/studios
         // list, which is super-admin-only and 403s for anyone else.

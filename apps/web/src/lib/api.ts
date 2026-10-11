@@ -6,6 +6,8 @@
 // dev — same-origin in prod via the deploy's ingress. There is intentionally
 // no hardcoded API host in client code.
 
+import { notifySessionExpiring } from './sessionGuard';
+
 export class ApiError extends Error {
   status: number;
   code?: string;
@@ -47,7 +49,15 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
     // by code, not just status: a failed *login attempt* is also a 401 but
     // uses invalid_credentials/account_inactive/role_inactive — those must
     // stay on the login form as an inline error, not bounce through here.
-    window.location.href = '/login';
+    //
+    // notifySessionExpiring() fires first and synchronously, so any mounted
+    // component with not-yet-saved state (see lib/sessionGuard.ts) gets one
+    // last chance to stash it to localStorage before this navigation tears
+    // the page down. The `next` param sends the user back to the same page
+    // once they log back in instead of the role default.
+    notifySessionExpiring();
+    const next = window.location.pathname + window.location.search;
+    window.location.href = `/login?next=${encodeURIComponent(next)}`;
   }
 
   if (!res.ok) {

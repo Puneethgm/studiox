@@ -1,6 +1,7 @@
-import { cookies } from 'next/headers';
+import { cookies, headers as nextHeaders } from 'next/headers';
 import { redirect } from 'next/navigation';
 import type { Me } from './types';
+import { sanitizeNextPath } from './sessionGuard';
 
 // Server-only address of the Go API. Never exposed to the browser.
 const BASE = process.env.API_BASE_URL ?? 'http://localhost:8080';
@@ -8,6 +9,15 @@ const BASE = process.env.API_BASE_URL ?? 'http://localhost:8080';
 async function cookieHeader(): Promise<string> {
   const store = await cookies();
   return store.getAll().map((c) => `${c.name}=${c.value}`).join('; ');
+}
+
+// /login?next=<path>, built from the x-pathname header middleware.ts stamps
+// on every /admin/* request — so a dead-session redirect sends the user
+// back to the page they were on, not always the role default.
+async function loginRedirectPath(): Promise<string> {
+  const h = await nextHeaders();
+  const next = sanitizeNextPath(h.get('x-pathname'));
+  return next ? `/login?next=${encodeURIComponent(next)}` : '/login';
 }
 
 // requireSession runs in server components / layouts and redirects to /login
@@ -18,7 +28,7 @@ export async function requireSession(): Promise<Me> {
     headers: ck ? { Cookie: ck } : {},
     cache: 'no-store',
   });
-  if (!res.ok) redirect('/login');
+  if (!res.ok) redirect(await loginRedirectPath());
   return (await res.json()) as Me;
 }
 
@@ -43,7 +53,7 @@ export async function serverFetch<T>(path: string, init: RequestInit = {}): Prom
     // "unauthorized" here genuinely means the session is dead — but keep
     // the code check anyway, matching the client-side api() helper, in
     // case that ever changes.
-    if (body?.code === 'unauthorized') redirect('/login');
+    if (body?.code === 'unauthorized') redirect(await loginRedirectPath());
     throw new Error(`API ${path}: ${res.status}`);
   }
   if (!res.ok) {
