@@ -29,6 +29,7 @@ import { Label } from '@/components/ui/Label';
 import { Textarea } from '@/components/ui/Textarea';
 import { Badge } from '@/components/ui/Badge';
 import { api } from '@/lib/api';
+import { onSessionExpiring, saveDraft, loadDraft, clearDraft } from '@/lib/sessionGuard';
 import Link from 'next/link';
 
 interface SocialPost {
@@ -115,6 +116,49 @@ export default function SocialPlannerClient({ studioId, studio, isSuperAdmin }: 
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
 
   const [visibleQueueCount, setVisibleQueueCount] = useState(4);
+
+  // If the session dies (idle timeout, revoked session) while an unsaved
+  // post draft is sitting in the composer, stash it so it isn't silently
+  // lost on the forced /login redirect — restored below once the user logs
+  // back in and lands back on this same studio's planner.
+  const postDraftKey = `social-post:${studioId}`;
+  useEffect(() => onSessionExpiring(() => {
+    if (newPostContent.trim()) {
+      saveDraft(postDraftKey, {
+        newPostContent, newPostDate, newPostTime, newPostCampaign, newPostPlatform,
+        mediaUrl, mediaName, editingPostId,
+      });
+    }
+  }), [postDraftKey, newPostContent, newPostDate, newPostTime, newPostCampaign, newPostPlatform, mediaUrl, mediaName, editingPostId]);
+
+  useEffect(() => {
+    const restored = loadDraft<{
+      newPostContent: string;
+      newPostDate: string;
+      newPostTime: string;
+      newPostCampaign: string;
+      newPostPlatform: 'Facebook' | 'Instagram' | 'Google Ads' | 'X (Twitter)';
+      mediaUrl: string;
+      mediaName: string;
+      editingPostId: string | null;
+    }>(postDraftKey);
+    if (!restored) return;
+    clearDraft(postDraftKey);
+    setNewPostContent(restored.newPostContent);
+    setNewPostDate(restored.newPostDate);
+    setNewPostTime(restored.newPostTime);
+    setNewPostCampaign(restored.newPostCampaign);
+    setNewPostPlatform(restored.newPostPlatform);
+    setMediaUrl(restored.mediaUrl);
+    setMediaName(restored.mediaName);
+    setEditingPostId(restored.editingPostId);
+    setNotificationStatus('success');
+    setNotificationMessage('Restored your unsaved post draft from before you were logged out.');
+    setShowNotificationModal(true);
+    // Runs once on mount only — a one-time rescue of a draft left behind
+    // by a session that died while this planner was open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     setVisibleQueueCount(4);

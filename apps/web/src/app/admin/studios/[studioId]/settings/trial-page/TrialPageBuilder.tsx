@@ -1,6 +1,7 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { onSessionExpiring, saveDraft, loadDraft, clearDraft } from '@/lib/sessionGuard';
 import { DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import {
   Plus, Save, CheckCircle2, X, Trash2, Type, Image as ImageIcon, Video, User, Mail, Calendar, DollarSign,
@@ -94,6 +95,29 @@ export function TrialPageBuilder({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
+
+  // If the session dies (idle timeout, revoked session) while this page
+  // layout has unsaved edits, stash it so it isn't silently lost on the
+  // forced /login redirect — restored below once the user logs back in and
+  // lands back on this same trial-page builder.
+  const layoutDraftKey = `trial-page:${studioId}`;
+  useEffect(() => onSessionExpiring(() => {
+    const dirty = JSON.stringify(blocks) !== JSON.stringify(initialBlocks) ||
+      JSON.stringify(background) !== JSON.stringify(initialBackground);
+    if (dirty) saveDraft(layoutDraftKey, { blocks, background });
+  }), [layoutDraftKey, blocks, background, initialBlocks, initialBackground]);
+
+  useEffect(() => {
+    const restored = loadDraft<{ blocks: PageBlock[]; background: PageBackground }>(layoutDraftKey);
+    if (!restored) return;
+    clearDraft(layoutDraftKey);
+    setBlocks(restored.blocks);
+    setBackground(restored.background);
+    showToast('Restored your unsaved page layout from before you were logged out.');
+    // Runs once on mount only — a one-time rescue of a draft left behind
+    // by a session that died while this builder was open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Require the pointer to move a few pixels before a drag is recognized —
   // otherwise dnd-kit's drag-start machinery can swallow a plain click

@@ -10,13 +10,18 @@ import { revalidatePath } from 'next/cache';
 
 const API_BASE = process.env.API_BASE_URL ?? 'http://localhost:8080';
 
+// `code` mirrors the Go API's error body `code` field (see httpx.WriteError)
+// — in particular `"unauthorized"`, which the calling client component uses
+// to tell a dead session apart from an ordinary validation/save failure and
+// redirect to /login instead of just showing an inline error. See
+// SettingsRows.tsx's EditableTextRow/ColorEditRow/ImageEditRow/ToggleRow.
 export type UpdateStudioResult =
   | { ok: true }
-  | { ok: false; error: string; details?: Record<string, string> };
+  | { ok: false; error: string; code?: string; details?: Record<string, string> };
 
 export type ChangePasswordResult =
   | { ok: true }
-  | { ok: false; error: string; details?: Record<string, string> };
+  | { ok: false; error: string; code?: string; details?: Record<string, string> };
 
 export async function updateStudioSettings(
   studioId: string,
@@ -62,13 +67,14 @@ export async function updateStudioSettings(
     cache: 'no-store',
   });
 
-  type ErrBody = { error?: string; details?: Record<string, string> };
+  type ErrBody = { error?: string; code?: string; details?: Record<string, string> };
   const body = (await res.json().catch(() => null)) as ErrBody | null;
 
   if (!res.ok) {
     return {
       ok: false,
       error: body?.error ?? `HTTP ${res.status}`,
+      code: body?.code,
       details: body?.details,
     };
   }
@@ -109,12 +115,13 @@ export async function changeMyPassword(data: {
     return { ok: true };
   }
 
-  type ErrBody = { error?: string; details?: Record<string, string> };
+  type ErrBody = { error?: string; code?: string; details?: Record<string, string> };
   const body = (await res.json().catch(() => null)) as ErrBody | null;
 
   return {
     ok: false,
     error: body?.error ?? `HTTP ${res.status}`,
+    code: body?.code,
     details: body?.details,
   };
 }
@@ -178,13 +185,14 @@ export async function saveSheetsSettings(
     cache: 'no-store',
   });
 
-  type ErrBody = { error?: string; details?: Record<string, string> };
+  type ErrBody = { error?: string; code?: string; details?: Record<string, string> };
   const body = (await res.json().catch(() => null)) as ErrBody | null;
 
   if (!res.ok) {
     return {
       ok: false,
       error: body?.error ?? `HTTP ${res.status}`,
+      code: body?.code,
       details: body?.details,
     };
   }
@@ -243,7 +251,7 @@ export async function saveInitialContactDelay(studioId: string, minutes: number)
 
   if (!res.ok) {
     const body = await res.json().catch(() => null);
-    return { ok: false, error: body?.error || `HTTP ${res.status}` };
+    return { ok: false, error: body?.error || `HTTP ${res.status}`, code: body?.code };
   }
   return { ok: true };
 }
@@ -298,7 +306,7 @@ export async function saveWhatsAppDailyMessageLimit(studioId: string, limit: num
 
   if (!res.ok) {
     const body = await res.json().catch(() => null);
-    return { ok: false, error: body?.error || `HTTP ${res.status}` };
+    return { ok: false, error: body?.error || `HTTP ${res.status}`, code: body?.code };
   }
   return { ok: true };
 }
@@ -353,7 +361,7 @@ export async function saveGlofoxFirstSession(studioId: string, enabled: boolean)
 
   if (!res.ok) {
     const body = await res.json().catch(() => null);
-    return { ok: false, error: body?.error || `HTTP ${res.status}` };
+    return { ok: false, error: body?.error || `HTTP ${res.status}`, code: body?.code };
   }
   return { ok: true };
 }
@@ -412,7 +420,7 @@ export async function saveColdLeadThresholds(
 
   if (!res.ok) {
     const body = await res.json().catch(() => null);
-    return { ok: false, error: body?.error || `HTTP ${res.status}` };
+    return { ok: false, error: body?.error || `HTTP ${res.status}`, code: body?.code };
   }
   return { ok: true };
 }
@@ -467,7 +475,7 @@ export async function saveWhatsAppSendSpacing(studioId: string, seconds: number)
 
   if (!res.ok) {
     const body = await res.json().catch(() => null);
-    return { ok: false, error: body?.error || `HTTP ${res.status}` };
+    return { ok: false, error: body?.error || `HTTP ${res.status}`, code: body?.code };
   }
   return { ok: true };
 }
@@ -522,7 +530,7 @@ export async function saveAIReplyDelay(studioId: string, seconds: number): Promi
 
   if (!res.ok) {
     const body = await res.json().catch(() => null);
-    return { ok: false, error: body?.error || `HTTP ${res.status}` };
+    return { ok: false, error: body?.error || `HTTP ${res.status}`, code: body?.code };
   }
   return { ok: true };
 }
@@ -596,13 +604,14 @@ export async function saveExternalLeadsSheetSettings(
     cache: 'no-store',
   });
 
-  type ErrBody = { error?: string; details?: Record<string, string> };
+  type ErrBody = { error?: string; code?: string; details?: Record<string, string> };
   const body = (await res.json().catch(() => null)) as ErrBody | null;
 
   if (!res.ok) {
     return {
       ok: false,
       error: body?.error ?? `HTTP ${res.status}`,
+      code: body?.code,
       details: body?.details,
     };
   }
@@ -645,7 +654,7 @@ async function sendExternalLeadsSheet(
   method: 'POST' | 'PUT',
   sheetId: string | null,
   data: ExternalLeadsSheetSettingsData
-): Promise<{ ok: boolean; error?: string; details?: Record<string, string>; sheet?: ExternalLeadsSheet }> {
+): Promise<{ ok: boolean; error?: string; code?: string; details?: Record<string, string>; sheet?: ExternalLeadsSheet }> {
   const ck = await cookieHeaderValue();
   const url = `${API_BASE}/api/v1/studios/${studioId}/leads/external-sheets${sheetId ? `/${sheetId}` : ''}`;
   const res = await fetch(url, {
@@ -654,10 +663,10 @@ async function sendExternalLeadsSheet(
     body: JSON.stringify(data),
     cache: 'no-store',
   });
-  type ErrBody = { error?: string; details?: Record<string, string> };
+  type ErrBody = { error?: string; code?: string; details?: Record<string, string> };
   const body = (await res.json().catch(() => null)) as (ErrBody & Partial<ExternalLeadsSheet>) | null;
   if (!res.ok) {
-    return { ok: false, error: body?.error ?? `HTTP ${res.status}`, details: body?.details };
+    return { ok: false, error: body?.error ?? `HTTP ${res.status}`, code: body?.code, details: body?.details };
   }
   revalidatePath(`/admin/studios/${studioId}/settings`);
   return { ok: true, sheet: body as ExternalLeadsSheet };
@@ -671,7 +680,7 @@ export async function updateExternalLeadsSheet(studioId: string, sheetId: string
   return sendExternalLeadsSheet(studioId, 'PUT', sheetId, data);
 }
 
-export async function deleteExternalLeadsSheet(studioId: string, sheetId: string): Promise<{ ok: boolean; error?: string }> {
+export async function deleteExternalLeadsSheet(studioId: string, sheetId: string): Promise<{ ok: boolean; error?: string; code?: string }> {
   const ck = await cookieHeaderValue();
   const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/leads/external-sheets/${sheetId}`, {
     method: 'DELETE',
@@ -679,8 +688,8 @@ export async function deleteExternalLeadsSheet(studioId: string, sheetId: string
     cache: 'no-store',
   });
   if (!res.ok && res.status !== 204) {
-    const body = (await res.json().catch(() => null)) as { error?: string } | null;
-    return { ok: false, error: body?.error ?? `HTTP ${res.status}` };
+    const body = (await res.json().catch(() => null)) as { error?: string; code?: string } | null;
+    return { ok: false, error: body?.error ?? `HTTP ${res.status}`, code: body?.code };
   }
   revalidatePath(`/admin/studios/${studioId}/settings`);
   return { ok: true };

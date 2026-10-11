@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Check, Copy, Pencil, X, Loader2, Upload } from 'lucide-react';
 import { Input } from '@/components/ui/Input';
+import { onSessionExpiring, saveDraft, loadDraft, clearDraft, pageScopedDraftKey, redirectToLoginFromHere } from '@/lib/sessionGuard';
 
 // Shared layout for one field row inside a settings card: label + description
 // on the left, current value / control on the right. Cards stack rows with a
@@ -90,12 +91,27 @@ export function EditableTextRow({
   multiline?: boolean;
   disabled?: boolean;
   disabledHint?: string;
-  onSave: (next: string) => Promise<{ ok: boolean; error?: string }>;
+  onSave: (next: string) => Promise<{ ok: boolean; error?: string; code?: string }>;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const draftKey = pageScopedDraftKey(`text-row:${label}`);
+  useEffect(() => onSessionExpiring(() => {
+    if (editing && draft !== value) saveDraft(draftKey, draft);
+  }), [draftKey, editing, draft, value]);
+  useEffect(() => {
+    const restored = loadDraft<string>(draftKey);
+    if (restored === null) return;
+    clearDraft(draftKey);
+    setDraft(restored);
+    setEditing(true);
+    // Runs once on mount only — a one-time rescue of a draft left behind
+    // by a session that died while this field was mid-edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function save() {
     if (draft === value) {
@@ -107,6 +123,14 @@ export function EditableTextRow({
     const res = await onSave(draft);
     setSaving(false);
     if (!res.ok) {
+      if (res.code === 'unauthorized') {
+        // The Server Action's own 401 never goes through lib/api.ts's
+        // client-side interception — handle the dead session here instead
+        // of leaving the user staring at a generic "unauthorized" error.
+        saveDraft(draftKey, draft);
+        redirectToLoginFromHere();
+        return;
+      }
       setError(res.error ?? 'Failed to save');
       return;
     }
@@ -205,7 +229,7 @@ export function EditableSecretRow({
   label: string;
   description?: string;
   hasValue: boolean;
-  onSave: (next: string) => Promise<{ ok: boolean; error?: string }>;
+  onSave: (next: string) => Promise<{ ok: boolean; error?: string; code?: string }>;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -223,6 +247,12 @@ export function EditableSecretRow({
     const res = await onSave(draft);
     setSaving(false);
     if (!res.ok) {
+      if (res.code === 'unauthorized') {
+        // Secrets are deliberately never persisted to localStorage, even
+        // as a rescue draft — just get the user back to a live session.
+        redirectToLoginFromHere();
+        return;
+      }
       setError(res.error ?? 'Failed to save');
       return;
     }
@@ -305,12 +335,25 @@ export function ColorEditRow({
   label: string;
   description?: string;
   value: string;
-  onSave: (next: string) => Promise<{ ok: boolean; error?: string }>;
+  onSave: (next: string) => Promise<{ ok: boolean; error?: string; code?: string }>;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const draftKey = pageScopedDraftKey(`color-row:${label}`);
+  useEffect(() => onSessionExpiring(() => {
+    if (editing && draft !== value) saveDraft(draftKey, draft);
+  }), [draftKey, editing, draft, value]);
+  useEffect(() => {
+    const restored = loadDraft<string>(draftKey);
+    if (restored === null) return;
+    clearDraft(draftKey);
+    setDraft(restored);
+    setEditing(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function save() {
     if (draft === value) {
@@ -322,6 +365,11 @@ export function ColorEditRow({
     const res = await onSave(draft);
     setSaving(false);
     if (!res.ok) {
+      if (res.code === 'unauthorized') {
+        saveDraft(draftKey, draft);
+        redirectToLoginFromHere();
+        return;
+      }
       setError(res.error ?? 'Failed to save');
       return;
     }
@@ -398,7 +446,7 @@ export function ImageEditRow({
   label: string;
   description?: string;
   value: string;
-  onSave: (next: string) => Promise<{ ok: boolean; error?: string }>;
+  onSave: (next: string) => Promise<{ ok: boolean; error?: string; code?: string }>;
   onUpload: (file: File) => Promise<string>;
   aspectWide?: boolean;
 }) {
@@ -407,6 +455,22 @@ export function ImageEditRow({
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Only rescues a picked/typed URL already sitting in the field — an
+  // upload in flight when the session dies can't be resumed (the file
+  // itself isn't kept), so it's deliberately not covered here.
+  const draftKey = pageScopedDraftKey(`image-row:${label}`);
+  useEffect(() => onSessionExpiring(() => {
+    if (editing && draft !== value) saveDraft(draftKey, draft);
+  }), [draftKey, editing, draft, value]);
+  useEffect(() => {
+    const restored = loadDraft<string>(draftKey);
+    if (restored === null) return;
+    clearDraft(draftKey);
+    setDraft(restored);
+    setEditing(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function save(next = draft) {
     if (next === value) {
@@ -418,6 +482,11 @@ export function ImageEditRow({
     const res = await onSave(next);
     setSaving(false);
     if (!res.ok) {
+      if (res.code === 'unauthorized') {
+        saveDraft(draftKey, next);
+        redirectToLoginFromHere();
+        return;
+      }
       setError(res.error ?? 'Failed to save');
       return;
     }
@@ -521,7 +590,7 @@ export function ToggleRow({
   checked: boolean;
   disabled?: boolean;
   disabledHint?: string;
-  onSave: (next: boolean) => Promise<{ ok: boolean; error?: string }>;
+  onSave: (next: boolean) => Promise<{ ok: boolean; error?: string; code?: string }>;
 }) {
   const [saving, setSaving] = useState(false);
   const [current, setCurrent] = useState(checked);
@@ -534,6 +603,13 @@ export function ToggleRow({
     const res = await onSave(next);
     setSaving(false);
     if (!res.ok) {
+      if (res.code === 'unauthorized') {
+        // A toggle is a one-click intent, not a composed draft — nothing
+        // worth stashing in localStorage, just get the user back to a live
+        // session instead of leaving them on a stale "unauthorized" error.
+        redirectToLoginFromHere();
+        return;
+      }
       setError(res.error ?? 'Failed to save');
       return;
     }

@@ -11,6 +11,7 @@ import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { MultiSelect } from '@/components/ui/MultiSelect';
 import { api, ApiError } from '@/lib/api';
+import { onSessionExpiring, saveDraft, loadDraft, clearDraft } from '@/lib/sessionGuard';
 import type { DecisionTree, TreeNode, ConditionType, NodeAction, SimulateResult } from '@/lib/types';
 import { ImportNodesButton } from './ImportNodesButton';
 import { TreeCanvas } from './TreeCanvas';
@@ -94,6 +95,8 @@ export function TreeEditor({ studioId, initialTree }: Props) {
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 3000);
   }
 
+  const nodeDraftKey = `decision-tree-node:${tree.id}`;
+
   const [simMessage, setSimMessage] = useState('');
   const [simLeadStatus, setSimLeadStatus] = useState('');
   const [simResult, setSimResult] = useState<SimulateResult | null>(null);
@@ -113,6 +116,29 @@ export function TreeEditor({ studioId, initialTree }: Props) {
   // applying a suggestion changes form.keywords (which is one of its own
   // dependencies). Only an actual label/reply change should fire it again.
   const lastSuggestKeyRef = useRef<string | null>(null);
+
+  // If the session dies (idle timeout, revoked session) while an add/edit
+  // node panel is open, stash the in-progress form so it isn't silently
+  // lost on the forced /login redirect — restored below once the user logs
+  // back in and lands back on this same tree.
+  useEffect(() => onSessionExpiring(() => {
+    if (panel.kind !== 'idle') {
+      saveDraft(nodeDraftKey, { panel, form, keywordsIsAI });
+    }
+  }), [panel, form, keywordsIsAI, nodeDraftKey]);
+
+  useEffect(() => {
+    const restored = loadDraft<{ panel: PanelMode; form: NodeFormState; keywordsIsAI: boolean }>(nodeDraftKey);
+    if (!restored) return;
+    clearDraft(nodeDraftKey);
+    setPanel(restored.panel);
+    setForm(restored.form);
+    setKeywordsIsAI(restored.keywordsIsAI);
+    showToast('Restored your unsaved node edit from before you were logged out.');
+    // Runs once on mount only — this is a one-time rescue of a draft left
+    // behind by a session that died while this tree was open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const refreshTree = useCallback(async () => {
     const updated = await api<DecisionTree>(
