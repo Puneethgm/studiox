@@ -45,6 +45,7 @@ import { changeMyPassword } from '@/app/admin/studios/[studioId]/settings/action
 import { api } from '@/lib/api';
 import { brandInitials, withAlpha } from '@/lib/color';
 import { cn } from '@/lib/cn';
+import { useIdleHeartbeat } from '@/lib/useIdleHeartbeat';
 import type { Me } from '@/lib/types';
 
 interface NavItem {
@@ -179,6 +180,7 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
   const brand = isStudio ? me.studio!.brandColor : '#7c3aed';
 
   // All hooks must run unconditionally — keep them above the lockout branch.
+  useIdleHeartbeat();
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
