@@ -124,7 +124,7 @@ func main() {
 	studiosRepo := studios.NewRepo(pool, cipher)
 	reviewsRepo := reviews.NewRepo(pool)
 
-	tokens := identity.NewTokenIssuer(cfg.JWT.Secret, cfg.JWT.TTL, cfg.Session.IdleTimeout, cipher)
+	tokens := identity.NewTokenIssuer(cfg.JWT.Secret, cfg.JWT.TTL, cfg.Session.IdleTimeout, cfg.Session.MaxAge, cipher)
 
 	crmRepo := crm.NewRepo(pool, cipher)
 	crmExecutor := crm.NewExecutor(crmRepo)

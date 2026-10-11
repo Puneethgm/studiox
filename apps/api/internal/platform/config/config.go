@@ -150,13 +150,23 @@ type CookieConfig struct {
 }
 
 // SessionConfig backs identity.SessionStore — the Redis-tracked-by-jti
-// session that enforces revocation and an idle timeout shorter than the
-// JWT's own absolute TTL (JWTConfig.TTL). See SessionStore's doc comment:
-// unlike RedisConfig's other consumer (the AI answer cache), Redis being
-// unreachable here fails closed (requests are rejected), since this is an
-// access-control mechanism, not a perf cache.
+// session that enforces revocation and an idle timeout. See SessionStore's
+// doc comment: unlike RedisConfig's other consumer (the AI answer cache),
+// Redis being unreachable here fails closed (requests are rejected), since
+// this is an access-control mechanism, not a perf cache.
 type SessionConfig struct {
+	// IdleTimeout: a session with no authenticated request at all for this
+	// long is force-expired. As long as requests keep coming, both this
+	// deadline and the JWT's own absolute expiry (JWTConfig.TTL) slide
+	// forward on every request — see identity.TokenIssuer.Refresh.
 	IdleTimeout time.Duration
+	// MaxAge is a hard backstop measured from the original login, which
+	// sliding activity never extends: even a continuously-active session
+	// is force-logged-out once this elapses, so a long-lived (or stolen)
+	// session cookie can't stay usable indefinitely. Deliberately much
+	// longer than IdleTimeout — this exists purely as an outer security
+	// ceiling, not as the everyday logout trigger.
+	MaxAge time.Duration
 }
 
 type SuperUserConfig struct {
@@ -193,7 +203,11 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	sessionIdleTimeout, err := durationDefault("SESSION_IDLE_TIMEOUT", 15*time.Minute)
+	sessionIdleTimeout, err := durationDefault("SESSION_IDLE_TIMEOUT", 30*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	sessionMaxAge, err := durationDefault("SESSION_MAX_AGE", 7*24*time.Hour)
 	if err != nil {
 		return Config{}, err
 	}
@@ -230,6 +244,7 @@ func Load() (Config, error) {
 		},
 		Session: SessionConfig{
 			IdleTimeout: sessionIdleTimeout,
+			MaxAge:      sessionMaxAge,
 		},
 		PublicFormBaseURL: getEnv("PUBLIC_FORM_BASE_URL", "http://localhost:3000"),
 		PublicAPIBaseURL:  getEnv("PUBLIC_API_BASE_URL", "http://localhost:8080"),

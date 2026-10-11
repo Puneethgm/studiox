@@ -22,7 +22,7 @@ import (
 func TestRequireAuth_RotatesAndEnforcesIdleTimeout(t *testing.T) {
 	idleTTL := 2 * time.Second
 	sessions := testSessionStore(t, idleTTL)
-	tokens := NewTokenIssuer("test-secret-at-least-32-characters-long", time.Hour, idleTTL, testCipher(t))
+	tokens := NewTokenIssuer("test-secret-at-least-32-characters-long", time.Hour, idleTTL, 24*time.Hour, testCipher(t))
 	h := &Handler{tokens: tokens, cookie: config.CookieConfig{Name: "px_session"}, sessions: sessions}
 
 	u := &User{ID: uuid.New(), Role: RoleSuperAdmin}
@@ -86,13 +86,65 @@ func TestRequireAuth_RotatesAndEnforcesIdleTimeout(t *testing.T) {
 	}
 }
 
+// TestRequireAuth_EnforcesHardBackstopDespiteContinuousActivity proves the
+// one thing sliding activity must NOT be able to do: outrun
+// Claims.SessionMaxExpiresAt. idleTTL is deliberately huge (an hour) so
+// only the hard backstop (2s here) is in play — two back-to-back requests,
+// each rotating the session like real continuous use, still get rejected
+// once the backstop passes.
+func TestRequireAuth_EnforcesHardBackstopDespiteContinuousActivity(t *testing.T) {
+	maxAge := 2 * time.Second
+	sessions := testSessionStore(t, time.Hour)
+	tokens := NewTokenIssuer("test-secret-at-least-32-characters-long", time.Hour, time.Hour, maxAge, testCipher(t))
+	h := &Handler{tokens: tokens, cookie: config.CookieConfig{Name: "px_session"}, sessions: sessions}
+
+	u := &User{ID: uuid.New(), Role: RoleSuperAdmin}
+	token, _, jti, err := tokens.Issue(u, nil)
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	if err := sessions.Create(context.Background(), jti, u.ID); err != nil {
+		t.Fatalf("sessions.Create: %v", err)
+	}
+
+	mw := h.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// Request #1, immediately — well within every window, succeeds and
+	// rotates (simulating real activity, not a stale cookie).
+	req1 := httptest.NewRequest(http.MethodGet, "/", nil)
+	req1.AddCookie(&http.Cookie{Name: "px_session", Value: token})
+	rec1 := httptest.NewRecorder()
+	mw.ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("request #1 status = %d, want 200", rec1.Code)
+	}
+	rotated := findCookie(rec1.Result().Cookies(), "px_session")
+	if rotated == nil {
+		t.Fatal("request #1 did not set a rotated session cookie")
+	}
+
+	// Wait past the hard backstop, then present the rotated (still "fresh"
+	// by idle standards) cookie — must be rejected despite the simulated
+	// activity, proving the backstop is a real ceiling, not just advisory.
+	time.Sleep(maxAge + 300*time.Millisecond)
+	req2 := httptest.NewRequest(http.MethodGet, "/", nil)
+	req2.AddCookie(&http.Cookie{Name: "px_session", Value: rotated.Value})
+	rec2 := httptest.NewRecorder()
+	mw.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusUnauthorized {
+		t.Fatalf("request #2 (after hard backstop elapsed, despite activity) status = %d, want 401", rec2.Code)
+	}
+}
+
 // TestRequireAuth_RejectsRevokedSession confirms a session killed via
 // SessionStore.Revoke (what logout/password-change do) is rejected
 // immediately, even though its IdleExpiresAt hasn't passed — revocation is
 // the one thing the token can't self-enforce, hence it still needs Redis.
 func TestRequireAuth_RejectsRevokedSession(t *testing.T) {
 	sessions := testSessionStore(t, time.Minute)
-	tokens := NewTokenIssuer("test-secret-at-least-32-characters-long", time.Hour, time.Minute, testCipher(t))
+	tokens := NewTokenIssuer("test-secret-at-least-32-characters-long", time.Hour, time.Minute, 24*time.Hour, testCipher(t))
 	h := &Handler{tokens: tokens, cookie: config.CookieConfig{Name: "px_session"}, sessions: sessions}
 
 	u := &User{ID: uuid.New(), Role: RoleSuperAdmin}

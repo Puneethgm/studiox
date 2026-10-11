@@ -524,13 +524,22 @@ func MustClaims(ctx context.Context) *Claims {
 // RequireAuth verifies the session cookie, rejects it if the token's own
 // sliding idle deadline (Claims.IdleExpiresAt) has passed or if its jti has
 // been revoked (identity.SessionStore), and otherwise rotates the session:
-// mints a brand-new token — same absolute expiry, a freshly pushed-forward
-// idle deadline, a new jti — and sets it as the response's session cookie.
-// This is what bakes the idle timeout into the token itself rather than
-// relying solely on a Redis TTL: even without Redis, the token would
-// eventually stop working on its own past IdleExpiresAt. Redis is still
-// consulted (and still fails closed on an outage) purely for revocation,
-// since a stateless JWT can't otherwise be killed before its own expiry.
+// mints a brand-new token — both the absolute expiry and the idle deadline
+// pushed forward from now, a new jti — and sets it as the response's
+// session cookie. This is what bakes the idle timeout into the token itself
+// rather than relying solely on a Redis TTL: even without Redis, the token
+// would eventually stop working on its own past IdleExpiresAt. Redis is
+// still consulted (and still fails closed on an outage) purely for
+// revocation, since a stateless JWT can't otherwise be killed before its
+// own expiry.
+//
+// Sliding the absolute expiry forward on every request (not just the idle
+// deadline) is deliberate: as long as the user keeps making authenticated
+// requests, the session should never hit a fixed login-time ceiling on a
+// timer — only genuine inactivity (no request at all within the idle
+// window), or Claims.SessionMaxExpiresAt (a hard backstop that sliding
+// activity never extends — see its doc comment), should ever force a
+// logout.
 //
 // Deliberately does NOT revoke the old jti here — only logout and
 // password-change do that (real, explicit security events). A browser
@@ -558,6 +567,13 @@ func (h *Handler) RequireAuth(next http.Handler) http.Handler {
 			httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "session expired due to inactivity")
 			return
 		}
+		// SessionMaxExpiresAt (the hard backstop — see its doc comment) is
+		// nil only for a token issued before this field existed; treat that
+		// as already expired rather than letting it through unbounded.
+		if claims.SessionMaxExpiresAt == nil || time.Now().After(claims.SessionMaxExpiresAt.Time) {
+			httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "session expired, please sign in again")
+			return
+		}
 		if err := h.sessions.Exists(r.Context(), claims.ID); err != nil {
 			if errors.Is(err, ErrSessionNotFound) {
 				httpx.WriteError(w, http.StatusUnauthorized, "unauthorized", "session expired due to inactivity")
@@ -568,7 +584,7 @@ func (h *Handler) RequireAuth(next http.Handler) http.Handler {
 		}
 
 		u := &User{ID: claims.UserID, StudioID: claims.StudioID, Role: claims.Role, MustResetPassword: claims.MustResetPassword}
-		newToken, newJTI, err := h.tokens.Refresh(u, claims.Permissions, claims.ExpiresAt.Time)
+		newToken, newExp, newJTI, err := h.tokens.Refresh(u, claims.Permissions, claims.SessionMaxExpiresAt.Time)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 			return
@@ -582,7 +598,7 @@ func (h *Handler) RequireAuth(next http.Handler) http.Handler {
 			Value:    newToken,
 			Path:     "/",
 			Domain:   h.cookie.Domain,
-			Expires:  claims.ExpiresAt.Time,
+			Expires:  newExp,
 			HttpOnly: true,
 			Secure:   h.cookie.Secure,
 			SameSite: http.SameSiteStrictMode,

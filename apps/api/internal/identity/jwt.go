@@ -35,12 +35,18 @@ type Claims struct {
 	MustResetPassword bool `json:"mrp,omitempty"`
 	// IdleExpiresAt is this token's sliding idle deadline — the caller must
 	// make another authenticated request before this time or the session
-	// dies, even though RegisteredClaims.ExpiresAt (the absolute cap set at
-	// login) may still be far off. RequireAuth pushes this forward on every
-	// request by minting and returning a brand-new token (see
-	// TokenIssuer.Refresh), so the idle timeout is enforced by the token
-	// itself, not just by identity.SessionStore's Redis TTL.
+	// dies. RequireAuth pushes both this and RegisteredClaims.ExpiresAt
+	// forward on every request by minting and returning a brand-new token
+	// (see TokenIssuer.Refresh), so the idle timeout is enforced by the
+	// token itself, not just by identity.SessionStore's Redis TTL.
 	IdleExpiresAt *jwt.NumericDate `json:"idle_exp,omitempty"`
+	// SessionMaxExpiresAt is a hard backstop set once at the original
+	// login (TokenIssuer.Issue) and never moved by Refresh, unlike
+	// IdleExpiresAt/ExpiresAt which both slide forward on every active
+	// request. Even a continuously-active session is force-logged-out once
+	// this passes — a security ceiling so a long-lived (or stolen) session
+	// cookie can't stay usable forever, independent of how often it's used.
+	SessionMaxExpiresAt *jwt.NumericDate `json:"sess_max_exp,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -99,36 +105,48 @@ type TokenIssuer struct {
 	secret  []byte
 	ttl     time.Duration
 	idleTTL time.Duration
-	cipher  *secrets.Cipher
+	// maxAge is the hard backstop (see Claims.SessionMaxExpiresAt) — set
+	// once at Issue time, never extended by Refresh.
+	maxAge time.Duration
+	cipher *secrets.Cipher
 }
 
-func NewTokenIssuer(secret string, ttl, idleTTL time.Duration, cipher *secrets.Cipher) *TokenIssuer {
-	return &TokenIssuer{secret: []byte(secret), ttl: ttl, idleTTL: idleTTL, cipher: cipher}
+func NewTokenIssuer(secret string, ttl, idleTTL, maxAge time.Duration, cipher *secrets.Cipher) *TokenIssuer {
+	return &TokenIssuer{secret: []byte(secret), ttl: ttl, idleTTL: idleTTL, maxAge: maxAge, cipher: cipher}
 }
 
 // Issue signs and encrypts a brand-new session for u — a fresh absolute
-// expiry (now + ttl) and a fresh idle deadline (now + idleTTL). Used only
-// by login and password-change (real re-authentication events); every
-// other authenticated request rotates the existing session via Refresh
-// instead, which keeps the original absolute expiry. permissions is
-// ignored (and should be nil) for anything other than RoleStudioStaff —
-// see Claims.Permissions.
+// expiry (now + ttl), a fresh idle deadline (now + idleTTL), and a fresh
+// hard backstop (now + maxAge). Used only by login and password-change
+// (real re-authentication events); every other authenticated request
+// rotates the existing session via Refresh instead. permissions is ignored
+// (and should be nil) for anything other than RoleStudioStaff — see
+// Claims.Permissions.
 func (t *TokenIssuer) Issue(u *User, permissions []string) (token string, exp time.Time, jti string, err error) {
+	now := time.Now()
+	sessionMaxExp := now.Add(t.maxAge)
+	return t.issue(u, permissions, now.Add(t.ttl), sessionMaxExp)
+}
+
+// Refresh re-issues claims for the same session, sliding BOTH the absolute
+// expiry and the idle deadline forward from now, while preserving
+// sessionMaxExp — the hard backstop from the original login, which
+// activity never extends (pass the existing token's
+// Claims.SessionMaxExpiresAt here). Used by RequireAuth on every
+// authenticated request: as long as activity (any authenticated request)
+// keeps arriving within the idle window, the session never hits a fixed
+// ceiling from the original login except that one outer backstop — only
+// idleTTL of genuine inactivity (no requests at all), or sessionMaxExp
+// itself passing, ever ends it.
+func (t *TokenIssuer) Refresh(u *User, permissions []string, sessionMaxExp time.Time) (token string, exp time.Time, jti string, err error) {
 	exp = time.Now().Add(t.ttl)
-	return t.issue(u, permissions, exp)
+	if exp.After(sessionMaxExp) {
+		exp = sessionMaxExp // sliding never reaches past the hard backstop
+	}
+	return t.issue(u, permissions, exp, sessionMaxExp)
 }
 
-// Refresh re-issues claims for the same session, preserving absoluteExp
-// (the expiry set at the original login — sliding activity never extends
-// the absolute cap) while pushing the idle deadline forward from now. Used
-// by RequireAuth on every authenticated request to bake the idle timeout
-// into the token itself, not just into identity.SessionStore's Redis TTL.
-func (t *TokenIssuer) Refresh(u *User, permissions []string, absoluteExp time.Time) (token string, jti string, err error) {
-	token, _, jti, err = t.issue(u, permissions, absoluteExp)
-	return
-}
-
-func (t *TokenIssuer) issue(u *User, permissions []string, exp time.Time) (token string, retExp time.Time, jti string, err error) {
+func (t *TokenIssuer) issue(u *User, permissions []string, exp, sessionMaxExp time.Time) (token string, retExp time.Time, jti string, err error) {
 	now := time.Now()
 	idleExp := now.Add(t.idleTTL)
 	if idleExp.After(exp) {
@@ -136,12 +154,13 @@ func (t *TokenIssuer) issue(u *User, permissions []string, exp time.Time) (token
 	}
 	jti = uuid.NewString()
 	c := Claims{
-		UserID:            u.ID,
-		StudioID:          u.StudioID,
-		Role:              u.Role,
-		Permissions:       permissions,
-		MustResetPassword: u.MustResetPassword,
-		IdleExpiresAt:     jwt.NewNumericDate(idleExp),
+		UserID:              u.ID,
+		StudioID:            u.StudioID,
+		Role:                u.Role,
+		Permissions:         permissions,
+		MustResetPassword:   u.MustResetPassword,
+		IdleExpiresAt:       jwt.NewNumericDate(idleExp),
+		SessionMaxExpiresAt: jwt.NewNumericDate(sessionMaxExp),
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        jti,
 			Subject:   u.ID.String(),

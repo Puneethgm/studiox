@@ -55,7 +55,7 @@ func testCipher(t *testing.T) *secrets.Cipher {
 }
 
 func TestTokenIssuer_PermissionsAndMustResetPasswordSurviveRoundTrip(t *testing.T) {
-	issuer := NewTokenIssuer("test-secret-at-least-32-characters-long", time.Hour, 15*time.Minute, testCipher(t))
+	issuer := NewTokenIssuer("test-secret-at-least-32-characters-long", time.Hour, 15*time.Minute, 24*time.Hour, testCipher(t))
 
 	studioID := uuid.New()
 	u := &User{
@@ -89,9 +89,9 @@ func TestTokenIssuer_PermissionsAndMustResetPasswordSurviveRoundTrip(t *testing.
 		t.Errorf("IdleExpiresAt (%v) should be before the absolute expiry (%v)", claims.IdleExpiresAt.Time, exp)
 	}
 
-	t.Run("Refresh preserves the absolute expiry but mints a new jti and idle deadline", func(t *testing.T) {
+	t.Run("Refresh slides the absolute expiry and idle deadline forward but preserves the hard backstop, and mints a new jti", func(t *testing.T) {
 		time.Sleep(1100 * time.Millisecond) // jwt.NumericDate has 1-second precision
-		refreshed, newJTI, err := issuer.Refresh(u, claims.Permissions, claims.ExpiresAt.Time)
+		refreshed, newExp, newJTI, err := issuer.Refresh(u, claims.Permissions, claims.SessionMaxExpiresAt.Time)
 		if err != nil {
 			t.Fatalf("refresh: %v", err)
 		}
@@ -102,11 +102,18 @@ func TestTokenIssuer_PermissionsAndMustResetPasswordSurviveRoundTrip(t *testing.
 		if err != nil {
 			t.Fatalf("parse refreshed: %v", err)
 		}
-		if !newClaims.ExpiresAt.Time.Equal(claims.ExpiresAt.Time) {
-			t.Errorf("Refresh changed the absolute expiry: got %v, want %v", newClaims.ExpiresAt.Time, claims.ExpiresAt.Time)
+		if !newClaims.ExpiresAt.Time.After(claims.ExpiresAt.Time) {
+			t.Errorf("Refresh should push the absolute expiry forward: got %v, want after %v", newClaims.ExpiresAt.Time, claims.ExpiresAt.Time)
+		}
+		if newClaims.ExpiresAt.Time.Sub(newExp).Abs() > time.Second {
+			// jwt.NumericDate has 1-second precision; newExp doesn't.
+			t.Errorf("Refresh's returned exp (%v) should match the token's own ExpiresAt claim (%v)", newExp, newClaims.ExpiresAt.Time)
 		}
 		if !newClaims.IdleExpiresAt.Time.After(claims.IdleExpiresAt.Time) {
 			t.Error("Refresh should push the idle deadline forward")
+		}
+		if !newClaims.SessionMaxExpiresAt.Time.Equal(claims.SessionMaxExpiresAt.Time) {
+			t.Errorf("Refresh should NOT move the hard backstop: got %v, want %v", newClaims.SessionMaxExpiresAt.Time, claims.SessionMaxExpiresAt.Time)
 		}
 	})
 
