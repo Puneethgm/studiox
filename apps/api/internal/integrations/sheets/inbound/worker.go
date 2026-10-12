@@ -122,15 +122,31 @@ func (w *Worker) importFromSheet(ctx context.Context, cfg leads.ExternalLeadsShe
 		if sheetRowNum <= lastImported {
 			continue
 		}
-		if sheetRowNum > maxRowSeen {
-			maxRowSeen = sheetRowNum
-		}
 
 		firstName, lastName := resolveName(row, nameCol, firstNameCol, lastNameCol)
 		email := cell(row, emailCol)
 		phone := cell(row, phoneCol)
 		if firstName == "" && lastName == "" && email == "" && phone == "" {
-			continue // blank row
+			// Fully blank row — safe to mark "seen" so trailing blank rows
+			// in the sheet don't hold the watermark back forever.
+			if sheetRowNum > maxRowSeen {
+				maxRowSeen = sheetRowNum
+			}
+			continue
+		}
+		if phone == "" {
+			// Row has some data but no phone yet. The Sheets API trims each
+			// row to its last filled cell, so a row read while someone is
+			// still typing it (name/email done, phone not yet) genuinely
+			// comes back with no phone cell at all — not a mapping bug.
+			// Deliberately don't advance the watermark past this row: the
+			// next poll (15s later) re-reads it, and once a phone appears
+			// it imports with everything filled in, rather than permanently
+			// importing with a phone number that can never be messaged.
+			continue
+		}
+		if sheetRowNum > maxRowSeen {
+			maxRowSeen = sheetRowNum
 		}
 
 		// Only import rows from the current calendar month, if a date column
