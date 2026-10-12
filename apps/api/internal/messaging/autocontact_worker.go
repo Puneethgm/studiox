@@ -197,35 +197,15 @@ func (w *AutoContactWorker) processItem(ctx context.Context, it leads.OutboxItem
 		}); err != nil {
 			w.log.Error("enqueue 1-day trial followup failed", "lead", l.ID, "err", err)
 		}
-	} else {
-		// Schedule the studio's configured no-reply follow-up cascade (Decision
-		// Trees → Follow-ups tab). Each step fires only if the lead hasn't
-		// replied yet — CancelPendingFollowupJobsForLead wipes any still-pending
-		// steps the moment the lead sends a genuine reply. An empty list means
-		// this studio has follow-ups turned off.
-		steps, err := w.msgRepo.ListFollowupSteps(ctx, l.StudioID)
-		if err != nil {
-			w.log.Error("load followup steps failed", "studio", l.StudioID, "err", err)
-		}
-		for _, s := range steps {
-			text, err := resolveFollowupText(ctx, w.msgRepo, l.StudioID, s)
-			if err != nil {
-				w.log.Error("resolve followup text failed", "lead", l.ID, "step", s.StepOrder, "err", err)
-				continue
-			}
-			body := renderGreeting(text, studio, l)
-			if _, err := w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
-				StudioID:       l.StudioID,
-				ConversationID: conv.ID,
-				Body:           body,
-				SourceKind:     SourceAutomation,
-				SourceRef:      fmt.Sprintf("lead:%s:followup:%d", l.ID.String(), s.StepOrder),
-				ScheduledFor:   time.Now().UTC().Add(time.Duration(s.DelayMinutes) * time.Minute),
-			}); err != nil {
-				w.log.Error("schedule followup failed", "lead", l.ID, "step", s.StepOrder, "err", err)
-			}
-		}
 	}
+	// Deliberately no longer auto-scheduling the studio's configured
+	// no-reply follow-up cascade (the scripted "still thinking about
+	// joining?" / "spots are limited" / ... messages on a fixed timer).
+	// AI stays on via continueAI above and will respond naturally to
+	// whatever the lead actually says — it no longer also queues a
+	// pre-written drip campaign in parallel. A studio can still send that
+	// cascade manually from Manual Actions if they want it for a specific
+	// lead.
 
 	return nil
 }
