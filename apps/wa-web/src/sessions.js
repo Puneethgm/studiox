@@ -44,6 +44,14 @@ const HISTORY_SYNC_TIMEOUT_MS = 15 * 60_000;
 // this many ms pass with no new chunk arriving at all; reset on every chunk.
 const HISTORY_SETTLE_MS = 5_000;
 
+// How long to wait after issuing a round of fetchMessageHistory requests
+// before trusting "no chunk yet" as "nothing's coming" — issuing requests
+// for ~70 chats at once took over 5s in testing before the first response
+// chunk arrived, longer than HISTORY_SETTLE_MS, which was firing (and
+// wrongly concluding the import) before responses had a real chance to
+// start. See _armPostExpandGrace.
+const HISTORY_EXPAND_GRACE_MS = 15_000;
+
 export class SessionManager {
   constructor({ log, projectxApiUrl }) {
     this.log = log;
@@ -377,6 +385,25 @@ export class SessionManager {
     }, HISTORY_SETTLE_MS);
   }
 
+  // Same idea as _resetHistorySettleTimer, but with a much longer delay —
+  // used right after issuing a round of fetchMessageHistory requests, whose
+  // responses can take noticeably longer to start arriving than the tight
+  // HISTORY_SETTLE_MS window allows for (see HISTORY_EXPAND_GRACE_MS). If a
+  // real response chunk lands before this fires, the message handler's own
+  // call to _resetHistorySettleTimer clears and replaces this with the
+  // normal short timer — this one only ever fires standalone when NOTHING
+  // came back at all for the whole grace period.
+  _armPostExpandGrace(studioId) {
+    const entry = this.sessions.get(studioId);
+    if (!entry || entry.historyState !== 'pending') return;
+    if (entry.historySettleTimer) clearTimeout(entry.historySettleTimer);
+    entry.historySettleTimer = setTimeout(() => {
+      this._onHistorySettled(studioId).catch((err) =>
+        this.log.error({ err, studioId }, 'wa-web: history import failed'),
+      );
+    }, HISTORY_EXPAND_GRACE_MS);
+  }
+
   _totalBuffered(entry) {
     let n = 0;
     for (const msgs of entry.historyBuffer.values()) n += msgs.length;
@@ -415,11 +442,19 @@ export class SessionManager {
         await this._concludeHistoryImport(studioId);
         return;
       }
-      // Give WhatsApp a chance to respond — the fetchMessageHistory calls
-      // only enqueue the requests; the actual older messages arrive later
-      // as further messaging-history.set chunks, which re-arm this same
-      // settle timer when they land.
-      this._resetHistorySettleTimer(studioId);
+      // fetchMessageHistory only enqueues the requests — the actual older
+      // messages come back later as further messaging-history.set chunks,
+      // and responses for a round of ~70 chats took over 5s to even start
+      // arriving in testing (confirmed: requests issued, then a 5.3s gap
+      // before the first response chunk landed). Arming the normal
+      // HISTORY_SETTLE_MS (5s) "quiet" timer immediately here fired and
+      // concluded the import RIGHT as real responses were about to start
+      // flooding in, silently losing that chat's actual history. A longer
+      // one-time grace timer absorbs that startup latency; the instant any
+      // response chunk actually lands, the handler's own
+      // _resetHistorySettleTimer call below replaces this with the tight
+      // 5s-quiet timer, so once real traffic resumes detection stays sharp.
+      this._armPostExpandGrace(studioId);
       return;
     }
 
