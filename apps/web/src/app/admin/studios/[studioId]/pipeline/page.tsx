@@ -6,6 +6,7 @@ import { LEAD_STATUSES } from '@/lib/types';
 import { AutoRefresh } from '@/components/AutoRefresh';
 import { PipelineBoard } from './PipelineBoard';
 import { AddLeadButton } from '../leads/AddLeadButton';
+import { PipelineSearch } from './PipelineSearch';
 
 interface ListResp {
   leads: Lead[];
@@ -30,10 +31,14 @@ const COLUMN_CONFIG: Record<LeadStatus, { color: string; pill: string; pillText:
 
 export default async function PipelinePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ studioId: string }>;
+  searchParams: Promise<{ search?: string }>;
 }) {
   const { studioId } = await params;
+  const { search } = await searchParams;
+  const searchQs = search ? `&search=${encodeURIComponent(search)}` : '';
 
   const [stats, coldRes, campaignsResp, ...buckets] = await Promise.all([
     serverFetch<LeadStats>(`/api/v1/studios/${studioId}/leads/stats`),
@@ -47,12 +52,19 @@ export default async function PipelinePage({
     }),
     ...LEAD_STATUSES.map((s) =>
       serverFetch<ListResp>(
-        `/api/v1/studios/${studioId}/leads?status=${s}&limit=${COLUMN_CAP}`,
+        `/api/v1/studios/${studioId}/leads?status=${s}&limit=${COLUMN_CAP}${searchQs}`,
       ),
     ),
   ]);
-  const coldLeads = coldRes.leads ?? [];
   const campaigns = campaignsResp.campaigns || [];
+  // The cold-leads endpoint has no search param of its own — filter the
+  // (typically small) result in-memory the same way, matching name or
+  // phone, so search still covers the Cold column.
+  const searchLower = (search ?? '').trim().toLowerCase();
+  const coldLeads = (coldRes.leads ?? []).filter((l) => {
+    if (!searchLower) return true;
+    return (l.name ?? '').toLowerCase().includes(searchLower) || (l.phone ?? '').toLowerCase().includes(searchLower);
+  });
 
   const byStatus = LEAD_STATUSES.reduce(
     (acc, status, i) => {
@@ -92,6 +104,7 @@ export default async function PipelinePage({
 
         {/* Stage count pills */}
         <div className="flex flex-wrap items-center gap-2">
+          <PipelineSearch search={search} />
           <AddLeadButton studioId={studioId} campaigns={campaigns} />
           {LEAD_STATUSES.map((status) => {
             const cfg = COLUMN_CONFIG[status];
