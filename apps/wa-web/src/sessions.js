@@ -15,21 +15,23 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const AUTH_DIR = process.env.AUTH_DIR || path.join(__dirname, '..', 'auth');
 
-// Per-chat message cap for backfill — keeps a single very long-running chat
-// from ballooning one HTTP payload, not a limit on how many chats import.
-// Every chat WhatsApp hands us in history sync gets imported (see
-// _concludeHistoryImport below) — there is deliberately no chat-count cap
-// anymore; a studio's real chat list shouldn't be truncated to an arbitrary
-// top-N.
+// Per-request page size for backfill — keeps one HTTP payload small for a
+// chat with a lot of history. A chat longer than this is paged across
+// multiple POSTs (see _concludeHistoryImport below), not truncated — every
+// message WhatsApp hands us gets imported, same as there being deliberately
+// no chat-count cap on how many chats import.
 const BACKFILL_PER_CHAT_LIMIT = 200;
 
 // Overall safety net — WhatsApp relays history through the user's primary
 // phone, so it only arrives once that phone is online, and it can take
-// anywhere from seconds to a couple of minutes for a real account with real
-// history. This timer only fires to conclude the import if NOT EVEN ONE
-// history-sync chunk ever arrives within a generous window (e.g. the
-// primary phone stays offline), so the UI isn't stuck spinning forever.
-const HISTORY_SYNC_TIMEOUT_MS = 3 * 60_000;
+// anywhere from seconds to several minutes for a real account with a lot of
+// history across many chats. This is also a hard ceiling on the whole sync:
+// if chunks keep arriving steadily (each within HISTORY_SETTLE_MS of the
+// last) for longer than this, the import is cut off here even though
+// WhatsApp was still sending real history — so it needs to be generous for
+// accounts with a large chat history, not just long enough for "no chunk
+// ever arrived at all".
+const HISTORY_SYNC_TIMEOUT_MS = 15 * 60_000;
 
 // Baileys' `isLatest` flag on a 'messaging-history.set' chunk is NOT a
 // reliable "the whole sync is done" signal — confirmed against real traffic:
@@ -262,24 +264,31 @@ export class SessionManager {
       );
       for (const [jid, messages] of chatEntries) {
         if (messages.length === 0) continue;
-        try {
-          const res = await fetch(`${this.projectxApiUrl}/internal/wa-web/backfill`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              studioId,
-              messages: messages.slice(0, BACKFILL_PER_CHAT_LIMIT),
-              displayName: entry.historyDisplayNames.get(jid) || undefined,
-            }),
-          });
-          if (res.ok) {
-            const body = await res.json().catch(() => ({}));
-            totalImported += body.imported || 0;
-          } else {
-            this.log.warn({ studioId, status: res.status }, 'wa-web: history import chat push non-ok');
+        // Page through in BACKFILL_PER_CHAT_LIMIT-sized batches instead of
+        // truncating to the first N — a long-running chat (months/years of
+        // history) must not have its older messages silently dropped just to
+        // keep one HTTP payload small.
+        for (let offset = 0; offset < messages.length; offset += BACKFILL_PER_CHAT_LIMIT) {
+          const batch = messages.slice(offset, offset + BACKFILL_PER_CHAT_LIMIT);
+          try {
+            const res = await fetch(`${this.projectxApiUrl}/internal/wa-web/backfill`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                studioId,
+                messages: batch,
+                displayName: entry.historyDisplayNames.get(jid) || undefined,
+              }),
+            });
+            if (res.ok) {
+              const body = await res.json().catch(() => ({}));
+              totalImported += body.imported || 0;
+            } else {
+              this.log.warn({ studioId, status: res.status }, 'wa-web: history import chat push non-ok');
+            }
+          } catch (err) {
+            this.log.warn({ err: err.message, studioId }, 'wa-web: history import chat failed, continuing');
           }
-        } catch (err) {
-          this.log.warn({ err: err.message, studioId }, 'wa-web: history import chat failed, continuing');
         }
       }
 
