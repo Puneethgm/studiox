@@ -362,18 +362,91 @@ export class SessionManager {
     return undefined;
   }
 
-  // Restarts the "conclude the import" countdown — called on every
+  // Restarts the "chunk stream went quiet" countdown — called on every
   // history-sync chunk (see messaging-history.set), including empty ones,
-  // so the import only concludes once the chunk stream actually goes quiet.
+  // so _onHistorySettled only runs once the stream actually goes quiet, not
+  // mid-burst.
   _resetHistorySettleTimer(studioId) {
     const entry = this.sessions.get(studioId);
     if (!entry || entry.historyState !== 'pending') return;
     if (entry.historySettleTimer) clearTimeout(entry.historySettleTimer);
     entry.historySettleTimer = setTimeout(() => {
-      this._concludeHistoryImport(studioId).catch((err) =>
+      this._onHistorySettled(studioId).catch((err) =>
         this.log.error({ err, studioId }, 'wa-web: history import failed'),
       );
     }, HISTORY_SETTLE_MS);
+  }
+
+  _totalBuffered(entry) {
+    let n = 0;
+    for (const msgs of entry.historyBuffer.values()) n += msgs.length;
+    return n;
+  }
+
+  // Fires once the chunk stream has been quiet for HISTORY_SETTLE_MS.
+  // WhatsApp's automatic post-pairing push is only a shallow "recent
+  // messages" preview per chat (confirmed against real traffic — often
+  // exactly 1 message for a chat that has dozens on the phone), not real
+  // full history. Getting further back requires actively requesting more
+  // via sock.fetchMessageHistory per chat (see _expandHistoryOnce) and
+  // waiting for the stream to settle again — this function is the loop
+  // that keeps doing that until either nothing new comes back or the round
+  // budget (historyExpandRoundsLeft) runs out, then hands off to the
+  // existing _concludeHistoryImport to actually flush everything buffered.
+  async _onHistorySettled(studioId) {
+    const entry = this.sessions.get(studioId);
+    if (!entry || entry.historyState !== 'pending') return;
+
+    const bufferedNow = this._totalBuffered(entry);
+    if (entry.historyExpandBufferedAtLastRound !== undefined && bufferedNow <= entry.historyExpandBufferedAtLastRound) {
+      // The last round of fetchMessageHistory calls didn't yield a single
+      // new message — every chat is exhausted (or WhatsApp just isn't
+      // sending more) — so asking again would just burn round budget for
+      // nothing. Finalize now instead.
+      await this._concludeHistoryImport(studioId);
+      return;
+    }
+
+    if (entry.historyExpandRoundsLeft > 0 && entry.historyOldestPerChat.size > 0) {
+      entry.historyExpandRoundsLeft--;
+      entry.historyExpandBufferedAtLastRound = bufferedNow;
+      const requested = await this._expandHistoryOnce(studioId);
+      if (requested === 0) {
+        await this._concludeHistoryImport(studioId);
+        return;
+      }
+      // Give WhatsApp a chance to respond — the fetchMessageHistory calls
+      // only enqueue the requests; the actual older messages arrive later
+      // as further messaging-history.set chunks, which re-arm this same
+      // settle timer when they land.
+      this._resetHistorySettleTimer(studioId);
+      return;
+    }
+
+    await this._concludeHistoryImport(studioId);
+  }
+
+  // Actively asks WhatsApp for more of each known chat's history, using the
+  // oldest message buffered for it so far as the "everything before this"
+  // cursor. Returns how many chats a request was actually sent for (0 means
+  // there was nothing left to expand, e.g. every call failed).
+  async _expandHistoryOnce(studioId) {
+    const entry = this.sessions.get(studioId);
+    if (!entry || !entry.sock) return 0;
+    let requested = 0;
+    for (const [jid, oldest] of entry.historyOldestPerChat.entries()) {
+      try {
+        await entry.sock.fetchMessageHistory(100, oldest.key, oldest.timestamp);
+        requested++;
+      } catch (err) {
+        this.log.warn({ err: err.message, studioId, jid }, 'wa-web: fetchMessageHistory failed, skipping this chat');
+      }
+    }
+    this.log.info(
+      { studioId, requested, chatsKnown: entry.historyOldestPerChat.size, roundsLeft: entry.historyExpandRoundsLeft },
+      'wa-web: history deep-fetch round requested',
+    );
+    return requested;
   }
 
   async _startSession(studioId, { reconnectAttempts = 0 } = {}) {
@@ -408,6 +481,18 @@ export class SessionManager {
       // HandleInboundWAWebBackfill on the Go side, which already keep
       // history import from spawning phantom leads on purpose).
       historyDisplayNames: new Map(),
+      // jid -> { key: WAMessageKey, timestamp } for the OLDEST message seen
+      // so far in that chat. WhatsApp's automatic post-pairing push is only
+      // a shallow "recent messages" preview per chat (often just 1), not
+      // real full history — going further back requires actively calling
+      // sock.fetchMessageHistory(count, oldestMsgKey, oldestMsgTimestamp)
+      // per chat, using this as the cursor (see _expandHistoryOnce below).
+      historyOldestPerChat: new Map(),
+      // Counts down each deep-fetch round in _expandHistoryOnce — a hard
+      // cap (independent of HISTORY_SYNC_TIMEOUT_MS) so one chat with
+      // genuinely thousands of messages can't keep the whole sync spinning
+      // forever; 25 rounds * ~100 msgs/chat is generous for a real account.
+      historyExpandRoundsLeft: 25,
       // 'pending' while listening for Baileys' one-time post-pairing history
       // push; 'done' once concluded (see _concludeHistoryImport); 'inert' for
       // a resumed (non-fresh) session, which never gets one, so there's
@@ -710,14 +795,23 @@ export class SessionManager {
           if (unmatchedSample.length < 10) unmatchedSample.push({ rawJid, jid, fromMe: !!msg.key.fromMe, pushName: msg.pushName });
         }
         const bucket = entry.historyBuffer.get(jid) || [];
+        const ts = Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000);
         bucket.push({
           from: jid,
           text,
           messageId: msg.key.id,
-          timestamp: Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000),
+          timestamp: ts,
           fromMe: !!msg.key.fromMe,
         });
         entry.historyBuffer.set(jid, bucket);
+        // Track the oldest message's own WAMessageKey (remoteJid as
+        // WhatsApp sent it, not our resolved jid — fetchMessageHistory
+        // needs the original key shape) so a later deep-fetch round can use
+        // it as the "give me what's before this" cursor.
+        const oldest = entry.historyOldestPerChat.get(jid);
+        if (!oldest || ts < oldest.timestamp) {
+          entry.historyOldestPerChat.set(jid, { key: msg.key, timestamp: ts });
+        }
       }
       // Diagnostic: for every message that DIDN'T resolve to a known name,
       // show exactly what jid we looked it up under vs what's actually in
