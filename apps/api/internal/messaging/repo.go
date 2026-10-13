@@ -614,6 +614,44 @@ func (r *Repo) SetLeadNeedsManualFollowup(ctx context.Context, leadID uuid.UUID,
 // conversations
 // ============================================================
 
+// GetConversationByLeadID finds the most recently active conversation
+// already linked to a lead, regardless of which contact-identity value it
+// was opened under. Needed because the same phone number can be stored
+// under more than one identity value for WhatsApp Web (inbound messages
+// land under the raw JID, e.g. "919945417287@c.us", while code paths that
+// start from leads.Lead derive a plain-digits value via sanitizePhone) —
+// looking up by lead_id instead of re-deriving the contact value avoids
+// opening a second, empty conversation next to one that already has real
+// history. Returns nil, nil (not an error) when the lead has no conversation yet.
+func (r *Repo) GetConversationByLeadID(ctx context.Context, studioID, leadID uuid.UUID) (*Conversation, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT id, channel_account_id, contact_identity_id, external_thread_id,
+		       status, lead_id, assigned_to, unread_count,
+		       last_message_at, last_message_preview, last_message_direction,
+		       created_at, updated_at, ai_enabled
+		FROM conversations
+		WHERE studio_id = $1 AND lead_id = $2
+		ORDER BY last_message_at DESC
+		LIMIT 1
+	`, studioID, leadID)
+	out := &Conversation{StudioID: studioID}
+	var dir *string
+	if err := row.Scan(&out.ID, &out.ChannelAccountID, &out.ContactIdentityID, &out.ExternalThreadID,
+		&out.Status, &out.LeadID, &out.AssignedTo, &out.UnreadCount,
+		&out.LastMessageAt, &out.LastMessagePreview, &dir,
+		&out.CreatedAt, &out.UpdatedAt, &out.AIEnabled); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get conversation by lead id: %w", err)
+	}
+	if dir != nil {
+		d := Direction(*dir)
+		out.LastMessageDirection = &d
+	}
+	return out, nil
+}
+
 // FindOrCreateConversation: same channel + same external thread = one row.
 func (r *Repo) FindOrCreateConversation(ctx context.Context, tx pgx.Tx, studioID, channelID, identityID uuid.UUID, externalThreadID string) (*Conversation, error) {
 	row := tx.QueryRow(ctx, `

@@ -129,22 +129,34 @@ func (w *AIWorker) enableAIForOneLead(ctx context.Context, studioID, leadID uuid
 	if err != nil {
 		return fmt.Errorf("lead not found")
 	}
-	phone := sanitizePhone(lead.Phone)
-	if phone == "" {
-		return fmt.Errorf("lead has no phone number")
-	}
 	if lead.DNDEnabled {
 		return fmt.Errorf("lead has Do Not Disturb enabled")
 	}
 
-	conv, err := w.msgSvc.CreateConversation(ctx, studioID, CreateConversationInput{
-		ChannelKind:  channelKind,
-		ContactValue: phone,
-		DisplayName:  lead.Name,
-		LeadID:       &leadID,
-	})
+	// Reuse the lead's existing conversation when it has one (e.g. a WhatsApp
+	// Web backfill-imported thread) rather than re-deriving a contact value
+	// from lead.Phone — WhatsApp Web inbound messages are stored under the
+	// raw JID ("919945417287@c.us"), which differs from the plain-digits
+	// value sanitizePhone produces, so creating fresh here would silently
+	// open a second, empty conversation next to the one with real history.
+	conv, err := w.msgRepo.GetConversationByLeadID(ctx, studioID, leadID)
 	if err != nil {
-		return fmt.Errorf("failed to open conversation: %w", err)
+		return fmt.Errorf("failed to look up existing conversation: %w", err)
+	}
+	if conv == nil {
+		phone := sanitizePhone(lead.Phone)
+		if phone == "" {
+			return fmt.Errorf("lead has no phone number")
+		}
+		conv, err = w.msgSvc.CreateConversation(ctx, studioID, CreateConversationInput{
+			ChannelKind:  channelKind,
+			ContactValue: phone,
+			DisplayName:  lead.Name,
+			LeadID:       &leadID,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to open conversation: %w", err)
+		}
 	}
 
 	// Cap at aiHistoryWindow-ish depth — enough real context for a good
