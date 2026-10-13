@@ -733,15 +733,19 @@ export function TreeEditor({ studioId, initialTree }: Props) {
                 </select>
               </label>
 
-              {(form.action === 'reply' || form.action === 'change_status') && (
+              {(form.action === 'reply' || form.action === 'change_status' || form.action === 'escalate_human') && (
                 <label className="block space-y-1">
-                  <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Reply template</span>
+                  <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                    {form.action === 'escalate_human' ? 'Message before handover' : 'Reply template'}
+                  </span>
                   <textarea
                     className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30 resize-none"
                     rows={4}
                     placeholder={
                       form.action === 'change_status'
                         ? 'Optional: e.g. "Hi {{lead_name}}, your status has been updated!"'
+                        : form.action === 'escalate_human'
+                        ? 'Optional: e.g. "Let me get one of our team to help you with that — one moment!"'
                         : 'Hi {{lead_name}}, great question! Our plans start at…'
                     }
                     value={form.replyTemplate}
@@ -750,6 +754,7 @@ export function TreeEditor({ studioId, initialTree }: Props) {
                   <p className="text-xs text-gray-400">
                     Use &#123;&#123;lead_name&#125;&#125;, &#123;&#123;lead_first_name&#125;&#125;, &#123;&#123;studio_name&#125;&#125;
                     {form.action === 'change_status' && ' — leave blank for a silent status update'}
+                    {form.action === 'escalate_human' && ' — sent to the customer right before the conversation hands off to a human, leave blank to escalate silently'}
                   </p>
                 </label>
               )}
