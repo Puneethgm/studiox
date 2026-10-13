@@ -1236,15 +1236,20 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	// link?" are asking, not confirming) — or (b) they give a bare
 	// affirmation ("yes"/"keen") replying to a bot message that had just
 	// offered a trial.
+	//
+	// Deliberately an EXACT match only, not a prefix/contains check: "yes "
+	// used to match anything starting with "yes" (e.g. "Yes I would like
+	// directions"), hijacking an unrelated question into a trial-confirm
+	// shortcut before the AI ever saw it. A real affirmation is short —
+	// anything with more content after it is a different topic and should
+	// go through the AI's normal reasoning instead.
 	if lead != nil {
 		lowerMsg := strings.ToLower(strings.TrimSpace(msg.Body))
 		explicitPurchaseIntent := isExplicitPurchaseIntent(lowerMsg)
 		isAffirmative := lowerMsg == "yes" || lowerMsg == "yeah" || lowerMsg == "sure" ||
 			lowerMsg == "ok" || lowerMsg == "okay" || lowerMsg == "yep" || lowerMsg == "yup" ||
 			lowerMsg == "y" || lowerMsg == "keen" || lowerMsg == "im keen" || lowerMsg == "i'm keen" ||
-			strings.HasPrefix(lowerMsg, "yes ") || strings.HasPrefix(lowerMsg, "sure ") ||
-			strings.Contains(lowerMsg, "i'm keen") || strings.Contains(lowerMsg, "im keen") ||
-			strings.Contains(lowerMsg, "interested")
+			lowerMsg == "interested" || lowerMsg == "i'm interested" || lowerMsg == "im interested"
 
 		if explicitPurchaseIntent {
 			firstName := lead.FirstName
