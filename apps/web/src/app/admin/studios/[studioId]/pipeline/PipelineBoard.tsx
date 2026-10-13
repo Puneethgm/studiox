@@ -22,6 +22,7 @@ import type { ColdLead, Lead, LeadStatus } from '@/lib/types';
 import { LEAD_STATUSES, LEAD_STATUS_LABELS } from '@/lib/types';
 import { updatePipelineStatus, movePipelineColdLead } from '../leads/actions';
 import { DeleteLeadButton } from '../leads/DeleteLeadButton';
+import { LeadRowCheckbox } from '../leads/LeadRowCheckbox';
 import { ReengageModal } from './ReengageModal';
 
 // Per-status visual config
@@ -631,6 +632,15 @@ function LeadCardVisual({
           onPointerDown={(e) => e.stopPropagation()}
         >
           <DeleteLeadButton studioId={studioId} leadId={lead.id} leadName={lead.name} />
+        </div>
+      )}
+
+      {/* Select — same pointerdown-stop reasoning as the delete button
+          above; LeadRowCheckbox already handles its own click
+          stopPropagation/preventDefault and stays visible once checked. */}
+      {studioId && !dragging && (
+        <div className="absolute left-2 top-2 z-10" onPointerDown={(e) => e.stopPropagation()}>
+          <LeadRowCheckbox leadId={lead.id} />
         </div>
       )}
 

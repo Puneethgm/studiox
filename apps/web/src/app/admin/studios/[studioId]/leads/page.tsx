@@ -15,6 +15,7 @@ import { DeleteLeadButton } from './DeleteLeadButton';
 import { EnableAIButton } from './EnableAIButton';
 import { LeadSelectionProvider } from './LeadSelectionContext';
 import { LeadRowCheckbox } from './LeadRowCheckbox';
+import { SelectAllCheckbox } from './SelectAllCheckbox';
 import { EnableAIForSelectedBar } from './EnableAIForSelectedBar';
 import { AutoRefresh } from '@/components/AutoRefresh';
 import { HeaderActions } from '@/components/HeaderActions';
@@ -207,7 +208,10 @@ export default async function LeadsPage({
             style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 4px 16px rgba(0,0,0,0.04)' }}
           >
             {/* Column headers */}
-            <div className="grid grid-cols-[1fr,1.1fr,110px,80px,80px,110px,110px,100px,120px] items-center gap-4 border-b border-white/20 bg-white/20 px-5 py-3 dark:border-white/5 dark:bg-white/5">
+            <div className="relative grid grid-cols-[1fr,1.1fr,110px,80px,80px,110px,110px,100px,120px] items-center gap-4 border-b border-white/20 bg-white/20 py-3 pl-9 pr-5 dark:border-white/5 dark:bg-white/5">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2">
+                <SelectAllCheckbox leadIds={data.leads.map((l) => l.id)} />
+              </div>
               <span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Name</span>
               <span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Contact</span>
               <span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Campaign</span>
@@ -222,7 +226,15 @@ export default async function LeadsPage({
             <ul className="divide-y divide-white/10 dark:divide-white/5">
               {data.leads.map((l) => (
                 <li key={l.id} className="group/row relative">
-                  <LeadRowCheckbox leadId={l.id} />
+                  {/* Reserves its own lane on the left (pl-9 below on the
+                      Link, instead of overlapping the avatar) so the
+                      checkbox never collides with row content whether it's
+                      showing on hover or pinned visible by being checked. */}
+                  <div className="pointer-events-none absolute left-3 top-1/2 z-10 -translate-y-1/2">
+                    <div className="pointer-events-auto">
+                      <LeadRowCheckbox leadId={l.id} />
+                    </div>
+                  </div>
                   <div className="pointer-events-none absolute right-3 top-1/2 z-10 -translate-y-1/2 opacity-0 transition-opacity group-hover/row:opacity-100">
                     <div className="pointer-events-auto">
                       <DeleteLeadButton studioId={studioId} leadId={l.id} leadName={l.name} />
@@ -230,7 +242,7 @@ export default async function LeadsPage({
                   </div>
                   <Link
                     href={`/admin/studios/${studioId}/leads/${l.id}`}
-                    className="group grid grid-cols-[1fr,1.1fr,110px,80px,80px,110px,110px,100px,120px] items-center gap-4 px-5 py-3.5 transition-all hover:bg-white/30 dark:hover:bg-white/5"
+                    className="group grid grid-cols-[1fr,1.1fr,110px,80px,80px,110px,110px,100px,120px] items-center gap-4 py-3.5 pl-9 pr-5 transition-all hover:bg-white/30 dark:hover:bg-white/5"
                   >
                     {/* Name */}
                     <div className="flex min-w-0 items-center gap-3">

@@ -2,15 +2,16 @@
 
 import { useLeadSelection } from './LeadSelectionContext';
 
+// Unpositioned on purpose — the Leads list (row) and Pipeline board (card)
+// need the checkbox in different spots, so each caller wraps this in its
+// own positioned element instead of this component picking a fixed one.
 export function LeadRowCheckbox({ leadId }: { leadId: string }) {
   const { selected, toggle } = useLeadSelection();
   const checked = selected.has(leadId);
 
   return (
     <div
-      className={`absolute left-2 top-1/2 z-10 -translate-y-1/2 transition-opacity ${
-        checked ? 'opacity-100' : 'opacity-0 group-hover/row:opacity-100'
-      }`}
+      className={`transition-opacity ${checked ? 'opacity-100' : 'opacity-0 group-hover/row:opacity-100 group-hover:opacity-100'}`}
       onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
     >
       <input

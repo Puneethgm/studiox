@@ -7,6 +7,8 @@ import { AutoRefresh } from '@/components/AutoRefresh';
 import { PipelineBoard } from './PipelineBoard';
 import { AddLeadButton } from '../leads/AddLeadButton';
 import { PipelineSearch } from './PipelineSearch';
+import { LeadSelectionProvider } from '../leads/LeadSelectionContext';
+import { EnableAIForSelectedBar } from '../leads/EnableAIForSelectedBar';
 
 interface ListResp {
   leads: Lead[];
@@ -92,6 +94,7 @@ export default async function PipelinePage({
     stats.total > 0 ? Math.round((memberCount / stats.total) * 100) : 0;
 
   return (
+    <LeadSelectionProvider>
     <div className="flex h-[calc(100vh-10rem)] lg:h-[calc(100vh-11rem)] flex-col gap-4">
       <AutoRefresh intervalMs={4000} />
 
@@ -148,6 +151,9 @@ export default async function PipelinePage({
           coldLeads={coldLeads}
         />
       )}
+
+      <EnableAIForSelectedBar studioId={studioId} />
     </div>
+    </LeadSelectionProvider>
   );
 }
