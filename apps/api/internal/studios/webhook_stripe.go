@@ -1105,13 +1105,17 @@ func (h *StripeWebhookHandler) applyMembershipConfirmed(ctx context.Context, stu
 			slog.Warn("stripe: failed to fetch subscription for renewal date", "err", errSub, "subscription_id", subID)
 		}
 	}
+	memberCurrency := studio.Currency
+	if memberCurrency == "" {
+		memberCurrency = "SGD"
+	}
 	if _, subErr := h.svc.repo.Pool().Exec(ctx, `
 		INSERT INTO user_subscriptions
 			(studio_id, lead_id, plan_id, plan_name, amount_paid, currency, payment_id,
 			 payment_status, subscription_status, stripe_subscription_id, stripe_customer_id,
 			 billing_interval, billing_interval_count, next_renewal_at, receipt_url)
-		VALUES ($1, $2, $3, $4, $5, 'SGD', $6, 'paid', $7, $8, $9, $10, $11, $12, $13)
-	`, studio.ID, leadID, planIDStr, planName, amountPaid, paymentID, subStatus, subID, custID, interval, intervalCount, nextRenewalAt, receiptURL); subErr != nil {
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'paid', $8, $9, $10, $11, $12, $13, $14)
+	`, studio.ID, leadID, planIDStr, planName, amountPaid, memberCurrency, paymentID, subStatus, subID, custID, interval, intervalCount, nextRenewalAt, receiptURL); subErr != nil {
 		slog.Warn("stripe: failed to record member subscription", "err", subErr, "lead_id", leadID)
 	}
 

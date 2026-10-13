@@ -64,6 +64,7 @@ type studioResponse struct {
 	KnowledgeBaseFiles            []KnowledgeBaseFile `json:"knowledgeBaseFiles"`
 	GreetingMessage               string              `json:"greetingMessage"`
 	TrialAmountSGD                int                 `json:"trialAmountSgd"`
+	Currency                      string              `json:"currency"`
 	BookingHeroImageURL           string              `json:"bookingHeroImageUrl"`
 	BookingHeroVideoURL           string              `json:"bookingHeroVideoUrl"`
 	TrialConfirmationMessage      string              `json:"trialConfirmationMessage"`
@@ -113,6 +114,7 @@ func toStudioResponse(s *Studio) studioResponse {
 		KnowledgeBaseFiles:            s.KnowledgeBaseFiles,
 		GreetingMessage:               s.GreetingMessage,
 		TrialAmountSGD:                s.TrialAmountSGD,
+		Currency:                      s.Currency,
 		BookingHeroImageURL:           s.BookingHeroImageURL,
 		BookingHeroVideoURL:           s.BookingHeroVideoURL,
 		TrialConfirmationMessage:      s.TrialConfirmationMessage,
@@ -390,6 +392,7 @@ type updateReq struct {
 	TrialAmountSGD                *int                 `json:"trialAmountSgd"`
 	TrialAmountINR                *int                 `json:"trialAmountInr"`
 	TrialAmountUSD                *int                 `json:"trialAmountUsd"`
+	Currency                      *string              `json:"currency"`
 	BookingHeroImageURL           *string              `json:"bookingHeroImageUrl"`
 	BookingHeroVideoURL           *string              `json:"bookingHeroVideoUrl"`
 	TrialConfirmationMessage      *string              `json:"trialConfirmationMessage"`
@@ -456,6 +459,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		KnowledgeBaseFiles:            existing.KnowledgeBaseFiles,
 		GreetingMessage:               existing.GreetingMessage,
 		TrialAmountSGD:                existing.TrialAmountSGD,
+		Currency:                      existing.Currency,
 		BookingHeroImageURL:           existing.BookingHeroImageURL,
 		BookingHeroVideoURL:           existing.BookingHeroVideoURL,
 		TrialConfirmationMessage:      existing.TrialConfirmationMessage,
@@ -528,6 +532,9 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.TrialAmountSGD != nil {
 		input.TrialAmountSGD = *req.TrialAmountSGD
+	}
+	if req.Currency != nil {
+		input.Currency = *req.Currency
 	}
 	if req.BookingHeroImageURL != nil {
 		input.BookingHeroImageURL = *req.BookingHeroImageURL
@@ -695,6 +702,7 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 		KnowledgeBaseFiles:            existing.KnowledgeBaseFiles,
 		GreetingMessage:               existing.GreetingMessage,
 		TrialAmountSGD:                existing.TrialAmountSGD,
+		Currency:                      existing.Currency,
 		BookingHeroImageURL:           existing.BookingHeroImageURL,
 		BookingHeroVideoURL:           existing.BookingHeroVideoURL,
 		TrialConfirmationMessage:      existing.TrialConfirmationMessage,
@@ -767,6 +775,9 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.TrialAmountSGD != nil {
 		input.TrialAmountSGD = *req.TrialAmountSGD
+	}
+	if req.Currency != nil {
+		input.Currency = *req.Currency
 	}
 
 	if req.BookingHeroImageURL != nil {
@@ -1222,7 +1233,7 @@ func (h *Handler) publicCreateCheckout(w http.ResponseWriter, r *http.Request) {
 	interval, intervalCount, recurring := billing.Resolve(selected.BillingCycle, selected.BillingInterval, int64(selected.BillingIntervalCount))
 	mode := "payment"
 	lineItemPriceData := &stripe.CheckoutSessionLineItemPriceDataParams{
-		Currency:   stripe.String("sgd"),
+		Currency:   stripe.String(s.StripeCurrency()),
 		UnitAmount: stripe.Int64(int64(selected.PriceSGD)),
 		ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
 			Name:        stripe.String(fmt.Sprintf("%s — %s", s.Name, selected.PlanName)),
@@ -1353,7 +1364,7 @@ func (h *Handler) publicCreatePaymentIntent(w http.ResponseWriter, r *http.Reque
 
 	params := &stripe.PaymentIntentParams{
 		Amount:      stripe.Int64(int64(selected.PriceSGD)),
-		Currency:    stripe.String("sgd"),
+		Currency:    stripe.String(s.StripeCurrency()),
 		Description: stripe.String(selected.PlanName),
 		Metadata: map[string]string{
 			"studio_id":     s.ID.String(),
@@ -2302,7 +2313,7 @@ func (h *Handler) publicCreateTrialPaymentIntent(w http.ResponseWriter, r *http.
 	sc.Init(s.StripeSecretKey, nil)
 	pi, err := sc.PaymentIntents.New(&stripe.PaymentIntentParams{
 		Amount:      stripe.Int64(amount),
-		Currency:    stripe.String("sgd"),
+		Currency:    stripe.String(s.StripeCurrency()),
 		Description: stripe.String(fmt.Sprintf("%s Trial Session", s.Name)),
 		Metadata: map[string]string{
 			"studio_id": studioID.String(),
@@ -2409,7 +2420,7 @@ func (h *Handler) publicCreatePlanPaymentIntent(w http.ResponseWriter, r *http.R
 	if !recurring {
 		pi, err := sc.PaymentIntents.New(&stripe.PaymentIntentParams{
 			Amount:      stripe.Int64(int64(selected.PriceSGD)),
-			Currency:    stripe.String("sgd"),
+			Currency:    stripe.String(s.StripeCurrency()),
 			Description: stripe.String(fmt.Sprintf("%s — %s", s.Name, selected.PlanName)),
 			Metadata: map[string]string{
 				"studio_id": studioID.String(),
@@ -2469,7 +2480,7 @@ func (h *Handler) publicCreatePlanPaymentIntent(w http.ResponseWriter, r *http.R
 		Items: []*stripe.SubscriptionItemsParams{
 			{
 				PriceData: &stripe.SubscriptionItemPriceDataParams{
-					Currency:   stripe.String("sgd"),
+					Currency:   stripe.String(s.StripeCurrency()),
 					Product:    stripe.String(product.ID),
 					UnitAmount: stripe.Int64(int64(selected.PriceSGD)),
 					Recurring: &stripe.SubscriptionItemPriceDataRecurringParams{
@@ -2568,6 +2579,12 @@ func (h *Handler) CreatePlatformCheckout(w http.ResponseWriter, r *http.Request)
 		LineItems: []*stripe.CheckoutSessionLineItemParams{
 			{
 				PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{
+					// This is 1herosocial.ai's own platform-level subscription
+					// billing (the platform Stripe account, not a studio's
+					// connected one) — always SGD regardless of which studio
+					// the admin happens to be looking at, unlike every other
+					// Currency param in this file which charges a specific
+					// studio's customer in that studio's configured currency.
 					Currency:   stripe.String("sgd"),
 					UnitAmount: stripe.Int64(amount),
 					ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{

@@ -2604,16 +2604,24 @@ func (r *Repo) GetLatestSubscriptionForLead(ctx context.Context, leadID uuid.UUI
 	return &s, nil
 }
 
-func (r *Repo) GetStripeConfig(ctx context.Context, studioID uuid.UUID) (secretKey string, amountSGD int, name string, slug string, err error) {
+// GetStripeConfig also returns the studio's configured currency (ISO 4217,
+// e.g. "SGD", "MYR") — trial_amount_sgd/plans.price_sgd hold the amount in
+// whatever this is despite their SGD-suffixed names (see
+// studios.Studio.StripeCurrency, the Go-side equivalent of this same
+// lowercase-for-Stripe-API convention).
+func (r *Repo) GetStripeConfig(ctx context.Context, studioID uuid.UUID) (secretKey string, amountSGD int, name string, slug string, currency string, err error) {
 	var encKey string
-	err = r.pool.QueryRow(ctx, "SELECT stripe_secret_key, trial_amount_sgd, name, slug FROM studios WHERE id = $1", studioID).Scan(&encKey, &amountSGD, &name, &slug)
+	err = r.pool.QueryRow(ctx, "SELECT stripe_secret_key, trial_amount_sgd, name, slug, currency FROM studios WHERE id = $1", studioID).Scan(&encKey, &amountSGD, &name, &slug, &currency)
 	if err != nil {
-		return "", 0, "", "", err
+		return "", 0, "", "", "", err
+	}
+	if currency == "" {
+		currency = "SGD"
 	}
 	if encKey != "" && r.cipher != nil {
 		secretKey, err = r.cipher.Decrypt(encKey)
 		if err != nil {
-			return "", 0, "", "", err
+			return "", 0, "", "", "", err
 		}
 	} else {
 		secretKey = encKey

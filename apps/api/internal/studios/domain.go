@@ -2,6 +2,7 @@ package studios
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -76,6 +77,12 @@ type Studio struct {
 	// price (see ResolveTrialAmountSGD) — there's no separate trial-price
 	// override needed for most studios.
 	TrialAmountSGD                int    `json:"trialAmountSgd"`
+	// Currency this studio charges in (ISO 4217, e.g. "SGD", "MYR") —
+	// applies to both TrialAmountSGD and membership plans' PriceSGD, which
+	// despite their field names hold an amount in whatever currency this
+	// is, not strictly Singapore dollars. Defaults to "SGD" for every
+	// existing studio (see migration 20261013100352_studio_currency.sql).
+	Currency                      string `json:"currency"`
 	BookingHeroImageURL           string `json:"bookingHeroImageUrl"`
 	BookingHeroVideoURL           string `json:"bookingHeroVideoUrl"`
 	TrialConfirmationMessage      string `json:"trialConfirmationMessage"`
@@ -112,6 +119,18 @@ type Studio struct {
 	// Optional summary fields used by list endpoints.
 	CampaignCount int `json:"campaignCount,omitempty"`
 	LeadCount     int `json:"leadCount,omitempty"`
+}
+
+// StripeCurrency returns this studio's currency the way Stripe's API
+// expects it (lowercase ISO 4217), defaulting to "sgd" for the rare case
+// Currency wasn't set — every real row has it via the column's DEFAULT
+// (see migration 20261013100352_studio_currency.sql), but call sites that
+// construct a Studio by hand (tests, etc.) might not.
+func (s *Studio) StripeCurrency() string {
+	if s.Currency == "" {
+		return "sgd"
+	}
+	return strings.ToLower(s.Currency)
 }
 
 var (

@@ -44,11 +44,15 @@ func (r *Repo) Create(ctx context.Context, tx pgx.Tx, s *Studio, actorID *uuid.U
 		}
 	}
 	kbFilesJSON, _ := json.Marshal(s.KnowledgeBaseFiles)
+	currency := s.Currency
+	if currency == "" {
+		currency = "SGD"
+	}
 	row := tx.QueryRow(ctx, `
-		INSERT INTO studios (slug, name, brand_color, logo_url, contact_email, contact_phone, active, gemini_api_key, groq_api_key, claude_api_key, meta_app_id, meta_app_secret, google_client_id, google_client_secret, google_developer_token, stripe_account_id, stripe_secret_key, stripe_publishable_key, stripe_webhook_secret, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files, trial_amount_sgd, managed_by_1hero, created_by, updated_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$26)
+		INSERT INTO studios (slug, name, brand_color, logo_url, contact_email, contact_phone, active, gemini_api_key, groq_api_key, claude_api_key, meta_app_id, meta_app_secret, google_client_id, google_client_secret, google_developer_token, stripe_account_id, stripe_secret_key, stripe_publishable_key, stripe_webhook_secret, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files, trial_amount_sgd, managed_by_1hero, currency, created_by, updated_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$27)
 		RETURNING id, created_at, updated_at
-	`, s.Slug, s.Name, s.BrandColor, s.LogoURL, s.ContactEmail, s.ContactPhone, s.Active, s.GeminiAPIKey, s.GroqAPIKey, s.ClaudeAPIKey, s.MetaAppID, s.MetaAppSecret, s.GoogleClientID, s.GoogleClientSecret, s.GoogleDeveloperToken, s.StripeAccountID, s.StripeSecretKey, s.StripePublishableKey, encWebhookSecret, s.SubscriptionTier, s.SocialPlannerEnabled, s.KnowledgeBase, string(kbFilesJSON), s.TrialAmountSGD, s.ManagedBy1Hero, actorID)
+	`, s.Slug, s.Name, s.BrandColor, s.LogoURL, s.ContactEmail, s.ContactPhone, s.Active, s.GeminiAPIKey, s.GroqAPIKey, s.ClaudeAPIKey, s.MetaAppID, s.MetaAppSecret, s.GoogleClientID, s.GoogleClientSecret, s.GoogleDeveloperToken, s.StripeAccountID, s.StripeSecretKey, s.StripePublishableKey, encWebhookSecret, s.SubscriptionTier, s.SocialPlannerEnabled, s.KnowledgeBase, string(kbFilesJSON), s.TrialAmountSGD, s.ManagedBy1Hero, currency, actorID)
 	if err := row.Scan(&s.ID, &s.CreatedAt, &s.UpdatedAt); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -121,7 +125,7 @@ func (r *Repo) GetByID(ctx context.Context, id uuid.UUID) (*Studio, error) {
 		       greeting_message, trial_amount_sgd, managed_by_1hero, booking_hero_image_url, booking_hero_video_url,
 		       trial_confirmation_message, membership_confirmation_message,
 		       trial_glofox_membership_id, trial_glofox_plan_code, membership_glofox_membership_id, membership_glofox_plan_code,
-		       communication_style_profile, style_profile_updated_at, style_refresh_interval_minutes, program_start_date
+		       communication_style_profile, style_profile_updated_at, style_refresh_interval_minutes, program_start_date, currency
 		FROM studios WHERE id = $1
 	`, id)
 	s, err := scanStudio(row, r.cipher)
@@ -148,7 +152,7 @@ func (r *Repo) GetBySlug(ctx context.Context, slug string) (*Studio, error) {
 		       greeting_message, trial_amount_sgd, managed_by_1hero, booking_hero_image_url, booking_hero_video_url,
 		       trial_confirmation_message, membership_confirmation_message,
 		       trial_glofox_membership_id, trial_glofox_plan_code, membership_glofox_membership_id, membership_glofox_plan_code,
-		       communication_style_profile, style_profile_updated_at, style_refresh_interval_minutes, program_start_date
+		       communication_style_profile, style_profile_updated_at, style_refresh_interval_minutes, program_start_date, currency
 		FROM studios WHERE slug = $1
 	`, slug)
 	s, err := scanStudio(row, r.cipher)
@@ -162,9 +166,12 @@ func (r *Repo) GetBySlug(ctx context.Context, slug string) (*Studio, error) {
 // Update writes the editable fields. Slug is intentionally NOT updatable here
 // (changing a slug breaks every shared public link). Add a deliberate "rename
 // slug" flow when needed.
-func (r *Repo) Update(ctx context.Context, id uuid.UUID, name, brandColor, logoURL, contactEmail, contactPhone string, active bool, managedBy1Hero bool, availabilitySlots []AvailabilitySlot, availabilityTimezone string, geminiAPIKey, groqAPIKey, metaAppID, metaAppSecret, googleClientID, googleClientSecret, googleDeveloperToken string, socialPlannerEnabled bool, knowledgeBase string, knowledgeBaseFiles []KnowledgeBaseFile, greetingMessage string, trialAmountSGD int, bookingHeroImageURL, bookingHeroVideoURL string, trialConfirmationMessage, membershipConfirmationMessage string, trialGlofoxMembershipID, trialGlofoxPlanCode, membershipGlofoxMembershipID, membershipGlofoxPlanCode string, actorID *uuid.UUID) error {
+func (r *Repo) Update(ctx context.Context, id uuid.UUID, name, brandColor, logoURL, contactEmail, contactPhone string, active bool, managedBy1Hero bool, availabilitySlots []AvailabilitySlot, availabilityTimezone string, geminiAPIKey, groqAPIKey, metaAppID, metaAppSecret, googleClientID, googleClientSecret, googleDeveloperToken string, socialPlannerEnabled bool, knowledgeBase string, knowledgeBaseFiles []KnowledgeBaseFile, greetingMessage string, trialAmountSGD int, bookingHeroImageURL, bookingHeroVideoURL string, trialConfirmationMessage, membershipConfirmationMessage string, trialGlofoxMembershipID, trialGlofoxPlanCode, membershipGlofoxMembershipID, membershipGlofoxPlanCode string, currency string, actorID *uuid.UUID) error {
 	slotsJSON, _ := json.Marshal(availabilitySlots)
 	filesJSON, _ := json.Marshal(knowledgeBaseFiles)
+	if currency == "" {
+		currency = "SGD"
+	}
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE studios
 		SET name = $2, brand_color = $3, logo_url = $4, contact_email = $5, contact_phone = $6, active = $7,
@@ -174,9 +181,10 @@ func (r *Repo) Update(ctx context.Context, id uuid.UUID, name, brandColor, logoU
 		    greeting_message = $20, trial_amount_sgd = $21, managed_by_1hero = $22, booking_hero_image_url = $23, booking_hero_video_url = $24,
 		    trial_confirmation_message = $25, membership_confirmation_message = $26,
 		    trial_glofox_membership_id = $27, trial_glofox_plan_code = $28, membership_glofox_membership_id = $29, membership_glofox_plan_code = $30,
-		    updated_by = $31, updated_at = now()
+		    currency = $31,
+		    updated_by = $32, updated_at = now()
 		WHERE id = $1`,
-		id, name, brandColor, logoURL, contactEmail, contactPhone, active, string(slotsJSON), availabilityTimezone, geminiAPIKey, groqAPIKey, metaAppID, metaAppSecret, googleClientID, googleClientSecret, googleDeveloperToken, socialPlannerEnabled, knowledgeBase, string(filesJSON), greetingMessage, trialAmountSGD, managedBy1Hero, bookingHeroImageURL, bookingHeroVideoURL, trialConfirmationMessage, membershipConfirmationMessage, trialGlofoxMembershipID, trialGlofoxPlanCode, membershipGlofoxMembershipID, membershipGlofoxPlanCode, actorID)
+		id, name, brandColor, logoURL, contactEmail, contactPhone, active, string(slotsJSON), availabilityTimezone, geminiAPIKey, groqAPIKey, metaAppID, metaAppSecret, googleClientID, googleClientSecret, googleDeveloperToken, socialPlannerEnabled, knowledgeBase, string(filesJSON), greetingMessage, trialAmountSGD, managedBy1Hero, bookingHeroImageURL, bookingHeroVideoURL, trialConfirmationMessage, membershipConfirmationMessage, trialGlofoxMembershipID, trialGlofoxPlanCode, membershipGlofoxMembershipID, membershipGlofoxPlanCode, currency, actorID)
 	if err != nil {
 		return fmt.Errorf("update studio: %w", err)
 	}
@@ -482,7 +490,7 @@ func scanStudio(row pgx.Row, cipher *secrets.Cipher) (*Studio, error) {
 		&s.GreetingMessage, &s.TrialAmountSGD, &s.ManagedBy1Hero, &s.BookingHeroImageURL, &s.BookingHeroVideoURL,
 		&s.TrialConfirmationMessage, &s.MembershipConfirmationMessage,
 		&s.TrialGlofoxMembershipID, &s.TrialGlofoxPlanCode, &s.MembershipGlofoxMembershipID, &s.MembershipGlofoxPlanCode,
-		&s.CommunicationStyleProfile, &s.StyleProfileUpdatedAt, &s.StyleRefreshIntervalMinutes, &s.ProgramStartDate); err != nil {
+		&s.CommunicationStyleProfile, &s.StyleProfileUpdatedAt, &s.StyleRefreshIntervalMinutes, &s.ProgramStartDate, &s.Currency); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}

@@ -2634,7 +2634,7 @@ func (s *Service) sendEscalationEmail(ctx context.Context, studioID, convID uuid
 // that subscription once the new one is confirmed — otherwise the customer
 // would end up billed on both the old and new plan.
 func (s *Service) buildPlanCheckoutBody(ctx context.Context, tx pgx.Tx, studioID, convID, leadID uuid.UUID, selectedPlan Plan, oldSubscriptionID string) string {
-	secretKey, _, studioName, studioSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
+	secretKey, _, studioName, studioSlug, currency, errStripe := s.repo.GetStripeConfig(ctx, studioID)
 	if errStripe != nil || secretKey == "" {
 		s.escalateForManualMembership(ctx, studioID, convID, leadID,
 			fmt.Sprintf("Can't send a membership payment link — Stripe isn't configured for this studio (plan: %s)", selectedPlan.PlanName))
@@ -2668,7 +2668,7 @@ func (s *Service) buildPlanCheckoutBody(ctx context.Context, tx pgx.Tx, studioID
 	sc.Init(secretKey, nil)
 	interval, intervalCount, recurring := billing.Resolve(selectedPlan.BillingCycle, selectedPlan.BillingInterval, int64(selectedPlan.BillingIntervalCount))
 	lineItemPriceData := &stripe.CheckoutSessionLineItemPriceDataParams{
-		Currency:   stripe.String("sgd"),
+		Currency:   stripe.String(strings.ToLower(currency)),
 		UnitAmount: stripe.Int64(int64(selectedPlan.PriceSGD)),
 		ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
 			Name: stripe.String(fmt.Sprintf("%s - %s Plan", studioName, selectedPlan.PlanName)),
@@ -3108,7 +3108,7 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 		// payment (webhook_stripe.go's handleCheckoutComplete), not here at
 		// checkout-session creation time.
 
-		secretKey, _, studioName, studioSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
+		secretKey, _, studioName, studioSlug, currency, errStripe := s.repo.GetStripeConfig(ctx, studioID)
 		if errStripe == nil && secretKey != "" {
 			var leadPhone, leadNameStr string
 			var trialPrice int64
@@ -3125,7 +3125,7 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 			`, studioID).Scan(&trialPrice)
 
 			amount := trialPrice
-			cur := "sgd"
+			cur := strings.ToLower(currency)
 			if amount == 0 {
 				amount = 2500
 			}
@@ -3335,7 +3335,7 @@ func frontendBaseURL() string {
 // path — once a lead exists, the trial-details page embeds Stripe Elements
 // directly instead (studios.publicCreateTrialPaymentIntent).
 func (s *Service) createTrialCheckoutSession(ctx context.Context, studioID uuid.UUID, leadID *uuid.UUID) (checkoutURL, studioName, studioSlug string, err error) {
-	secretKey, trialAmountSGD, sName, sSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
+	secretKey, trialAmountSGD, sName, sSlug, currency, errStripe := s.repo.GetStripeConfig(ctx, studioID)
 	if errStripe != nil || secretKey == "" {
 		return "", sName, sSlug, fmt.Errorf("stripe not configured for studio")
 	}
@@ -3376,7 +3376,7 @@ func (s *Service) createTrialCheckoutSession(ctx context.Context, studioID uuid.
 		LineItems: []*stripe.CheckoutSessionLineItemParams{
 			{
 				PriceData: &stripe.CheckoutSessionLineItemPriceDataParams{
-					Currency:   stripe.String("sgd"),
+					Currency:   stripe.String(strings.ToLower(currency)),
 					UnitAmount: stripe.Int64(amount),
 					ProductData: &stripe.CheckoutSessionLineItemPriceDataProductDataParams{
 						Name:        stripe.String(fmt.Sprintf("%s Trial Session", sName)),
@@ -3492,7 +3492,7 @@ func (s *Service) SendTrialPaymentLink(ctx context.Context, studioID, convID uui
 				slog.Error("send trial payment link: failed to escalate conversation", "conv", convID, "err", errEsc)
 			}
 		} else {
-			_, _, _, studioSlug, errStripe := s.repo.GetStripeConfig(ctx, studioID)
+			_, _, _, studioSlug, _, errStripe := s.repo.GetStripeConfig(ctx, studioID)
 			if errStripe == nil && studioSlug != "" {
 				detailsURL := fmt.Sprintf("%s/trial-details/%s?studio=%s", frontendURL, leadID.String(), studioSlug)
 				tl := &TriggerLink{StudioID: studioID, Name: fmt.Sprintf("Trial - %s", firstName), URL: detailsURL}

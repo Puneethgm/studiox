@@ -491,6 +491,18 @@ type UpdateStudioInput struct {
 	TrialGlofoxPlanCode           string              `json:"trialGlofoxPlanCode"`
 	MembershipGlofoxMembershipID  string              `json:"membershipGlofoxMembershipId"`
 	MembershipGlofoxPlanCode      string              `json:"membershipGlofoxPlanCode"`
+	Currency                      string              `json:"currency"`
+}
+
+// SupportedCurrencies are the ISO 4217 codes a studio can charge in —
+// deliberately a short whitelist (not "any 3-letter string") so a typo in
+// the settings form fails validation instead of silently reaching Stripe
+// with a currency it may not even support for that connected account.
+var SupportedCurrencies = map[string]bool{
+	"SGD": true,
+	"MYR": true,
+	"USD": true,
+	"INR": true,
 }
 
 func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput, actorID *uuid.UUID) (map[string]string, error) {
@@ -526,10 +538,17 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput
 	if in.ContactPhone != "" && len(in.ContactPhone) > 50 {
 		errs["contactPhone"] = "must be under 50 characters"
 	}
+	in.Currency = strings.ToUpper(strings.TrimSpace(in.Currency))
+	if in.Currency == "" {
+		in.Currency = "SGD"
+	}
+	if !SupportedCurrencies[in.Currency] {
+		errs["currency"] = "unsupported currency"
+	}
 	if len(errs) > 0 {
 		return errs, nil
 	}
-	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.ContactPhone, in.Active, in.ManagedBy1Hero, in.AvailabilitySlots, in.AvailabilityTimezone, in.GeminiAPIKey, in.GroqAPIKey, in.MetaAppID, in.MetaAppSecret, in.GoogleClientID, in.GoogleClientSecret, in.GoogleDeveloperToken, in.SocialPlannerEnabled, in.KnowledgeBase, in.KnowledgeBaseFiles, in.GreetingMessage, in.TrialAmountSGD, in.BookingHeroImageURL, in.BookingHeroVideoURL, in.TrialConfirmationMessage, in.MembershipConfirmationMessage, in.TrialGlofoxMembershipID, in.TrialGlofoxPlanCode, in.MembershipGlofoxMembershipID, in.MembershipGlofoxPlanCode, actorID); err != nil {
+	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.ContactPhone, in.Active, in.ManagedBy1Hero, in.AvailabilitySlots, in.AvailabilityTimezone, in.GeminiAPIKey, in.GroqAPIKey, in.MetaAppID, in.MetaAppSecret, in.GoogleClientID, in.GoogleClientSecret, in.GoogleDeveloperToken, in.SocialPlannerEnabled, in.KnowledgeBase, in.KnowledgeBaseFiles, in.GreetingMessage, in.TrialAmountSGD, in.BookingHeroImageURL, in.BookingHeroVideoURL, in.TrialConfirmationMessage, in.MembershipConfirmationMessage, in.TrialGlofoxMembershipID, in.TrialGlofoxPlanCode, in.MembershipGlofoxMembershipID, in.MembershipGlofoxPlanCode, in.Currency, actorID); err != nil {
 		return nil, err
 	}
 
