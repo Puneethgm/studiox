@@ -718,7 +718,8 @@ export class SessionManager {
         // A fromMe message that ISN'T one of ours is one the studio typed
         // directly into WhatsApp on the linked phone, and needs recording
         // just as much as a customer's reply does.
-        const text = extractMessageText(msg.message);
+        const rawText = extractMessageText(msg.message);
+        const text = resolveMentions(rawText, msg.message, entry.historyDisplayNames);
         this.log.info(
           { studioId, from: msg.key?.remoteJid, fromMe: !!msg.key?.fromMe, body: text.slice(0, 50) },
           'wa-web: message received',
@@ -747,6 +748,16 @@ export class SessionManager {
         if (isGroup && msg.key?.participant) {
           participantJid = await resolveJid(sock, msg.key.participant, entry.lidToPhone, this.log);
           participantName = msg.pushName || undefined;
+        }
+        // Learn this sender's name for future @-mention resolution (see
+        // resolveMentions above) — historyDisplayNames otherwise only grows
+        // during the one-time backfill sync, so a group member who joined
+        // after that (or was never captured there) would stay unresolvable
+        // forever even after they'd sent plenty of messages themselves.
+        const mentionLearnJid = participantJid || (!msg.key?.fromMe ? remoteJid : undefined);
+        const mentionLearnName = participantName || (!msg.key?.fromMe ? msg.pushName : undefined);
+        if (mentionLearnJid && mentionLearnName && !entry.historyDisplayNames.has(mentionLearnJid)) {
+          entry.historyDisplayNames.set(mentionLearnJid, mentionLearnName);
         }
         if (isGroup) {
           const subject = await this._resolveGroupSubject(sock, entry, remoteJid);
@@ -860,8 +871,8 @@ export class SessionManager {
         const rawJid = msg.key.remoteJid;
         const jid = await resolveJid(sock, rawJid, entry.lidToPhone, this.log);
         if (!jid) { skippedNoJid++; continue; } // no resolvable jid at all
-        const text = extractMessageText(msg.message);
-        if (!text) { skippedNoText++; continue; }
+        const rawText = extractMessageText(msg.message);
+        if (!rawText) { skippedNoText++; continue; }
         // chats[]/contacts[] essentially never carry a name for a 1:1 chat
         // (confirmed by direct log inspection — WhatsApp's linked-device
         // protocol doesn't sync the phone's private address book to a web
@@ -882,6 +893,7 @@ export class SessionManager {
           unnamedMessages++;
           if (unmatchedSample.length < 10) unmatchedSample.push({ rawJid, jid, fromMe: !!msg.key.fromMe, pushName: msg.pushName });
         }
+        const text = resolveMentions(rawText, msg.message, entry.historyDisplayNames);
         const bucket = entry.historyBuffer.get(jid) || [];
         const ts = Number(msg.messageTimestamp) || Math.floor(Date.now() / 1000);
         bucket.push({
@@ -1098,6 +1110,31 @@ function extractMessageText(message) {
     message.viewOnceMessageV2Extension?.message ||
     message.documentWithCaptionMessage?.message;
   return wrapped ? extractMessageText(wrapped) : '';
+}
+
+// WhatsApp's @-mention syntax embeds the mentioned person's raw numeric JID
+// directly in the message text (e.g. "@264033282334953"), not their name —
+// contextInfo.mentionedJid gives the list of who was mentioned, in the same
+// numeric form embedded in the text, but still no names. Without this, a
+// group message mentioning someone showed raw WhatsApp IDs instead of a
+// readable name. Resolves against whatever name we already know for that
+// JID (from history sync or an earlier message of theirs — see
+// historyDisplayNames) and leaves the raw number as-is if we don't know
+// them yet, rather than guessing.
+function resolveMentions(text, message, displayNames) {
+  const mentioned = message?.extendedTextMessage?.contextInfo?.mentionedJid;
+  if (!mentioned?.length || !text.includes('@')) return text;
+  let out = text;
+  for (const jid of mentioned) {
+    const digits = jid.split('@')[0];
+    if (!digits) continue;
+    const name = displayNames.get(jid)
+      || displayNames.get(`${digits}@s.whatsapp.net`)
+      || displayNames.get(`${digits}@c.us`)
+      || displayNames.get(`${digits}@lid`);
+    if (name) out = out.split('@' + digits).join('@' + name);
+  }
+  return out;
 }
 
 // WhatsApp JIDs can carry a ":<deviceId>" suffix on the user portion for
