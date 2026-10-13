@@ -467,6 +467,38 @@ func (h *Handler) waWebBackfillRunning(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// waWebBackfillProgress godoc
+//
+//	@Summary		Report WhatsApp Web backfill progress
+//	@Description	Lets the wa-web Node service report a running count of messages buffered so far while a deep-history sync is still in progress — a full sync can take several minutes across many rounds of fetching, during which backfill_message_count otherwise sits at 0 with no feedback until the very end. Status stays "running"; only the count updates. Internal-only (Docker-network only, not exposed via nginx) — no session/API-key auth, authenticated via the shared `x-internal-key` header instead.
+//	@Tags			Messaging - Internal
+//	@Accept			json
+//	@Produce		json
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		400	{object}	httpx.ErrorResponse	"invalid body or studioId"
+//	@Failure		500	{object}	httpx.ErrorResponse
+//	@Router			/internal/wa-web/backfill-progress [post]
+func (h *Handler) waWebBackfillProgress(w http.ResponseWriter, r *http.Request) {
+	var p struct {
+		StudioID     string `json:"studioId"`
+		MessageCount int    `json:"messageCount"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_json", err.Error())
+		return
+	}
+	studioID, err := uuid.Parse(p.StudioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid studioId")
+		return
+	}
+	if err := h.svc.repo.SetWAWebBackfillStatus(r.Context(), studioID, "running", p.MessageCount); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // waWebBackfillDone godoc
 //
 //	@Summary		Mark WhatsApp Web backfill as finished

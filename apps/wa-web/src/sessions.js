@@ -434,6 +434,16 @@ export class SessionManager {
       return;
     }
 
+    if (entry.historyExpandBufferedAtLastRound !== undefined) {
+      // A full sync can take several minutes across many rounds, during
+      // which backfill_message_count otherwise sits frozen at 0 with no
+      // feedback — report the buffered-so-far count (not yet actually
+      // imported to the DB, that still only happens once at the end in
+      // _concludeHistoryImport, but a live "still working, here's how much
+      // it's found" counter beats total silence).
+      this._notifyWithRetry('/internal/wa-web/backfill-progress', { studioId, messageCount: bufferedNow }, { attempts: 1 }).catch(() => {});
+    }
+
     if (entry.historyExpandRoundsLeft > 0 && entry.historyOldestPerChat.size > 0) {
       entry.historyExpandRoundsLeft--;
       entry.historyExpandBufferedAtLastRound = bufferedNow;
