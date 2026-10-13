@@ -1046,6 +1046,7 @@ func (h *Handler) updateChannel(w http.ResponseWriter, r *http.Request) {
 //	@Param			status		query		string	false	"Filter by conversation status"
 //	@Param			channelKind	query		string	false	"Filter by channel kind (e.g. whatsapp, instagram, messenger, twilio, x, telegram)"
 //	@Param			escalated	query		bool	false	"Filter to only escalated (or non-escalated) conversations"
+//	@Param			search		query		string	false	"Case-insensitive substring match against the contact's name or number — runs in the database, so it finds matches beyond whatever page the caller has loaded so far"
 //	@Param			limit		query		int		false	"Max results to return"
 //	@Param			offset		query		int		false	"Result offset for pagination"
 //	@Success		200			{object}	map[string]interface{}
@@ -1079,6 +1080,9 @@ func (h *Handler) listConversations(w http.ResponseWriter, r *http.Request) {
 	if v := q.Get("escalated"); v != "" {
 		b := v == "true"
 		f.Escalated = &b
+	}
+	if v := q.Get("search"); v != "" {
+		f.Search = &v
 	}
 	list, total, err := h.svc.ListConversations(r.Context(), studioID, f)
 	if err != nil {

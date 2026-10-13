@@ -649,8 +649,14 @@ type ListConversationsFilter struct {
 	Status      *ConvStatus
 	ChannelKind *ChannelKind
 	Escalated   *bool
-	Limit       int
-	Offset      int
+	// Search matches against the contact's name (lead name, falling back to
+	// WhatsApp display name) or their raw number/value — case-insensitive,
+	// substring. Runs in the database so it can find any matching contact
+	// regardless of how many conversations the frontend has paged in so
+	// far, not just whichever page is currently loaded client-side.
+	Search *string
+	Limit  int
+	Offset int
 }
 
 func (r *Repo) ListConversations(ctx context.Context, studioID uuid.UUID, f ListConversationsFilter) ([]Conversation, int, error) {
@@ -674,9 +680,18 @@ func (r *Repo) ListConversations(ctx context.Context, studioID uuid.UUID, f List
 			cond += " AND c.escalated_at IS NULL"
 		}
 	}
+	// Needed by both the count and the select below, so the join and the
+	// search condition live in one `fromJoins` fragment shared by both
+	// queries instead of duplicated.
+	fromJoins := "conversations c JOIN channel_accounts ch ON ch.id = c.channel_account_id"
+	if f.Search != nil && strings.TrimSpace(*f.Search) != "" {
+		fromJoins += " JOIN contact_identities ci ON ci.id = c.contact_identity_id LEFT JOIN leads l ON l.id = c.lead_id"
+		args = append(args, "%"+strings.TrimSpace(*f.Search)+"%")
+		cond += fmt.Sprintf(" AND (COALESCE(l.name, '') ILIKE $%d OR ci.display_name ILIKE $%d OR ci.value ILIKE $%d)", len(args), len(args), len(args))
+	}
 
 	var total int
-	countQ := `SELECT COUNT(*) FROM conversations c JOIN channel_accounts ch ON ch.id = c.channel_account_id WHERE ` + cond
+	countQ := `SELECT COUNT(*) FROM ` + fromJoins + ` WHERE ` + cond
 	if err := r.pool.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count conversations: %w", err)
 	}

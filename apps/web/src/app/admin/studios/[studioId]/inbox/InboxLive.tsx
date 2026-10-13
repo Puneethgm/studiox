@@ -327,6 +327,18 @@ export function InboxLive({
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [newReceiverValue, setNewReceiverValue] = useState('');
+  // newReceiverValue doubles as the search box, but searching only against
+  // whatever page of conversations happened to already be loaded client-side
+  // meant a contact further down the list (beyond the loaded page) could
+  // never be found by typing their name/number. Debounce it and run the
+  // actual match in the database instead (see conversationsListURL's
+  // `search` param), so it finds any matching contact regardless of
+  // scroll/pagination state.
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(newReceiverValue.trim()), 300);
+    return () => clearTimeout(t);
+  }, [newReceiverValue]);
   const [creatingConversation, setCreatingConversation] = useState(false);
   const [authError, setAuthError] = useState(false);
   const messagesEndRef = useRef<HTMLLIElement>(null);
@@ -490,8 +502,11 @@ export function InboxLive({
       url += `&channelKind=${activeChannel}`;
     }
     url += `&status=open&escalated=false`;
+    if (debouncedSearch) {
+      url += `&search=${encodeURIComponent(debouncedSearch)}`;
+    }
     return url;
-  }, [studioId, unrespondedOnly, activeChannel]);
+  }, [studioId, unrespondedOnly, activeChannel, debouncedSearch]);
 
   const refreshConversations = useCallback(async () => {
     try {
@@ -544,10 +559,11 @@ export function InboxLive({
 
   const refreshEscalatedConversations = useCallback(async () => {
     try {
-      const res = await api<{ conversations: Conversation[] }>(
-        `/api/v1/studios/${studioId}/messaging/conversations?limit=50&escalated=true`,
-        { cache: 'no-store' },
-      );
+      let url = `/api/v1/studios/${studioId}/messaging/conversations?limit=50&escalated=true`;
+      if (debouncedSearch) {
+        url += `&search=${encodeURIComponent(debouncedSearch)}`;
+      }
+      const res = await api<{ conversations: Conversation[] }>(url, { cache: 'no-store' });
       setEscalatedConversations(res.conversations);
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
@@ -556,7 +572,7 @@ export function InboxLive({
       }
       throw error;
     }
-  }, [studioId, handleAuthError]);
+  }, [studioId, debouncedSearch, handleAuthError]);
 
   const resolveEscalation = useCallback(async (conversationId: string) => {
     try {
@@ -1544,7 +1560,7 @@ export function InboxLive({
                   Conversation Input's existing "start a chat with this
                   number" behavior on submit when nothing matches. */}
               <div
-                className="flex-1 overflow-y-auto no-scrollbar"
+                className="flex-1 overflow-y-auto thin-scrollbar"
                 onScroll={currentTab === 'escalation' ? undefined : handleConversationListScroll}
               >
                 {mounted && currentTab === 'escalation' && activeListConversations.length === 0 ? (
@@ -1790,7 +1806,7 @@ export function InboxLive({
                   <div
                     ref={messagesScrollRef}
                     onScroll={handleMessagesScroll}
-                    className="relative flex-1 overflow-y-auto no-scrollbar px-5 py-6 bg-[#f4f5f6] dark:bg-zinc-900/40"
+                    className="relative flex-1 overflow-y-auto thin-scrollbar px-5 py-6 bg-[#f4f5f6] dark:bg-zinc-900/40"
                   >
                     <div className="relative">
                       {loadingMessages && messages.length === 0 ? (
