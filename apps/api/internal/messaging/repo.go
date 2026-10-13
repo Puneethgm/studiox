@@ -2564,15 +2564,20 @@ func (r *Repo) GetStripeConfig(ctx context.Context, studioID uuid.UUID) (secretK
 // TrialPaymentEnabled — mirrored here via direct SQL, not an import, for
 // the same reason as GetStripeConfig above).
 // IsTrialPlanActive reports whether the studio's designated Trial plan —
-// the plan literally named "Trial", same convention ListActivePlans uses
-// to exclude it from the membership list below — is currently active.
-// There's no separate "collect trial payment" toggle: the existing
-// Active/Inactive switch on the Trial plan card in Settings → Plans *is*
-// the toggle. No plan named "Trial" at all counts as inactive — there's
-// nothing to charge for.
+// a plan whose name contains "trial" (case-insensitive), same convention
+// ListActivePlans uses to exclude it from the membership list below — is
+// currently active. There's no separate "collect trial payment" toggle:
+// the existing Active/Inactive switch on the Trial plan card in
+// Settings → Plans *is* the toggle. No matching plan at all counts as
+// inactive — there's nothing to charge for.
+//
+// Deliberately a "contains trial" match, not an exact "Trial" match: a
+// studio can (and does) name this plan something descriptive like "Trial
+// Offer: 8 Sessions for $68" rather than the bare word "Trial" — an exact
+// match silently treated that as no trial plan existing at all.
 func (r *Repo) IsTrialPlanActive(ctx context.Context, studioID uuid.UUID) (bool, error) {
 	var active bool
-	err := r.pool.QueryRow(ctx, `SELECT is_active FROM plans WHERE studio_id = $1 AND plan_name = 'Trial' LIMIT 1`, studioID).Scan(&active)
+	err := r.pool.QueryRow(ctx, `SELECT is_active FROM plans WHERE studio_id = $1 AND plan_name ILIKE '%trial%' LIMIT 1`, studioID).Scan(&active)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -2601,7 +2606,7 @@ func (r *Repo) ListActivePlans(ctx context.Context, studioID uuid.UUID) ([]Plan,
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, studio_id, plan_name, price_sgd, billing_cycle, billing_interval, billing_interval_count, features
 		FROM plans
-		WHERE studio_id = $1 AND is_active = true AND plan_name != 'Trial'
+		WHERE studio_id = $1 AND is_active = true AND plan_name NOT ILIKE '%trial%'
 		ORDER BY price_sgd ASC
 	`, studioID)
 	if err != nil {

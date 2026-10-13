@@ -3103,10 +3103,13 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 			var trialPrice int64
 			_ = tx.QueryRow(ctx, "SELECT phone, name FROM leads WHERE id = $1", *conv.LeadID).Scan(&leadPhone, &leadNameStr)
 
-			// Get Trial plan price from the studio's plans
+			// Get Trial plan price from the studio's plans. Matches on
+			// "contains trial" rather than an exact "Trial" name — a studio
+			// can name this plan something descriptive (e.g. "Trial Offer:
+			// 8 Sessions for $68") rather than the bare word.
 			_ = tx.QueryRow(ctx, `
 				SELECT COALESCE(price_sgd, 0) FROM plans
-				WHERE studio_id = $1 AND plan_name = 'Trial' AND is_active = true
+				WHERE studio_id = $1 AND plan_name ILIKE '%trial%' AND is_active = true
 				LIMIT 1
 			`, studioID).Scan(&trialPrice)
 

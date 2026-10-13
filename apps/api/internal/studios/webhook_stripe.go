@@ -1170,8 +1170,11 @@ func (h *StripeWebhookHandler) applyMembershipConfirmed(ctx context.Context, stu
 func (h *StripeWebhookHandler) recordTrialSubscription(ctx context.Context, studio *Studio, leadID, currency, paymentID, custID, receiptURL string, amountPaid int64, convID, contactName, contactPhone string) {
 	var planID uuid.UUID
 	var planName string
+	// Matches on "contains trial" rather than an exact "Trial" name — a
+	// studio can name this plan something descriptive rather than the bare
+	// word (same convention IsTrialPlanActive/ResolveTrialAmountSGD use).
 	if err := h.svc.repo.Pool().QueryRow(ctx, `
-		SELECT id, plan_name FROM plans WHERE studio_id = $1 AND plan_name = 'Trial' LIMIT 1
+		SELECT id, plan_name FROM plans WHERE studio_id = $1 AND plan_name ILIKE '%trial%' LIMIT 1
 	`, studio.ID).Scan(&planID, &planName); err != nil {
 		slog.Warn("stripe trial payment: no Trial plan found, skipping subscription record", "studio_id", studio.ID, "err", err)
 		planName = "Trial"

@@ -745,7 +745,12 @@ func (s *Service) ResolveTrialAmountSGD(ctx context.Context, studioID uuid.UUID,
 	if amount == 0 {
 		plans, _ := s.ListPlans(ctx, studioID)
 		for _, p := range plans {
-			if !p.IsActive || p.PlanName != "Trial" {
+			// "Contains trial" rather than an exact "Trial" name — a studio
+			// can name this plan something descriptive (e.g. "Trial Offer:
+			// 8 Sessions for $68") rather than the bare word. Matching on
+			// the exact name used to silently fall through to the
+			// hardcoded $25 default below for any studio that did this.
+			if !p.IsActive || !strings.Contains(strings.ToLower(p.PlanName), "trial") {
 				continue
 			}
 			if amount == 0 || int64(p.PriceSGD) < amount {
