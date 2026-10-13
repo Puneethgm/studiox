@@ -2162,6 +2162,80 @@ type ColdLeadContext struct {
 	StudioGreeting string
 }
 
+// FindOrCreateLeadForBroadcast resolves (or creates) a real leads row for a
+// broadcast recipient. Broadcast contacts previously lived entirely outside
+// the leads pipeline (see broadcast_contacts' own migration comment: "not
+// leads — no pipeline/campaign entanglement") — every recipient a broadcast
+// actually messages should be a trackable, AI-reachable lead like any other
+// outreach target, not an invisible side-channel send. Matches an existing
+// lead by cleaned phone digits (WhatsApp/SMS) or by email (email channel)
+// before creating a new one, so re-running a broadcast against the same
+// contact list never creates duplicate leads. Mirrors
+// CreateLeadFromColdConversation's campaign/fitness-plan attribution
+// (active campaign → any campaign → give up if the studio has none at all).
+func (r *Repo) FindOrCreateLeadForBroadcast(ctx context.Context, studioID uuid.UUID, isEmail bool, contactValue, displayName string) (uuid.UUID, error) {
+	var leadID uuid.UUID
+	if isEmail {
+		email := strings.ToLower(strings.TrimSpace(contactValue))
+		_ = r.pool.QueryRow(ctx, `
+			SELECT id FROM leads WHERE studio_id = $1 AND lower(email) = $2 AND email != '' LIMIT 1
+		`, studioID, email).Scan(&leadID)
+	} else {
+		cleanPhone := nonDigit.ReplaceAllString(contactValue, "")
+		_ = r.pool.QueryRow(ctx, `
+			SELECT id FROM leads WHERE studio_id = $1 AND regexp_replace(phone, '\D', '', 'g') = $2 AND phone != '' LIMIT 1
+		`, studioID, cleanPhone).Scan(&leadID)
+	}
+	if leadID != uuid.Nil {
+		return leadID, nil
+	}
+
+	var campaignID uuid.UUID
+	var fitnessPlans []string
+	err := r.pool.QueryRow(ctx, `
+		SELECT id, fitness_plans FROM campaigns
+		WHERE studio_id = $1 AND active = true
+		ORDER BY created_at DESC LIMIT 1
+	`, studioID).Scan(&campaignID, &fitnessPlans)
+	if err != nil {
+		_ = r.pool.QueryRow(ctx, `
+			SELECT id, fitness_plans FROM campaigns WHERE studio_id = $1 LIMIT 1
+		`, studioID).Scan(&campaignID, &fitnessPlans)
+	}
+	if campaignID == uuid.Nil {
+		return uuid.Nil, fmt.Errorf("studio has no campaign to attribute a new lead to")
+	}
+	defaultPlan := "Trial Class"
+	if len(fitnessPlans) > 0 {
+		defaultPlan = fitnessPlans[0]
+	}
+
+	leadName := strings.TrimSpace(displayName)
+	var phone, email string
+	if isEmail {
+		email = strings.ToLower(strings.TrimSpace(contactValue))
+		if leadName == "" {
+			leadName = email
+		}
+	} else {
+		phone = nonDigit.ReplaceAllString(contactValue, "")
+		if leadName == "" {
+			leadName = phone
+		}
+	}
+
+	leadID = uuid.New()
+	if _, err := r.pool.Exec(ctx, `
+		INSERT INTO leads (id, studio_id, campaign_id, name, first_name, last_name,
+		                   email, phone, fitness_plan, status, source,
+		                   auto_contact_stage, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,'',$6,$7,$8,'contacted','broadcast','awaiting_interest',now(),now())
+	`, leadID, studioID, campaignID, leadName, leadName, email, phone, defaultPlan); err != nil {
+		return uuid.Nil, fmt.Errorf("create lead from broadcast recipient: %w", err)
+	}
+	return leadID, nil
+}
+
 // CreateLeadFromColdConversation mints a real lead for a conversation that
 // doesn't have one yet — backfilled WhatsApp Web history is deliberately
 // imported without a lead (see HandleInboundWAWebBackfill's no-phantom-leads

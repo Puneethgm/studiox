@@ -151,10 +151,24 @@ func (w *BroadcastWorker) tickCampaign(ctx context.Context, c BroadcastCampaign)
 			}
 		}
 
+		// Resolve (or create) a real lead for this recipient first — a
+		// broadcast contact who's actually getting messaged is a real
+		// outreach target and belongs in the Pipeline like any other lead,
+		// not an invisible side-channel send (see
+		// FindOrCreateLeadForBroadcast's doc comment).
+		leadID, err := w.repo.FindOrCreateLeadForBroadcast(ctx, c.StudioID, c.Channel == BroadcastChannelEmail, contactValue, recipient.Contact.Name)
+		if err != nil {
+			w.log.Warn("Broadcast worker — failed to resolve lead for recipient",
+				"component", "broadcast_worker", "campaign_id", c.ID, "contact_id", recipient.Contact.ID, "error", err.Error())
+			_ = w.repo.MarkRecipientFailed(ctx, recipient.RecipientID, err.Error())
+			continue
+		}
+
 		conv, err := w.svc.CreateConversation(ctx, c.StudioID, CreateConversationInput{
 			ChannelKind:  channelKind,
 			ContactValue: contactValue,
 			DisplayName:  recipient.Contact.Name,
+			LeadID:       &leadID,
 		})
 		if err != nil {
 			w.log.Warn("Broadcast worker — failed to open conversation for recipient",
@@ -182,6 +196,15 @@ func (w *BroadcastWorker) tickCampaign(ctx context.Context, c BroadcastCampaign)
 		if err := w.repo.MarkRecipientEnqueued(ctx, recipient.RecipientID, jobID); err != nil {
 			w.log.Warn("Broadcast worker — failed to mark recipient enqueued",
 				"component", "broadcast_worker", "campaign_id", c.ID, "error", err.Error())
+		}
+		// Turn AI on for this conversation now that a real message went
+		// out — without this, a broadcast recipient who had no prior
+		// conversation gets a message but their reply goes unanswered
+		// (ai_enabled otherwise defaults to false on a brand-new
+		// conversation, see FindOrCreateConversation).
+		if err := w.repo.SetConversationAIEnabled(ctx, c.StudioID, conv.ID, true); err != nil {
+			w.log.Warn("Broadcast worker — failed to enable AI for recipient conversation",
+				"component", "broadcast_worker", "campaign_id", c.ID, "conversation_id", conv.ID, "error", err.Error())
 		}
 		enqueued++
 	}
