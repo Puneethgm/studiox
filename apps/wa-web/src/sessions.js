@@ -208,11 +208,21 @@ export class SessionManager {
   // connects (see _startSession / _concludeHistoryImport) — Baileys pushes
   // chat history on its own schedule, so there's no "right moment" for a
   // human to click a button and catch it. This is the manual entry point the
-  // admin's "Import chat history" / "Retry" button hits; it never starts a
-  // second, competing import. It just makes sure the Go API's view of the
-  // current state is fresh:
-  //   - already concluded  -> re-report the result (covers a wa-web restart
-  //     losing its 'done' notification before the Go side received it)
+  // admin's "Import chat history" / "Retry" button hits. It never starts a
+  // second, competing import while one is already in flight. Cases:
+  //   - already concluded, session still live -> genuinely re-run the
+  //     deep-fetch expansion loop (see _onHistorySettled/_expandHistoryOnce)
+  //     using the per-chat cursors still held in memory from the original
+  //     run. Lets an admin ask "check again" on demand instead of forcing a
+  //     full disconnect/reconnect — useful if the original sync got cut
+  //     short (a dropped connection mid-sync) and some in-window history
+  //     was missed. Won't surface anything older than WhatsApp's own sync
+  //     horizon (observed ~1 year back) — that's a platform limit, not
+  //     something any number of retries gets past.
+  //   - already concluded, but the cursors are gone (e.g. wa-web itself
+  //     restarted since) -> nothing to re-run; just re-report the last
+  //     known result, which also covers a wa-web restart losing its 'done'
+  //     notification before the Go side received it.
   //   - still in flight     -> re-assert 'running' (covers the same restart
   //     scenario for the initial notification) and let it keep going
   //   - resumed session ('inert') -> no-op. WhatsApp already had its one
@@ -224,6 +234,18 @@ export class SessionManager {
     if (!s || s.status !== 'connected') throw new Error(`session not connected for studio ${studioId}`);
 
     if (s.historyState === 'done') {
+      if (s.sock && s.historyOldestPerChat && s.historyOldestPerChat.size > 0) {
+        this.log.info({ studioId }, 'wa-web: manual re-check requested, re-running deep-fetch expansion');
+        s.historyState = 'pending';
+        s.historyExpandRoundsLeft = 25;
+        s.historyExpandBufferedAtLastRound = undefined;
+        s.historyEverSeenAtLastRound = undefined;
+        await this._notifyBackfillRunning(studioId);
+        this._onHistorySettled(studioId).catch((err) =>
+          this.log.error({ err, studioId }, 'wa-web: manual re-check failed'),
+        );
+        return;
+      }
       await this._notifyWithRetry('/internal/wa-web/backfill-done', {
         studioId,
         messageCount: s.historyImportedCount ?? 0,

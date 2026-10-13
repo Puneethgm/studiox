@@ -279,9 +279,18 @@ export function ConnectWhatsAppWeb({
               </div>
             )}
             {backfill === 'done' && (
-              <p className="text-xs text-green-600 dark:text-green-400">
-                Imported {backfillCount} historical messages.
-              </p>
+              <div className="flex flex-col items-center gap-1">
+                <p className="text-xs text-green-600 dark:text-green-400">
+                  Imported {backfillCount} historical messages.
+                </p>
+                <Button variant="ghost" size="sm" leftIcon={<RefreshCw className="h-3.5 w-3.5" />} onClick={startBackfill}>
+                  Check for more
+                </Button>
+                <p className="text-[11px] text-slate-400 text-center max-w-xs">
+                  Re-checks the current session for any history missed earlier — won't reach further back than
+                  WhatsApp's own sync window (roughly the last year).
+                </p>
+              </div>
             )}
             {backfill === 'failed' && (
               <div className="flex items-center gap-2">
