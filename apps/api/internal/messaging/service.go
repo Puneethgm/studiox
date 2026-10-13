@@ -1738,7 +1738,18 @@ func (s *Service) HandleInboundWAWebBackfill(ctx context.Context, studioID uuid.
 	}
 	channel, err := s.repo.GetActiveChannelByKind(ctx, studioID, KindWhatsAppWeb)
 	if errors.Is(err, ErrNotFound) {
-		return 0, nil // session not connected — nothing to attach history to
+		// The channel can be mid-reconnect (status briefly not 'active') while
+		// Baileys is still flushing buffered history for the same session —
+		// falling back to the most recently connected channel of this kind
+		// avoids silently dropping real history that was already fetched from
+		// WhatsApp. See the investigation that found this exact gap: backfill
+		// reported "done" with 0 messages imported despite wa-web logging
+		// hundreds of buffered messages received.
+		channel, err = s.repo.GetMostRecentChannelByKind(ctx, studioID, KindWhatsAppWeb)
+		if errors.Is(err, ErrNotFound) {
+			slog.Warn("wa-web backfill: no whatsapp_web channel found at all, dropping history batch", "studio_id", studioID, "message_count", len(msgs))
+			return 0, nil
+		}
 	}
 	if err != nil {
 		return 0, fmt.Errorf("look up whatsapp_web channel: %w", err)

@@ -179,6 +179,24 @@ func (r *Repo) GetActiveChannelByKind(ctx context.Context, studioID uuid.UUID, k
 	return r.scanChannelWithToken(row)
 }
 
+// GetMostRecentChannelByKind returns the most recently connected channel of a
+// specific kind for a studio, regardless of its current status. Used as a
+// fallback when backfill history arrives during a brief status flicker (e.g.
+// a reconnect mid-sync) that would make GetActiveChannelByKind miss a channel
+// that is, for all practical purposes, the right one to attach history to.
+func (r *Repo) GetMostRecentChannelByKind(ctx context.Context, studioID uuid.UUID, kind ChannelKind) (*ChannelAccount, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT id, studio_id, kind, bsp, external_id, parent_id, display_handle,
+		       access_token_enc, status, last_error, connected_at, disconnected_at,
+		       created_at, updated_at
+		FROM channel_accounts
+		WHERE studio_id = $1 AND kind = $2
+		ORDER BY connected_at DESC
+		LIMIT 1
+	`, studioID, kind)
+	return r.scanChannelWithToken(row)
+}
+
 func (r *Repo) scanChannelWithToken(row pgx.Row) (*ChannelAccount, error) {
 	var c ChannelAccount
 	var encToken string
