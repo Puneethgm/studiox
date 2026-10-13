@@ -257,7 +257,33 @@ export class SessionManager {
       entry.historySettleTimer = null;
     }
 
-    let totalImported = 0;
+    // Flushes whatever's left buffered since the last incremental flush
+    // (see _flushHistoryBuffer) — for a short sync with only one round,
+    // this is the only flush that ever happens.
+    const { failed } = await this._flushHistoryBuffer(studioId);
+    const totalImported = entry.historyImportedSoFar || 0;
+    entry.historyImportedCount = totalImported;
+    entry.historyImportFailed = failed;
+    await this._notifyWithRetry('/internal/wa-web/backfill-done', { studioId, messageCount: totalImported, failed });
+    this.log.info({ studioId, totalImported, failed }, 'wa-web: history import finished');
+  }
+
+  // Pushes everything currently buffered (across all chats) to the Go
+  // API's /internal/wa-web/backfill, same per-chat paging as before, then
+  // clears historyBuffer. Called both incrementally after each deep-fetch
+  // round (see _onHistorySettled) — so the inbox actually fills in as the
+  // sync progresses instead of staying completely empty until the whole
+  // multi-minute process finishes — and one final time from
+  // _concludeHistoryImport for whatever's left over from the last round.
+  // Safe to call repeatedly: the Go side dedupes on (conversation_id,
+  // external_id), so a chat whose earlier messages were already flushed in
+  // a prior round just reports 0 newly inserted for those, not an error.
+  // Accumulates into entry.historyImportedSoFar, the running "how much has
+  // actually been written to the DB" total reported to the UI.
+  async _flushHistoryBuffer(studioId) {
+    const entry = this.sessions.get(studioId);
+    if (!entry) return { imported: 0, failed: false };
+    let imported = 0;
     let failed = false;
     try {
       const chatEntries = [...entry.historyBuffer.entries()];
@@ -268,7 +294,7 @@ export class SessionManager {
           bufferedMessages: chatEntries.reduce((n, [, msgs]) => n + msgs.length, 0),
           perChat: chatEntries.map(([jid, msgs]) => ({ jid, count: msgs.length, hasName: !!entry.historyDisplayNames.get(jid) })),
         },
-        'wa-web: history import starting',
+        'wa-web: history flush starting',
       );
       for (const [jid, messages] of chatEntries) {
         if (messages.length === 0) continue;
@@ -290,12 +316,12 @@ export class SessionManager {
             });
             if (res.ok) {
               const body = await res.json().catch(() => ({}));
-              totalImported += body.imported || 0;
+              imported += body.imported || 0;
             } else {
-              this.log.warn({ studioId, status: res.status }, 'wa-web: history import chat push non-ok');
+              this.log.warn({ studioId, status: res.status }, 'wa-web: history flush chat push non-ok');
             }
           } catch (err) {
-            this.log.warn({ err: err.message, studioId }, 'wa-web: history import chat failed, continuing');
+            this.log.warn({ err: err.message, studioId }, 'wa-web: history flush chat failed, continuing');
           }
         }
       }
@@ -312,14 +338,13 @@ export class SessionManager {
         await this._pushContactName(studioId, jid, name);
       }
     } catch (err) {
-      this.log.error({ err: { message: err.message, stack: err.stack }, studioId }, 'wa-web: history import failed');
+      this.log.error({ err: { message: err.message, stack: err.stack }, studioId }, 'wa-web: history flush failed');
       failed = true;
     }
 
-    entry.historyImportedCount = totalImported;
-    entry.historyImportFailed = failed;
-    await this._notifyWithRetry('/internal/wa-web/backfill-done', { studioId, messageCount: totalImported, failed });
-    this.log.info({ studioId, totalImported, failed }, 'wa-web: history import finished');
+    entry.historyBuffer.clear();
+    entry.historyImportedSoFar = (entry.historyImportedSoFar || 0) + imported;
+    return { imported, failed };
   }
 
   async _notifyBackfillRunning(studioId) {
@@ -404,12 +429,6 @@ export class SessionManager {
     }, HISTORY_EXPAND_GRACE_MS);
   }
 
-  _totalBuffered(entry) {
-    let n = 0;
-    for (const msgs of entry.historyBuffer.values()) n += msgs.length;
-    return n;
-  }
-
   // Fires once the chunk stream has been quiet for HISTORY_SETTLE_MS.
   // WhatsApp's automatic post-pairing push is only a shallow "recent
   // messages" preview per chat (confirmed against real traffic — often
@@ -424,8 +443,8 @@ export class SessionManager {
     const entry = this.sessions.get(studioId);
     if (!entry || entry.historyState !== 'pending') return;
 
-    const bufferedNow = this._totalBuffered(entry);
-    if (entry.historyExpandBufferedAtLastRound !== undefined && bufferedNow <= entry.historyExpandBufferedAtLastRound) {
+    const everSeenNow = entry.historyEverSeenCount || 0;
+    if (entry.historyEverSeenAtLastRound !== undefined && everSeenNow <= entry.historyEverSeenAtLastRound) {
       // The last round of fetchMessageHistory calls didn't yield a single
       // new message — every chat is exhausted (or WhatsApp just isn't
       // sending more) — so asking again would just burn round budget for
@@ -434,19 +453,21 @@ export class SessionManager {
       return;
     }
 
-    if (entry.historyExpandBufferedAtLastRound !== undefined) {
-      // A full sync can take several minutes across many rounds, during
-      // which backfill_message_count otherwise sits frozen at 0 with no
-      // feedback — report the buffered-so-far count (not yet actually
-      // imported to the DB, that still only happens once at the end in
-      // _concludeHistoryImport, but a live "still working, here's how much
-      // it's found" counter beats total silence).
-      this._notifyWithRetry('/internal/wa-web/backfill-progress', { studioId, messageCount: bufferedNow }, { attempts: 1 }).catch(() => {});
+    if (entry.historyEverSeenAtLastRound !== undefined) {
+      // A full sync can take several minutes across many rounds — flush
+      // whatever this round found to the DB now (instead of only once at
+      // the very end) so the inbox actually fills in progressively, then
+      // report the real, now-persisted total so the UI's counter reflects
+      // what's genuinely visible in the inbox, not just buffered in memory.
+      const { failed } = await this._flushHistoryBuffer(studioId);
+      if (!failed) {
+        this._notifyWithRetry('/internal/wa-web/backfill-progress', { studioId, messageCount: entry.historyImportedSoFar || 0 }, { attempts: 1 }).catch(() => {});
+      }
     }
 
     if (entry.historyExpandRoundsLeft > 0 && entry.historyOldestPerChat.size > 0) {
       entry.historyExpandRoundsLeft--;
-      entry.historyExpandBufferedAtLastRound = bufferedNow;
+      entry.historyEverSeenAtLastRound = everSeenNow;
       const requested = await this._expandHistoryOnce(studioId);
       if (requested === 0) {
         await this._concludeHistoryImport(studioId);
@@ -849,6 +870,12 @@ export class SessionManager {
           fromMe: !!msg.key.fromMe,
         });
         entry.historyBuffer.set(jid, bucket);
+        // Monotonic "ever seen" counter, independent of historyBuffer
+        // itself — historyBuffer gets cleared on each incremental flush
+        // (see _flushHistoryBuffer), so summing it no longer reflects total
+        // progress across rounds. This is what growth-detection and the
+        // live progress counter actually track.
+        entry.historyEverSeenCount = (entry.historyEverSeenCount || 0) + 1;
         // Track the oldest message's own WAMessageKey (remoteJid as
         // WhatsApp sent it, not our resolved jid — fetchMessageHistory
         // needs the original key shape) so a later deep-fetch round can use
