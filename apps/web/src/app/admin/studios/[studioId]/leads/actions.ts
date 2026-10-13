@@ -158,6 +158,50 @@ export async function deleteLeadAction(studioId: string, leadId: string): Promis
   }
 }
 
+export interface EnableAIForLeadsResult {
+  ok: boolean;
+  error?: string;
+  enqueued?: number;
+  message?: string;
+  errors?: Record<string, string>;
+}
+
+// Enables AI for exactly the admin-picked lead IDs — unlike
+// enableAutoContactForStatusAction, which operates on a whole status
+// bucket. A lead with existing conversation history gets a genuine
+// context-aware AI follow-up instead of the plain greeting (see
+// EnableAIForLeads's doc comment on the Go side).
+export async function enableAIForLeadsAction(studioId: string, leadIds: string[]): Promise<EnableAIForLeadsResult> {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/leads/enable-ai-for-selected`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      },
+      body: JSON.stringify({ leadIds }),
+      cache: 'no-store',
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      return { ok: false, error: data.error || `HTTP ${res.status}` };
+    }
+
+    revalidatePath(`/admin/studios/${studioId}/leads`);
+    revalidatePath(`/admin/studios/${studioId}/pipeline`);
+    return { ok: true, enqueued: data.enqueued, message: data.message, errors: data.errors };
+  } catch (err: any) {
+    return { ok: false, error: err.message || 'An unknown error occurred.' };
+  }
+}
+
 export type UpdatePipelineStatusResult = { ok: true } | { ok: false; error: string };
 
 // Minimal status-only PATCH for the pipeline board's drag-and-drop — every

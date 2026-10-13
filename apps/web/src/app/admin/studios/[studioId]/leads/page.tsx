@@ -13,6 +13,9 @@ import { ImportLeadsButton } from './ImportLeadsButton';
 import { AddLeadButton } from './AddLeadButton';
 import { DeleteLeadButton } from './DeleteLeadButton';
 import { EnableAIButton } from './EnableAIButton';
+import { LeadSelectionProvider } from './LeadSelectionContext';
+import { LeadRowCheckbox } from './LeadRowCheckbox';
+import { EnableAIForSelectedBar } from './EnableAIForSelectedBar';
 import { AutoRefresh } from '@/components/AutoRefresh';
 import { HeaderActions } from '@/components/HeaderActions';
 
@@ -114,6 +117,7 @@ export default async function LeadsPage({
   const campaigns = campaignsResp.campaigns || [];
 
   return (
+    <LeadSelectionProvider>
     <div className="space-y-5 pb-10">
       <AutoRefresh intervalMs={5000} />
 
@@ -218,6 +222,7 @@ export default async function LeadsPage({
             <ul className="divide-y divide-white/10 dark:divide-white/5">
               {data.leads.map((l) => (
                 <li key={l.id} className="group/row relative">
+                  <LeadRowCheckbox leadId={l.id} />
                   <div className="pointer-events-none absolute right-3 top-1/2 z-10 -translate-y-1/2 opacity-0 transition-opacity group-hover/row:opacity-100">
                     <div className="pointer-events-auto">
                       <DeleteLeadButton studioId={studioId} leadId={l.id} leadName={l.name} />
@@ -314,6 +319,9 @@ export default async function LeadsPage({
           <Pagination total={data.total} pageSize={PAGE_SIZE} page={page} />
         </>
       )}
+
+      <EnableAIForSelectedBar studioId={studioId} />
     </div>
+    </LeadSelectionProvider>
   );
 }

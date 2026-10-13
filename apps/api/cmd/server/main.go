@@ -484,6 +484,7 @@ func main() {
 					r.Delete("/{provider}/models/{modelId}", studiosHandler.DeleteAIModel)
 				})
 				leadsHandler.AdminRoutes(r)
+				r.Post("/leads/enable-ai-for-selected", aiWorker.EnableAIForLeadsHandler)
 				r.Get("/social-posts", studiosHandler.ListSocialPosts)
 				r.Post("/social-posts", studiosHandler.CreateSocialPost)
 				r.Put("/social-posts/{postId}", studiosHandler.UpdateSocialPost)
