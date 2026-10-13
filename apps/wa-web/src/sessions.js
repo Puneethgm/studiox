@@ -872,6 +872,37 @@ function extractMessageText(message) {
   if (!message) return '';
   if (message.conversation) return message.conversation;
   if (message.extendedTextMessage?.text) return message.extendedTextMessage.text;
+  // Media messages carry their text as a caption, not conversation/
+  // extendedTextMessage — without reading these, every photo/video a
+  // customer sends (very common mid-conversation: gym selfies, payment
+  // screenshots, etc.) came back as "" and the whole message was dropped,
+  // both live and during backfill (both paths call this same function).
+  if (message.imageMessage?.caption) return message.imageMessage.caption;
+  if (message.videoMessage?.caption) return message.videoMessage.caption;
+  if (message.documentMessage?.caption) return message.documentMessage.caption;
+  // Tapping a button/list option (e.g. picking a trial date/time slot) is a
+  // real reply with real content, just shaped differently on the wire —
+  // prefer the human-readable label over the raw row/button id.
+  if (message.buttonsResponseMessage) {
+    return message.buttonsResponseMessage.selectedDisplayText || message.buttonsResponseMessage.selectedButtonId || '';
+  }
+  if (message.listResponseMessage) {
+    return message.listResponseMessage.title
+      || message.listResponseMessage.singleSelectReply?.selectedRowId
+      || '';
+  }
+  if (message.templateButtonReplyMessage?.selectedDisplayText) return message.templateButtonReplyMessage.selectedDisplayText;
+  // Content types with no text at all — still worth a placeholder so the
+  // conversation shows the customer engaged at this point instead of this
+  // turn vanishing from history entirely (e.g. a voice-note reply looking
+  // like the customer never responded).
+  if (message.audioMessage) return message.audioMessage.ptt ? '[Voice note]' : '[Audio]';
+  if (message.stickerMessage) return '[Sticker]';
+  if (message.locationMessage || message.liveLocationMessage) return '[Location]';
+  if (message.contactMessage || message.contactsArrayMessage) return '[Contact card]';
+  if (message.imageMessage) return '[Image]';
+  if (message.videoMessage) return '[Video]';
+  if (message.documentMessage) return '[Document]';
   const wrapped =
     message.ephemeralMessage?.message ||
     message.viewOnceMessage?.message ||
