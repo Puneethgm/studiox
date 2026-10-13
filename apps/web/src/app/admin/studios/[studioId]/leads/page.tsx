@@ -10,6 +10,8 @@ import type { Lead, LeadStatus, Campaign } from '@/lib/types';
 import { LEAD_STATUSES, LEAD_STATUS_LABELS } from '@/lib/types';
 import { LeadFilters } from './LeadFilters';
 import { ImportLeadsButton } from './ImportLeadsButton';
+import { AddLeadButton } from './AddLeadButton';
+import { DeleteLeadButton } from './DeleteLeadButton';
 import { EnableAIButton } from './EnableAIButton';
 import { AutoRefresh } from '@/components/AutoRefresh';
 import { HeaderActions } from '@/components/HeaderActions';
@@ -123,6 +125,8 @@ export default async function LeadsPage({
 
         <EnableAIButton studioId={studioId} />
 
+        <AddLeadButton studioId={studioId} campaigns={campaigns} />
+
         <ImportLeadsButton studioId={studioId} campaigns={campaigns} />
 
         <a href={`/api/v1/studios/${studioId}/leads/export${exportQs ? `?${exportQs}` : ''}`}>
@@ -213,7 +217,12 @@ export default async function LeadsPage({
 
             <ul className="divide-y divide-white/10 dark:divide-white/5">
               {data.leads.map((l) => (
-                <li key={l.id}>
+                <li key={l.id} className="group/row relative">
+                  <div className="pointer-events-none absolute right-3 top-1/2 z-10 -translate-y-1/2 opacity-0 transition-opacity group-hover/row:opacity-100">
+                    <div className="pointer-events-auto">
+                      <DeleteLeadButton studioId={studioId} leadId={l.id} leadName={l.name} />
+                    </div>
+                  </div>
                   <Link
                     href={`/admin/studios/${studioId}/leads/${l.id}`}
                     className="group grid grid-cols-[1fr,1.1fr,110px,80px,80px,110px,110px,100px,120px] items-center gap-4 px-5 py-3.5 transition-all hover:bg-white/30 dark:hover:bg-white/5"

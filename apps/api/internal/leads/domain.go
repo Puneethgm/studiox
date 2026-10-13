@@ -144,6 +144,10 @@ var (
 	// ErrExternalSheetExists: this studio already imports from that spreadsheet + tab.
 	ErrExternalSheetExists   = errors.New("this spreadsheet and tab is already added")
 	ErrExternalSheetNotFound = errors.New("external sheet not found")
+	// ErrLeadHasPayments blocks deleting a lead with payment/subscription
+	// history — user_subscriptions.lead_id is ON DELETE CASCADE, so deleting
+	// the lead would silently wipe their payment records too.
+	ErrLeadHasPayments = errors.New("this lead has payment/subscription history and cannot be deleted")
 )
 
 type AnalyticsSummary struct {

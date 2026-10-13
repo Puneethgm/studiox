@@ -21,6 +21,7 @@ import { relativeTime } from '@/lib/datetime';
 import type { ColdLead, Lead, LeadStatus } from '@/lib/types';
 import { LEAD_STATUSES, LEAD_STATUS_LABELS } from '@/lib/types';
 import { updatePipelineStatus, movePipelineColdLead } from '../leads/actions';
+import { DeleteLeadButton } from '../leads/DeleteLeadButton';
 import { ReengageModal } from './ReengageModal';
 
 // Per-status visual config
@@ -611,7 +612,7 @@ function LeadCardVisual({
   const content = (
     <div
       className={cn(
-        "group block rounded-[16px] p-3 backdrop-blur-xl transition-all duration-300 border bg-white/70 border-white/45 dark:bg-neutral-900/30 dark:border-white/5",
+        "group relative block rounded-[16px] p-3 backdrop-blur-xl transition-all duration-300 border bg-white/70 border-white/45 dark:bg-neutral-900/30 dark:border-white/5",
         dragging ? "shadow-xl rotate-2" : "hover:-translate-y-0.5 hover:shadow-md cursor-grab active:cursor-grabbing",
         isPending && "opacity-60"
       )}
@@ -619,6 +620,20 @@ function LeadCardVisual({
         boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 2px 8px rgba(0,0,0,0.04)',
       }}
     >
+      {/* Delete — stops propagation at pointerdown so dnd-kit's drag
+          listener (attached on the card's outer wrapper in LeadCard, which
+          this whole block is nested inside) never sees it, not just at
+          click, and preventDefault+stopPropagation on click so it doesn't
+          also trigger the card's own Link navigation below. */}
+      {studioId && !dragging && (
+        <div
+          className="absolute right-2 top-2 z-10 opacity-0 transition-opacity group-hover:opacity-100"
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <DeleteLeadButton studioId={studioId} leadId={lead.id} leadName={lead.name} />
+        </div>
+      )}
+
       {/* Avatar + name row */}
       <div className="flex items-center gap-2.5">
         <span

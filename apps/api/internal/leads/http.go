@@ -55,8 +55,10 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Post("/leads/import", h.importLeads)
 	r.Post("/leads/auto-contact/enable", h.enableAutoContactForStatus)
 	r.Get("/leads/sources", h.listUniqueSources)
+	r.Post("/leads", h.createLead)
 	r.Get("/leads/{id}", h.getLead)
 	r.Patch("/leads/{id}", h.patchLead)
+	r.Delete("/leads/{id}", h.deleteLead)
 	r.Patch("/leads/{id}/dnd", h.setLeadDND)
 }
 
@@ -681,6 +683,115 @@ func (h *Handler) getLead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, l)
+}
+
+type createLeadReq struct {
+	CampaignID   *string `json:"campaignId"`
+	Name         string  `json:"name"`
+	FirstName    string  `json:"firstName"`
+	LastName     string  `json:"lastName"`
+	Email        string  `json:"email"`
+	Phone        string  `json:"phone"`
+	FitnessPlan  string  `json:"fitnessPlan"`
+	Notes        string  `json:"notes"`
+	SendGreeting bool    `json:"sendGreeting"`
+}
+
+// createLead godoc
+//
+//	@Summary		Manually add a lead
+//	@Description	Creates a single lead directly from the admin UI (e.g. a walk-in or phone inquiry), as opposed to a public form submission or bulk CSV import. campaignId is optional — omitted, it falls back to the studio's oldest active campaign. sendGreeting defaults to false: a manually-added lead does not automatically fire the automated WhatsApp greeting unless explicitly requested.
+//	@Tags			Leads
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			studioId	path		string			true	"Studio ID"
+//	@Param			body		body		createLeadReq	true	"New lead"
+//	@Success		201			{object}	Lead
+//	@Failure		400			{object}	httpx.ErrorResponse	"validation failed"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/admin/leads [post]
+//	@Router			/api/v1/studios/{studioId}/leads [post]
+func (h *Handler) createLead(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := h.resolveStudioID(w, r)
+	if !ok {
+		return
+	}
+	var req createLeadReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	var campaignID *uuid.UUID
+	if req.CampaignID != nil && *req.CampaignID != "" {
+		id, err := uuid.Parse(*req.CampaignID)
+		if err != nil {
+			httpx.WriteValidationError(w, map[string]string{"campaignId": "invalid campaign id"})
+			return
+		}
+		campaignID = &id
+	}
+	l, errs, err := h.svc.CreateLeadManually(r.Context(), studioID, CreateLeadManualInput{
+		CampaignID:      campaignID,
+		Name:            req.Name,
+		FirstName:       req.FirstName,
+		LastName:        req.LastName,
+		Email:           req.Email,
+		Phone:           req.Phone,
+		FitnessPlan:     req.FitnessPlan,
+		Notes:           req.Notes,
+		SkipAutoContact: !req.SendGreeting,
+	})
+	if errs != nil {
+		httpx.WriteValidationError(w, errs)
+		return
+	}
+	if err != nil {
+		slog.Error("createLead failed", "err", err, "studio_id", studioID)
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, l)
+}
+
+// deleteLead godoc
+//
+//	@Summary		Delete a lead
+//	@Description	Permanently deletes a lead. Refused with 409 if the lead has payment/subscription history, since that would be silently destroyed along with it — resolve that separately before deleting. Every other reference to the lead (conversation, contact identity, etc.) is simply detached, not deleted, so chat history survives the lead record being removed.
+//	@Tags			Leads
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			studioId	path	string	true	"Studio ID"
+//	@Param			id			path	string	true	"Lead ID"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		400			{object}	httpx.ErrorResponse	"invalid id"
+//	@Failure		404			{object}	httpx.ErrorResponse	"lead not found"
+//	@Failure		409			{object}	httpx.ErrorResponse	"lead has payment/subscription history"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/admin/leads/{id} [delete]
+//	@Router			/api/v1/studios/{studioId}/leads/{id} [delete]
+func (h *Handler) deleteLead(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := h.resolveStudioID(w, r)
+	if !ok {
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	if err := h.svc.DeleteLead(r.Context(), studioID, id); err != nil {
+		switch {
+		case errors.Is(err, ErrLeadNotFound):
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "lead not found")
+		case errors.Is(err, ErrLeadHasPayments):
+			httpx.WriteError(w, http.StatusConflict, "has_payments", "this lead has payment/subscription history and cannot be deleted")
+		default:
+			slog.Error("deleteLead failed", "err", err, "studio_id", studioID, "lead_id", id)
+			httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		}
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 type patchLeadReq struct {

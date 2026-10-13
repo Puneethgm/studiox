@@ -598,6 +598,33 @@ func (r *Repo) GetLead(ctx context.Context, studioID, id uuid.UUID) (*Lead, erro
 	return &l, nil
 }
 
+// DeleteLead permanently removes a lead. Refuses (ErrLeadHasPayments)
+// rather than deleting if the lead has any payment/subscription history —
+// user_subscriptions.lead_id is ON DELETE CASCADE, so deleting the lead row
+// directly would silently destroy those financial records too. Every other
+// table referencing leads(id) is ON DELETE SET NULL (conversations,
+// contact_identities, knowledge_gaps, etc.), so this just detaches the
+// lead from its conversation/chat history rather than deleting that too.
+func (r *Repo) DeleteLead(ctx context.Context, studioID, id uuid.UUID) error {
+	var hasPayments bool
+	if err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM user_subscriptions WHERE lead_id = $1)
+	`, id).Scan(&hasPayments); err != nil {
+		return fmt.Errorf("check payment history: %w", err)
+	}
+	if hasPayments {
+		return ErrLeadHasPayments
+	}
+	tag, err := r.pool.Exec(ctx, `DELETE FROM leads WHERE studio_id = $1 AND id = $2`, studioID, id)
+	if err != nil {
+		return fmt.Errorf("delete lead: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrLeadNotFound
+	}
+	return nil
+}
+
 func (r *Repo) GetLeadTx(ctx context.Context, tx pgx.Tx, studioID, id uuid.UUID) (*Lead, error) {
 	row := tx.QueryRow(ctx, `
 		SELECT l.id, l.studio_id, s.name, s.slug, l.campaign_id, c.name, c.slug,

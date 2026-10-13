@@ -329,6 +329,111 @@ func (s *Service) SubmitTrialSignup(ctx context.Context, in TrialSignupInput) (*
 	return l, nil, nil
 }
 
+// CreateLeadManualInput is an admin manually adding a single lead from the
+// Pipeline/Leads UI (not a public form submission or bulk import) — e.g. a
+// walk-in or phone inquiry the studio wants tracked the same as any other
+// lead. CampaignID is optional: nil falls back to the studio's oldest
+// active campaign, same resolution SubmitTrialSignup uses for its own
+// no-campaign-context link.
+type CreateLeadManualInput struct {
+	CampaignID  *uuid.UUID
+	Name        string
+	FirstName   string
+	LastName    string
+	Email       string
+	Phone       string
+	FitnessPlan string
+	Notes       string
+	// SkipAutoContact defaults to true from the frontend (admin opts IN to
+	// sending a greeting) — a manually-added lead shouldn't silently fire
+	// an automated WhatsApp message just from being entered into the
+	// system, unlike a public form submission where the visitor just
+	// explicitly asked to be contacted.
+	SkipAutoContact bool
+}
+
+func (s *Service) CreateLeadManually(ctx context.Context, studioID uuid.UUID, in CreateLeadManualInput) (*Lead, map[string]string, error) {
+	in.Name = strings.TrimSpace(in.Name)
+	in.FirstName = strings.TrimSpace(in.FirstName)
+	in.LastName = strings.TrimSpace(in.LastName)
+	in.Email = strings.ToLower(strings.TrimSpace(in.Email))
+	in.Phone = strings.TrimSpace(in.Phone)
+	in.FitnessPlan = strings.TrimSpace(in.FitnessPlan)
+	in.Notes = strings.TrimSpace(in.Notes)
+
+	if in.Name == "" && (in.FirstName != "" || in.LastName != "") {
+		in.Name = strings.TrimSpace(in.FirstName + " " + in.LastName)
+	} else if in.Name != "" && in.FirstName == "" && in.LastName == "" {
+		parts := strings.SplitN(in.Name, " ", 2)
+		in.FirstName = parts[0]
+		if len(parts) > 1 {
+			in.LastName = parts[1]
+		}
+	}
+
+	errs := map[string]string{}
+	if in.Name == "" {
+		errs["name"] = "required"
+	}
+	if in.Phone == "" {
+		errs["phone"] = "required"
+	} else if !phoneRe.MatchString(in.Phone) {
+		errs["phone"] = "invalid phone number"
+	}
+	if in.Email != "" {
+		if _, err := mail.ParseAddress(in.Email); err != nil {
+			errs["email"] = "invalid email"
+		}
+	}
+	if len(errs) > 0 {
+		return nil, errs, nil
+	}
+
+	var c *Campaign
+	var err error
+	if in.CampaignID != nil {
+		c, err = s.repo.GetCampaign(ctx, studioID, *in.CampaignID)
+		if err != nil {
+			return nil, map[string]string{"campaignId": "campaign not found"}, nil
+		}
+	} else {
+		c, err = s.repo.GetOldestActiveCampaign(ctx, studioID)
+		if err != nil {
+			return nil, map[string]string{"campaignId": "studio has no active campaign to attribute this lead to"}, nil
+		}
+	}
+
+	fitnessPlan := in.FitnessPlan
+	if fitnessPlan == "" {
+		fitnessPlan = "General"
+		if len(c.FitnessPlans) > 0 {
+			fitnessPlan = c.FitnessPlans[0]
+		}
+	}
+
+	l := &Lead{
+		StudioID:     studioID,
+		StudioName:   c.StudioName,
+		StudioSlug:   c.StudioSlug,
+		CampaignID:   c.ID,
+		CampaignName: c.Name,
+		CampaignSlug: c.Slug,
+		Name:         in.Name,
+		FirstName:    in.FirstName,
+		LastName:     in.LastName,
+		Email:        in.Email,
+		Phone:        in.Phone,
+		FitnessPlan:  fitnessPlan,
+		Notes:        in.Notes,
+		Source:       "manual",
+		Status:       StatusNew,
+	}
+	if err := s.repo.CreateLeadWithOutbox(ctx, l, "", in.SkipAutoContact); err != nil {
+		return nil, nil, err
+	}
+	return l, nil, nil
+}
+
 func (s *Service) ListLeads(ctx context.Context, studioID uuid.UUID, f ListLeadsFilter) ([]Lead, int, error) {
 	return s.repo.ListLeads(ctx, studioID, f)
 }
@@ -339,6 +444,10 @@ func (s *Service) Stats(ctx context.Context, studioID uuid.UUID) (*LeadStats, er
 
 func (s *Service) GetLead(ctx context.Context, studioID, id uuid.UUID) (*Lead, error) {
 	return s.repo.GetLead(ctx, studioID, id)
+}
+
+func (s *Service) DeleteLead(ctx context.Context, studioID, id uuid.UUID) error {
+	return s.repo.DeleteLead(ctx, studioID, id)
 }
 
 // SetDND toggles Do Not Disturb for a lead. Turning it on also cancels every

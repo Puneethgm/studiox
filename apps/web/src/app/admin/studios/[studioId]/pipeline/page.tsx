@@ -1,10 +1,11 @@
 import { Inbox } from 'lucide-react';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { serverFetch } from '@/lib/auth';
-import type { ColdLead, Lead, LeadStatus } from '@/lib/types';
+import type { Campaign, ColdLead, Lead, LeadStatus } from '@/lib/types';
 import { LEAD_STATUSES } from '@/lib/types';
 import { AutoRefresh } from '@/components/AutoRefresh';
 import { PipelineBoard } from './PipelineBoard';
+import { AddLeadButton } from '../leads/AddLeadButton';
 
 interface ListResp {
   leads: Lead[];
@@ -34,9 +35,16 @@ export default async function PipelinePage({
 }) {
   const { studioId } = await params;
 
-  const [stats, coldRes, ...buckets] = await Promise.all([
+  const [stats, coldRes, campaignsResp, ...buckets] = await Promise.all([
     serverFetch<LeadStats>(`/api/v1/studios/${studioId}/leads/stats`),
     serverFetch<{ leads: ColdLead[] }>(`/api/v1/studios/${studioId}/messaging/leads/cold`),
+    // Only feeds the "Add Lead" campaign dropdown — a user with the
+    // Pipeline permission but not Campaigns gets a 403 here, same
+    // tolerance the Leads list page already applies.
+    serverFetch<{ campaigns: Campaign[] }>(`/api/v1/studios/${studioId}/campaigns`).catch((err: unknown) => {
+      if (err instanceof Error && err.message.endsWith(': 403')) return { campaigns: [] as Campaign[] };
+      throw err;
+    }),
     ...LEAD_STATUSES.map((s) =>
       serverFetch<ListResp>(
         `/api/v1/studios/${studioId}/leads?status=${s}&limit=${COLUMN_CAP}`,
@@ -44,6 +52,7 @@ export default async function PipelinePage({
     ),
   ]);
   const coldLeads = coldRes.leads ?? [];
+  const campaigns = campaignsResp.campaigns || [];
 
   const byStatus = LEAD_STATUSES.reduce(
     (acc, status, i) => {
@@ -83,6 +92,7 @@ export default async function PipelinePage({
 
         {/* Stage count pills */}
         <div className="flex flex-wrap items-center gap-2">
+          <AddLeadButton studioId={studioId} campaigns={campaigns} />
           {LEAD_STATUSES.map((status) => {
             const cfg = COLUMN_CONFIG[status];
             const n = stats.byStatus[status] ?? 0;

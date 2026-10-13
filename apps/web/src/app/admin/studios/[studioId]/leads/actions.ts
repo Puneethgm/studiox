@@ -78,6 +78,86 @@ export async function enableAutoContactForStatusAction(studioId: string, statuse
   }
 }
 
+export interface CreateLeadInput {
+  campaignId?: string;
+  name?: string;
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  phone: string;
+  fitnessPlan?: string;
+  notes?: string;
+  sendGreeting?: boolean;
+}
+
+export type CreateLeadResult =
+  | { ok: true; id: string }
+  | { ok: false; error: string; details?: Record<string, string> };
+
+export async function createLeadAction(studioId: string, input: CreateLeadInput): Promise<CreateLeadResult> {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/leads`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      },
+      body: JSON.stringify(input),
+      cache: 'no-store',
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      return { ok: false, error: data.error || `HTTP ${res.status}`, details: data.details };
+    }
+
+    revalidatePath(`/admin/studios/${studioId}/leads`);
+    revalidatePath(`/admin/studios/${studioId}/pipeline`);
+    revalidatePath(`/admin/studios/${studioId}`);
+    return { ok: true, id: data.id };
+  } catch (err: any) {
+    return { ok: false, error: err.message || 'An unknown error occurred.' };
+  }
+}
+
+export type DeleteLeadResult = { ok: true } | { ok: false; error: string };
+
+export async function deleteLeadAction(studioId: string, leadId: string): Promise<DeleteLeadResult> {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/leads/${leadId}`, {
+      method: 'DELETE',
+      headers: {
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      },
+      cache: 'no-store',
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      return { ok: false, error: data.error || `HTTP ${res.status}` };
+    }
+
+    revalidatePath(`/admin/studios/${studioId}/leads`);
+    revalidatePath(`/admin/studios/${studioId}/pipeline`);
+    revalidatePath(`/admin/studios/${studioId}`);
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err.message || 'An unknown error occurred.' };
+  }
+}
+
 export type UpdatePipelineStatusResult = { ok: true } | { ok: false; error: string };
 
 // Minimal status-only PATCH for the pipeline board's drag-and-drop — every
