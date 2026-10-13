@@ -1068,6 +1068,7 @@ type publicRes struct {
 	BrandColor           string `json:"brandColor"`
 	LogoURL              string `json:"logoUrl"`
 	TrialAmountSGD       int    `json:"trialAmountSgd"`
+	Currency             string `json:"currency"`
 	AvailabilitySlots    any    `json:"availabilitySlots,omitempty"`
 	AvailabilityTimezone string `json:"availabilityTimezone,omitempty"`
 	StripePublishableKey string `json:"stripePublishableKey,omitempty"`
@@ -1107,6 +1108,7 @@ func (h *Handler) publicGet(w http.ResponseWriter, r *http.Request) {
 		BrandColor:           s.BrandColor,
 		LogoURL:              s.LogoURL,
 		TrialAmountSGD:       int(h.svc.ResolveTrialAmountSGD(r.Context(), s.ID, s.TrialAmountSGD)),
+		Currency:             s.Currency,
 		AvailabilitySlots:    s.AvailabilitySlots,
 		AvailabilityTimezone: s.AvailabilityTimezone,
 		StripePublishableKey: s.StripePublishableKey,

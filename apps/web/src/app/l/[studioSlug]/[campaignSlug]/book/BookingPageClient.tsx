@@ -29,9 +29,9 @@ const STRIPE_STYLE = {
   }
 };
 
-function CheckoutForm({ brand, selectedPlan, studioSlug, leadId, name, email, onSuccess }: {
+function CheckoutForm({ brand, selectedPlan, studioSlug, leadId, name, email, currency, onSuccess }: {
   brand: string; selectedPlan: PublicPlan | null; studioSlug: string; leadId: string;
-  name: string; email: string; onSuccess: (piId: string, plan: PublicPlan) => void;
+  name: string; email: string; currency: string; onSuccess: (piId: string, plan: PublicPlan) => void;
 }) {
   const stripe = useStripe(); const elements = useElements();
   const [loading, setLoading] = useState(false); const [error, setError] = useState('');
@@ -61,7 +61,7 @@ function CheckoutForm({ brand, selectedPlan, studioSlug, leadId, name, email, on
   }
 
   const isFree = selectedPlan?.priceSgd === 0;
-  const amount = selectedPlan ? (isFree ? 'Free' : `S$${(selectedPlan.priceSgd / 100).toFixed(2)}`) : '—';
+  const amount = selectedPlan ? (isFree ? 'Free' : `${currency}${(selectedPlan.priceSgd / 100).toFixed(2)}`) : '—';
 
   const stripeCls = 'border border-gray-300 rounded-lg px-3 py-2.5 bg-white focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500 transition-colors';
 
@@ -187,7 +187,7 @@ export function BookingPageClient({ studio, plans, leadId, studioSlug, campaignS
 
   const heroImage = studio.bookingHeroImageUrl;
   const heroVideo = studio.bookingHeroVideoUrl;
-  const selPrice = selectedPlan ? (selectedPlan.priceSgd === 0 ? 'Free' : `S$${(selectedPlan.priceSgd / 100).toFixed(2)}`) : null;
+  const selPrice = selectedPlan ? (selectedPlan.priceSgd === 0 ? 'Free' : `${studio.currency || 'SGD'}${(selectedPlan.priceSgd / 100).toFixed(2)}`) : null;
 
   const StudioLogo = () => studio.logoUrl
     ? <img src={studio.logoUrl} alt={studio.name} className="h-8 w-8 rounded-lg object-cover" />
@@ -310,7 +310,7 @@ export function BookingPageClient({ studio, plans, leadId, studioSlug, campaignS
               onChange={e => setSelectedPlan(plans.find(p => p.id === e.target.value) ?? null)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-800 bg-white focus:outline-none focus:ring-1 focus:border-blue-500 appearance-none cursor-pointer">
               {plans.map(plan => {
-                const price = plan.priceSgd === 0 ? 'Free' : `S$${(plan.priceSgd / 100).toFixed(2)}`;
+                const price = plan.priceSgd === 0 ? 'Free' : `${studio.currency || 'SGD'}${(plan.priceSgd / 100).toFixed(2)}`;
                 const cycle = plan.billingCycle === 'monthly' ? '/mo' : plan.billingCycle === 'yearly' ? '/yr' : '';
                 return <option key={plan.id} value={plan.id}>{plan.planName} — {price}{cycle}</option>;
               })}
@@ -359,7 +359,7 @@ export function BookingPageClient({ studio, plans, leadId, studioSlug, campaignS
             </div>
             {stripeRef.current ? (
               <Elements stripe={stripeRef.current}>
-                <CheckoutForm brand={brand} selectedPlan={selectedPlan} studioSlug={studioSlug} leadId={leadId} name={name} email={email} onSuccess={handlePaymentSuccess} />
+                <CheckoutForm brand={brand} selectedPlan={selectedPlan} studioSlug={studioSlug} leadId={leadId} name={name} email={email} currency={studio.currency || 'SGD'} onSuccess={handlePaymentSuccess} />
               </Elements>
             ) : (
               <div className="space-y-3">

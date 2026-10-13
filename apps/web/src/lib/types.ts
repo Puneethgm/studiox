@@ -90,6 +90,9 @@ export interface Studio {
   bookingHeroImageUrl?: string;
   bookingHeroVideoUrl?: string;
   trialAmountSgd?: number;
+  // ISO 4217 currency code (e.g. "SGD", "MYR") this studio charges in —
+  // applies to both trialAmountSgd and membership plan prices.
+  currency?: string;
   subscriptionTier?: string;
   trialConfirmationMessage?: string;
   membershipConfirmationMessage?: string;

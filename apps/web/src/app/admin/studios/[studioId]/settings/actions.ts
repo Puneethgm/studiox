@@ -43,6 +43,7 @@ export async function updateStudioSettings(
     googleDeveloperToken?: string;
     knowledgeBase?: string;
     trialAmountSgd?: number;
+    currency?: string;
     trialConfirmationMessage?: string;
     membershipConfirmationMessage?: string;
     trialGlofoxMembershipId?: string;

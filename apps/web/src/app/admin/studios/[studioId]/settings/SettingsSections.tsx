@@ -39,7 +39,16 @@ import {
   ColorEditRow,
   ImageEditRow,
   ToggleRow,
+  SelectEditRow,
 } from './SettingsRows';
+
+// Keep in sync with apps/api/internal/studios/service.go's SupportedCurrencies.
+const CURRENCY_OPTIONS = [
+  { value: 'SGD', label: 'SGD — Singapore Dollar' },
+  { value: 'MYR', label: 'MYR — Malaysian Ringgit' },
+  { value: 'USD', label: 'USD — US Dollar' },
+  { value: 'INR', label: 'INR — Indian Rupee' },
+];
 
 // The Server Actions return {ok, error, details}. `error` is often just the
 // generic "validation failed" — the actually useful message is the first
@@ -147,9 +156,16 @@ export function GeneralSection({ studio, onChange }: { studio: Studio; onChange:
             }}
           />
         </SettingsRow>
+        <SelectEditRow
+          label="Currency"
+          description="Applies to the trial price below and all membership plan prices. Changing this does not convert existing amounts — re-enter them in the new currency."
+          value={studio.currency || 'SGD'}
+          options={CURRENCY_OPTIONS}
+          onSave={(v) => saveField('currency', v)}
+        />
         <EditableTextRow
-          label="Trial price (S$)"
-          description="Shown/charged on the trial payment page. S$0 falls back to your lowest active plan (or S$25 with none)."
+          label={`Trial price (${studio.currency || 'SGD'})`}
+          description={`Shown/charged on the trial payment page. 0 falls back to your lowest active plan (or 25.00 with none).`}
           value={((studio.trialAmountSgd ?? 0) / 100).toFixed(2)}
           onSave={(v) => saveField('trialAmountSgd', Math.round((parseFloat(v) || 0) * 100))}
         />

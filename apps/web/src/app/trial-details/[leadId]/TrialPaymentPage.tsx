@@ -13,7 +13,7 @@ import { FONT_FAMILY_STACKS } from '@/lib/types';
 import { defaultTrialPageBlocks, defaultTrialPageBackground, computeCanvasHeight, CANVAS_WIDTH } from '@/lib/trialPageDefaults';
 
 interface LeadInfo { leadName: string; studioName: string; alreadyPurchased: boolean; }
-interface StudioInfo { name: string; brandColor: string; logoUrl: string; trialAmountSgd?: number; stripePublishableKey?: string; }
+interface StudioInfo { name: string; brandColor: string; logoUrl: string; trialAmountSgd?: number; currency?: string; stripePublishableKey?: string; }
 
 const STRIPE_STYLE = {
   style: {
@@ -82,8 +82,8 @@ function useResponsiveScale(designWidth: number) {
   return scale;
 }
 
-function CanvasForm({ blocks, background, leadInfo, amount, leadId, studioSlug, preview, standalone, planId, amountLabelOverride, onSuccess }: {
-  blocks: PageBlock[]; background: PageBackground; leadInfo: LeadInfo; amount: number | null; leadId?: string; studioSlug?: string; preview?: boolean; standalone?: boolean; planId?: string; amountLabelOverride?: string; onSuccess: () => void;
+function CanvasForm({ blocks, background, leadInfo, amount, leadId, studioSlug, preview, standalone, planId, amountLabelOverride, currency, onSuccess }: {
+  blocks: PageBlock[]; background: PageBackground; leadInfo: LeadInfo; amount: number | null; leadId?: string; studioSlug?: string; preview?: boolean; standalone?: boolean; planId?: string; amountLabelOverride?: string; currency?: string; onSuccess: () => void;
 }) {
   const stripe = useStripe();
   const elements = useElements();
@@ -270,7 +270,7 @@ function CanvasForm({ blocks, background, leadInfo, amount, leadId, studioSlug, 
               return (
                 <div className="flex h-full items-center justify-between rounded-lg border border-gray-100 px-3" style={{ backgroundColor: c.backgroundColor ?? '#f9fafb' }}>
                   <span className="text-xs font-semibold" style={{ color: c.labelColor ?? '#6b7280' }}>{amountLabelOverride ?? c.label}</span>
-                  <span className="text-sm font-black" style={{ color: c.textColor ?? '#111827' }}>{amount != null ? `S$${(amount / 100).toFixed(2)}` : '—'}</span>
+                  <span className="text-sm font-black" style={{ color: c.textColor ?? '#111827' }}>{amount != null ? `${currency || 'SGD'} ${(amount / 100).toFixed(2)}` : '—'}</span>
                 </div>
               );
             })()}
@@ -490,6 +490,7 @@ export function TrialPaymentPage({ leadId, preview, standalone, studioSlug: stud
                 standalone={standalone}
                 planId={planId}
                 amountLabelOverride={planInfo ? `${planInfo.planName} Plan` : undefined}
+                currency={studio?.currency}
                 onSuccess={() => setDone(true)}
               />
             </Elements>

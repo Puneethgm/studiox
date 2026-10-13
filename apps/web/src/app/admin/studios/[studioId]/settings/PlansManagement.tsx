@@ -23,10 +23,12 @@ export function PlansManagement({
   studioId,
   initialPlans,
   onSaveSuccess,
+  currency = 'SGD',
 }: {
   studioId: string;
   initialPlans: Plan[];
   onSaveSuccess: (msg: string) => void;
+  currency?: string;
 }) {
   const [plans, setPlans] = useState<Plan[]>(initialPlans);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -217,7 +219,7 @@ export function PlansManagement({
               />
             </div>
             <div>
-              <Label className="text-[10px]">Price (S$)</Label>
+              <Label className="text-[10px]">Price ({currency})</Label>
               <Input
                 type="number"
                 value={newPlan.priceSgd}
@@ -358,7 +360,7 @@ export function PlansManagement({
                       />
                     </div>
                     <div>
-                      <Label className="text-[10px]">Price (S$)</Label>
+                      <Label className="text-[10px]">Price ({currency})</Label>
                       <Input
                         type="number"
                         value={editState.priceSgd}
@@ -432,7 +434,7 @@ export function PlansManagement({
                 <div className="space-y-4">
                   <div className="flex items-baseline gap-1">
                     <span className="text-3xl font-black tracking-tight text-zinc-900 dark:text-white">
-                      S$ {(plan.priceSgd / 100).toFixed(2)}
+                      {currency} {(plan.priceSgd / 100).toFixed(2)}
                     </span>
                     {plan.billingCycle !== 'one_time' && (
                       <span className="text-sm font-semibold text-zinc-500">

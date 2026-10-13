@@ -638,3 +638,59 @@ export function ToggleRow({
     </SettingsRow>
   );
 }
+
+// A fixed set of choices (e.g. currency) — saves instantly on change, same
+// as ToggleRow, rather than needing a separate pencil-to-edit step: picking
+// a different option from a dropdown is already the deliberate action.
+export function SelectEditRow({
+  label,
+  description,
+  value,
+  options,
+  onSave,
+}: {
+  label: string;
+  description?: string;
+  value: string;
+  options: { value: string; label: string }[];
+  onSave: (next: string) => Promise<{ ok: boolean; error?: string; code?: string }>;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [current, setCurrent] = useState(value);
+  const [error, setError] = useState<string | null>(null);
+
+  async function change(next: string) {
+    const prev = current;
+    setCurrent(next);
+    setSaving(true);
+    setError(null);
+    const res = await onSave(next);
+    setSaving(false);
+    if (!res.ok) {
+      if (res.code === 'unauthorized') {
+        redirectToLoginFromHere();
+        return;
+      }
+      setCurrent(prev);
+      setError(res.error ?? 'Failed to save');
+    }
+  }
+
+  return (
+    <SettingsRow label={label} description={description}>
+      <select
+        value={current}
+        disabled={saving}
+        onChange={(e) => change(e.target.value)}
+        className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-800 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      {error && <p className="mt-1 text-xs font-medium text-red-500">{error}</p>}
+    </SettingsRow>
+  );
+}

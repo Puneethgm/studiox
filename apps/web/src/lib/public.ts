@@ -8,6 +8,7 @@ export interface PublicStudio {
   brandColor: string;
   logoUrl: string;
   trialAmountSgd?: number;
+  currency?: string;
   availabilitySlots?: Record<string, string[]>;
   availabilityTimezone?: string;
   stripePublishableKey?: string;

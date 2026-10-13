@@ -124,7 +124,7 @@ export function PlansRows({ studio, initialPlans }: { studio: Studio; initialPla
               <Input value={newPlan.planName} onChange={(e) => setNewPlan({ ...newPlan, planName: e.target.value })} placeholder="e.g. Premium" />
             </div>
             <div>
-              <Label className="text-xs">Price (S$)</Label>
+              <Label className="text-xs">Price ({studio.currency || 'SGD'})</Label>
               <Input type="number" value={newPlan.priceSgd} onChange={(e) => setNewPlan({ ...newPlan, priceSgd: e.target.value })} placeholder="0.00" />
             </div>
             <div>
@@ -208,6 +208,7 @@ export function PlansRows({ studio, initialPlans }: { studio: Studio; initialPla
             key={plan.id}
             plan={plan}
             accentHex={ACCENTS[idx % ACCENTS.length]!}
+            currency={studio.currency || 'SGD'}
             onPatch={(patch) => patchPlan(plan, patch)}
             onDelete={() => deletePlan(plan)}
           />
@@ -220,11 +221,13 @@ export function PlansRows({ studio, initialPlans }: { studio: Studio; initialPla
 function PlanCard({
   plan,
   accentHex,
+  currency,
   onPatch,
   onDelete,
 }: {
   plan: Plan;
   accentHex: string;
+  currency: string;
   onPatch: (patch: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>;
   onDelete: () => void;
 }) {
@@ -309,7 +312,7 @@ function PlanCard({
         {editingPrice ? (
           <div className="mt-2">
             <div className="flex items-center gap-1.5">
-              <span className="text-sm font-semibold text-zinc-500">S$</span>
+              <span className="text-sm font-semibold text-zinc-500">{currency}</span>
               <Input value={price} onChange={(e) => setPrice(e.target.value)} className="h-8 w-20 text-sm" autoFocus />
               <select
                 value={cycle}
@@ -367,7 +370,7 @@ function PlanCard({
         ) : (
           <div className="mt-2 flex items-baseline gap-1">
             <span className="text-3xl font-black tracking-tight text-zinc-900 dark:text-white">
-              S${(plan.priceSgd / 100).toFixed(2)}
+              {currency} {(plan.priceSgd / 100).toFixed(2)}
             </span>
             {plan.billingCycle !== 'one_time' && (
               <span className="text-xs font-semibold text-zinc-400">

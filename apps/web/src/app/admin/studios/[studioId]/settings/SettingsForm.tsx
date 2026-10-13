@@ -121,6 +121,7 @@ export function SettingsForm({
   // persist that price and override the Plans-based fallback the backend
   // otherwise uses (see FieldHint below).
   const [trialAmountSgd, setTrialAmountSgd] = useState((studio.trialAmountSgd ?? 0) / 100);
+  const [currency, setCurrency] = useState(studio.currency || 'SGD');
   const [pricingSaving, setPricingSaving] = useState(false);
 
   const [currentPassword, setCurrentPassword] = useState('');
@@ -413,6 +414,7 @@ export function SettingsForm({
         active,
         managedBy1Hero,
         trialAmountSgd: Math.round(trialAmountSgd * 100),
+        currency,
       });
       if (!result.ok) {
         setErrors(result.details ?? { _: result.error });
@@ -681,7 +683,26 @@ export function SettingsForm({
                 </div>
 
                 <div>
-                  <Label htmlFor="trialAmountSgd">Trial Price (S$)</Label>
+                  <Label htmlFor="currency">Currency</Label>
+                  <select
+                    id="currency"
+                    value={currency}
+                    onChange={(e) => setCurrency(e.target.value)}
+                    className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-semibold text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                  >
+                    <option value="SGD">SGD — Singapore Dollar</option>
+                    <option value="MYR">MYR — Malaysian Ringgit</option>
+                    <option value="USD">USD — US Dollar</option>
+                    <option value="INR">INR — Indian Rupee</option>
+                  </select>
+                  <FieldHint>
+                    Applies to the trial price below and all membership plan prices. Changing this does not convert
+                    existing amounts — re-enter them in the new currency.
+                  </FieldHint>
+                </div>
+
+                <div>
+                  <Label htmlFor="trialAmountSgd">Trial Price ({currency})</Label>
                   <Input
                     id="trialAmountSgd"
                     type="number"
@@ -692,7 +713,7 @@ export function SettingsForm({
                   />
                   <FieldHint>
                     The price shown and charged on the trial payment page (including the shareable static signup link).
-                    If left at S$0, the page uses your lowest active Plan price instead (or S$25 if no active plans).
+                    If left at 0, the page uses your lowest active Plan price instead (or 25.00 if no active plans).
                   </FieldHint>
                 </div>
 
@@ -807,7 +828,7 @@ export function SettingsForm({
         )}
 
         {activeSection === 'plans' && (
-          <PlansManagement studioId={studio.id} initialPlans={initialPlans} onSaveSuccess={(msg) => showToast(msg)} />
+          <PlansManagement studioId={studio.id} initialPlans={initialPlans} onSaveSuccess={(msg) => showToast(msg)} currency={currency} />
         )}
 
         {activeSection === 'booking' && (
