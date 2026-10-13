@@ -115,7 +115,7 @@ func TestEnsureRollingSummary_SummarizesOnlyWhatFellOutOfTheWindow(t *testing.T)
 		_, _ = pool.Exec(context.Background(), `DELETE FROM messages WHERE conversation_id = $1`, conv.ID)
 	})
 
-	full, err := msgRepo.ListMessages(ctx, studioID, conv.ID, 500)
+	full, err := msgRepo.ListMessages(ctx, studioID, conv.ID, 500, nil)
 	if err != nil {
 		t.Fatalf("list messages: %v", err)
 	}

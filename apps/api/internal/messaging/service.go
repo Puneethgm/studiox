@@ -2065,8 +2065,8 @@ func (s *Service) GetConversation(ctx context.Context, studioID, id uuid.UUID) (
 	return s.repo.GetConversation(ctx, studioID, id)
 }
 
-func (s *Service) ListMessages(ctx context.Context, studioID, conversationID uuid.UUID, limit int) ([]Message, error) {
-	return s.repo.ListMessages(ctx, studioID, conversationID, limit)
+func (s *Service) ListMessages(ctx context.Context, studioID, conversationID uuid.UUID, limit int, before *time.Time) ([]Message, error) {
+	return s.repo.ListMessages(ctx, studioID, conversationID, limit, before)
 }
 
 func (s *Service) MarkRead(ctx context.Context, studioID, conversationID uuid.UUID) error {
@@ -2610,7 +2610,7 @@ func (s *Service) sendEscalationEmail(ctx context.Context, studioID, convID uuid
 		return fmt.Errorf("get conversation: %w", err)
 	}
 
-	msgs, err := s.repo.ListMessages(ctx, studioID, convID, 6)
+	msgs, err := s.repo.ListMessages(ctx, studioID, convID, 6, nil)
 	if err != nil {
 		return fmt.Errorf("list messages: %w", err)
 	}

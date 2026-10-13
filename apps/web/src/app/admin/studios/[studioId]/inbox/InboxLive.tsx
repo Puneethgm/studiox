@@ -187,6 +187,16 @@ export function InboxLive({
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [escalatedConversations, setEscalatedConversations] = useState<Conversation[]>([]);
   const [inboxTab, setInboxTab] = useState<'all' | 'unread' | 'recents' | 'starred'>('all');
+  // refreshConversations only ever fetches page 1 (limit=50) and the list
+  // UI had no way to ask for more, so a studio with more conversations than
+  // that (e.g. 424 after a full WhatsApp history backfill) could never show
+  // the rest no matter how far the sidebar was scrolled. rawConversationsRef
+  // tracks the full server-returned set across pages (before the inboxTab
+  // client-side filters below are applied), so loadMoreConversations knows
+  // the correct offset and can append without re-fetching page 1.
+  const rawConversationsRef = useRef<Conversation[]>([]);
+  const [conversationsTotal, setConversationsTotal] = useState(0);
+  const [loadingMoreConversations, setLoadingMoreConversations] = useState(false);
 
   // Starred is a shared, studio-wide flag stored on the conversation row in
   // Postgres (conversations.is_starred) — not per-browser localStorage. That
@@ -306,6 +316,14 @@ export function InboxLive({
   }, []);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
+  // refreshMessages only ever fetched the most recent 200 with no way to
+  // see further back — a long-running conversation (e.g. 220+ messages
+  // after a full WhatsApp history backfill) permanently lost its oldest
+  // messages with no path to view them. hasMoreMessages/loadingMoreMessages
+  // back a "load earlier" scroll-up at the top of the thread.
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const [loadingMoreMessages, setLoadingMoreMessages] = useState(false);
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [newReceiverValue, setNewReceiverValue] = useState('');
@@ -447,33 +465,43 @@ export function InboxLive({
   // escalated-only list instead of the regular inbox list.
   const activeListConversations = currentTab === 'escalation' ? escalatedConversations : conversations;
 
+  const applyInboxTabFilter = useCallback((list: Conversation[]) => {
+    let filtered = list;
+    if (inboxTab === 'unread') {
+      filtered = filtered.filter(c => c.unreadCount > 0);
+    } else if (inboxTab === 'recents') {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      filtered = filtered.filter(c => new Date(c.lastMessageAt) >= sevenDaysAgo);
+    } else if (inboxTab === 'starred') {
+      filtered = filtered.filter(c => c.isStarred);
+    }
+    if (unrespondedOnly) {
+      filtered = filtered.filter(c => c.status === 'open' && c.lastMessageDirection === 'inbound');
+    }
+    return filtered;
+  }, [inboxTab, unrespondedOnly]);
+
+  const conversationsListURL = useCallback((offset: number) => {
+    let url = `/api/v1/studios/${studioId}/messaging/conversations?limit=50&offset=${offset}`;
+    // Awaiting Reply intentionally searches across all channels; otherwise
+    // scope to the active channel tab.
+    if (!unrespondedOnly) {
+      url += `&channelKind=${activeChannel}`;
+    }
+    url += `&status=open&escalated=false`;
+    return url;
+  }, [studioId, unrespondedOnly, activeChannel]);
+
   const refreshConversations = useCallback(async () => {
     try {
-      let url = `/api/v1/studios/${studioId}/messaging/conversations?limit=50`;
-      // Awaiting Reply intentionally searches across all channels; otherwise
-      // scope to the active channel tab.
-      if (!unrespondedOnly) {
-        url += `&channelKind=${activeChannel}`;
-      }
-      url += `&status=open&escalated=false`;
-      const res = await api<{ conversations: Conversation[] }>(url, { cache: 'no-store' });
-      let filtered = res.conversations;
-
-      // Filter by inbox tab
-      if (inboxTab === 'unread') {
-        filtered = filtered.filter(c => c.unreadCount > 0);
-      } else if (inboxTab === 'recents') {
-        const sevenDaysAgo = new Date();
-        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-        filtered = filtered.filter(c => new Date(c.lastMessageAt) >= sevenDaysAgo);
-      } else if (inboxTab === 'starred') {
-        filtered = filtered.filter(c => c.isStarred);
-      }
-
-      if (unrespondedOnly) {
-        filtered = filtered.filter(c => c.status === 'open' && c.lastMessageDirection === 'inbound');
-      }
-      setConversations(filtered);
+      const res = await api<{ conversations: Conversation[]; total: number }>(
+        conversationsListURL(0),
+        { cache: 'no-store' },
+      );
+      rawConversationsRef.current = res.conversations;
+      setConversationsTotal(res.total);
+      setConversations(applyInboxTabFilter(res.conversations));
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         handleAuthError();
@@ -481,7 +509,38 @@ export function InboxLive({
       }
       throw error;
     }
-  }, [studioId, activeChannel, unrespondedOnly, inboxTab, handleAuthError]);
+  }, [conversationsListURL, applyInboxTabFilter, handleAuthError]);
+
+  const loadMoreConversations = useCallback(async () => {
+    if (loadingMoreConversations || rawConversationsRef.current.length >= conversationsTotal) return;
+    setLoadingMoreConversations(true);
+    try {
+      const res = await api<{ conversations: Conversation[]; total: number }>(
+        conversationsListURL(rawConversationsRef.current.length),
+        { cache: 'no-store' },
+      );
+      const existingIds = new Set(rawConversationsRef.current.map((c) => c.id));
+      const merged = [...rawConversationsRef.current, ...res.conversations.filter((c) => !existingIds.has(c.id))];
+      rawConversationsRef.current = merged;
+      setConversationsTotal(res.total);
+      setConversations(applyInboxTabFilter(merged));
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        handleAuthError();
+        return;
+      }
+      console.error('Failed to load more conversations', error);
+    } finally {
+      setLoadingMoreConversations(false);
+    }
+  }, [loadingMoreConversations, conversationsTotal, conversationsListURL, applyInboxTabFilter, handleAuthError]);
+
+  const handleConversationListScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) {
+      loadMoreConversations();
+    }
+  }, [loadMoreConversations]);
 
   const refreshEscalatedConversations = useCallback(async () => {
     try {
@@ -511,15 +570,20 @@ export function InboxLive({
     }
   }, [studioId, refreshConversations]);
 
+  const MESSAGES_PAGE_SIZE = 200;
+
   const refreshMessages = useCallback(
     async (convId: string) => {
       setLoadingMessages(true);
       try {
         const res = await api<{ messages: Message[] }>(
-          `/api/v1/studios/${studioId}/messaging/conversations/${convId}/messages?limit=200`,
+          `/api/v1/studios/${studioId}/messaging/conversations/${convId}/messages?limit=${MESSAGES_PAGE_SIZE}`,
           { cache: 'no-store' }
         );
         setMessages(res.messages);
+        // A full page back means there's likely older history past it; a
+        // short page means we already have everything this conversation has.
+        setHasMoreMessages(res.messages.length >= MESSAGES_PAGE_SIZE);
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) {
           handleAuthError();
@@ -532,6 +596,47 @@ export function InboxLive({
     },
     [studioId, handleAuthError],
   );
+
+  const loadMoreMessages = useCallback(async () => {
+    if (!selectedId || loadingMoreMessages || !hasMoreMessages || messages.length === 0) return;
+    const oldest = messages[0];
+    if (!oldest) return;
+    setLoadingMoreMessages(true);
+    const scrollEl = messagesScrollRef.current;
+    const prevScrollHeight = scrollEl?.scrollHeight ?? 0;
+    try {
+      const res = await api<{ messages: Message[] }>(
+        `/api/v1/studios/${studioId}/messaging/conversations/${selectedId}/messages?limit=${MESSAGES_PAGE_SIZE}&before=${encodeURIComponent(oldest.sentAt)}`,
+        { cache: 'no-store' },
+      );
+      setHasMoreMessages(res.messages.length >= MESSAGES_PAGE_SIZE);
+      if (res.messages.length > 0) {
+        setMessages((prev) => [...res.messages, ...prev]);
+        // Prepending older messages shifts everything down visually unless
+        // we restore the scroll offset — otherwise the thread jumps to a
+        // random position every time older history loads in.
+        requestAnimationFrame(() => {
+          if (scrollEl) {
+            scrollEl.scrollTop += scrollEl.scrollHeight - prevScrollHeight;
+          }
+        });
+      }
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        handleAuthError();
+        return;
+      }
+      console.error('Failed to load earlier messages', error);
+    } finally {
+      setLoadingMoreMessages(false);
+    }
+  }, [selectedId, loadingMoreMessages, hasMoreMessages, messages, studioId, handleAuthError]);
+
+  const handleMessagesScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    if (e.currentTarget.scrollTop < 200) {
+      loadMoreMessages();
+    }
+  }, [loadMoreMessages]);
 
   // Fetch functions for tabs
   const fetchTemplates = useCallback(async () => {
@@ -1438,7 +1543,10 @@ export function InboxLive({
                   a normal chat app's search bar. Falls through to the New
                   Conversation Input's existing "start a chat with this
                   number" behavior on submit when nothing matches. */}
-              <div className="flex-1 overflow-y-auto no-scrollbar">
+              <div
+                className="flex-1 overflow-y-auto no-scrollbar"
+                onScroll={currentTab === 'escalation' ? undefined : handleConversationListScroll}
+              >
                 {mounted && currentTab === 'escalation' && activeListConversations.length === 0 ? (
                   <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-zinc-400">
                     <UserCheck className="h-8 w-8" />
@@ -1565,6 +1673,11 @@ export function InboxLive({
                     <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/20 border-t-brand-500" />
                   </div>
                 )}
+                {mounted && currentTab !== 'escalation' && loadingMoreConversations && (
+                  <div className="flex items-center justify-center py-3">
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/20 border-t-brand-500" />
+                  </div>
+                )}
               </div>
             </aside>
 
@@ -1675,6 +1788,8 @@ export function InboxLive({
                   )}
 
                   <div
+                    ref={messagesScrollRef}
+                    onScroll={handleMessagesScroll}
                     className="relative flex-1 overflow-y-auto no-scrollbar px-5 py-6 bg-[#f4f5f6] dark:bg-zinc-900/40"
                   >
                     <div className="relative">
@@ -1684,6 +1799,11 @@ export function InboxLive({
                         </div>
                       ) : (
                         <ul className="space-y-3">
+                          {loadingMoreMessages && (
+                            <li className="flex justify-center py-2">
+                              <div className="h-5 w-5 animate-spin rounded-full border-2 border-white/20 border-t-brand-500" />
+                            </li>
+                          )}
                           {messages.map((m, i) => {
                             const prev = i > 0 ? messages[i - 1] : undefined;
                             const showDivider = !prev || dayKey(m.sentAt) !== dayKey(prev.sentAt);

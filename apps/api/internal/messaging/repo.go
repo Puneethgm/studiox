@@ -1104,27 +1104,57 @@ func (r *Repo) InsertMessageBackfill(ctx context.Context, tx pgx.Tx, in CreateMe
 	return out, nil
 }
 
-func (r *Repo) ListMessages(ctx context.Context, studioID, conversationID uuid.UUID, limit int) ([]Message, error) {
+// ListMessages returns up to `limit` messages for a conversation, most
+// recent first then re-ordered ascending for display. When `before` is
+// non-nil, it returns the `limit` messages immediately preceding that
+// timestamp instead of the most recent ones — this is how a "load earlier
+// messages" scroll-up in the UI fetches the next older page; without it,
+// any conversation with more messages than the UI's single page size has
+// no way to ever surface its older history (see the 200-message hardcoded
+// frontend fetch this was built to support paginating past).
+func (r *Repo) ListMessages(ctx context.Context, studioID, conversationID uuid.UUID, limit int, before *time.Time) ([]Message, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	rows, err := r.pool.Query(ctx, `
-		SELECT sub.id, sub.conversation_id, sub.studio_id, sub.direction, sub.source_kind, sub.source_user_id,
-		       sub.source_ref, sub.body, sub.attachments, sub.sender_jid, sub.sender_name,
-		       sub.external_id, sub.in_reply_to, sub.status,
-		       sub.failure_reason, sub.sent_at, sub.delivered_at, sub.read_at, sub.created_at
-		FROM (
-			SELECT id, conversation_id, studio_id, direction, source_kind, source_user_id,
-			       source_ref, body, attachments, sender_jid, sender_name,
-			       external_id, in_reply_to, status,
-			       failure_reason, sent_at, delivered_at, read_at, created_at
-			FROM messages
-			WHERE studio_id = $1 AND conversation_id = $2
-			ORDER BY sent_at DESC, created_at DESC
-			LIMIT $3
-		) sub
-		ORDER BY sub.sent_at ASC, sub.created_at ASC
-	`, studioID, conversationID, limit)
+	var rows pgx.Rows
+	var err error
+	if before != nil {
+		rows, err = r.pool.Query(ctx, `
+			SELECT sub.id, sub.conversation_id, sub.studio_id, sub.direction, sub.source_kind, sub.source_user_id,
+			       sub.source_ref, sub.body, sub.attachments, sub.sender_jid, sub.sender_name,
+			       sub.external_id, sub.in_reply_to, sub.status,
+			       sub.failure_reason, sub.sent_at, sub.delivered_at, sub.read_at, sub.created_at
+			FROM (
+				SELECT id, conversation_id, studio_id, direction, source_kind, source_user_id,
+				       source_ref, body, attachments, sender_jid, sender_name,
+				       external_id, in_reply_to, status,
+				       failure_reason, sent_at, delivered_at, read_at, created_at
+				FROM messages
+				WHERE studio_id = $1 AND conversation_id = $2 AND sent_at < $3
+				ORDER BY sent_at DESC, created_at DESC
+				LIMIT $4
+			) sub
+			ORDER BY sub.sent_at ASC, sub.created_at ASC
+		`, studioID, conversationID, *before, limit)
+	} else {
+		rows, err = r.pool.Query(ctx, `
+			SELECT sub.id, sub.conversation_id, sub.studio_id, sub.direction, sub.source_kind, sub.source_user_id,
+			       sub.source_ref, sub.body, sub.attachments, sub.sender_jid, sub.sender_name,
+			       sub.external_id, sub.in_reply_to, sub.status,
+			       sub.failure_reason, sub.sent_at, sub.delivered_at, sub.read_at, sub.created_at
+			FROM (
+				SELECT id, conversation_id, studio_id, direction, source_kind, source_user_id,
+				       source_ref, body, attachments, sender_jid, sender_name,
+				       external_id, in_reply_to, status,
+				       failure_reason, sent_at, delivered_at, read_at, created_at
+				FROM messages
+				WHERE studio_id = $1 AND conversation_id = $2
+				ORDER BY sent_at DESC, created_at DESC
+				LIMIT $3
+			) sub
+			ORDER BY sub.sent_at ASC, sub.created_at ASC
+		`, studioID, conversationID, limit)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("list messages: %w", err)
 	}

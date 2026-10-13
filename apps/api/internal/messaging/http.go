@@ -1178,6 +1178,7 @@ func (h *Handler) createConversation(w http.ResponseWriter, r *http.Request) {
 //	@Param			studioId	path		string	true	"Studio ID"
 //	@Param			id			path		string	true	"Conversation ID"
 //	@Param			limit		query		int		false	"Max messages to return (default 100)"
+//	@Param			before		query		string	false	"RFC3339 timestamp — returns the `limit` messages immediately before this instead of the most recent ones, for loading older history on scroll-up"
 //	@Success		200			{object}	map[string]interface{}
 //	@Failure		400			{object}	httpx.ErrorResponse	"invalid id"
 //	@Failure		500			{object}	httpx.ErrorResponse
@@ -1199,7 +1200,16 @@ func (h *Handler) listMessages(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
-	msgs, err := h.svc.ListMessages(r.Context(), studioID, id, limit)
+	var before *time.Time
+	if v := r.URL.Query().Get("before"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "bad_before", "before must be an RFC3339 timestamp")
+			return
+		}
+		before = &t
+	}
+	msgs, err := h.svc.ListMessages(r.Context(), studioID, id, limit, before)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return

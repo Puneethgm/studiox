@@ -194,7 +194,7 @@ func (w *AIWorker) summarizeConversationsAfterBackfill(ctx context.Context, stud
 // line, matching the reply-generation silent-failure pattern) if no LLM
 // provider is configured for the studio.
 func (w *AIWorker) summarizeConversation(ctx context.Context, studioID, convID uuid.UUID, studio *studios.Studio) error {
-	history, err := w.msgRepo.ListMessages(ctx, studioID, convID, 10)
+	history, err := w.msgRepo.ListMessages(ctx, studioID, convID, 10, nil)
 	if err != nil {
 		return fmt.Errorf("fetch message history: %w", err)
 	}
@@ -252,7 +252,7 @@ const (
 func (w *AIWorker) ensureRollingSummary(ctx context.Context, studioID uuid.UUID, convID uuid.UUID, studio *studios.Studio) {
 	// Capped at 500 (ListMessages' own max) so the "every Nth message" gate below keeps
 	// working for a very long-running conversation instead of freezing at a smaller cap.
-	full, err := w.msgRepo.ListMessages(ctx, studioID, convID, 500)
+	full, err := w.msgRepo.ListMessages(ctx, studioID, convID, 500, nil)
 	if err != nil {
 		w.log.Warn("ai: rolling summary — failed to load full history", "conversation_id", convID, "err", err)
 		return
@@ -601,7 +601,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 
 	// Recent-message window for the model's immediate context; ensureRollingSummary
 	// (below) covers anything further back so a long conversation doesn't lose it.
-	history, err := w.msgRepo.ListMessages(ctx, studioID, conv.ID, aiHistoryWindow)
+	history, err := w.msgRepo.ListMessages(ctx, studioID, conv.ID, aiHistoryWindow, nil)
 	if err != nil {
 		w.log.Error("fetch message history for ai context failed", "err", err)
 		history = []Message{*msg}
