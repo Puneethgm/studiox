@@ -1739,6 +1739,23 @@ func (w *AIWorker) buildPrompt(ctx context.Context, history []Message, semanticH
 		sb.WriteString("You can see your own earlier replies in RECENT CONVERSATION below — do NOT restate pricing, promotions, or programme details you've already told the customer in this conversation; assume they remember it and only repeat something if they explicitly ask again. Keep replies short and move the conversation forward instead of re-explaining what's already covered.\n\n")
 	}
 
+	// ── Staff corrections ───────────────────────────────────────────────────
+	// Feedback a staff member gave on a specific past reply (from the Test
+	// Chat drawer, or eventually live) — see ai_feedback_corrections /
+	// AIFeedbackCorrection. Deliberately placed AFTER the knowledge base and
+	// told to take priority over it: a correction exists specifically
+	// because the KB-grounded answer was wrong, so it must win when the two
+	// conflict, not get silently overridden back to the same mistake.
+	if studio != nil {
+		if corrections, err := w.studiosRepo.ListAIFeedbackCorrections(ctx, studio.ID, 20); err == nil && len(corrections) > 0 {
+			sb.WriteString("STAFF CORRECTIONS — a team member reviewed past AI replies and flagged these as wrong. These take priority over the knowledge base above if they ever conflict. Apply the spirit of each correction to any similar question now, not just an exact repeat of the original question:\n")
+			for _, c := range corrections {
+				fmt.Fprintf(&sb, "- Question like: %q — wrong answer given: %q — correct answer: %q\n", c.Question, c.OriginalReply, c.Correction)
+			}
+			sb.WriteString("\n")
+		}
+	}
+
 	// ── Classes ──────────────────────────────────────────────────────────────
 	// This assistant has no booking system. It must never claim to have booked, cancelled,
 	// moved or confirmed anything — the real conversations showed it saying "locking you in

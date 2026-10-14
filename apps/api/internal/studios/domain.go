@@ -40,6 +40,20 @@ type KnowledgeGap struct {
 	ResolvedAt     *time.Time `json:"resolvedAt,omitempty"`
 }
 
+// AIFeedbackCorrection is staff feedback on a specific AI reply — "this was
+// wrong, it should have said X instead" — given from the Test Chat drawer.
+// Folded into every future prompt for this studio (see AIWorker.buildPrompt's
+// STAFF CORRECTIONS section), live replies included, not just test sessions.
+type AIFeedbackCorrection struct {
+	ID            uuid.UUID `json:"id"`
+	StudioID      uuid.UUID `json:"studioId"`
+	Question      string    `json:"question"`
+	OriginalReply string    `json:"originalReply"`
+	Correction    string    `json:"correction"`
+	Source        string    `json:"source"` // "test_chat" | "live"
+	CreatedAt     time.Time `json:"createdAt"`
+}
+
 type Studio struct {
 	ID                   uuid.UUID           `json:"id"`
 	Slug                 string              `json:"slug"`

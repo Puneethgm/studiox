@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { FileText, MessageCircle, Send, X } from 'lucide-react';
+import { CheckCircle, FileText, MessageCircle, MessageSquareWarning, Send, X } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { api, ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
@@ -156,9 +156,12 @@ export function TestChatDrawer({
             </p>
           ) : (
             <ul className="space-y-3">
-              {turns.map((t, i) => (
-                <TestChatBubble key={i} turn={t} />
-              ))}
+              {turns.map((t, i) => {
+                const prev = turns[i - 1];
+                return (
+                  <TestChatBubble key={i} turn={t} studioId={studioId} precedingQuestion={prev?.role === 'user' ? prev.text : ''} />
+                );
+              })}
               {sending && (
                 <li className="flex items-start">
                   <div className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900">
@@ -299,7 +302,18 @@ function SourcesBadge({ sources }: { sources: string[] }) {
   );
 }
 
-function TestChatBubble({ turn }: { turn: TestChatTurn }) {
+function TestChatBubble({
+  turn,
+  studioId,
+  precedingQuestion,
+}: {
+  turn: TestChatTurn;
+  studioId: string;
+  // The user's message right before this reply — sent as `question` when
+  // giving feedback, so the correction is tied to what was actually asked,
+  // not just the AI's (wrong) answer on its own.
+  precedingQuestion: string;
+}) {
   const isUser = turn.role === 'user';
   const segments = isUser ? null : parseMarkdownish(turn.text);
   const hasTable = segments?.some((s) => s.kind === 'table') ?? false;
@@ -358,7 +372,92 @@ function TestChatBubble({ turn }: { turn: TestChatTurn }) {
           </div>
         )}
       </div>
-      {!isUser && turn.sources && turn.sources.length > 0 && <SourcesBadge sources={turn.sources} />}
+      {!isUser && (
+        <div className="flex items-center gap-2">
+          {turn.sources && turn.sources.length > 0 && <SourcesBadge sources={turn.sources} />}
+          <FeedbackControl studioId={studioId} question={precedingQuestion} originalReply={turn.text} />
+        </div>
+      )}
     </li>
+  );
+}
+
+// "This was wrong" control under an AI reply — opens a small inline form to
+// correct it. The correction is saved via SubmitTestChatFeedback and folded
+// into buildPrompt's STAFF CORRECTIONS section for every future reply in
+// this studio (real live replies included, not just test chat), so this is
+// the "teach the AI" loop, not just a complaint box.
+function FeedbackControl({ studioId, question, originalReply }: { studioId: string; question: string; originalReply: string }) {
+  const [open, setOpen] = useState(false);
+  const [correction, setCorrection] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (saved) {
+    return (
+      <span className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+        <CheckCircle className="h-2.5 w-2.5" />
+        Saved — future replies will use this
+      </span>
+    );
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-zinc-500 transition-colors hover:border-rose-400 hover:text-rose-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400"
+      >
+        <MessageSquareWarning className="h-2.5 w-2.5" />
+        This was wrong
+      </button>
+    );
+  }
+
+  async function handleSubmit() {
+    const text = correction.trim();
+    if (!text || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await api(`/api/v1/studios/${studioId}/knowledge-base/test-chat/feedback`, {
+        method: 'POST',
+        json: { question, originalReply, correction: text },
+      });
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to save feedback — try again.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="w-full max-w-[85%] rounded-lg border border-rose-200 bg-rose-50/60 p-2.5 dark:border-rose-900/40 dark:bg-rose-900/10">
+      <p className="mb-1.5 text-[9px] font-black uppercase tracking-wider text-rose-500">What should it have said instead?</p>
+      <textarea
+        autoFocus
+        rows={2}
+        className="w-full resize-none rounded-md border border-rose-200 bg-white px-2 py-1.5 text-xs leading-relaxed placeholder:text-zinc-400 focus:border-rose-400 focus:outline-none focus:ring-1 focus:ring-rose-400 dark:border-rose-900/50 dark:bg-zinc-900"
+        placeholder="e.g. We're open 6am-9pm, not 9am-6pm — correct the hours."
+        value={correction}
+        onChange={(e) => setCorrection(e.target.value)}
+      />
+      {error && <p className="mt-1 text-[10px] font-semibold text-rose-600">{error}</p>}
+      <div className="mt-1.5 flex justify-end gap-1.5">
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          className="rounded-md px-2 py-1 text-[10px] font-bold text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+        >
+          Cancel
+        </button>
+        <Button size="sm" onClick={handleSubmit} loading={saving} disabled={!correction.trim()}>
+          Save correction
+        </Button>
+      </div>
+    </div>
   );
 }

@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/projectx/api/internal/identity"
 	"github.com/projectx/api/internal/integrations/llm"
 	"github.com/projectx/api/internal/platform/httpx"
 	"github.com/projectx/api/internal/studios"
@@ -192,4 +195,105 @@ func (w *AIWorker) TestChatHandler(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(rw, http.StatusOK, TestChatResponse{Reply: reply, Sources: sources})
+}
+
+type submitFeedbackReq struct {
+	Question      string `json:"question"`
+	OriginalReply string `json:"originalReply"`
+	Correction    string `json:"correction"`
+}
+
+// SubmitTestChatFeedback godoc
+//
+//	@Summary		Give feedback on a Test Chat reply so the AI learns from it
+//	@Description	Records a staff correction on a specific AI reply — folded into every future prompt for this studio (buildPrompt's STAFF CORRECTIONS section), so it improves real live replies too, not just this test session.
+//	@Tags			Knowledge Base
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			studioId	path		string				true	"Studio ID"
+//	@Param			body		body		submitFeedbackReq	true	"The question asked, the AI's original (wrong) reply, and what it should have said"
+//	@Success		200			{object}	studios.AIFeedbackCorrection
+//	@Failure		400			{object}	httpx.ErrorResponse
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/knowledge-base/test-chat/feedback [post]
+func (w *AIWorker) SubmitTestChatFeedback(rw http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(rw, r)
+	if !ok {
+		return
+	}
+	var req submitFeedbackReq
+	if !httpx.DecodeJSON(rw, r, &req) {
+		return
+	}
+	req.Correction = strings.TrimSpace(req.Correction)
+	if req.Correction == "" {
+		httpx.WriteValidationError(rw, map[string]string{"correction": "required"})
+		return
+	}
+	c := identity.MustClaims(r.Context())
+	correction, err := w.studiosRepo.CreateAIFeedbackCorrection(r.Context(), studioID, req.Question, req.OriginalReply, req.Correction, "test_chat", &c.UserID)
+	if err != nil {
+		w.log.Error("submit test chat feedback failed", "studio_id", studioID, "err", err)
+		httpx.WriteError(rw, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(rw, http.StatusOK, correction)
+}
+
+// ListAIFeedbackCorrections godoc
+//
+//	@Summary		List staff corrections given to the AI for this studio
+//	@Tags			Knowledge Base
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Success		200			{object}	map[string]any
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/knowledge-base/feedback [get]
+func (w *AIWorker) ListAIFeedbackCorrections(rw http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(rw, r)
+	if !ok {
+		return
+	}
+	corrections, err := w.studiosRepo.ListAIFeedbackCorrections(r.Context(), studioID, 50)
+	if err != nil {
+		httpx.WriteError(rw, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(rw, http.StatusOK, map[string]any{"corrections": corrections})
+}
+
+// DeleteAIFeedbackCorrection godoc
+//
+//	@Summary		Remove a staff correction
+//	@Description	Use when a correction is stale or was itself wrong — it stops being applied to future AI replies immediately.
+//	@Tags			Knowledge Base
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			studioId		path	string	true	"Studio ID"
+//	@Param			correctionId	path	string	true	"Correction ID"
+//	@Success		200				{object}	map[string]any
+//	@Failure		400				{object}	httpx.ErrorResponse
+//	@Failure		404				{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/knowledge-base/feedback/{correctionId} [delete]
+func (w *AIWorker) DeleteAIFeedbackCorrection(rw http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(rw, r)
+	if !ok {
+		return
+	}
+	correctionID, err := uuid.Parse(chi.URLParam(r, "correctionId"))
+	if err != nil {
+		httpx.WriteError(rw, http.StatusBadRequest, "bad_id", "invalid correction id")
+		return
+	}
+	if err := w.studiosRepo.DeleteAIFeedbackCorrection(r.Context(), studioID, correctionID); err != nil {
+		if errors.Is(err, studios.ErrNotFound) {
+			httpx.WriteError(rw, http.StatusNotFound, "not_found", "correction not found")
+			return
+		}
+		httpx.WriteError(rw, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(rw, http.StatusOK, map[string]any{"ok": true})
 }

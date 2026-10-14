@@ -1083,3 +1083,65 @@ func (r *Repo) MarkKnowledgeGapDismissed(ctx context.Context, studioID, gapID uu
 	}
 	return nil
 }
+
+// ── AI feedback corrections ──────────────────────────────────
+
+// CreateAIFeedbackCorrection records staff feedback on one AI reply.
+func (r *Repo) CreateAIFeedbackCorrection(ctx context.Context, studioID uuid.UUID, question, originalReply, correction, source string, actorID *uuid.UUID) (*AIFeedbackCorrection, error) {
+	var c AIFeedbackCorrection
+	c.StudioID = studioID
+	if err := r.pool.QueryRow(ctx, `
+		INSERT INTO ai_feedback_corrections (studio_id, question, original_reply, correction, source, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id, question, original_reply, correction, source, created_at
+	`, studioID, question, originalReply, correction, source, actorID).Scan(
+		&c.ID, &c.Question, &c.OriginalReply, &c.Correction, &c.Source, &c.CreatedAt); err != nil {
+		return nil, fmt.Errorf("create ai feedback correction: %w", err)
+	}
+	return &c, nil
+}
+
+// ListAIFeedbackCorrections returns a studio's most recent corrections,
+// newest first, capped at limit. Used both by buildPrompt (recent corrections
+// folded into every prompt — see the STAFF CORRECTIONS section) and by the
+// admin UI listing them for review/deletion.
+func (r *Repo) ListAIFeedbackCorrections(ctx context.Context, studioID uuid.UUID, limit int) ([]AIFeedbackCorrection, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 20
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, studio_id, question, original_reply, correction, source, created_at
+		FROM ai_feedback_corrections
+		WHERE studio_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2
+	`, studioID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list ai feedback corrections: %w", err)
+	}
+	defer rows.Close()
+	out := make([]AIFeedbackCorrection, 0)
+	for rows.Next() {
+		var c AIFeedbackCorrection
+		if err := rows.Scan(&c.ID, &c.StudioID, &c.Question, &c.OriginalReply, &c.Correction, &c.Source, &c.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan ai feedback correction: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// DeleteAIFeedbackCorrection removes one correction — e.g. it's stale, or it
+// was itself wrong and is making the AI worse instead of better.
+func (r *Repo) DeleteAIFeedbackCorrection(ctx context.Context, studioID, id uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx, `
+		DELETE FROM ai_feedback_corrections WHERE id = $1 AND studio_id = $2
+	`, id, studioID)
+	if err != nil {
+		return fmt.Errorf("delete ai feedback correction: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
