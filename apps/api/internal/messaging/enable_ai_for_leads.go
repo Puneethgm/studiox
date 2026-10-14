@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
@@ -290,16 +289,17 @@ func (w *AIWorker) composeFollowUpFromHistory(ctx context.Context, studioID uuid
 	reply = strings.ReplaceAll(reply, "{{lead_first_name}}", lead.FirstName)
 	reply = strings.ReplaceAll(reply, "{{studio_name}}", studio.Name)
 	// Belt-and-suspenders against the prompt instruction above not being
-	// followed: the model occasionally signs off with a bracket placeholder
-	// it had no real value for (e.g. "[Your Name]") instead of a staff
-	// member's actual name — caught in production. Swap any such
-	// placeholder for the studio name rather than letting a literal
-	// "[Your Name]" reach a real customer.
-	reply = staffNamePlaceholderRe.ReplaceAllString(reply, studio.Name)
+	// followed: the model occasionally leaves an unfilled bracket
+	// placeholder — "[Your Name]" as a sign-off, "[Insert Address Here]"
+	// when it doesn't actually know something — instead of a real value.
+	// Shared with the main chat-reply guard (see guardAgainstPlaceholderArtifact
+	// in ai_worker.go); here, returning "" instead of a message lets the
+	// caller's existing empty-body fallback send the plain greeting instead,
+	// which fits "re-opening a quiet conversation" better than a generic
+	// "a team member will follow up" line would.
+	if unfilledPlaceholder.MatchString(reply) {
+		w.log.Warn("enable-ai-for-leads: follow-up contained an unfilled template placeholder, falling back to greeting", "studio_id", studioID, "lead_id", lead.ID, "reply", reply)
+		return ""
+	}
 	return reply
 }
-
-// staffNamePlaceholderRe matches an unfilled "sign off with your name" style
-// placeholder like "[Your Name]", "[Staff Name]", "[Name]" — case
-// insensitive, tolerant of the common variants seen in the wild.
-var staffNamePlaceholderRe = regexp.MustCompile(`(?i)\[\s*(your |staff |my )?name\s*\]`)

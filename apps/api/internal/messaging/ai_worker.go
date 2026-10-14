@@ -1512,6 +1512,11 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		resp = stripNameGreeting(resp)
 	}
 
+	if guarded := guardAgainstPlaceholderArtifact(resp); guarded != resp {
+		w.log.Warn("ai response contained an unfilled template placeholder — replaced with fallback", "message_id", msg.ID, "studio_id", studioID, "original_response", resp)
+		resp = guarded
+	}
+
 	w.log.Info("ai response generated", "message_id", msg.ID, "response_len", len(resp), "channel", channel.Kind, "model", sourceRef)
 
 	// Enqueue outbound reply. Delayed slightly so the reply doesn't feel
@@ -1666,7 +1671,7 @@ func (w *AIWorker) buildPrompt(ctx context.Context, history []Message, semanticH
 		sb.WriteString("KNOWLEDGE BASE:\n\"\"\"\n")
 		sb.WriteString(kbText)
 		sb.WriteString("\n\"\"\"\n")
-		sb.WriteString("Answer ONLY from the knowledge base above and the plans below. Reply to exactly what the customer asked and nothing else. Never invent a specific fact (a day, time, price, date, class, instructor or policy) that isn't stated above, and never fill a gap with something plausible. If the knowledge base doesn't clearly answer the question — or it is about a different topic than the one asked — do not guess: say a team member will help with that, and keep it to one short sentence. If you genuinely can't tell what the customer is asking, ask ONE short clarifying question instead of answering something else. ")
+		sb.WriteString("Answer ONLY from the knowledge base above and the plans below. Reply to exactly what the customer asked and nothing else. Never invent a specific fact (a day, time, price, date, class, instructor or policy) that isn't stated above, and never fill a gap with something plausible. If the knowledge base doesn't clearly answer the question — or it is about a different topic than the one asked — do not guess: say a team member will help with that, and keep it to one short sentence. Never write a placeholder like [Insert Address Here] or [Your Name] for information you don't have — that's a template artifact, not an answer; say a team member will help with that instead, same as any other missing fact. If you genuinely can't tell what the customer is asking, ask ONE short clarifying question instead of answering something else. ")
 		sb.WriteString("You can see your own earlier replies in RECENT CONVERSATION below — do NOT restate pricing, promotions, or programme details you've already told the customer in this conversation; assume they remember it and only repeat something if they explicitly ask again. Keep replies short and move the conversation forward instead of re-explaining what's already covered.\n\n")
 	}
 
@@ -2082,6 +2087,31 @@ func stripNameGreeting(resp string) string {
 	}
 	r, size := utf8.DecodeRuneInString(rest)
 	return string(unicode.ToUpper(r)) + rest[size:]
+}
+
+// unfilledPlaceholder matches a short square-bracket span like
+// "[Insert Address Here]", "[Your Name]", "[Address]", "[TBD]" — a template
+// artifact the model left in instead of either answering from the knowledge
+// base or deferring to a team member (the prompt tells it to do the latter
+// for anything not in the KB, but models don't follow that reliably — same
+// reasoning as every other strip* guard in this file). Real WhatsApp replies
+// essentially never contain literal square brackets, so any short bracketed
+// span is almost certainly this, not legitimate content.
+var unfilledPlaceholder = regexp.MustCompile(`\[[^\[\]]{1,60}\]`)
+
+// guardAgainstPlaceholderArtifact catches an AI reply that leaked an unfilled
+// template placeholder (e.g. "...you can find us at [Insert Address Here]")
+// straight to a real customer — confirmed in production. A surgical removal
+// would leave a half-sentence ("you can find us at ."), which reads just as
+// broken, so the whole reply is swapped for a safe, generic fallback instead
+// — the model clearly didn't have the real answer, so handing off to a human
+// is the correct behavior anyway, matching what the prompt already asks for
+// when information is missing.
+func guardAgainstPlaceholderArtifact(resp string) string {
+	if !unfilledPlaceholder.MatchString(resp) {
+		return resp
+	}
+	return "Let me get that confirmed for you — one of our team members will follow up shortly with the details!"
 }
 
 // motivationPhrases are the fitness-goal/qualifying-question phrasings the prompt
