@@ -149,6 +149,23 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 
 	r.Get("/google-credentials", h.getGoogleCredentials)
 	r.Post("/google-credentials", h.uploadGoogleCredentials)
+
+	r.Post("/encrypt-legacy-ai-keys", h.encryptLegacyAIKeys)
+}
+
+// encryptLegacyAIKeys is a one-time, idempotent maintenance action: any
+// per-studio Gemini/Groq/Claude/Mistral API key saved before encryption was
+// added to UpdateAIProviderKey/Update/Create is still sitting as plaintext
+// in the DB and won't self-heal until that studio happens to re-save a key.
+// This re-encrypts every such row in place. Safe to call more than once —
+// already-encrypted values are left untouched.
+func (h *Handler) encryptLegacyAIKeys(w http.ResponseWriter, r *http.Request) {
+	fixed, err := h.svc.repo.EncryptLegacyAIProviderKeys(r.Context())
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true, "keysEncrypted": fixed})
 }
 
 func (h *Handler) SelfRoutes(r chi.Router) {

@@ -34,6 +34,37 @@ func NewRepo(pool *pgxpool.Pool, cipher *secrets.Cipher) *Repo {
 // transactional create-studio-with-admin flow.
 func (r *Repo) Pool() *pgxpool.Pool { return r.pool }
 
+// encryptOrPlain encrypts an AI provider API key before it's written to the
+// studios table — same AES-256-GCM cipher already used for
+// stripe_secret_key/stripe_webhook_secret. Empty values and a nil cipher
+// (e.g. TOKEN_ENCRYPTION_KEY unset in a dev env) pass through unchanged
+// rather than failing the whole write.
+func (r *Repo) encryptOrPlain(key string) (string, error) {
+	if key == "" || r.cipher == nil {
+		return key, nil
+	}
+	return r.cipher.Encrypt(key)
+}
+
+// decryptOrPlain reverses encryptOrPlain. Falls back to returning the raw
+// stored value on a decrypt error rather than erroring the whole read — this
+// is what makes the switch to encrypted storage non-destructive: a row
+// written before this field was encrypted is still valid ciphertext-shaped
+// garbage to Decrypt (fails the GCM tag check) and the caller just gets the
+// plaintext back unchanged, same as always, until it's next saved and
+// becomes genuinely encrypted. Same pattern already used for
+// stripe_secret_key/stripe_webhook_secret below.
+func decryptOrPlain(cipher *secrets.Cipher, value string) string {
+	if value == "" || cipher == nil {
+		return value
+	}
+	dec, err := cipher.Decrypt(value)
+	if err != nil {
+		return value
+	}
+	return dec
+}
+
 func (r *Repo) Create(ctx context.Context, tx pgx.Tx, s *Studio, actorID *uuid.UUID) error {
 	var err error
 	encWebhookSecret := s.StripeWebhookSecret
@@ -42,6 +73,18 @@ func (r *Repo) Create(ctx context.Context, tx pgx.Tx, s *Studio, actorID *uuid.U
 		if err != nil {
 			return fmt.Errorf("encrypt stripe webhook secret: %w", err)
 		}
+	}
+	encGeminiKey, err := r.encryptOrPlain(s.GeminiAPIKey)
+	if err != nil {
+		return fmt.Errorf("encrypt gemini api key: %w", err)
+	}
+	encGroqKey, err := r.encryptOrPlain(s.GroqAPIKey)
+	if err != nil {
+		return fmt.Errorf("encrypt groq api key: %w", err)
+	}
+	encClaudeKey, err := r.encryptOrPlain(s.ClaudeAPIKey)
+	if err != nil {
+		return fmt.Errorf("encrypt claude api key: %w", err)
 	}
 	kbFilesJSON, _ := json.Marshal(s.KnowledgeBaseFiles)
 	currency := s.Currency
@@ -52,7 +95,7 @@ func (r *Repo) Create(ctx context.Context, tx pgx.Tx, s *Studio, actorID *uuid.U
 		INSERT INTO studios (slug, name, brand_color, logo_url, contact_email, contact_phone, active, gemini_api_key, groq_api_key, claude_api_key, meta_app_id, meta_app_secret, google_client_id, google_client_secret, google_developer_token, stripe_account_id, stripe_secret_key, stripe_publishable_key, stripe_webhook_secret, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files, trial_amount_sgd, managed_by_1hero, currency, created_by, updated_by)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$27)
 		RETURNING id, created_at, updated_at
-	`, s.Slug, s.Name, s.BrandColor, s.LogoURL, s.ContactEmail, s.ContactPhone, s.Active, s.GeminiAPIKey, s.GroqAPIKey, s.ClaudeAPIKey, s.MetaAppID, s.MetaAppSecret, s.GoogleClientID, s.GoogleClientSecret, s.GoogleDeveloperToken, s.StripeAccountID, s.StripeSecretKey, s.StripePublishableKey, encWebhookSecret, s.SubscriptionTier, s.SocialPlannerEnabled, s.KnowledgeBase, string(kbFilesJSON), s.TrialAmountSGD, s.ManagedBy1Hero, currency, actorID)
+	`, s.Slug, s.Name, s.BrandColor, s.LogoURL, s.ContactEmail, s.ContactPhone, s.Active, encGeminiKey, encGroqKey, encClaudeKey, s.MetaAppID, s.MetaAppSecret, s.GoogleClientID, s.GoogleClientSecret, s.GoogleDeveloperToken, s.StripeAccountID, s.StripeSecretKey, s.StripePublishableKey, encWebhookSecret, s.SubscriptionTier, s.SocialPlannerEnabled, s.KnowledgeBase, string(kbFilesJSON), s.TrialAmountSGD, s.ManagedBy1Hero, currency, actorID)
 	if err := row.Scan(&s.ID, &s.CreatedAt, &s.UpdatedAt); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -92,6 +135,7 @@ func (r *Repo) List(ctx context.Context) ([]Studio, error) {
 			&s.TrialAmountSGD, &s.ManagedBy1Hero, &s.CampaignCount, &s.LeadCount); err != nil {
 			return nil, fmt.Errorf("scan studio: %w", err)
 		}
+		s.GeminiAPIKey = decryptOrPlain(r.cipher, s.GeminiAPIKey)
 		if s.StripeSecretKey != "" && r.cipher != nil {
 			dec, err := r.cipher.Decrypt(s.StripeSecretKey)
 			if err == nil {
@@ -172,6 +216,14 @@ func (r *Repo) Update(ctx context.Context, id uuid.UUID, name, brandColor, logoU
 	if currency == "" {
 		currency = "SGD"
 	}
+	encGeminiKey, err := r.encryptOrPlain(geminiAPIKey)
+	if err != nil {
+		return fmt.Errorf("encrypt gemini api key: %w", err)
+	}
+	encGroqKey, err := r.encryptOrPlain(groqAPIKey)
+	if err != nil {
+		return fmt.Errorf("encrypt groq api key: %w", err)
+	}
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE studios
 		SET name = $2, brand_color = $3, logo_url = $4, contact_email = $5, contact_phone = $6, active = $7,
@@ -184,7 +236,7 @@ func (r *Repo) Update(ctx context.Context, id uuid.UUID, name, brandColor, logoU
 		    currency = $31,
 		    updated_by = $32, updated_at = now()
 		WHERE id = $1`,
-		id, name, brandColor, logoURL, contactEmail, contactPhone, active, string(slotsJSON), availabilityTimezone, geminiAPIKey, groqAPIKey, metaAppID, metaAppSecret, googleClientID, googleClientSecret, googleDeveloperToken, socialPlannerEnabled, knowledgeBase, string(filesJSON), greetingMessage, trialAmountSGD, managedBy1Hero, bookingHeroImageURL, bookingHeroVideoURL, trialConfirmationMessage, membershipConfirmationMessage, trialGlofoxMembershipID, trialGlofoxPlanCode, membershipGlofoxMembershipID, membershipGlofoxPlanCode, currency, actorID)
+		id, name, brandColor, logoURL, contactEmail, contactPhone, active, string(slotsJSON), availabilityTimezone, encGeminiKey, encGroqKey, metaAppID, metaAppSecret, googleClientID, googleClientSecret, googleDeveloperToken, socialPlannerEnabled, knowledgeBase, string(filesJSON), greetingMessage, trialAmountSGD, managedBy1Hero, bookingHeroImageURL, bookingHeroVideoURL, trialConfirmationMessage, membershipConfirmationMessage, trialGlofoxMembershipID, trialGlofoxPlanCode, membershipGlofoxMembershipID, membershipGlofoxPlanCode, currency, actorID)
 	if err != nil {
 		return fmt.Errorf("update studio: %w", err)
 	}
@@ -461,6 +513,69 @@ var aiProviderKeyColumns = map[string]string{
 	"mistral": "mistral_api_key",
 }
 
+// EncryptLegacyAIProviderKeys is a one-time (idempotent, safe to re-run)
+// backfill for rows written before UpdateAIProviderKey/Update/Create started
+// encrypting these 4 columns — those rows are still sitting as plaintext in
+// the DB and won't self-heal until that studio happens to re-save a key.
+// For each studio and each provider column: if the stored value fails to
+// decrypt (i.e. it's plaintext, not already ciphertext from this cipher) and
+// isn't empty, re-save it through the now-encrypting write path. Returns how
+// many (studio, provider) values were actually re-encrypted.
+func (r *Repo) EncryptLegacyAIProviderKeys(ctx context.Context) (int, error) {
+	if r.cipher == nil {
+		return 0, errors.New("TOKEN_ENCRYPTION_KEY not configured — cannot encrypt")
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, gemini_api_key, groq_api_key, claude_api_key, mistral_api_key FROM studios
+	`)
+	if err != nil {
+		return 0, fmt.Errorf("list studios for key backfill: %w", err)
+	}
+	type row struct {
+		id                                           uuid.UUID
+		gemini, groq, claude, mistral                string
+	}
+	var toFix []row
+	for rows.Next() {
+		var rr row
+		if err := rows.Scan(&rr.id, &rr.gemini, &rr.groq, &rr.claude, &rr.mistral); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("scan studio for key backfill: %w", err)
+		}
+		toFix = append(toFix, rr)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	// isPlaintext reports whether value is non-empty and NOT already valid
+	// ciphertext under this cipher (Decrypt succeeds only for real
+	// ciphertext — a GCM auth-tag check, not just base64-decodability).
+	isPlaintext := func(value string) bool {
+		if value == "" {
+			return false
+		}
+		_, err := r.cipher.Decrypt(value)
+		return err != nil
+	}
+
+	fixed := 0
+	for _, rr := range toFix {
+		for provider, value := range map[string]string{
+			"gemini": rr.gemini, "groq": rr.groq, "claude": rr.claude, "mistral": rr.mistral,
+		} {
+			if !isPlaintext(value) {
+				continue
+			}
+			if err := r.UpdateAIProviderKey(ctx, rr.id, provider, value, nil); err != nil {
+				return fixed, fmt.Errorf("re-encrypt %s key for studio %s: %w", provider, rr.id, err)
+			}
+			fixed++
+		}
+	}
+	return fixed, nil
+}
+
 // UpdateAIProviderKey saves a studio's API key for one AI provider. A small
 // dedicated setter (like SetCommunicationStyleProfile/SetTrialPageLayout
 // above) rather than another parameter on the already-large Update, since
@@ -470,7 +585,11 @@ func (r *Repo) UpdateAIProviderKey(ctx context.Context, studioID uuid.UUID, prov
 	if !ok {
 		return fmt.Errorf("unsupported ai provider %q", provider)
 	}
-	tag, err := r.pool.Exec(ctx, fmt.Sprintf(`UPDATE studios SET %s = $2, updated_by = $3, updated_at = now() WHERE id = $1`, col), studioID, key, actorID)
+	encKey, err := r.encryptOrPlain(key)
+	if err != nil {
+		return fmt.Errorf("encrypt ai provider key: %w", err)
+	}
+	tag, err := r.pool.Exec(ctx, fmt.Sprintf(`UPDATE studios SET %s = $2, updated_by = $3, updated_at = now() WHERE id = $1`, col), studioID, encKey, actorID)
 	if err != nil {
 		return fmt.Errorf("update ai provider key: %w", err)
 	}
@@ -496,6 +615,11 @@ func scanStudio(row pgx.Row, cipher *secrets.Cipher) (*Studio, error) {
 		}
 		return nil, fmt.Errorf("scan studio: %w", err)
 	}
+
+	s.GeminiAPIKey = decryptOrPlain(cipher, s.GeminiAPIKey)
+	s.GroqAPIKey = decryptOrPlain(cipher, s.GroqAPIKey)
+	s.ClaudeAPIKey = decryptOrPlain(cipher, s.ClaudeAPIKey)
+	s.MistralAPIKey = decryptOrPlain(cipher, s.MistralAPIKey)
 
 	if s.StripeSecretKey != "" && cipher != nil {
 		dec, err := cipher.Decrypt(s.StripeSecretKey)
