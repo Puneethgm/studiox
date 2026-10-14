@@ -151,6 +151,15 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
   const [ocrLoading, setOcrLoading] = useState(false);
   const [ocrError, setOcrError] = useState<string | null>(null);
 
+  // Removing a file here isn't a soft delete — the auto-save effect below
+  // persists it ~900ms later, which triggers a full knowledge-base re-embed
+  // that permanently drops every chunk tied to this file (see
+  // asyncSyncKnowledgeChunks's delete-all-then-reinsert on the Go side).
+  // A single misclick on Trash2 used to do that with zero confirmation —
+  // this holds the index pending confirmation instead of removing it
+  // immediately.
+  const [fileToRemoveIndex, setFileToRemoveIndex] = useState<number | null>(null);
+
   useEffect(() => {
     if (ocrFile || ocrQueue.length === 0) return;
     const [next, ...rest] = ocrQueue;
@@ -461,6 +470,12 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
     setFiles((prev) => prev.filter((_, i) => i !== index));
   }
 
+  function handleConfirmRemoveFile() {
+    if (fileToRemoveIndex === null) return;
+    handleRemoveFile(fileToRemoveIndex);
+    setFileToRemoveIndex(null);
+  }
+
   function handleFilePlatform(index: number, platform: string) {
     setFiles((prev) => prev.map((f, i) => i === index ? { ...f, platform } : f));
   }
@@ -603,7 +618,7 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
                         />
                         <button
                           type="button"
-                          onClick={() => handleRemoveFile(i)}
+                          onClick={() => setFileToRemoveIndex(i)}
                           className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-rose-500 dark:hover:bg-zinc-800/50"
                         >
                           <Trash2 className="h-4 w-4" />
@@ -835,6 +850,39 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
               {ocrQueue.length} more image{ocrQueue.length === 1 ? '' : 's'} queued after this one.
             </p>
           )}
+        </div>
+      </Dialog>
+
+      <Dialog open={fileToRemoveIndex !== null} onClose={() => setFileToRemoveIndex(null)} widthClassName="max-w-sm">
+        <DialogHeader
+          icon={<AlertCircle className="h-5 w-5 text-rose-500" />}
+          title="Remove this document?"
+          onClose={() => setFileToRemoveIndex(null)}
+        />
+        <div className="space-y-4 px-5 py-4">
+          <p className="text-sm text-zinc-600 dark:text-zinc-300">
+            {fileToRemoveIndex !== null && files[fileToRemoveIndex] ? (
+              <>
+                <span className="font-semibold text-zinc-800 dark:text-zinc-100">{files[fileToRemoveIndex].name}</span>{' '}
+                will be deleted from the knowledge base, along with everything the AI learned from it. This can't be undone
+                — the AI will no longer use this document to answer questions.
+              </>
+            ) : (
+              "This file will be deleted from the knowledge base, along with everything the AI learned from it. This can't be undone."
+            )}
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setFileToRemoveIndex(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              leftIcon={<Trash2 className="h-3.5 w-3.5" />}
+              onClick={handleConfirmRemoveFile}
+            >
+              Delete document
+            </Button>
+          </div>
         </div>
       </Dialog>
 
