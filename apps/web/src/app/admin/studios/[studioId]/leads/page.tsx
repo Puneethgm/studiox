@@ -250,7 +250,7 @@ export default async function LeadsPage({
                         {l.name ? l.name.charAt(0).toUpperCase() : 'L'}
                       </div>
                       <span className="truncate text-sm font-bold text-zinc-900 group-hover:text-brand-600 dark:text-zinc-100 dark:group-hover:text-brand-400">
-                        {l.name || 'Anonymous Lead'}
+                        {l.name || l.phone || 'Anonymous Lead'}
                       </span>
                     </div>
 

@@ -187,7 +187,7 @@ export default async function GlobalLeadsPage({
                       </div>
                       <div className="min-w-0">
                         <span className="truncate block text-sm font-bold text-zinc-900 group-hover:text-brand-600 dark:text-zinc-100 dark:group-hover:text-brand-400">
-                          {l.name || 'Anonymous Lead'}
+                          {l.name || l.phone || 'Anonymous Lead'}
                         </span>
                         <span className="text-[10px] font-semibold text-zinc-400 block truncate">
                           {l.studioName || 'Unknown Studio'}
