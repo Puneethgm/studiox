@@ -212,6 +212,21 @@ func (w *AIWorker) enableAIForOneLead(ctx context.Context, studioID, leadID uuid
 		return fmt.Errorf("failed to enqueue message: %w", err)
 	}
 
+	// Mirrors AutoContactWorker.processItem's own MarkLeadContacted call
+	// after its initial send — without it, a "new" lead sent a real message
+	// here stayed "new" forever in the Leads/Pipeline UI, looking untouched
+	// even though AI had just messaged them. Only for "new": unlike
+	// AutoContactWorker (which only ever touches freshly-created leads),
+	// this feature is explicitly meant to re-engage a lead at ANY pipeline
+	// stage — MarkLeadContacted unconditionally sets status='contacted', so
+	// calling it on a trial_booked/member lead would wrongly regress their
+	// stage backwards.
+	if lead.Status == leads.StatusNew {
+		if err := w.leadsRepo.MarkLeadContacted(ctx, leadID); err != nil {
+			w.log.Warn("enable-ai-for-leads: failed to mark lead contacted", "lead_id", leadID, "err", err)
+		}
+	}
+
 	// A lead whose auto-contact stage is still "bot owns this stage" (see
 	// AIWorker.handleInbound's botOwnedStage check — anything other than "",
 	// "completed", "awaiting_options" or "awaiting_interest") was never
