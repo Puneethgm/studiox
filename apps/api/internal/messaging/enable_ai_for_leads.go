@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
@@ -229,7 +230,8 @@ func (w *AIWorker) composeFollowUpFromHistory(ctx context.Context, studioID uuid
 	var b strings.Builder
 	b.WriteString("You are writing a WhatsApp follow-up message on behalf of " + studio.Name + " to re-open a conversation that went quiet. ")
 	b.WriteString("Below is the real prior conversation with this contact. Write ONE short, natural, friendly message picking back up on whatever they last talked about — reference it specifically, don't just say a generic \"hi, following up\". ")
-	b.WriteString("Do not repeat the whole history back to them. Output only the message itself, no preamble, no quotes.\n\n")
+	b.WriteString("Do not repeat the whole history back to them. Output only the message itself, no preamble, no quotes. ")
+	b.WriteString("Never sign off with a staff member's name or any bracket placeholder like [Your Name] — you have no real staff name to use here. If you want to identify who's writing, use the studio name (" + studio.Name + ") instead, or just don't sign off at all.\n\n")
 	if studio.CommunicationStyleProfile != "" {
 		b.WriteString("House style for this studio's messages:\n" + studio.CommunicationStyleProfile + "\n\n")
 	}
@@ -253,5 +255,17 @@ func (w *AIWorker) composeFollowUpFromHistory(ctx context.Context, studioID uuid
 	reply = strings.ReplaceAll(reply, "{{lead_name}}", lead.Name)
 	reply = strings.ReplaceAll(reply, "{{lead_first_name}}", lead.FirstName)
 	reply = strings.ReplaceAll(reply, "{{studio_name}}", studio.Name)
+	// Belt-and-suspenders against the prompt instruction above not being
+	// followed: the model occasionally signs off with a bracket placeholder
+	// it had no real value for (e.g. "[Your Name]") instead of a staff
+	// member's actual name — caught in production. Swap any such
+	// placeholder for the studio name rather than letting a literal
+	// "[Your Name]" reach a real customer.
+	reply = staffNamePlaceholderRe.ReplaceAllString(reply, studio.Name)
 	return reply
 }
+
+// staffNamePlaceholderRe matches an unfilled "sign off with your name" style
+// placeholder like "[Your Name]", "[Staff Name]", "[Name]" — case
+// insensitive, tolerant of the common variants seen in the wild.
+var staffNamePlaceholderRe = regexp.MustCompile(`(?i)\[\s*(your |staff |my )?name\s*\]`)
