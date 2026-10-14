@@ -192,6 +192,26 @@ func (w *AIWorker) enableAIForOneLead(ctx context.Context, studioID, leadID uuid
 		return fmt.Errorf("failed to enqueue message: %w", err)
 	}
 
+	// A lead whose auto-contact stage is still "bot owns this stage" (see
+	// AIWorker.handleInbound's botOwnedStage check — anything other than "",
+	// "completed", "awaiting_options" or "awaiting_interest") was never
+	// actually advanced by AutoContactWorker, most commonly an imported/
+	// manually-added lead that starts at the generic CreateLead default of
+	// "initial" and was never auto-contacted. Sending a message here without
+	// also moving the stage forward left such leads permanently stuck: the
+	// very next customer reply would hit botOwnedStage and the AI worker
+	// would silently defer to a stage machine that was never actually
+	// running for this lead, leaving the conversation unanswered forever
+	// despite ai_enabled being true. Advance it the same way
+	// AutoContactWorker.processItem does after its own initial send.
+	stage := lead.AutoContactStage
+	botOwnedStage := stage != "" && stage != "completed" && stage != "awaiting_options" && stage != "awaiting_interest"
+	if botOwnedStage {
+		if err := w.leadsRepo.UpdateAutoContactStage(ctx, studioID, leadID, "awaiting_interest"); err != nil {
+			w.log.Warn("enable-ai-for-leads: failed to advance auto-contact stage", "lead_id", leadID, "err", err)
+		}
+	}
+
 	if err := w.msgRepo.SetConversationAIEnabled(ctx, studioID, conv.ID, true); err != nil {
 		w.log.Warn("enable-ai-for-leads: failed to enable AI flag", "lead_id", leadID, "err", err)
 	}
