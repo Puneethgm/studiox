@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -43,7 +44,28 @@ type AIWorker struct {
 	subs         map[uuid.UUID]func()
 	httpClient   *http.Client
 	answerCache  *AnswerCache
+
+	// pendingReplies debounces rapid-fire inbound messages so a customer
+	// sending several messages back to back (e.g. "hi", "I mean the Tuesday
+	// class", "is there a discount") gets ONE reply addressing all of them,
+	// not one reply per message — confirmed as a real complaint: separate
+	// replies read as repetitive and the AI sometimes answered an earlier
+	// message in the burst before the later ones (with more context) had
+	// even been read. Keyed by conversation ID; see debounceInboundMessage.
+	pendingReplies   map[uuid.UUID]*time.Timer
+	pendingMessageID map[uuid.UUID]uuid.UUID
+	pendingStudioID  map[uuid.UUID]uuid.UUID
+	pendingMu        sync.Mutex
 }
+
+// inboundDebounceWindow is how long AIWorker waits after an inbound message
+// before actually generating a reply — reset on every further message from
+// the same conversation within the window, so a burst of messages only ever
+// produces one reply, generated after the customer has actually paused.
+// Long enough to comfortably cover someone typing 2-3 messages in a row,
+// short enough that a single message still gets a reply that doesn't feel
+// delayed.
+const inboundDebounceWindow = 6 * time.Second
 
 func NewAIWorker(bus Bus, msgRepo *Repo, msgSvc *Service, studiosRepo *studios.Repo, leadsRepo *leads.Repo, dtSvc *decisiontree.Service, cl *claude.Client, claudeAPIURL string, embClient *embeddings.Client, llmRepo *llm.Repo, log *slog.Logger, answerCache *AnswerCache) *AIWorker {
 	transport := &http.Transport{
@@ -56,21 +78,24 @@ func NewAIWorker(bus Bus, msgRepo *Repo, msgSvc *Service, studiosRepo *studios.R
 		Timeout:   30 * time.Second,
 	}
 	return &AIWorker{
-		bus:          bus,
-		msgRepo:      msgRepo,
-		msgSvc:       msgSvc,
-		studiosRepo:  studiosRepo,
-		leadsRepo:    leadsRepo,
-		dtSvc:        dtSvc,
-		claude:       cl,
-		claudeAPIURL: claudeAPIURL,
-		geminiClient: gemini.New(),
-		embeddings:   embClient,
-		llmRepo:      llmRepo,
-		log:          log,
-		subs:         make(map[uuid.UUID]func()),
-		httpClient:   client,
-		answerCache:  answerCache,
+		bus:              bus,
+		msgRepo:          msgRepo,
+		msgSvc:           msgSvc,
+		studiosRepo:      studiosRepo,
+		leadsRepo:        leadsRepo,
+		dtSvc:            dtSvc,
+		claude:           cl,
+		claudeAPIURL:     claudeAPIURL,
+		geminiClient:     gemini.New(),
+		embeddings:       embClient,
+		llmRepo:          llmRepo,
+		log:              log,
+		subs:             make(map[uuid.UUID]func()),
+		httpClient:       client,
+		answerCache:      answerCache,
+		pendingReplies:   make(map[uuid.UUID]*time.Timer),
+		pendingMessageID: make(map[uuid.UUID]uuid.UUID),
+		pendingStudioID:  make(map[uuid.UUID]uuid.UUID),
 	}
 }
 
@@ -132,19 +157,7 @@ func (w *AIWorker) listenStudio(ctx context.Context, studioID uuid.UUID, ch <-ch
 				if evt.MessageID == nil {
 					continue
 				}
-				go func(msgID uuid.UUID) {
-					// Without recover(), a panic anywhere in handleMessage kills this
-					// goroutine silently — no error logged, no reply sent, no trace.
-					defer func() {
-						if r := recover(); r != nil {
-							w.log.Error("ai handle message panicked", "message_id", msgID, "studio_id", studioID,
-								"panic", r, "stack", string(debug.Stack()))
-						}
-					}()
-					if err := w.handleMessage(ctx, studioID, msgID); err != nil {
-						w.log.Error("ai handle message", "err", err)
-					}
-				}(*evt.MessageID)
+				w.debounceInboundMessage(ctx, studioID, evt.ConversationID, *evt.MessageID)
 			case EvtWAWebBackfillDone:
 				if evt.ChannelAccountID == nil {
 					continue
@@ -157,6 +170,51 @@ func (w *AIWorker) listenStudio(ctx context.Context, studioID uuid.UUID, ch <-ch
 			}
 		}
 	}
+}
+
+// debounceInboundMessage replaces an immediate per-message handleMessage
+// call with a short, per-conversation quiet window (inboundDebounceWindow):
+// each new inbound message from the same conversation resets the timer
+// instead of firing its own reply, so a customer sending several messages
+// back to back ("hi", "I mean Tuesday", "is there a discount?") gets exactly
+// ONE reply once they've actually paused, addressing everything in the
+// burst — not one reply per message. handleMessage itself needs no changes:
+// by the time the timer fires, every message in the burst is already
+// persisted, so the single handleMessage call (anchored on the LATEST
+// message ID seen) loads them all as ordinary conversation history.
+func (w *AIWorker) debounceInboundMessage(ctx context.Context, studioID, conversationID, messageID uuid.UUID) {
+	w.pendingMu.Lock()
+	defer w.pendingMu.Unlock()
+
+	w.pendingMessageID[conversationID] = messageID
+	w.pendingStudioID[conversationID] = studioID
+
+	if existing, ok := w.pendingReplies[conversationID]; ok {
+		existing.Stop()
+	}
+	w.pendingReplies[conversationID] = time.AfterFunc(inboundDebounceWindow, func() {
+		w.pendingMu.Lock()
+		msgID, ok := w.pendingMessageID[conversationID]
+		sID := w.pendingStudioID[conversationID]
+		delete(w.pendingReplies, conversationID)
+		delete(w.pendingMessageID, conversationID)
+		delete(w.pendingStudioID, conversationID)
+		w.pendingMu.Unlock()
+		if !ok {
+			return
+		}
+		// Without recover(), a panic anywhere in handleMessage kills this
+		// goroutine silently — no error logged, no reply sent, no trace.
+		defer func() {
+			if r := recover(); r != nil {
+				w.log.Error("ai handle message panicked", "message_id", msgID, "studio_id", sID,
+					"panic", r, "stack", string(debug.Stack()))
+			}
+		}()
+		if err := w.handleMessage(ctx, sID, msgID); err != nil {
+			w.log.Error("ai handle message", "err", err)
+		}
+	})
 }
 
 // summarizeConversationsAfterBackfill generates and stores a short internal
@@ -957,14 +1015,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 					// change_status with no reply: silently update status and stop.
 					return nil
 				}
-				if lead != nil {
-					reply = strings.ReplaceAll(reply, "{{lead_name}}", lead.Name)
-					reply = strings.ReplaceAll(reply, "{{lead_first_name}}", lead.FirstName)
-					reply = strings.ReplaceAll(reply, "{{lead_status}}", string(lead.Status))
-				}
-				if studio != nil {
-					reply = strings.ReplaceAll(reply, "{{studio_name}}", studio.Name)
-				}
+				reply = renderTreeReply(reply, lead, studio)
 				w.log.Info("decision tree matched, using tree reply", "studio_id", studioID, "node", treeResult.NodeLabel)
 				_, err = w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
 					StudioID:       studioID,
@@ -989,11 +1040,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 					w.log.Warn("failed to mark conversation escalated", "studio_id", studioID, "err", err)
 				}
 				if treeResult.Reply != "" {
-					reply := treeResult.Reply
-					if lead != nil {
-						reply = strings.ReplaceAll(reply, "{{lead_name}}", lead.Name)
-						reply = strings.ReplaceAll(reply, "{{lead_first_name}}", lead.FirstName)
-					}
+					reply := renderTreeReply(treeResult.Reply, lead, studio)
 					if _, err := w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
 						StudioID:       studioID,
 						ConversationID: msg.ConversationID,
@@ -1022,10 +1069,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 				if bookBody == "" {
 					bookBody = "Great! Please select an option:\n1. Book a Trial\n2. Become a Member"
 				}
-				if lead != nil {
-					bookBody = strings.ReplaceAll(bookBody, "{{lead_name}}", lead.Name)
-					bookBody = strings.ReplaceAll(bookBody, "{{lead_first_name}}", lead.FirstName)
-				}
+				bookBody = renderTreeReply(bookBody, lead, studio)
 				_, err = w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
 					StudioID:       studioID,
 					ConversationID: msg.ConversationID,
@@ -1049,10 +1093,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 				if reply == "" {
 					return nil
 				}
-				if lead != nil {
-					reply = strings.ReplaceAll(reply, "{{lead_name}}", lead.Name)
-					reply = strings.ReplaceAll(reply, "{{lead_first_name}}", lead.FirstName)
-				}
+				reply = renderTreeReply(reply, lead, studio)
 				w.log.Info("decision tree matched send_link, sending reply", "studio_id", studioID, "node", treeResult.NodeLabel)
 				_, err = w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
 					StudioID:       studioID,
@@ -1567,6 +1608,29 @@ func availableKnowledgeText(kbChunks []string, studio *studios.Studio) string {
 		}
 	}
 	return kbText
+}
+
+// renderTreeReply substitutes a decision-tree node's documented template
+// variables — {{lead_name}}, {{lead_first_name}}, {{lead_status}},
+// {{studio_name}} (the exact set the TreeEditor UI tells admins they can
+// use, see its reply-template field help text) — into its ReplyTemplate.
+// Shared by every action branch below (reply/change_status, escalate,
+// book_trial, send_link): previously each branch inlined its own
+// subset of these substitutions, and escalate/book_trial/send_link didn't
+// substitute {{studio_name}} at all — a template using it on one of those
+// node types would send the literal, unfilled "{{studio_name}}" to a real
+// customer. One shared helper means every node type gets every documented
+// variable, with no risk of a future branch forgetting one again.
+func renderTreeReply(reply string, lead *leads.Lead, studio *studios.Studio) string {
+	if lead != nil {
+		reply = strings.ReplaceAll(reply, "{{lead_name}}", lead.Name)
+		reply = strings.ReplaceAll(reply, "{{lead_first_name}}", lead.FirstName)
+		reply = strings.ReplaceAll(reply, "{{lead_status}}", string(lead.Status))
+	}
+	if studio != nil {
+		reply = strings.ReplaceAll(reply, "{{studio_name}}", studio.Name)
+	}
+	return reply
 }
 
 // buildPrompt composes the full prompt for a customer reply. It never asks the model to
