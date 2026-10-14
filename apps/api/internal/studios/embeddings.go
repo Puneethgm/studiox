@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -313,6 +314,31 @@ func FormatVectorAsString(vec []float32) string {
 	}
 	sb.WriteByte(']')
 	return sb.String()
+}
+
+// ParseVectorString reverses FormatVectorAsString — reads a pgvector
+// column's text form ("[v1,v2,...]", via an `embedding::text` select) back
+// into []float32. Used to reuse an existing chunk's embedding when its
+// content hasn't changed since the last knowledge-base sync, instead of
+// re-calling the embeddings API for content that's identical to what's
+// already stored (see asyncSyncKnowledgeChunks).
+func ParseVectorString(s string) ([]float32, error) {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "[")
+	s = strings.TrimSuffix(s, "]")
+	if s == "" {
+		return nil, nil
+	}
+	parts := strings.Split(s, ",")
+	vec := make([]float32, len(parts))
+	for i, p := range parts {
+		f, err := strconv.ParseFloat(strings.TrimSpace(p), 32)
+		if err != nil {
+			return nil, fmt.Errorf("parse vector component %d: %w", i, err)
+		}
+		vec[i] = float32(f)
+	}
+	return vec, nil
 }
 
 // ExpandQuery calls Gemini to generate 3 alternative phrasings of the

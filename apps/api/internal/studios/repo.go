@@ -532,8 +532,8 @@ func (r *Repo) EncryptLegacyAIProviderKeys(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("list studios for key backfill: %w", err)
 	}
 	type row struct {
-		id                                           uuid.UUID
-		gemini, groq, claude, mistral                string
+		id                            uuid.UUID
+		gemini, groq, claude, mistral string
 	}
 	var toFix []row
 	for rows.Next() {
@@ -712,6 +712,43 @@ func (r *Repo) GetPlatformSetting(ctx context.Context, key string) (string, erro
 }
 
 // ── RAG / Knowledge Chunks ──────────────────────────────────
+
+// ExistingChunkEmbedding is one already-stored chunk's content plus its
+// embedding in pgvector's text form (not yet parsed to []float32 — see
+// ParseVectorString) — used to detect which chunks of a re-synced
+// knowledge base are byte-identical to what's already embedded, so
+// asyncSyncKnowledgeChunks can reuse the embedding instead of re-calling
+// the embeddings API for content that hasn't actually changed.
+type ExistingChunkEmbedding struct {
+	SourceType    string
+	SourceName    string
+	Content       string
+	EmbeddingText string
+}
+
+// ListKnowledgeChunkEmbeddings returns every current chunk's (source_type,
+// source_name, content) plus its embedding as pgvector text, for the reuse
+// check described on ExistingChunkEmbedding.
+func (r *Repo) ListKnowledgeChunkEmbeddings(ctx context.Context, studioID uuid.UUID) ([]ExistingChunkEmbedding, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT source_type, source_name, content, embedding::text
+		FROM studio_knowledge_chunks
+		WHERE studio_id = $1
+	`, studioID)
+	if err != nil {
+		return nil, fmt.Errorf("list knowledge chunk embeddings: %w", err)
+	}
+	defer rows.Close()
+	var out []ExistingChunkEmbedding
+	for rows.Next() {
+		var e ExistingChunkEmbedding
+		if err := rows.Scan(&e.SourceType, &e.SourceName, &e.Content, &e.EmbeddingText); err != nil {
+			return nil, fmt.Errorf("scan knowledge chunk embedding: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
 
 type ChunkData struct {
 	SourceType string

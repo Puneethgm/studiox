@@ -648,8 +648,42 @@ func (s *Service) asyncSyncKnowledgeChunks(studioID uuid.UUID, kbText string, kb
 			return
 		}
 
+		// Reuse an already-embedded chunk's vector when its content is
+		// byte-identical to what's already stored, instead of re-calling the
+		// embeddings API for it — every save previously re-embedded EVERY
+		// chunk from scratch, even files nobody touched, which is slow and
+		// burns real API calls for content that didn't change (confirmed:
+		// removing one small file re-embedded an untouched 352-chunk
+		// document for no reason). Keyed by (source_type, source_name,
+		// content) — any actual content change (even one character) misses
+		// the cache and gets freshly embedded, so this is purely an
+		// optimization, never a correctness risk.
+		existingChunks, err := s.repo.ListKnowledgeChunkEmbeddings(ctx, studioID)
+		if err != nil {
+			slog.Warn("list existing knowledge chunk embeddings failed, re-embedding everything", "studio_id", studioID, "err", err)
+		}
+		reusable := make(map[string]string, len(existingChunks))
+		for _, e := range existingChunks {
+			reusable[e.SourceType+"\x00"+e.SourceName+"\x00"+e.Content] = e.EmbeddingText
+		}
+
 		var chunks []ChunkData
+		reusedCount, embeddedCount := 0, 0
 		for i, rc := range raw {
+			if embText, ok := reusable[rc.sourceType+"\x00"+rc.sourceName+"\x00"+rc.content]; ok {
+				if vec, perr := ParseVectorString(embText); perr == nil {
+					chunks = append(chunks, ChunkData{
+						SourceType: rc.sourceType,
+						SourceName: rc.sourceName,
+						Platform:   rc.platform,
+						Index:      i,
+						Content:    rc.content,
+						Embedding:  vec,
+					})
+					reusedCount++
+					continue
+				}
+			}
 			vec, err := s.embeddings.EmbedPassage(ctx, rc.content)
 			if err != nil {
 				slog.Warn("embedding failed for chunk", "studio_id", studioID, "chunk", i, "err", err)
@@ -663,8 +697,10 @@ func (s *Service) asyncSyncKnowledgeChunks(studioID uuid.UUID, kbText string, kb
 				Content:    rc.content,
 				Embedding:  vec,
 			})
+			embeddedCount++
 			time.Sleep(100 * time.Millisecond)
 		}
+		slog.Info("knowledge sync embedding reuse", "studio_id", studioID, "reused", reusedCount, "freshly_embedded", embeddedCount, "total", len(raw))
 
 		if len(chunks) == 0 {
 			slog.Error("knowledge sync produced no chunks", "studio_id", studioID, "attempted", len(raw))
