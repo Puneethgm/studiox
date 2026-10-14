@@ -145,6 +145,25 @@ func (w *AIWorker) enableAIForOneLead(ctx context.Context, studioID, leadID uuid
 		return fmt.Errorf("failed to look up existing conversation: %w", err)
 	}
 	if conv == nil {
+		// Same person can have more than one leads row for the same number
+		// (one from a form submission, one from an import, etc. — confirmed
+		// in production) — the lead_id check above only catches the case
+		// where THIS lead record already owns the conversation. Check by
+		// the actual phone number next, so selecting the duplicate lead
+		// that never got linked doesn't silently open a second, empty
+		// conversation next to the real one sitting under its twin.
+		if byPhone, phoneErr := w.msgRepo.GetConversationByPhone(ctx, studioID, lead.Phone); phoneErr == nil && byPhone != nil {
+			conv = byPhone
+			if conv.LeadID == nil || *conv.LeadID != leadID {
+				if err := w.msgRepo.RelinkConversationToLead(ctx, studioID, conv.ID, leadID); err != nil {
+					w.log.Warn("enable-ai-for-leads: failed to relink conversation to selected lead", "lead_id", leadID, "conv_id", conv.ID, "err", err)
+				} else {
+					conv.LeadID = &leadID
+				}
+			}
+		}
+	}
+	if conv == nil {
 		phone := sanitizePhone(lead.Phone)
 		if phone == "" {
 			return fmt.Errorf("lead has no phone number")

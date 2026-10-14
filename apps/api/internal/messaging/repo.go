@@ -652,6 +652,88 @@ func (r *Repo) GetConversationByLeadID(ctx context.Context, studioID, leadID uui
 	return out, nil
 }
 
+// GetConversationByPhone finds the most recently active conversation for a
+// phone number anywhere in the studio, regardless of which lead (if any) it
+// is currently linked to. Needed on top of GetConversationByLeadID because
+// the same person can end up with more than one leads row for the same
+// phone number (e.g. one from a form submission, one from an import) —
+// confirmed in production (duplicate lead pairs sharing one real
+// conversation). Looking a lead up by its own ID only catches the case
+// where the SAME lead record already has the conversation; it misses the
+// conversation sitting under that person's OTHER lead record entirely,
+// which silently opened a second, empty conversation. Matches on digits
+// only so "919945417287" and "919945417287@c.us" (WhatsApp Web's inbound
+// JID form) are treated as the same number. Returns nil, nil when no
+// conversation exists for this number yet.
+func (r *Repo) GetConversationByPhone(ctx context.Context, studioID uuid.UUID, rawPhone string) (*Conversation, error) {
+	digits := digitsOnly(rawPhone)
+	if digits == "" {
+		return nil, nil
+	}
+	row := r.pool.QueryRow(ctx, `
+		SELECT c.id, c.channel_account_id, c.contact_identity_id, c.external_thread_id,
+		       c.status, c.lead_id, c.assigned_to, c.unread_count,
+		       c.last_message_at, c.last_message_preview, c.last_message_direction,
+		       c.created_at, c.updated_at, c.ai_enabled
+		FROM conversations c
+		JOIN contact_identities ci ON ci.id = c.contact_identity_id
+		WHERE c.studio_id = $1 AND ci.kind = 'phone'
+		  AND regexp_replace(ci.value, '[^0-9]', '', 'g') = $2
+		ORDER BY c.last_message_at DESC
+		LIMIT 1
+	`, studioID, digits)
+	out := &Conversation{StudioID: studioID}
+	var dir *string
+	if err := row.Scan(&out.ID, &out.ChannelAccountID, &out.ContactIdentityID, &out.ExternalThreadID,
+		&out.Status, &out.LeadID, &out.AssignedTo, &out.UnreadCount,
+		&out.LastMessageAt, &out.LastMessagePreview, &dir,
+		&out.CreatedAt, &out.UpdatedAt, &out.AIEnabled); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get conversation by phone: %w", err)
+	}
+	if dir != nil {
+		d := Direction(*dir)
+		out.LastMessageDirection = &d
+	}
+	return out, nil
+}
+
+// digitsOnly strips everything but 0-9 — used to compare phone numbers
+// stored under different formats (plain digits vs. a WhatsApp JID like
+// "919945417287@c.us") without caring about the suffix.
+func digitsOnly(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// RelinkConversationToLead reassigns an existing conversation (and its
+// contact identity) to a different lead — used when
+// GetConversationByPhone finds a conversation that currently belongs to a
+// duplicate lead record for the same person, so the lead the admin actually
+// selected ends up with the real conversation history instead of a fresh,
+// empty one.
+func (r *Repo) RelinkConversationToLead(ctx context.Context, studioID, conversationID, leadID uuid.UUID) error {
+	if _, err := r.pool.Exec(ctx, `
+		UPDATE conversations SET lead_id = $2, updated_at = now() WHERE id = $1 AND studio_id = $3
+	`, conversationID, leadID, studioID); err != nil {
+		return fmt.Errorf("relink conversation to lead: %w", err)
+	}
+	if _, err := r.pool.Exec(ctx, `
+		UPDATE contact_identities SET lead_id = $2
+		WHERE id = (SELECT contact_identity_id FROM conversations WHERE id = $1) AND studio_id = $3
+	`, conversationID, leadID, studioID); err != nil {
+		return fmt.Errorf("relink contact identity to lead: %w", err)
+	}
+	return nil
+}
+
 // FindOrCreateConversation: same channel + same external thread = one row.
 func (r *Repo) FindOrCreateConversation(ctx context.Context, tx pgx.Tx, studioID, channelID, identityID uuid.UUID, externalThreadID string) (*Conversation, error) {
 	row := tx.QueryRow(ctx, `
