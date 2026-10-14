@@ -1630,6 +1630,23 @@ func renderTreeReply(reply string, lead *leads.Lead, studio *studios.Studio) str
 	if studio != nil {
 		reply = strings.ReplaceAll(reply, "{{studio_name}}", studio.Name)
 	}
+	// Decision tree templates are admin-authored, not AI-generated, but the
+	// same mistake happens here: an admin types "[Your Name]" (or similar)
+	// expecting it to be filled in, not realizing it isn't one of the
+	// documented {{...}} variables the TreeEditor UI actually supports —
+	// confirmed happening in production. Unlike an AI-generated reply
+	// (guardAgainstPlaceholderArtifact swaps the whole message, since the
+	// model's other content can't be trusted either), this is otherwise
+	// real, intentional content the admin wrote — swap just the
+	// placeholder for the studio name rather than discarding their whole
+	// message every time this template fires. Not a perfect guess for
+	// every kind of placeholder (e.g. a missing address), but strictly
+	// better than sending raw "[Your Name]" to a real customer, and the
+	// warning log below gives an admin something to find and fix properly.
+	if studio != nil && unfilledPlaceholder.MatchString(reply) {
+		slog.Warn("decision tree reply template contains an unfilled placeholder", "studio_id", studio.ID, "reply", reply)
+		reply = unfilledPlaceholder.ReplaceAllString(reply, studio.Name)
+	}
 	return reply
 }
 
