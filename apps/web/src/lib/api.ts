@@ -8,6 +8,23 @@
 
 import { notifySessionExpiring } from './sessionGuard';
 
+// The CSRF token lives in a deliberately non-HttpOnly cookie (px_csrf, set
+// alongside the session cookie on login/every refresh — see
+// identity/http.go's issueSessionCookie/RequireAuth) specifically so this
+// can read it and echo it back as a header. The security property isn't
+// "the cookie is secret" — it's that a cross-site attacker page can trigger
+// the cookie to be sent automatically but can never read its value (browser
+// same-origin policy) to also forge a matching header, which the API
+// compares against the session's own sealed CSRFToken claim.
+function readCSRFCookie(): string | undefined {
+  if (typeof document === 'undefined') return undefined;
+  const match = document.cookie.match(/(?:^|; )px_csrf=([^;]*)/);
+  const raw = match?.[1];
+  return raw !== undefined ? decodeURIComponent(raw) : undefined;
+}
+
+const MUTATING_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
+
 export class ApiError extends Error {
   status: number;
   code?: string;
@@ -27,11 +44,18 @@ interface ApiOptions extends Omit<RequestInit, 'body'> {
 
 export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
   const { json, headers, ...rest } = opts;
+  const method = (rest.method ?? 'GET').toUpperCase();
+  const csrfHeaders: Record<string, string> = {};
+  if (MUTATING_METHODS.has(method)) {
+    const token = readCSRFCookie();
+    if (token) csrfHeaders['X-CSRF-Token'] = token;
+  }
   const res = await fetch(path, {
     ...rest,
     credentials: 'include',
     headers: {
       ...(json ? { 'Content-Type': 'application/json' } : {}),
+      ...csrfHeaders,
       ...headers,
     },
     body: json ? JSON.stringify(json) : (rest as RequestInit).body,

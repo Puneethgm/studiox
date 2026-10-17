@@ -8,6 +8,7 @@
 
 import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
+import { csrfHeader } from '@/lib/auth';
 import type { AuthFieldDef, CrmOperation, CrmProvider, LlmProviderName, OperationKey } from './types';
 
 const API_BASE = process.env.API_BASE_URL ?? 'http://localhost:8080';
@@ -24,6 +25,7 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<{ ok: 
     headers: {
       'Content-Type': 'application/json',
       ...(ck ? { Cookie: ck } : {}),
+      ...(await csrfHeader()),
       ...(init.headers ?? {}),
     },
     cache: 'no-store',

@@ -7,6 +7,7 @@
 
 import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
+import { csrfHeader } from '@/lib/auth';
 
 const API_BASE = process.env.API_BASE_URL ?? 'http://localhost:8080';
 
@@ -63,6 +64,7 @@ export async function updateStudioSettings(
     headers: {
       'Content-Type': 'application/json',
       ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      ...(await csrfHeader()),
     },
     body: JSON.stringify(data),
     cache: 'no-store',
@@ -106,6 +108,7 @@ export async function changeMyPassword(data: {
     headers: {
       'Content-Type': 'application/json',
       ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      ...(await csrfHeader()),
     },
     body: JSON.stringify(data),
     cache: 'no-store',
@@ -181,6 +184,7 @@ export async function saveSheetsSettings(
     headers: {
       'Content-Type': 'application/json',
       ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      ...(await csrfHeader()),
     },
     body: JSON.stringify(data),
     cache: 'no-store',
@@ -245,6 +249,7 @@ export async function saveInitialContactDelay(studioId: string, minutes: number)
     headers: {
       'Content-Type': 'application/json',
       ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      ...(await csrfHeader()),
     },
     body: JSON.stringify({ initialContactDelayMinutes: minutes }),
     cache: 'no-store',
@@ -300,6 +305,7 @@ export async function saveWhatsAppDailyMessageLimit(studioId: string, limit: num
     headers: {
       'Content-Type': 'application/json',
       ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      ...(await csrfHeader()),
     },
     body: JSON.stringify({ whatsappDailyMessageLimit: limit }),
     cache: 'no-store',
@@ -355,6 +361,7 @@ export async function saveGlofoxFirstSession(studioId: string, enabled: boolean)
     headers: {
       'Content-Type': 'application/json',
       ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      ...(await csrfHeader()),
     },
     body: JSON.stringify({ enabled }),
     cache: 'no-store',
@@ -414,6 +421,7 @@ export async function saveColdLeadThresholds(
     headers: {
       'Content-Type': 'application/json',
       ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      ...(await csrfHeader()),
     },
     body: JSON.stringify({ coldNeverRepliedDays: neverRepliedDays, coldStalledDays: stalledDays }),
     cache: 'no-store',
@@ -469,6 +477,7 @@ export async function saveWhatsAppSendSpacing(studioId: string, seconds: number)
     headers: {
       'Content-Type': 'application/json',
       ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      ...(await csrfHeader()),
     },
     body: JSON.stringify({ whatsappSendSpacingSeconds: seconds }),
     cache: 'no-store',
@@ -524,6 +533,7 @@ export async function saveAIReplyDelay(studioId: string, seconds: number): Promi
     headers: {
       'Content-Type': 'application/json',
       ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      ...(await csrfHeader()),
     },
     body: JSON.stringify({ aiReplyDelaySeconds: seconds }),
     cache: 'no-store',
@@ -600,6 +610,7 @@ export async function saveExternalLeadsSheetSettings(
     headers: {
       'Content-Type': 'application/json',
       ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      ...(await csrfHeader()),
     },
     body: JSON.stringify(data),
     cache: 'no-store',
@@ -660,7 +671,7 @@ async function sendExternalLeadsSheet(
   const url = `${API_BASE}/api/v1/studios/${studioId}/leads/external-sheets${sheetId ? `/${sheetId}` : ''}`;
   const res = await fetch(url, {
     method,
-    headers: { 'Content-Type': 'application/json', ...(ck ? { Cookie: ck } : {}) },
+    headers: { 'Content-Type': 'application/json', ...(ck ? { Cookie: ck } : {}), ...(await csrfHeader()) },
     body: JSON.stringify(data),
     cache: 'no-store',
   });
@@ -685,7 +696,7 @@ export async function deleteExternalLeadsSheet(studioId: string, sheetId: string
   const ck = await cookieHeaderValue();
   const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/leads/external-sheets/${sheetId}`, {
     method: 'DELETE',
-    headers: { ...(ck ? { Cookie: ck } : {}) },
+    headers: { ...(ck ? { Cookie: ck } : {}), ...(await csrfHeader()) },
     cache: 'no-store',
   });
   if (!res.ok && res.status !== 204) {

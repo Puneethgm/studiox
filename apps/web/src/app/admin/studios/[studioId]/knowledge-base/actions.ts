@@ -3,6 +3,7 @@
 import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 import { parseOffice } from 'officeparser';
+import { csrfHeader } from '@/lib/auth';
 
 const API_BASE = process.env.API_BASE_URL ?? 'http://localhost:8080';
 
@@ -70,6 +71,7 @@ export async function ocrImage(studioId: string, formData: FormData): Promise<Oc
       method: 'POST',
       headers: {
         ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+        ...(await csrfHeader()),
       },
       body: formData,
       cache: 'no-store',
@@ -118,6 +120,7 @@ export async function updateKnowledgeBase(
     headers: {
       'Content-Type': 'application/json',
       ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      ...(await csrfHeader()),
     },
     body: JSON.stringify({
       knowledgeBase,
@@ -154,6 +157,7 @@ export async function updateCommunicationStyle(studioId: string, communicationSt
     headers: {
       'Content-Type': 'application/json',
       ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      ...(await csrfHeader()),
     },
     body: JSON.stringify({ communicationStyleProfile }),
     cache: 'no-store',
@@ -183,6 +187,7 @@ export async function updateStyleRefreshInterval(studioId: string, styleRefreshI
     headers: {
       'Content-Type': 'application/json',
       ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      ...(await csrfHeader()),
     },
     body: JSON.stringify({ styleRefreshIntervalMinutes }),
     cache: 'no-store',
@@ -215,6 +220,7 @@ export async function updateProgramStartDate(studioId: string, programStartDate:
     headers: {
       'Content-Type': 'application/json',
       ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      ...(await csrfHeader()),
     },
     body: JSON.stringify({ programStartDate }),
     cache: 'no-store',
@@ -284,7 +290,7 @@ export async function resolveKnowledgeGap(
   const ck = await kbCookieHeader();
   const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/knowledge-base/gaps/${gapId}/resolve`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(ck ? { Cookie: ck } : {}) },
+    headers: { 'Content-Type': 'application/json', ...(ck ? { Cookie: ck } : {}), ...(await csrfHeader()) },
     body: JSON.stringify({ answer }),
     cache: 'no-store',
   });
@@ -302,7 +308,7 @@ export async function dismissKnowledgeGap(studioId: string, gapId: string): Prom
   const ck = await kbCookieHeader();
   const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/knowledge-base/gaps/${gapId}/dismiss`, {
     method: 'POST',
-    headers: { ...(ck ? { Cookie: ck } : {}) },
+    headers: { ...(ck ? { Cookie: ck } : {}), ...(await csrfHeader()) },
     cache: 'no-store',
   });
   if (!res.ok && res.status !== 204) {

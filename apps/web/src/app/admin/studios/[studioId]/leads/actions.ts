@@ -2,6 +2,7 @@
 
 import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
+import { csrfHeader } from '@/lib/auth';
 
 const API_BASE = process.env.API_BASE_URL ?? 'http://localhost:8080';
 
@@ -24,6 +25,7 @@ export async function importLeadsAction(studioId: string, formData: FormData): P
       method: 'POST',
       headers: {
         ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+        ...(await csrfHeader()),
       },
       body: formData,
       cache: 'no-store',
@@ -61,6 +63,7 @@ export async function enableAutoContactForStatusAction(studioId: string, statuse
       headers: {
         'Content-Type': 'application/json',
         ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+        ...(await csrfHeader()),
       },
       body: JSON.stringify({ statuses }),
       cache: 'no-store',
@@ -107,6 +110,7 @@ export async function createLeadAction(studioId: string, input: CreateLeadInput)
       headers: {
         'Content-Type': 'application/json',
         ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+        ...(await csrfHeader()),
       },
       body: JSON.stringify(input),
       cache: 'no-store',
@@ -140,6 +144,7 @@ export async function deleteLeadAction(studioId: string, leadId: string): Promis
       method: 'DELETE',
       headers: {
         ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+        ...(await csrfHeader()),
       },
       cache: 'no-store',
     });
@@ -184,6 +189,7 @@ export async function enableAIForLeadsAction(studioId: string, leadIds: string[]
       headers: {
         'Content-Type': 'application/json',
         ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+        ...(await csrfHeader()),
       },
       body: JSON.stringify({ leadIds }),
       cache: 'no-store',
@@ -224,6 +230,7 @@ export async function updatePipelineStatus(
       headers: {
         'Content-Type': 'application/json',
         ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+        ...(await csrfHeader()),
       },
       body: JSON.stringify({ status }),
       cache: 'no-store',
@@ -265,6 +272,7 @@ export async function movePipelineColdLead(
       headers: {
         'Content-Type': 'application/json',
         ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+        ...(await csrfHeader()),
       },
       body: JSON.stringify({ conversationId, status }),
       cache: 'no-store',

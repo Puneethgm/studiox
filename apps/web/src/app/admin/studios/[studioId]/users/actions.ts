@@ -5,6 +5,7 @@
 
 import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
+import { csrfHeader } from '@/lib/auth';
 import type { StudioUser } from '@/lib/types';
 
 const API_BASE = process.env.API_BASE_URL ?? 'http://localhost:8080';
@@ -35,7 +36,7 @@ export async function createStudioUser(
 ): Promise<CreateStudioUserResult> {
   const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/users`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Cookie: await cookieHeader() },
+    headers: { 'Content-Type': 'application/json', Cookie: await cookieHeader(), ...(await csrfHeader()) },
     body: JSON.stringify(data),
     cache: 'no-store',
   });
@@ -53,7 +54,7 @@ export async function createStudioUser(
 export async function setUserActive(studioId: string, userId: string, active: boolean): Promise<SetUserActiveResult> {
   const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/users/${userId}/active`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', Cookie: await cookieHeader() },
+    headers: { 'Content-Type': 'application/json', Cookie: await cookieHeader(), ...(await csrfHeader()) },
     body: JSON.stringify({ active }),
     cache: 'no-store',
   });
@@ -69,7 +70,7 @@ export async function setUserActive(studioId: string, userId: string, active: bo
 export async function deactivateStudioUser(studioId: string, userId: string): Promise<DeactivateStudioUserResult> {
   const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/users/${userId}`, {
     method: 'DELETE',
-    headers: { Cookie: await cookieHeader() },
+    headers: { Cookie: await cookieHeader(), ...(await csrfHeader()) },
     cache: 'no-store',
   });
   if (!res.ok) {

@@ -7,6 +7,7 @@
 
 import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
+import { csrfHeader } from '@/lib/auth';
 
 const API_BASE = process.env.API_BASE_URL ?? 'http://localhost:8080';
 
@@ -48,6 +49,7 @@ export async function updateLeadStatus(
       headers: {
         'Content-Type': 'application/json',
         ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+        ...(await csrfHeader()),
       },
       body: JSON.stringify(data),
       cache: 'no-store',

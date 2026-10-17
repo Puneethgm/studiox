@@ -7,6 +7,7 @@
 
 import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
+import { csrfHeader } from '@/lib/auth';
 import type { StudioRole } from '@/lib/types';
 
 const API_BASE = process.env.API_BASE_URL ?? 'http://localhost:8080';
@@ -39,7 +40,7 @@ export async function createRole(
 ): Promise<RoleResult> {
   const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/roles`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Cookie: await cookieHeader() },
+    headers: { 'Content-Type': 'application/json', Cookie: await cookieHeader(), ...(await csrfHeader()) },
     body: JSON.stringify(data),
     cache: 'no-store',
   });
@@ -58,7 +59,7 @@ export async function updateRole(
 ): Promise<RoleResult> {
   const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/roles/${roleId}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', Cookie: await cookieHeader() },
+    headers: { 'Content-Type': 'application/json', Cookie: await cookieHeader(), ...(await csrfHeader()) },
     body: JSON.stringify(data),
     cache: 'no-store',
   });
@@ -74,7 +75,7 @@ export async function updateRole(
 export async function setRoleActive(studioId: string, roleId: string, active: boolean): Promise<RoleResult> {
   const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/roles/${roleId}/active`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', Cookie: await cookieHeader() },
+    headers: { 'Content-Type': 'application/json', Cookie: await cookieHeader(), ...(await csrfHeader()) },
     body: JSON.stringify({ active }),
     cache: 'no-store',
   });
@@ -90,7 +91,7 @@ export async function setRoleActive(studioId: string, roleId: string, active: bo
 export async function deleteRole(studioId: string, roleId: string): Promise<DeleteRoleResult> {
   const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/roles/${roleId}`, {
     method: 'DELETE',
-    headers: { Cookie: await cookieHeader() },
+    headers: { Cookie: await cookieHeader(), ...(await csrfHeader()) },
     cache: 'no-store',
   });
   if (!res.ok) {
