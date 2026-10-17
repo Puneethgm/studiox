@@ -23,6 +23,10 @@ x-api-env: &api_env
   POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
   POSTGRES_DB: ${POSTGRES_DB}
   POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:-require}
+  # Optional read-replica host for the API to point read-only queries at
+  # (postgres_replica below). Same user/password/db/port as the primary.
+  # Blank by default — until the Go side opts into it, this is a no-op.
+  POSTGRES_READ_HOST: ${POSTGRES_READ_HOST:-}
   JWT_SECRET: ${JWT_SECRET}
   JWT_TTL: "30m"
   SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL}
@@ -76,13 +80,58 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      # Read by deploy/postgres/init-replication.sql on first init to set
+      # the `replicator` role's password.
+      POSTGRES_REPLICATION_PASSWORD: ${POSTGRES_REPLICATION_PASSWORD:?POSTGRES_REPLICATION_PASSWORD must be set}
+    # Enables streaming replication to postgres_replica:
+    #   wal_level=replica       — write enough WAL detail for a standby to replay
+    #   max_wal_senders=4       — concurrent replication connections allowed (1 replica today, headroom for more)
+    #   hot_standby=on          — harmless here (it's a standby-side setting); kept explicit for clarity
+    command:
+      - "postgres"
+      - "-c"
+      - "wal_level=replica"
+      - "-c"
+      - "max_wal_senders=4"
+      - "-c"
+      - "hot_standby=on"
     volumes:
       - pg_data:/var/lib/postgresql/data
+      # Run order matters: the hba script must land before the role-create
+      # script alphabetically/numerically so pg_hba.conf is already
+      # permissive by the time anything might connect.
+      - ./postgres/init-replication-hba.sh:/docker-entrypoint-initdb.d/10-init-replication-hba.sh:ro
+      - ./postgres/init-replication.sql:/docker-entrypoint-initdb.d/20-init-replication.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 3s
       retries: 5
+    networks:
+      - backend
+
+  # Streaming (physical) read replica of `postgres`, cloned via
+  # pg_basebackup on first boot — see deploy/postgres/replica-entrypoint.sh.
+  # Read-scaling/failover-visibility only for now: nothing here promotes it
+  # automatically if the primary goes down. See deploy/README.md.
+  postgres_replica:
+    image: pgvector/pgvector:pg16
+    restart: always
+    user: postgres
+    entrypoint: ["/scripts/replica-entrypoint.sh"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_HOST: postgres
+      POSTGRES_REPLICATION_PASSWORD: ${POSTGRES_REPLICATION_PASSWORD:?POSTGRES_REPLICATION_PASSWORD must be set}
+      PGDATA: /var/lib/postgresql/data
+    volumes:
+      - pg_replica_data:/var/lib/postgresql/data
+      - ./postgres/replica-entrypoint.sh:/scripts/replica-entrypoint.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - backend
 
@@ -267,11 +316,72 @@ services:
     networks:
       - frontend
 
+  # ---- Observability (Phase 1: logs) ----
+  # Loki (log storage) + Promtail (ships every container's stdout here) +
+  # Grafana (browse/search them). See deploy/README.md's Observability
+  # section for how to reach Grafana and query logs. No metrics yet
+  # (Prometheus) — that's a separate, later addition; this phase needs zero
+  # application code changes, every service here already logs structured
+  # JSON.
+  loki:
+    image: grafana/loki:2.9.8
+    restart: always
+    command: ["-config.file=/etc/loki/loki-config.yml"]
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki_data:/loki
+    networks:
+      - backend
+
+  promtail:
+    image: grafana/promtail:2.9.8
+    restart: always
+    command: ["-config.file=/etc/promtail/promtail-config.yml"]
+    volumes:
+      - ./promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      # Read-only, but note this still grants the container visibility into
+      # the full Docker API (how Promtail's Docker service-discovery
+      # works, same trust model every Docker-aware log shipper uses —
+      # cAdvisor, Portainer, etc.) — not just "read container logs". Fine
+      # for a single-operator EC2 box; revisit with a socket-proxy
+      # (e.g. tecnativa/docker-socket-proxy) before adding anyone else
+      # with shell access to this host.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+    networks:
+      - backend
+
+  grafana:
+    image: grafana/grafana:10.4.3
+    restart: always
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set — generate one with openssl rand -base64 18}"
+      # No self-signup, no anonymous access — admin-created accounts only.
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    # Bound to localhost only — reach it via an SSH tunnel
+    # (ssh -L 3001:localhost:3001 ...), never exposed publicly, same
+    # reasoning as not proxying it through nginx. See deploy/README.md.
+    ports:
+      - "127.0.0.1:3001:3000"
+    depends_on:
+      - loki
+    networks:
+      - backend
+
 volumes:
   pg_data:
+  pg_replica_data:
   uploads_data:
   wa_auth_data:
   embeddings_cache:
+  loki_data:
+  grafana_data:
 
 networks:
   backend:

@@ -1,0 +1,59 @@
+# Ships every container's stdout (Docker's own json-file log driver output)
+# to Loki. Auto-discovers containers via the Docker socket — no per-service
+# config needed when a new service is added to docker-compose.yml, it just
+# shows up here automatically.
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 10s
+        # Only this compose project's containers — see docker-compose.yml's
+        # top-level `name: projectx`. Leaves any other container on the box
+        # (there may be others, this is a shared EC2 host) alone.
+        filters:
+          - name: label
+            values: ["com.docker.compose.project=projectx"]
+
+    relabel_configs:
+      # Docker SD's __meta_docker_container_name has a leading "/" — strip it.
+      - source_labels: [__meta_docker_container_name]
+        regex: "/(.*)"
+        target_label: container
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        target_label: service
+
+    pipeline_stages:
+      # Every service here logs structured JSON (apps/api's slog, wa-web/
+      # tg-web's pino, embeddings' uvicorn/python logging) — pull the common
+      # fields out as labels so Grafana can filter/search on them directly
+      # instead of full-text-searching the raw line every time.
+      #
+      # Field shapes genuinely differ between the Go side (slog: level is
+      # text — "INFO"/"ERROR"/"WARN") and the Node side (pino: level is
+      # numeric — 30/40/50/60 for info/warn/error/fatal). This stage stores
+      # whichever is present as-is rather than normalizing them to a common
+      # scale; filtering by `service` + `level` together still works fine,
+      # it's just that "level=error" only matches the Go services and
+      # "level=50" only matches the Node ones. Revisit with a per-service
+      # pipeline (keyed off the `service` label) if that split becomes
+      # annoying rather than just occasionally inconvenient.
+      - json:
+          expressions:
+            level: level
+            msg: msg
+            studio_id: studio_id
+            request_id: request_id
+      - labels:
+          level:
+          studio_id:
