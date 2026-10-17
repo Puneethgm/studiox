@@ -2,9 +2,19 @@ import 'dotenv/config';
 import express from 'express';
 import pino from 'pino';
 import { SessionManager } from './sessions.js';
+import { initTracing, tracingMiddleware, traceLogMixin } from './tracing.js';
 
-const log = pino({ level: process.env.LOG_LEVEL || 'info' });
+// Empty OTEL_EXPORTER_OTLP_ENDPOINT is a deliberate no-op (see tracing.js) —
+// local dev without the observability stack running is unaffected.
+const { tracer, shutdown: shutdownTracing } = initTracing('tg-web', process.env.OTEL_EXPORTER_OTLP_ENDPOINT || '');
+
+// Stamps trace_id/span_id (from tracingMiddleware's active span, see below)
+// onto every log line — same mechanism as apps/wa-web and apps/api.
+const log = pino({ level: process.env.LOG_LEVEL || 'info', mixin: traceLogMixin });
 const app = express();
+// First in the chain so every downstream middleware/handler's logging runs
+// inside the span and picks up its trace_id via the pino mixin above.
+app.use(tracingMiddleware(tracer));
 app.use(express.json());
 
 const PORT = process.env.PORT || 3101;
@@ -129,6 +139,16 @@ app.listen(PORT, () => {
   log.info({ port: PORT }, 'tg-web service started');
   if (configured) prewarmAll();
 });
+
+// Flushes any trace spans still buffered in the BatchSpanProcessor —
+// without this, a container stop (SIGTERM, the normal `docker compose
+// down`/restart path) can drop the last batch instead of exporting it.
+for (const sig of ['SIGTERM', 'SIGINT']) {
+  process.on(sig, async () => {
+    await shutdownTracing().catch((err) => log.error({ err }, 'tracing shutdown failed'));
+    process.exit(0);
+  });
+}
 
 // Rehydrates persisted sessions from the Go API (each studio's encrypted
 // session string, decrypted server-side before it reaches us — see

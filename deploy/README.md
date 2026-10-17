@@ -295,12 +295,14 @@ to Tempo) complete the pipeline — a log line carrying `trace_id` becomes a
 clickable link straight into its Tempo trace (and back), via Grafana's
 Loki/Tempo datasource correlation.
 
-Only `api` (Go) and `wa-web` (Node) emit traces so far —
-`internal/platform/tracing` (Go) and `src/tracing.js` (Node) are separate
-implementations of the same idea: one OTel span per HTTP request,
-`trace_id`/`span_id` stamped onto every log line written during that
-request. `tg-web` and `web` aren't instrumented yet. `OTEL_EXPORTER_OTLP_ENDPOINT`
-empty disables tracing for that service — a deliberate no-op, not an error.
+`api` (Go), `wa-web`, and `tg-web` (both Node) emit traces —
+`internal/platform/tracing` (Go) and each service's own `src/tracing.js`
+(Node, duplicated rather than shared — wa-web and tg-web are separate
+deployables) are separate implementations of the same idea: one OTel span
+per HTTP request, `trace_id`/`span_id` stamped onto every log line written
+during that request. `web` (the Next.js frontend) isn't instrumented yet.
+`OTEL_EXPORTER_OTLP_ENDPOINT` empty disables tracing for that service — a
+deliberate no-op, not an error.
 
 ---
 
