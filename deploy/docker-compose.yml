@@ -241,12 +241,16 @@ services:
     restart: always
     depends_on:
       - api
+      - otel-collector
     environment:
       PORT: "3100"
       LOG_LEVEL: info
       PROJECTX_API_URL: http://api:8080
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY must be set}
       AUTH_DIR: /auth
+      # OTLP/HTTP form (Node's exporter, unlike the Go API's OTLP/gRPC) —
+      # see src/tracing.js. Empty disables tracing, same no-op contract.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${WA_WEB_OTEL_ENDPOINT:-http://otel-collector:4318/v1/traces}
     volumes:
       - wa_auth_data:/auth
     networks:

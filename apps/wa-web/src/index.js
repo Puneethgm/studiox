@@ -4,8 +4,13 @@ import pino from 'pino';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { SessionManager } from './sessions.js';
+import { initTracing, tracingMiddleware, traceLogMixin } from './tracing.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Empty OTEL_EXPORTER_OTLP_ENDPOINT is a deliberate no-op (see tracing.js) —
+// local dev without the observability stack running is unaffected.
+const { tracer, shutdown: shutdownTracing } = initTracing('wa-web', process.env.OTEL_EXPORTER_OTLP_ENDPOINT || '');
 
 // Also write to a plain file, not just stdout — stdout here is piped through
 // `make dev`/concurrently into whatever terminal launched it, which isn't
@@ -13,13 +18,23 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // gives a durable place to actually inspect Baileys' history-sync diagnostics
 // (see sessions.js) without depending on someone copy-pasting terminal output.
 const log = pino(
-  { level: process.env.LOG_LEVEL || 'info' },
+  {
+    level: process.env.LOG_LEVEL || 'info',
+    // Stamps trace_id/span_id (from tracingMiddleware's active span, see
+    // below) onto every log line, the same way apps/api's logger.FromCtx
+    // does for the Go side — lets a log line in Grafana link straight to
+    // its Tempo trace.
+    mixin: traceLogMixin,
+  },
   pino.multistream([
     { stream: process.stdout },
     { stream: pino.destination({ dest: path.join(__dirname, '..', 'wa-web.log'), sync: false }) },
   ]),
 );
 const app = express();
+// First in the chain so every downstream middleware/handler's logging runs
+// inside the span and picks up its trace_id via the pino mixin above.
+app.use(tracingMiddleware(tracer));
 app.use(express.json());
 
 const PORT = process.env.PORT || 3100;
@@ -137,6 +152,16 @@ app.listen(PORT, () => {
   // ever missed (e.g. the Go API was briefly down).
   sessions.startStatusReconciliation();
 });
+
+// Flushes any trace spans still buffered in the BatchSpanProcessor —
+// without this, a container stop (SIGTERM, the normal `docker compose
+// down`/restart path) can drop the last batch instead of exporting it.
+for (const sig of ['SIGTERM', 'SIGINT']) {
+  process.on(sig, async () => {
+    await shutdownTracing().catch((err) => log.error({ err }, 'tracing shutdown failed'));
+    process.exit(0);
+  });
+}
 
 async function prewarmAll() {
   // Retry until the Go API is ready (it starts concurrently and may not be up yet)

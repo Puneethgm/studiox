@@ -288,6 +288,20 @@ with numeric levels (30/40/50/60). Filtering by `level` works within one
 ecosystem but the values don't line up across the two — a known,
 accepted limitation for now (see `deploy/promtail/promtail-config.yml`).
 
+### Traces
+
+`tempo` (trace storage) + `otel-collector` (receives OTLP traces, forwards
+to Tempo) complete the pipeline — a log line carrying `trace_id` becomes a
+clickable link straight into its Tempo trace (and back), via Grafana's
+Loki/Tempo datasource correlation.
+
+Only `api` (Go) and `wa-web` (Node) emit traces so far —
+`internal/platform/tracing` (Go) and `src/tracing.js` (Node) are separate
+implementations of the same idea: one OTel span per HTTP request,
+`trace_id`/`span_id` stamped onto every log line written during that
+request. `tg-web` and `web` aren't instrumented yet. `OTEL_EXPORTER_OTLP_ENDPOINT`
+empty disables tracing for that service — a deliberate no-op, not an error.
+
 ---
 
 ## Adding a domain + HTTPS later
