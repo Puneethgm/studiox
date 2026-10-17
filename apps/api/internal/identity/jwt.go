@@ -1,6 +1,8 @@
 package identity
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"time"
@@ -10,6 +12,17 @@ import (
 
 	"github.com/projectx/api/internal/platform/secrets"
 )
+
+// generateCSRFToken returns a random, URL-safe 32-byte token — same
+// strength as the session's own encryption key (see secrets.RequiredKeyBytes),
+// plenty for an unguessable per-session CSRF value.
+func generateCSRFToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
 
 type Claims struct {
 	UserID   uuid.UUID  `json:"uid"`
@@ -47,6 +60,17 @@ type Claims struct {
 	// this passes — a security ceiling so a long-lived (or stolen) session
 	// cookie can't stay usable forever, independent of how often it's used.
 	SessionMaxExpiresAt *jwt.NumericDate `json:"sess_max_exp,omitempty"`
+	// CSRFToken is a random value generated once at login (TokenIssuer.Issue)
+	// and carried forward unchanged by every Refresh, same pattern as
+	// SessionMaxExpiresAt — stable for the life of the session even though
+	// the JWT itself (and its jti) rotates on every request. Mirrored into a
+	// second, non-HttpOnly cookie (see issueSessionCookie) so client-side JS
+	// and Next.js Server Actions can read it and echo it back as the
+	// X-CSRF-Token header on every mutating request; RequireAuth compares
+	// that header against this claim (which an attacker's cross-site page
+	// can't read — it's sealed inside the encrypted px_session cookie, not
+	// just protected by SameSite). See RequireAuth's checkCSRF call.
+	CSRFToken string `json:"csrf"`
 	jwt.RegisteredClaims
 }
 
@@ -122,10 +146,15 @@ func NewTokenIssuer(secret string, ttl, idleTTL, maxAge time.Duration, cipher *s
 // rotates the existing session via Refresh instead. permissions is ignored
 // (and should be nil) for anything other than RoleStudioStaff — see
 // Claims.Permissions.
-func (t *TokenIssuer) Issue(u *User, permissions []string) (token string, exp time.Time, jti string, err error) {
+func (t *TokenIssuer) Issue(u *User, permissions []string) (token string, exp time.Time, jti string, csrfToken string, err error) {
 	now := time.Now()
 	sessionMaxExp := now.Add(t.maxAge)
-	return t.issue(u, permissions, now.Add(t.ttl), sessionMaxExp)
+	csrfToken, err = generateCSRFToken()
+	if err != nil {
+		return "", time.Time{}, "", "", fmt.Errorf("generate csrf token: %w", err)
+	}
+	token, exp, jti, err = t.issue(u, permissions, now.Add(t.ttl), sessionMaxExp, csrfToken)
+	return token, exp, jti, csrfToken, err
 }
 
 // Refresh re-issues claims for the same session, sliding BOTH the absolute
@@ -138,15 +167,15 @@ func (t *TokenIssuer) Issue(u *User, permissions []string) (token string, exp ti
 // ceiling from the original login except that one outer backstop — only
 // idleTTL of genuine inactivity (no requests at all), or sessionMaxExp
 // itself passing, ever ends it.
-func (t *TokenIssuer) Refresh(u *User, permissions []string, sessionMaxExp time.Time) (token string, exp time.Time, jti string, err error) {
+func (t *TokenIssuer) Refresh(u *User, permissions []string, sessionMaxExp time.Time, csrfToken string) (token string, exp time.Time, jti string, err error) {
 	exp = time.Now().Add(t.ttl)
 	if exp.After(sessionMaxExp) {
 		exp = sessionMaxExp // sliding never reaches past the hard backstop
 	}
-	return t.issue(u, permissions, exp, sessionMaxExp)
+	return t.issue(u, permissions, exp, sessionMaxExp, csrfToken)
 }
 
-func (t *TokenIssuer) issue(u *User, permissions []string, exp, sessionMaxExp time.Time) (token string, retExp time.Time, jti string, err error) {
+func (t *TokenIssuer) issue(u *User, permissions []string, exp, sessionMaxExp time.Time, csrfToken string) (token string, retExp time.Time, jti string, err error) {
 	now := time.Now()
 	idleExp := now.Add(t.idleTTL)
 	if idleExp.After(exp) {
@@ -161,6 +190,7 @@ func (t *TokenIssuer) issue(u *User, permissions []string, exp, sessionMaxExp ti
 		MustResetPassword:   u.MustResetPassword,
 		IdleExpiresAt:       jwt.NewNumericDate(idleExp),
 		SessionMaxExpiresAt: jwt.NewNumericDate(sessionMaxExp),
+		CSRFToken:           csrfToken,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        jti,
 			Subject:   u.ID.String(),

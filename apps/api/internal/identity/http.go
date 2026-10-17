@@ -2,6 +2,7 @@ package identity
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -132,7 +133,7 @@ func (h *Handler) issueSessionCookie(w http.ResponseWriter, r *http.Request, u *
 		}
 	}
 
-	token, exp, jti, err := h.tokens.Issue(u, permissions)
+	token, exp, jti, csrfToken, err := h.tokens.Issue(u, permissions)
 	if err != nil {
 		return err
 	}
@@ -157,7 +158,50 @@ func (h *Handler) issueSessionCookie(w http.ResponseWriter, r *http.Request, u *
 		Secure:   h.cookie.Secure,
 		SameSite: http.SameSiteStrictMode,
 	})
+	setCSRFCookie(w, h.cookie, csrfToken, exp)
 	return nil
+}
+
+// csrfCookieName is deliberately NOT HttpOnly — client-side JS (lib/api.ts)
+// and Next.js Server Actions (reading it via next/headers' cookies()) both
+// need to read its value to echo it back as the X-CSRF-Token header.
+// SameSite=Strict still applies, same as the session cookie — it's not the
+// thing keeping this safe to expose (the whole point of the pattern is that
+// an attacker's cross-site page can trigger the cookie to be auto-sent but
+// can never read its value to forge a matching header), but there's no
+// reason to loosen it.
+const csrfCookieName = "px_csrf"
+
+func setCSRFCookie(w http.ResponseWriter, cookie config.CookieConfig, csrfToken string, exp time.Time) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     csrfCookieName,
+		Value:    csrfToken,
+		Path:     "/",
+		Domain:   cookie.Domain,
+		Expires:  exp,
+		HttpOnly: false,
+		Secure:   cookie.Secure,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+// checkCSRF compares the X-CSRF-Token request header against the session's
+// own CSRFToken claim — constant-time, so response timing can't leak
+// whether/how much of the token matched. Safe methods (GET/HEAD/OPTIONS)
+// never mutate state, so they're exempt by convention, same as every other
+// CSRF scheme. Called from RequireAuth (covers every authenticated mutating
+// route in one place) and explicitly from logout (the one mutating auth
+// route that doesn't go through RequireAuth — see its own call site).
+func checkCSRF(r *http.Request, csrfToken string) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	}
+	header := r.Header.Get("X-CSRF-Token")
+	if header == "" || csrfToken == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(header), []byte(csrfToken)) == 1
 }
 
 // login godoc
@@ -232,8 +276,19 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 	// Best-effort: revoke the session so the cookie can't keep working if
 	// it's somehow replayed after this response (e.g. an old copy cached by
 	// a proxy) — a parse failure here just means there's nothing to revoke.
+	// logout doesn't go through RequireAuth (see Routes — it's intentionally
+	// reachable without a valid session, since a stale/broken cookie should
+	// still be clearable), so it checks CSRF inline instead: only enforced
+	// when there's an actual valid session to protect — a request with no
+	// (or an already-broken) cookie has nothing a forged request could
+	// meaningfully hijack, so it still falls through to just clearing
+	// whatever cookie is present.
 	if cookie, err := r.Cookie(h.cookie.Name); err == nil && cookie.Value != "" {
 		if claims, err := h.tokens.Parse(cookie.Value); err == nil {
+			if !checkCSRF(r, claims.CSRFToken) {
+				httpx.WriteError(w, http.StatusForbidden, "csrf_mismatch", "missing or invalid CSRF token")
+				return
+			}
 			_ = h.sessions.Revoke(r.Context(), claims.ID)
 		}
 	}
@@ -583,8 +638,40 @@ func (h *Handler) RequireAuth(next http.Handler) http.Handler {
 			return
 		}
 
+		// Rollout grace: a session issued before CSRF protection existed has
+		// no CSRFToken claim at all (empty string) — without this, every
+		// admin already logged in at deploy time would get silently 403'd
+		// on every mutating action for the rest of their session (hours),
+		// with no path to recover except manually logging out and back in.
+		// Minting one now instead self-heals within a single request: this
+		// one request (if mutating) still can't present a header matching a
+		// token it was never given, so it's let through once un-checked,
+		// but the refreshed cookie below carries the new token forward, so
+		// every subsequent request — including ones fired moments later —
+		// has a real one to check. Only reachable for a pre-existing
+		// session; Issue() always sets a real token from here on, so this
+		// path goes permanently cold once every live session has rotated at
+		// least once (bounded by SessionMaxExpiresAt).
+		csrfToken := claims.CSRFToken
+		if csrfToken == "" {
+			csrfToken, err = generateCSRFToken()
+			if err != nil {
+				httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+				return
+			}
+		} else if !checkCSRF(r, csrfToken) {
+			// CSRF check before any mutation happens — claims.CSRFToken is
+			// stable across the Refresh below (carried forward unchanged),
+			// so this check and the cookie the client already has from
+			// login/last refresh always agree. See checkCSRF's doc comment
+			// for why this is the one place that covers every authenticated
+			// mutating route.
+			httpx.WriteError(w, http.StatusForbidden, "csrf_mismatch", "missing or invalid CSRF token")
+			return
+		}
+
 		u := &User{ID: claims.UserID, StudioID: claims.StudioID, Role: claims.Role, MustResetPassword: claims.MustResetPassword}
-		newToken, newExp, newJTI, err := h.tokens.Refresh(u, claims.Permissions, claims.SessionMaxExpiresAt.Time)
+		newToken, newExp, newJTI, err := h.tokens.Refresh(u, claims.Permissions, claims.SessionMaxExpiresAt.Time, csrfToken)
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 			return
@@ -603,6 +690,7 @@ func (h *Handler) RequireAuth(next http.Handler) http.Handler {
 			Secure:   h.cookie.Secure,
 			SameSite: http.SameSiteStrictMode,
 		})
+		setCSRFCookie(w, h.cookie, csrfToken, newExp)
 
 		ctx := WithClaims(r.Context(), claims)
 		ctx = logger.WithUserID(ctx, claims.UserID.String())

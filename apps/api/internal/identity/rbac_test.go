@@ -61,12 +61,15 @@ func TestTokenIssuer_PermissionsAndMustResetPasswordSurviveRoundTrip(t *testing.
 	u := &User{
 		ID: uuid.New(), StudioID: &studioID, Role: RoleStudioStaff, MustResetPassword: true,
 	}
-	token, exp, jti, err := issuer.Issue(u, []string{"leads", "inbox"})
+	token, exp, jti, csrfToken, err := issuer.Issue(u, []string{"leads", "inbox"})
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
 	if jti == "" {
 		t.Error("Issue returned an empty jti")
+	}
+	if csrfToken == "" {
+		t.Error("Issue returned an empty csrfToken")
 	}
 
 	claims, err := issuer.Parse(token)
@@ -88,10 +91,13 @@ func TestTokenIssuer_PermissionsAndMustResetPasswordSurviveRoundTrip(t *testing.
 	if !claims.IdleExpiresAt.Time.Before(exp) {
 		t.Errorf("IdleExpiresAt (%v) should be before the absolute expiry (%v)", claims.IdleExpiresAt.Time, exp)
 	}
+	if claims.CSRFToken != csrfToken {
+		t.Errorf("claims.CSRFToken (%q) did not survive the round trip, want %q", claims.CSRFToken, csrfToken)
+	}
 
 	t.Run("Refresh slides the absolute expiry and idle deadline forward but preserves the hard backstop, and mints a new jti", func(t *testing.T) {
 		time.Sleep(1100 * time.Millisecond) // jwt.NumericDate has 1-second precision
-		refreshed, newExp, newJTI, err := issuer.Refresh(u, claims.Permissions, claims.SessionMaxExpiresAt.Time)
+		refreshed, newExp, newJTI, err := issuer.Refresh(u, claims.Permissions, claims.SessionMaxExpiresAt.Time, claims.CSRFToken)
 		if err != nil {
 			t.Fatalf("refresh: %v", err)
 		}
@@ -115,11 +121,14 @@ func TestTokenIssuer_PermissionsAndMustResetPasswordSurviveRoundTrip(t *testing.
 		if !newClaims.SessionMaxExpiresAt.Time.Equal(claims.SessionMaxExpiresAt.Time) {
 			t.Errorf("Refresh should NOT move the hard backstop: got %v, want %v", newClaims.SessionMaxExpiresAt.Time, claims.SessionMaxExpiresAt.Time)
 		}
+		if newClaims.CSRFToken != claims.CSRFToken {
+			t.Errorf("Refresh should NOT change the CSRF token: got %q, want %q", newClaims.CSRFToken, claims.CSRFToken)
+		}
 	})
 
 	t.Run("super_admin gets no embedded permissions but HasPermission is always true", func(t *testing.T) {
 		super := &User{ID: uuid.New(), Role: RoleSuperAdmin}
-		token, _, _, err := issuer.Issue(super, nil)
+		token, _, _, _, err := issuer.Issue(super, nil)
 		if err != nil {
 			t.Fatalf("issue: %v", err)
 		}
