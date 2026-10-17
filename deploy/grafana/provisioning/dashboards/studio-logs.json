@@ -1,0 +1,83 @@
+{
+  "title": "Studio Logs",
+  "uid": "studio-logs",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "type": "query",
+        "datasource": { "type": "loki", "uid": "Loki" },
+        "query": "label_values(service)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": false,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "studio_id",
+        "type": "query",
+        "datasource": { "type": "loki", "uid": "Loki" },
+        "query": "label_values(studio_id)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": false,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "level",
+        "type": "query",
+        "datasource": { "type": "loki", "uid": "Loki" },
+        "query": "label_values(level)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": false,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "search",
+        "type": "textbox",
+        "label": "Text search",
+        "current": { "text": "", "value": "" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Log volume",
+      "type": "timeseries",
+      "datasource": { "type": "loki", "uid": "Loki" },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "Loki" },
+          "expr": "sum(count_over_time({service=~\"$service\", studio_id=~\"$studio_id\", level=~\"$level\"} |= \"$search\" [1m])) by (service)"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Logs — service=$service, studio_id=$studio_id",
+      "type": "logs",
+      "datasource": { "type": "loki", "uid": "Loki" },
+      "gridPos": { "h": 18, "w": 24, "x": 0, "y": 6 },
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "Loki" },
+          "expr": "{service=~\"$service\", studio_id=~\"$studio_id\", level=~\"$level\"} |= \"$search\""
+        }
+      ]
+    }
+  ]
+}

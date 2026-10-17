@@ -62,6 +62,8 @@ heroic-artifact-434914-d4-1b7152cf7bec.json
 !apps/tg-web/package-lock.json
 # Generated Swagger spec (make swagger) — no secrets, just route/schema metadata
 !apps/api/docs/swagger.json
+# Grafana dashboard definitions — no secrets, just panel/query config
+!deploy/grafana/provisioning/dashboards/*.json
 apps/api/secrets/
 .aider*
 
