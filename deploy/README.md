@@ -240,11 +240,12 @@ This is logs only — no metrics (Prometheus) or alerting yet; that's
 later, separate work.
 
 Requires `GRAFANA_ADMIN_PASSWORD` in `.env` (the `grafana` service refuses
-to start without it).
+to start without it). The host port is configurable via `GRAFANA_PORT`
+(default `3001`) in case something else on the box already uses it.
 
-Grafana is bound to `127.0.0.1:3001` on the box only — it is **never**
-exposed publicly and is not proxied through nginx. Reach it over an SSH
-tunnel:
+Grafana is bound to `127.0.0.1:${GRAFANA_PORT:-3001}` on the box only —
+it is **never** exposed publicly and is not proxied through nginx. Reach
+it over an SSH tunnel:
 
 ```bash
 ssh -L 3001:localhost:3001 ubuntu@your-ec2-host
@@ -252,8 +253,28 @@ ssh -L 3001:localhost:3001 ubuntu@your-ec2-host
 # admin / $GRAFANA_ADMIN_PASSWORD
 ```
 
-In Grafana, use **Explore** with the Loki datasource (already
-provisioned). Useful starting queries:
+Six dashboards are auto-provisioned:
+
+- **Studio Logs** — cross-service overview, pick any `service` + `studio_id`.
+- **Channel: API / WhatsApp (wa-web) / Telegram (tg-web) / Web /
+  Embeddings** — one dashboard per service, each with a status tile, a
+  log-rate-by-level graph, an error-rate graph, and the raw logs panel
+  (filterable by `studio_id`).
+
+The "Status" tile is a **heuristic, not a real health check** — it's
+green when the service has logged anything in the last 2 minutes, red
+otherwise. A hung-but-silent process would still show green. A real
+up/down check needs Prometheus + an actual health-check exporter, which
+is deliberately out of scope for this logs-only phase.
+
+**Docker-only visibility**: Promtail discovers containers via the Docker
+socket, so every log line in here came from a Docker container (labeled
+`source=docker`). A service run locally outside Docker (e.g. `air` for Go
+dev) never reaches Loki — there's no "local" view, because local-non-Docker
+logs simply never arrive.
+
+In Grafana, you can also use **Explore** with the Loki datasource
+directly for ad-hoc queries:
 
 ```logql
 {service="api"}

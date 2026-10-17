@@ -32,6 +32,14 @@ scrape_configs:
         target_label: container
       - source_labels: [__meta_docker_container_label_com_docker_compose_service]
         target_label: service
+      # Every line Promtail ships came from a Docker container by
+      # construction (docker_sd_configs only discovers Docker containers) —
+      # this label makes that explicit in Grafana. A service run locally
+      # outside Docker (e.g. `air` for Go dev) never reaches Loki at all;
+      # there is no way to distinguish "local" in this pipeline because
+      # local-non-Docker logs simply never arrive here.
+      - replacement: docker
+        target_label: source
 
     pipeline_stages:
       # Every service here logs structured JSON (apps/api's slog, wa-web/

@@ -368,7 +368,7 @@ services:
     # (ssh -L 3001:localhost:3001 ...), never exposed publicly, same
     # reasoning as not proxying it through nginx. See deploy/README.md.
     ports:
-      - "127.0.0.1:3001:3000"
+      - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
     depends_on:
       - loki
     networks:
