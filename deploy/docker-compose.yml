@@ -71,6 +71,11 @@ x-api-env: &api_env
   SMTP_USER: ${SMTP_USER:-}
   SMTP_PASSWORD: ${SMTP_PASSWORD:-}
   SMTP_FROM: ${SMTP_FROM:-}
+  # Defaults to the otel-collector service below. tracing.Init() treats an
+  # empty value as a deliberate no-op (internal/platform/tracing) — set
+  # OTEL_EXPORTER_OTLP_ENDPOINT="" in .env to disable tracing entirely
+  # without editing this file.
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-otel-collector:4317}
 
 services:
   postgres:
@@ -218,6 +223,8 @@ services:
     depends_on:
       init-uploads:
         condition: service_completed_successfully
+      otel-collector:
+        condition: service_started
     environment: *api_env
     volumes:
       - ./secrets:/secrets
@@ -316,13 +323,38 @@ services:
     networks:
       - frontend
 
-  # ---- Observability (Phase 1: logs) ----
+  # ---- Observability (Phase 1: logs + traces) ----
   # Loki (log storage) + Promtail (ships every container's stdout here) +
-  # Grafana (browse/search them). See deploy/README.md's Observability
-  # section for how to reach Grafana and query logs. No metrics yet
-  # (Prometheus) — that's a separate, later addition; this phase needs zero
-  # application code changes, every service here already logs structured
-  # JSON.
+  # Tempo (trace storage) + an OTel Collector (receives traces from
+  # instrumented services, forwards to Tempo) + Grafana (browse/search
+  # both, and jump from a log line's trace_id straight into its trace).
+  # See deploy/README.md's Observability section. Still no metrics
+  # (Prometheus) — that's a separate, later addition.
+  #
+  # Only the Go api is instrumented so far (internal/platform/tracing) —
+  # wa-web/tg-web/web don't emit traces yet, so Tempo and their rows in the
+  # per-channel dashboards will only ever show logs until that's added.
+  tempo:
+    image: grafana/tempo:2.6.1
+    restart: always
+    command: ["-config.file=/etc/tempo-config.yaml"]
+    volumes:
+      - ./tempo/tempo-config.yaml:/etc/tempo-config.yaml:ro
+      - tempo_data:/var/tempo
+    networks:
+      - backend
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.112.0
+    restart: always
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    depends_on:
+      - tempo
+    networks:
+      - backend
+
   loki:
     image: grafana/loki:2.9.8
     restart: always
@@ -382,6 +414,7 @@ volumes:
   embeddings_cache:
   loki_data:
   grafana_data:
+  tempo_data:
 
 networks:
   backend:

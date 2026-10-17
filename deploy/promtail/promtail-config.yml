@@ -62,6 +62,14 @@ scrape_configs:
             msg: msg
             studio_id: studio_id
             request_id: request_id
+            trace_id: trace_id
       - labels:
           level:
           studio_id:
+      # trace_id deliberately stays a plain extracted field, not a label —
+      # it's unique per request, so promoting it to a label would blow up
+      # Loki's label-cardinality the same way studio_id/request_id already
+      # don't (they're bounded; trace_id isn't). Grafana's Loki datasource
+      # finds it straight in the JSON text via a derivedField regex
+      # instead (see deploy/grafana/provisioning/datasources/datasources.yml),
+      # which needs no label at all to link to Tempo.

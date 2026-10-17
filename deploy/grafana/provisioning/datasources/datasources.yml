@@ -1,0 +1,35 @@
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    uid: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: true
+    jsonData:
+      maxLines: 1000
+      derivedFields:
+        # Every log line carrying a trace_id (api only, so far — see
+        # internal/platform/tracing) becomes a clickable link into Tempo.
+        # Matches both the JSON form slog produces ("trace_id":"...") and a
+        # bare trace_id=... in case any future service logs it that way.
+        - datasourceUid: Tempo
+          matcherRegex: "trace_id[\"=:]+([a-f0-9]+)"
+          name: TraceID
+          url: "$${__value.raw}"
+
+  - name: Tempo
+    uid: Tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      tracesToLogsV2:
+        # Real uid set above (Loki), not a guessed/literal string — the
+        # infaira_twin reference stack's own config notes this exact
+        # mistake broke its trace->logs link until fixed.
+        datasourceUid: Loki
+        filterByTraceID: true
+        filterBySpanID: false
+        query: '{source="docker"} | trace_id="$${__trace.traceId}"'

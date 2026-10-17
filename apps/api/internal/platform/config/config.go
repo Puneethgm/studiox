@@ -18,6 +18,12 @@ type Config struct {
 	LogLevel    string
 	CORSOrigins []string
 
+	// OTELExporterEndpoint is the OTLP/gRPC collector address (e.g.
+	// otel-collector:4317). Empty disables tracing entirely — no collector
+	// dial is attempted, so local dev without the observability stack
+	// running is unaffected.
+	OTELExporterEndpoint string
+
 	DB DBConfig
 
 	JWT       JWTConfig
@@ -131,11 +137,30 @@ type DBConfig struct {
 	Password string
 	Name     string
 	SSLMode  string
+	// ReadHost, when set, points at a read-replica Postgres instance used
+	// for read scaling/failover (init.md §4.5's "production DB has a read
+	// replica"). Loaded from POSTGRES_READ_HOST. Empty (the default) means
+	// no replica is configured — ReadDSN() returns "" in that case, and
+	// callers (cmd/server/main.go) fall back to the primary pool so
+	// behavior is unchanged when this isn't set.
+	ReadHost string
 }
 
 func (d DBConfig) DSN() string {
 	return fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
 		d.User, d.Password, d.Host, d.Port, d.Name, d.SSLMode)
+}
+
+// ReadDSN returns the read-replica DSN, or "" if no replica host is
+// configured. Reuses the same user/password/port/db/sslmode as the primary
+// connection — a replica is assumed to be the same Postgres cluster
+// credentials-wise, just a different host.
+func (d DBConfig) ReadDSN() string {
+	if d.ReadHost == "" {
+		return ""
+	}
+	return fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
+		d.User, d.Password, d.ReadHost, d.Port, d.Name, d.SSLMode)
 }
 
 type JWTConfig struct {
@@ -229,6 +254,8 @@ func Load() (Config, error) {
 		Env:         getEnv("API_ENV", "local"),
 		LogLevel:    getEnv("API_LOG_LEVEL", "info"),
 		CORSOrigins: splitCSV(getEnv("API_CORS_ORIGINS", "http://localhost:3000,http://localhost:3001")),
+
+		OTELExporterEndpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
 		JWT: JWTConfig{
 			Secret: getEnv("JWT_SECRET", ""),
 			TTL:    jwtTTL,
@@ -311,6 +338,11 @@ func Load() (Config, error) {
 }
 
 func loadDBConfig(defaultPort int) (DBConfig, error) {
+	// POSTGRES_READ_HOST is read the same way regardless of which branch
+	// below builds the rest of the config — see DBConfig.ReadHost's doc
+	// comment. Empty/unset means no replica, same as today.
+	readHost := getEnv("POSTGRES_READ_HOST", "")
+
 	if rawURL := os.Getenv("DATABASE_URL"); rawURL != "" {
 		parsed, err := url.Parse(rawURL)
 		if err != nil {
@@ -332,6 +364,7 @@ func loadDBConfig(defaultPort int) (DBConfig, error) {
 			Password: password,
 			Name:     strings.TrimPrefix(parsed.Path, "/"),
 			SSLMode:  sslMode,
+			ReadHost: readHost,
 		}, nil
 	}
 
@@ -342,6 +375,7 @@ func loadDBConfig(defaultPort int) (DBConfig, error) {
 		Password: getEnv("POSTGRES_PASSWORD", ""),
 		Name:     getEnv("POSTGRES_DB", "projectx"),
 		SSLMode:  getEnv("POSTGRES_SSLMODE", "disable"),
+		ReadHost: readHost,
 	}, nil
 }
 

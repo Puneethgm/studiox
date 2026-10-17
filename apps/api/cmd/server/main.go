@@ -22,6 +22,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/projectx/api/internal/decisiontree"
 	"github.com/projectx/api/internal/identity"
@@ -38,6 +39,7 @@ import (
 	"github.com/projectx/api/internal/leads"
 	"github.com/projectx/api/internal/messaging"
 	"github.com/projectx/api/internal/messaging/channels"
+	"github.com/projectx/api/internal/platform/audit"
 	"github.com/projectx/api/internal/platform/config"
 	"github.com/projectx/api/internal/platform/db"
 	"github.com/projectx/api/internal/platform/httpx"
@@ -46,6 +48,7 @@ import (
 	"github.com/projectx/api/internal/platform/rediscache"
 	s3pkg "github.com/projectx/api/internal/platform/s3"
 	"github.com/projectx/api/internal/platform/secrets"
+	"github.com/projectx/api/internal/platform/tracing"
 	"github.com/projectx/api/internal/reviews"
 	"github.com/projectx/api/internal/studios"
 
@@ -74,6 +77,22 @@ func main() {
 	log := logger.New(cfg.LogLevel)
 	slog.SetDefault(log)
 
+	// No-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset (local dev without the
+	// observability stack running) — see internal/platform/tracing's doc
+	// comment.
+	shutdownTracing, err := tracing.Init(context.Background(), "api", cfg.OTELExporterEndpoint)
+	if err != nil {
+		log.Error("tracing init", "err", err)
+		os.Exit(1)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTracing(ctx); err != nil {
+			log.Error("tracing shutdown", "err", err)
+		}
+	}()
+
 	// http.DefaultClient (used for every internal wa-web/tg-web/Meta call)
 	// defaults to 2 idle connections per host. A burst of concurrent sends
 	// to the same internal service (e.g. a Manual Actions batch) blows past
@@ -97,6 +116,29 @@ func main() {
 	}
 	defer pool.Close()
 
+	// readPool serves read-heavy queries that can tolerate replica lag
+	// (init.md §4.5's "production DB has a read replica"). Defaults to the
+	// primary pool itself when POSTGRES_READ_HOST isn't configured, so
+	// downstream code (internal/leads) never has to nil-check — it always
+	// has a valid pool, it's just the same one when no replica exists.
+	readPool := pool
+	if readDSN := cfg.DB.ReadDSN(); readDSN != "" {
+		rp, err := db.Connect(rootCtx, readDSN)
+		if err != nil {
+			log.Error("read replica connect failed — falling back to primary pool for reads", "err", err)
+		} else {
+			readPool = rp
+			defer rp.Close()
+			log.Info("connected to read replica", "host", cfg.DB.ReadHost)
+		}
+	}
+
+	// Best-effort audit trail for compliance-sensitive flows (account
+	// deletion, archive recovery — init.md §4.5). Needs only the primary
+	// pool; constructed early so every service that writes audit entries
+	// can share this one instance.
+	auditLogger := audit.New(pool)
+
 	cipher, err := secrets.New(cfg.TokenEncryptionKey)
 	if err != nil {
 		log.Error("token encryption init", "err", err)
@@ -117,7 +159,7 @@ func main() {
 
 	// --- repos / services / handlers ---
 	identityRepo := identity.NewRepo(pool)
-	leadsRepo := leads.NewRepo(pool)
+	leadsRepo := leads.NewRepo(pool, readPool)
 	dtRepo := decisiontree.NewRepo(pool)
 	dtSvc := decisiontree.NewService(dtRepo)
 	dtHandler := decisiontree.NewHandler(dtSvc)
@@ -156,10 +198,11 @@ func main() {
 	if frontendURL == "" {
 		frontendURL = "http://localhost:3000"
 	}
-	studiosSvc := studios.NewService(studiosRepo, identityRepo, glofoxClient, crmExecutor, embeddingsClient, mailer, frontendURL)
-	reviewsHandler := reviews.NewHandler(reviewsRepo)
 
-	// Initialize S3 uploader if configured
+	// Initialize S3 uploader if configured. Constructed before studiosSvc
+	// (moved up from its previous spot below) because studios.Service now
+	// needs it too, for the account-deletion archive upload/download flow
+	// (init.md §4.5) — not just studiosHandler's logo/social-media uploads.
 	var s3Uploader *s3pkg.Uploader
 	if cfg.S3.Enabled() {
 		awsCfg, err := awsconfig.LoadDefaultConfig(
@@ -179,6 +222,9 @@ func main() {
 	} else {
 		log.Info("S3 not configured (using disk for uploads)")
 	}
+
+	studiosSvc := studios.NewService(studiosRepo, identityRepo, glofoxClient, crmExecutor, embeddingsClient, mailer, frontendURL, s3Uploader, auditLogger)
+	reviewsHandler := reviews.NewHandler(reviewsRepo)
 
 	studiosHandler := studios.NewHandler(studiosSvc, cfg.Sheets.CredentialsPath, s3Uploader, llmRepo, cfg.Claude.APIURL)
 
@@ -329,6 +375,11 @@ func main() {
 	socialWorker := studios.NewSocialWorker(pool, cfg.TokenEncryptionKey, log.With("component", "social_worker"))
 	go socialWorker.Run(rootCtx)
 
+	// Audit-log retention: enforces the 90-day minimum/maximum retention
+	// window on audit_logs (init.md §4.5) — runs once/day.
+	auditRetentionWorker := audit.NewRetentionWorker(pool, log.With("component", "audit_retention"))
+	go auditRetentionWorker.Run(rootCtx)
+
 	metaWebhook := messaging.NewMetaWebhookHandler(msgSvc,
 		cfg.Meta.WebhookVerifyToken, cfg.Meta.AppSecret,
 		log.With("component", "meta_webhook"))
@@ -342,6 +393,11 @@ func main() {
 	// --- router ---
 	r := chi.NewRouter()
 
+	// Starts an OTel span per request (no-op when tracing.Init was a no-op,
+	// i.e. OTEL_EXPORTER_OTLP_ENDPOINT unset) — first in the chain so every
+	// other middleware's logging runs inside the span and picks up its
+	// trace_id via logger.FromCtx.
+	r.Use(otelhttp.NewMiddleware("api"))
 	r.Use(httpx.RequestID)
 	r.Use(httpx.SecurityHeaders)
 	r.Use(httpx.RateLimiter)

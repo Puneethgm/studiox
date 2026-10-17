@@ -1,0 +1,38 @@
+# Single-binary Tempo for one EC2 box — local filesystem storage, no
+# clustering. Stores traces; Grafana's Tempo datasource (provisioned in
+# deploy/grafana/provisioning/datasources/) reads them, and Loki's
+# derivedFields link a trace_id found in a log line straight here.
+#
+# No metrics_generator (service-graphs/span-metrics) — that needs
+# Prometheus remote-write, which doesn't exist on this stack (logs-only
+# phase so far). Add it when/if a Prometheus phase happens; until then
+# this gives working traces and trace<->logs correlation, just no Node
+# Graph panel.
+
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+ingester:
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    block_retention: 168h # 7 days — traces are far higher-volume than logs,
+                           # so a shorter window than Loki's 30 days
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/traces
+    wal:
+      path: /var/tempo/wal

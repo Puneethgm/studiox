@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"os"
 	"time"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 type ctxKey int
@@ -68,6 +70,16 @@ func FromCtx(ctx context.Context, base *slog.Logger) *slog.Logger {
 	}
 	if v, ok := ctx.Value(keyUserID).(string); ok && v != "" {
 		l = l.With("user_id", v)
+	}
+	// Attaches trace_id/span_id whenever this context is inside an active
+	// OTel span (otelhttp's middleware starts one per request — see
+	// internal/platform/tracing). Grafana's Loki datasource has a
+	// derivedField that turns trace_id into a clickable link straight into
+	// Tempo's trace view. A no-op when tracing is disabled
+	// (OTEL_EXPORTER_OTLP_ENDPOINT unset) — SpanContextFromContext then
+	// returns an invalid context and IsValid() is false.
+	if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {
+		l = l.With("trace_id", sc.TraceID().String(), "span_id", sc.SpanID().String())
 	}
 	return l
 }
