@@ -4,7 +4,7 @@ import pino from 'pino';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { SessionManager } from './sessions.js';
-import { initTracing, tracingMiddleware, traceLogMixin } from './tracing.js';
+import { initTracing, tracingMiddleware, traceLogMixin, accessLogMiddleware } from './tracing.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -35,6 +35,7 @@ const app = express();
 // First in the chain so every downstream middleware/handler's logging runs
 // inside the span and picks up its trace_id via the pino mixin above.
 app.use(tracingMiddleware(tracer));
+app.use(accessLogMiddleware(log));
 app.use(express.json());
 
 const PORT = process.env.PORT || 3100;
@@ -120,6 +121,26 @@ app.post('/sessions/:studioId/send', async (req, res) => {
     res.json({ ok: true, messageId: result?.key?.id });
   } catch (err) {
     log.error({ err: err.message, studioId, to }, 'wa-web: send message failed');
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /sessions/:studioId/delete-message — real WhatsApp "delete for
+// everyone", not a local hide. See SessionManager.deleteMessage's own doc
+// comment for the real constraints (own messages only, WhatsApp's own time
+// window, not something this code enforces or can override).
+app.post('/sessions/:studioId/delete-message', async (req, res) => {
+  const { studioId } = req.params;
+  const { to, messageId } = req.body;
+  if (!to) return res.status(400).json({ error: 'to required' });
+  if (!messageId) return res.status(400).json({ error: 'messageId required' });
+  log.info({ studioId, to, messageId }, 'wa-web: deleting message');
+  try {
+    await sessions.deleteMessage(studioId, to, messageId);
+    log.info({ studioId, to, messageId }, 'wa-web: message deleted ok');
+    res.json({ ok: true });
+  } catch (err) {
+    log.error({ err: err.message, studioId, to, messageId }, 'wa-web: delete message failed');
     res.status(500).json({ error: err.message });
   }
 });

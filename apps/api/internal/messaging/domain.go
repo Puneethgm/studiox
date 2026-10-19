@@ -204,6 +204,11 @@ type Message struct {
 	DeliveredAt   *time.Time    `json:"deliveredAt,omitempty"`
 	ReadAt        *time.Time    `json:"readAt,omitempty"`
 	CreatedAt     time.Time     `json:"createdAt"`
+	// DeletedAt is set for a real WhatsApp "delete for everyone" (only
+	// supported for whatsapp_web conversations today) — body/attachments
+	// are cleared server-side at the same time, mirroring that the content
+	// is actually gone on WhatsApp's own servers too, not just hidden here.
+	DeletedAt *time.Time `json:"deletedAt,omitempty"`
 }
 
 // ----- outbound job -----

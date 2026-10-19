@@ -92,9 +92,20 @@ type Lead struct {
 	// GlofoxMemberID is the external member/barcode ID from a Glofox member export
 	// (the "BarcodeID" column), set when the lead was bulk-imported from one — see
 	// ImportLeads/mapHeaders. Empty for leads from any other source.
-	GlofoxMemberID string    `json:"glofoxMemberId,omitempty"`
-	CreatedAt      time.Time `json:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
+	GlofoxMemberID string `json:"glofoxMemberId,omitempty"`
+	// Tags is free-form, studio-defined labels (e.g. "vip", "referral") —
+	// no separate tags table, same free-text-dimension approach as Source/
+	// FitnessPlan elsewhere on this struct. Filterable via ListLeadsFilter.Tag
+	// and editable through PATCH /leads/{id} (see http.go's patchLeadReq).
+	Tags []string `json:"tags"`
+	// ReminderAt/ReminderNote are a manual, staff-set follow-up reminder —
+	// distinct from NeedsManualFollowup above (that one is AI/system-owned,
+	// set and cleared automatically; this one only a human ever sets, via
+	// PATCH /leads/{id}). Nil ReminderAt means no reminder set.
+	ReminderAt   *time.Time `json:"reminderAt,omitempty"`
+	ReminderNote string     `json:"reminderNote,omitempty"`
+	CreatedAt    time.Time  `json:"createdAt"`
+	UpdatedAt    time.Time  `json:"updatedAt"`
 }
 
 type StudioSheetsSettings struct {

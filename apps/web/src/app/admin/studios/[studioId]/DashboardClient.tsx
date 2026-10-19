@@ -57,6 +57,7 @@ interface DashboardClientProps {
   initialLeads: Lead[];
   initialLeadsTotal: number;
   initialStats: LeadStats;
+  remindersDueCount: number;
   defaultTab?: 'overview' | 'analytics';
 }
 
@@ -91,6 +92,7 @@ export default function DashboardClient({
   initialLeads,
   initialLeadsTotal,
   initialStats,
+  remindersDueCount,
   defaultTab = 'overview',
 }: DashboardClientProps) {
   const [activeTab, setActiveTab] = useState<'overview' | 'analytics'>(defaultTab);
@@ -761,6 +763,25 @@ export default function DashboardClient({
                   </Link>
                   <p className="mt-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
                     New or contacted leads with fewer than 3 contact attempts.
+                  </p>
+                </Card>
+
+                <Card
+                  title={<span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Reminders Due</span>}
+                  className="bg-sky-50/20 border-sky-100 dark:border-sky-950/20 dark:bg-sky-950/5 hover:border-sky-200 transition-colors"
+                >
+                  <Link href={studio.id === 'global' ? `/admin/leads?reminderDue=true` : `/admin/studios/${studio.id}/leads?reminderDue=true`}>
+                    <div className="flex items-baseline gap-2 cursor-pointer group">
+                      <span className="text-3xl font-black text-zinc-900 dark:text-white group-hover:underline">
+                        {remindersDueCount}
+                      </span>
+                      <Badge tone={remindersDueCount > 0 ? 'warning' : 'neutral'} className="font-bold">
+                        {remindersDueCount > 0 ? 'Action Needed' : 'Good'}
+                      </Badge>
+                    </div>
+                  </Link>
+                  <p className="mt-2 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                    Leads with a manual follow-up reminder set and due now.
                   </p>
                 </Card>
 

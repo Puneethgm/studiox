@@ -55,6 +55,7 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Post("/leads/import", h.importLeads)
 	r.Post("/leads/auto-contact/enable", h.enableAutoContactForStatus)
 	r.Get("/leads/sources", h.listUniqueSources)
+	r.Get("/leads/tags", h.listUniqueTags)
 	r.Post("/leads", h.createLead)
 	r.Get("/leads/{id}", h.getLead)
 	r.Patch("/leads/{id}", h.patchLead)
@@ -393,6 +394,12 @@ func parseListLeadsFilter(q url.Values) ListLeadsFilter {
 	}
 	if v := q.Get("source"); v != "" {
 		f.Source = v
+	}
+	if v := q.Get("tag"); v != "" {
+		f.Tag = v
+	}
+	if v := q.Get("reminderDue"); v == "true" {
+		f.ReminderDue = true
 	}
 	if v := q.Get("startDate"); v != "" {
 		f.StartDate = v
@@ -810,6 +817,22 @@ type patchLeadReq struct {
 	Currency       *string     `json:"currency"`
 	Offer          *string     `json:"offer"`
 	FurtherNotes   *string     `json:"furtherNotes"`
+	// Tags is nil when the client didn't send the field at all (leave
+	// unchanged, same as every other pointer field here), and an empty
+	// (non-nil) slice when they explicitly cleared all tags — both are
+	// distinguishable since JSON null/absent both decode to a nil *[]string,
+	// while `"tags": []` decodes to a pointer to an empty, non-nil slice.
+	Tags *[]string `json:"tags"`
+	// ReminderAt is a raw ISO datetime string, not *time.Time — a bare
+	// *time.Time can't distinguish "field omitted" from "explicit null"
+	// (both decode to a nil pointer), so there'd be no way for the client
+	// to ever actually clear an already-set reminder. A *string sidesteps
+	// that: the editor UI always sends this key on every save (same as
+	// Tags above), using "" for "no reminder" and a real ISO string
+	// otherwise — nil only happens for a client that omits the field
+	// entirely, which still means "leave unchanged".
+	ReminderAt   *string `json:"reminderAt"`
+	ReminderNote *string `json:"reminderNote"`
 }
 
 type setLeadDNDReq struct {
@@ -914,6 +937,9 @@ func (h *Handler) patchLead(w http.ResponseWriter, r *http.Request) {
 	currency := current.Currency
 	offer := current.Offer
 	furtherNotes := current.FurtherNotes
+	tags := current.Tags
+	reminderAt := current.ReminderAt
+	reminderNote := current.ReminderNote
 
 	if req.Status != nil {
 		status = *req.Status
@@ -960,8 +986,26 @@ func (h *Handler) patchLead(w http.ResponseWriter, r *http.Request) {
 	if req.FurtherNotes != nil {
 		furtherNotes = *req.FurtherNotes
 	}
+	if req.Tags != nil {
+		tags = *req.Tags
+	}
+	if req.ReminderAt != nil {
+		if *req.ReminderAt == "" {
+			reminderAt = nil
+		} else {
+			parsed, err := time.Parse(time.RFC3339, *req.ReminderAt)
+			if err != nil {
+				httpx.WriteError(w, http.StatusBadRequest, "invalid", "reminderAt must be a valid ISO 8601 datetime or empty string to clear")
+				return
+			}
+			reminderAt = &parsed
+		}
+	}
+	if req.ReminderNote != nil {
+		reminderNote = *req.ReminderNote
+	}
 
-	if err := h.svc.UpdateLead(r.Context(), studioID, id, status, currency, notes, contactMade, hotLead, trialPurchased, firstName, lastName, fitnessPlan, assignedTo, trialAttended, memberSold, monthlyFee, offer, furtherNotes); err != nil {
+	if err := h.svc.UpdateLead(r.Context(), studioID, id, status, currency, notes, contactMade, hotLead, trialPurchased, firstName, lastName, fitnessPlan, assignedTo, trialAttended, memberSold, monthlyFee, offer, furtherNotes, tags, reminderAt, reminderNote); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
 		return
 	}
@@ -1745,4 +1789,30 @@ func (h *Handler) listUniqueSources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, sources)
+}
+
+// listUniqueTags godoc
+//
+//	@Summary		List unique lead tags
+//	@Description	Returns the distinct tags in use across the resolved studio's leads, for populating the Leads tab's tag filter dropdown. Same resolution rules as listUniqueSources above.
+//	@Tags			Leads
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Success		200			{array}		string
+//	@Failure		400			{object}	httpx.ErrorResponse	"missing/invalid studioId"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/admin/leads/tags [get]
+//	@Router			/api/v1/studios/{studioId}/leads/tags [get]
+func (h *Handler) listUniqueTags(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := h.resolveStudioID(w, r)
+	if !ok {
+		return
+	}
+	tags, err := h.svc.GetUniqueTags(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, tags)
 }

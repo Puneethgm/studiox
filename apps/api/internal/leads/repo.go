@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -20,11 +21,24 @@ import (
 )
 
 type Repo struct {
-	pool   *pgxpool.Pool
-	glofox *glofox.Client
+	pool *pgxpool.Pool
+	// readPool serves read-heavy queries that can tolerate replica lag
+	// (currently just Stats — see init.md §4.5's read-replica requirement).
+	// Defaults to pool itself when no replica is configured (see NewRepo),
+	// so every other method keeps using pool and never has to nil-check.
+	readPool *pgxpool.Pool
+	glofox   *glofox.Client
 }
 
-func NewRepo(pool *pgxpool.Pool) *Repo { return &Repo{pool: pool} }
+// NewRepo wires the primary pool and, optionally, a read-replica pool.
+// Pass the same pool for both (or nil for readPool) when no replica is
+// configured — behavior is then identical to before the replica existed.
+func NewRepo(pool *pgxpool.Pool, readPool *pgxpool.Pool) *Repo {
+	if readPool == nil {
+		readPool = pool
+	}
+	return &Repo{pool: pool, readPool: readPool}
+}
 
 // SetGlofoxClient wires up Glofox CRM sync for leads created/updated through
 // this repo directly (the automated sheet-import and AI/automation status
@@ -447,14 +461,23 @@ func (r *Repo) EnqueueAutoContactForLeadsByStatus(ctx context.Context, studioID 
 }
 
 type ListLeadsFilter struct {
-	CampaignID     *uuid.UUID
-	Status         *LeadStatus
-	Statuses       []LeadStatus
-	MaxAttempts    *int
-	StartDate      string
-	EndDate        string
-	DurationDays   int
-	Source         string
+	CampaignID   *uuid.UUID
+	Status       *LeadStatus
+	Statuses     []LeadStatus
+	MaxAttempts  *int
+	StartDate    string
+	EndDate      string
+	DurationDays int
+	Source       string
+	// Tag filters to leads carrying this exact tag (array containment, not
+	// substring) — single-tag for now, matching Source's own single-value
+	// filter shape rather than a multi-select with no existing UI
+	// precedent anywhere in this codebase.
+	Tag string
+	// ReminderDue restricts to leads with a manual follow-up reminder set
+	// and due (reminder_at <= now()) — powers the dashboard's "Reminders
+	// Due" stat card and the Leads tab's reminderDue filter.
+	ReminderDue    bool
 	HotLead        *bool
 	ContactMade    *bool
 	TrialPurchased *bool
@@ -496,6 +519,13 @@ func (r *Repo) ListLeads(ctx context.Context, studioID uuid.UUID, f ListLeadsFil
 	if f.Source != "" {
 		args = append(args, f.Source)
 		conds = append(conds, fmt.Sprintf("l.source = $%d", len(args)))
+	}
+	if f.Tag != "" {
+		args = append(args, f.Tag)
+		conds = append(conds, fmt.Sprintf("l.tags @> ARRAY[$%d]::text[]", len(args)))
+	}
+	if f.ReminderDue {
+		conds = append(conds, "l.reminder_at IS NOT NULL AND l.reminder_at <= now()")
 	}
 
 	var dateFilter string
@@ -545,7 +575,7 @@ func (r *Repo) ListLeads(ctx context.Context, studioID uuid.UUID, f ListLeadsFil
 		       l.name, COALESCE(l.first_name, ''), COALESCE(l.last_name, ''), l.email, l.phone, l.fitness_plan, l.goals,
 		       l.source, l.status, l.currency, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage,
 		       COALESCE(l.assigned_to, ''), l.trial_attended, l.member_sold, l.monthly_fee, COALESCE(l.offer, ''), COALESCE(l.further_notes, ''),
-		       l.dnd_enabled, l.needs_manual_followup, l.created_at, l.updated_at, l.glofox_member_id
+		       l.dnd_enabled, l.needs_manual_followup, l.created_at, l.updated_at, l.glofox_member_id, l.tags, l.reminder_at, l.reminder_note
 		FROM leads l
 		JOIN campaigns c ON c.id = l.campaign_id
 		JOIN studios s ON s.id = l.studio_id
@@ -565,7 +595,7 @@ func (r *Repo) ListLeads(ctx context.Context, studioID uuid.UUID, f ListLeadsFil
 		if err := rows.Scan(&l.ID, &l.StudioID, &l.StudioName, &l.StudioSlug, &l.CampaignID, &l.CampaignName, &l.CampaignSlug,
 			&l.Name, &l.FirstName, &l.LastName, &l.Email, &l.Phone, &l.FitnessPlan, &l.Goals,
 			&l.Source, &l.Status, &l.Currency, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage,
-			&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.DNDEnabled, &l.NeedsManualFollowup, &l.CreatedAt, &l.UpdatedAt, &l.GlofoxMemberID); err != nil {
+			&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.DNDEnabled, &l.NeedsManualFollowup, &l.CreatedAt, &l.UpdatedAt, &l.GlofoxMemberID, &l.Tags, &l.ReminderAt, &l.ReminderNote); err != nil {
 			return nil, 0, fmt.Errorf("scan lead: %w", err)
 		}
 		out = append(out, l)
@@ -579,7 +609,7 @@ func (r *Repo) GetLead(ctx context.Context, studioID, id uuid.UUID) (*Lead, erro
 		       l.name, COALESCE(l.first_name, ''), COALESCE(l.last_name, ''), l.email, l.phone, l.fitness_plan, l.goals,
 		       l.source, l.status, l.currency, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage,
 		       COALESCE(l.assigned_to, ''), l.trial_attended, l.member_sold, l.monthly_fee, COALESCE(l.offer, ''), COALESCE(l.further_notes, ''),
-		       l.dnd_enabled, l.needs_manual_followup, l.created_at, l.updated_at, COALESCE(l.gender, ''), l.date_of_birth, l.glofox_member_id
+		       l.dnd_enabled, l.needs_manual_followup, l.created_at, l.updated_at, COALESCE(l.gender, ''), l.date_of_birth, l.glofox_member_id, l.tags, l.reminder_at, l.reminder_note
 		FROM leads l
 		JOIN campaigns c ON c.id = l.campaign_id
 		JOIN studios s ON s.id = l.studio_id
@@ -589,7 +619,7 @@ func (r *Repo) GetLead(ctx context.Context, studioID, id uuid.UUID) (*Lead, erro
 	if err := row.Scan(&l.ID, &l.StudioID, &l.StudioName, &l.StudioSlug, &l.CampaignID, &l.CampaignName, &l.CampaignSlug,
 		&l.Name, &l.FirstName, &l.LastName, &l.Email, &l.Phone, &l.FitnessPlan, &l.Goals,
 		&l.Source, &l.Status, &l.Currency, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage,
-		&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.DNDEnabled, &l.NeedsManualFollowup, &l.CreatedAt, &l.UpdatedAt, &l.Gender, &l.DateOfBirth, &l.GlofoxMemberID); err != nil {
+		&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.DNDEnabled, &l.NeedsManualFollowup, &l.CreatedAt, &l.UpdatedAt, &l.Gender, &l.DateOfBirth, &l.GlofoxMemberID, &l.Tags, &l.ReminderAt, &l.ReminderNote); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrLeadNotFound
 		}
@@ -631,7 +661,7 @@ func (r *Repo) GetLeadTx(ctx context.Context, tx pgx.Tx, studioID, id uuid.UUID)
 		       l.name, COALESCE(l.first_name, ''), COALESCE(l.last_name, ''), l.email, l.phone, l.fitness_plan, l.goals,
 		       l.source, l.status, l.currency, l.notes, l.contact_attempts, l.last_contacted_at, l.contact_made, l.hot_lead, l.trial_purchased, l.auto_contact_stage,
 		       COALESCE(l.assigned_to, ''), l.trial_attended, l.member_sold, l.monthly_fee, COALESCE(l.offer, ''), COALESCE(l.further_notes, ''),
-		       l.dnd_enabled, l.needs_manual_followup, l.created_at, l.updated_at, COALESCE(l.gender, ''), l.date_of_birth, l.glofox_member_id
+		       l.dnd_enabled, l.needs_manual_followup, l.created_at, l.updated_at, COALESCE(l.gender, ''), l.date_of_birth, l.glofox_member_id, l.tags, l.reminder_at, l.reminder_note
 		FROM leads l
 		JOIN campaigns c ON c.id = l.campaign_id
 		JOIN studios s ON s.id = l.studio_id
@@ -641,7 +671,7 @@ func (r *Repo) GetLeadTx(ctx context.Context, tx pgx.Tx, studioID, id uuid.UUID)
 	if err := row.Scan(&l.ID, &l.StudioID, &l.StudioName, &l.StudioSlug, &l.CampaignID, &l.CampaignName, &l.CampaignSlug,
 		&l.Name, &l.FirstName, &l.LastName, &l.Email, &l.Phone, &l.FitnessPlan, &l.Goals,
 		&l.Source, &l.Status, &l.Currency, &l.Notes, &l.ContactAttempts, &l.LastContactedAt, &l.ContactMade, &l.HotLead, &l.TrialPurchased, &l.AutoContactStage,
-		&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.DNDEnabled, &l.NeedsManualFollowup, &l.CreatedAt, &l.UpdatedAt, &l.Gender, &l.DateOfBirth, &l.GlofoxMemberID); err != nil {
+		&l.AssignedTo, &l.TrialAttended, &l.MemberSold, &l.MonthlyFee, &l.Offer, &l.FurtherNotes, &l.DNDEnabled, &l.NeedsManualFollowup, &l.CreatedAt, &l.UpdatedAt, &l.Gender, &l.DateOfBirth, &l.GlofoxMemberID, &l.Tags, &l.ReminderAt, &l.ReminderNote); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrLeadNotFound
 		}
@@ -710,12 +740,14 @@ type LeadStats struct {
 func (r *Repo) Stats(ctx context.Context, studioID uuid.UUID) (*LeadStats, error) {
 	var rows pgx.Rows
 	var err error
+	// Read-scaled: runs against the read-replica pool when one is
+	// configured (falls back to the primary pool otherwise — see NewRepo).
 	if studioID == uuid.Nil {
-		rows, err = r.pool.Query(ctx, `
+		rows, err = r.readPool.Query(ctx, `
 			SELECT status, COUNT(*) FROM leads GROUP BY status
 		`)
 	} else {
-		rows, err = r.pool.Query(ctx, `
+		rows, err = r.readPool.Query(ctx, `
 			SELECT status, COUNT(*) FROM leads WHERE studio_id = $1 GROUP BY status
 		`, studioID)
 	}
@@ -741,7 +773,7 @@ func (r *Repo) Stats(ctx context.Context, studioID uuid.UUID) (*LeadStats, error
 	return out, rows.Err()
 }
 
-func (r *Repo) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status LeadStatus, currency string, notes string, contactMade, hotLead, trialPurchased bool, firstName, lastName, fitnessPlan, assignedTo string, trialAttended, memberSold bool, monthlyFee float64, offer, furtherNotes string) error {
+func (r *Repo) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status LeadStatus, currency string, notes string, contactMade, hotLead, trialPurchased bool, firstName, lastName, fitnessPlan, assignedTo string, trialAttended, memberSold bool, monthlyFee float64, offer, furtherNotes string, tags []string, reminderAt *time.Time, reminderNote string) error {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -751,16 +783,19 @@ func (r *Repo) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status Le
 	var oldStatus, oldNotes, oldFirstName, oldLastName, oldFitnessPlan, oldAssignedTo, oldOffer, oldFurtherNotes, oldCurrency string
 	var oldContactMade, oldHotLead, oldTrialPurchased, oldTrialAttended, oldMemberSold bool
 	var oldMonthlyFee float64
+	var oldTags []string
+	var oldReminderAt *time.Time
+	var oldReminderNote string
 	err = tx.QueryRow(ctx, `
 		SELECT status, COALESCE(notes, ''), COALESCE(first_name, ''), COALESCE(last_name, ''), COALESCE(fitness_plan, ''),
 		       contact_made, hot_lead, trial_purchased,
 		       COALESCE(assigned_to, ''), trial_attended, member_sold, monthly_fee, currency,
-		       COALESCE(offer, ''), COALESCE(further_notes, '')
+		       COALESCE(offer, ''), COALESCE(further_notes, ''), tags, reminder_at, reminder_note
 		FROM leads WHERE studio_id = $1 AND id = $2
 	`, studioID, id).Scan(&oldStatus, &oldNotes, &oldFirstName, &oldLastName, &oldFitnessPlan,
 		&oldContactMade, &oldHotLead, &oldTrialPurchased,
 		&oldAssignedTo, &oldTrialAttended, &oldMemberSold, &oldMonthlyFee, &oldCurrency,
-		&oldOffer, &oldFurtherNotes)
+		&oldOffer, &oldFurtherNotes, &oldTags, &oldReminderAt, &oldReminderNote)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrLeadNotFound
@@ -774,14 +809,15 @@ func (r *Repo) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status Le
 
 	name := strings.TrimSpace(firstName + " " + lastName)
 	tag, err := tx.Exec(ctx, `
-		UPDATE leads 
+		UPDATE leads
 		SET status = $3, notes = $4, contact_made = $5, hot_lead = $6, trial_purchased = $7,
 		    first_name = $8, last_name = $9, fitness_plan = $10, name = $11,
 		    assigned_to = $12, trial_attended = $13, member_sold = $14, monthly_fee = $15,
-		    currency = $16, offer = $17, further_notes = $18, updated_at = now()
+		    currency = $16, offer = $17, further_notes = $18, tags = $19,
+		    reminder_at = $20, reminder_note = $21, updated_at = now()
 		WHERE studio_id = $1 AND id = $2
 	`, studioID, id, string(status), notes, contactMade, hotLead, trialPurchased, firstName, lastName, fitnessPlan, name,
-		assignedTo, trialAttended, memberSold, monthlyFee, currency, offer, furtherNotes)
+		assignedTo, trialAttended, memberSold, monthlyFee, currency, offer, furtherNotes, tags, reminderAt, reminderNote)
 	if err != nil {
 		return fmt.Errorf("update lead: %w", err)
 	}
@@ -789,10 +825,13 @@ func (r *Repo) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status Le
 		return ErrLeadNotFound
 	}
 
+	reminderAtChanged := (reminderAt == nil) != (oldReminderAt == nil) ||
+		(reminderAt != nil && oldReminderAt != nil && !reminderAt.Equal(*oldReminderAt))
 	changed := string(status) != oldStatus || notes != oldNotes || firstName != oldFirstName || lastName != oldLastName || fitnessPlan != oldFitnessPlan ||
 		contactMade != oldContactMade || hotLead != oldHotLead || trialPurchased != oldTrialPurchased ||
 		assignedTo != oldAssignedTo || trialAttended != oldTrialAttended || memberSold != oldMemberSold ||
-		monthlyFee != oldMonthlyFee || currency != oldCurrency || offer != oldOffer || furtherNotes != oldFurtherNotes
+		monthlyFee != oldMonthlyFee || currency != oldCurrency || offer != oldOffer || furtherNotes != oldFurtherNotes ||
+		!slices.Equal(tags, oldTags) || reminderAtChanged || reminderNote != oldReminderNote
 
 	if changed {
 		l, err := r.GetLeadTx(ctx, tx, studioID, id)
@@ -1828,4 +1867,41 @@ func (r *Repo) GetUniqueSources(ctx context.Context, studioID uuid.UUID) ([]stri
 		sources = append(sources, s)
 	}
 	return sources, rows.Err()
+}
+
+// GetUniqueTags returns every distinct tag in use across a studio's leads
+// (or platform-wide when studioID is uuid.Nil), for the Leads tab's tag
+// filter dropdown — same shape as GetUniqueSources above, just unnest()ing
+// the array column instead of reading a scalar one.
+func (r *Repo) GetUniqueTags(ctx context.Context, studioID uuid.UUID) ([]string, error) {
+	var rows pgx.Rows
+	var err error
+	if studioID == uuid.Nil {
+		rows, err = r.pool.Query(ctx, `
+			SELECT DISTINCT tag
+			FROM leads, unnest(tags) AS tag
+			ORDER BY 1
+		`)
+	} else {
+		rows, err = r.pool.Query(ctx, `
+			SELECT DISTINCT tag
+			FROM leads, unnest(tags) AS tag
+			WHERE studio_id = $1
+			ORDER BY 1
+		`, studioID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("unique tags query: %w", err)
+	}
+	defer rows.Close()
+
+	var tags []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		tags = append(tags, t)
+	}
+	return tags, rows.Err()
 }

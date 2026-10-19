@@ -180,6 +180,7 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Post("/conversations/{id}/resolve-escalation", h.resolveConversationEscalation)
 	r.Get("/escalations/stats", h.getEscalationStats)
 	r.Delete("/conversations/{id}", h.deleteConversation)
+	r.Delete("/conversations/{id}/messages/{messageId}", h.deleteMessage)
 
 	// Templates
 	r.Get("/templates", h.listTemplates)
@@ -1302,6 +1303,41 @@ func (h *Handler) markRead(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.svc.MarkRead(r.Context(), studioID, id); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.NoContent(w)
+}
+
+// deleteMessage godoc
+//
+//	@Summary		Delete a message (WhatsApp "delete for everyone")
+//	@Description	Requests a real WhatsApp delete-for-everyone via Baileys — only possible for an outbound message on a whatsapp_web conversation, and only within whatever time window WhatsApp's own servers currently enforce. See Service.DeleteMessage's doc comment for the full constraints; this is not a local hide.
+//	@Tags			Messaging - Conversations
+//	@Security		CookieAuth
+//	@Param			studioId	path	string	true	"Studio ID"
+//	@Param			id			path	string	true	"Conversation ID"
+//	@Param			messageId	path	string	true	"Message ID"
+//	@Success		204
+//	@Failure		400	{object}	httpx.ErrorResponse	"invalid id, wrong channel, message already deleted/inbound, or WhatsApp rejected the delete (likely outside its time window)"
+//	@Failure		500	{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/conversations/{id}/messages/{messageId} [delete]
+func (h *Handler) deleteMessage(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	convID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid conversation id")
+		return
+	}
+	msgID, err := uuid.Parse(chi.URLParam(r, "messageId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid message id")
+		return
+	}
+	if err := h.svc.DeleteMessage(r.Context(), studioID, convID, msgID); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
 		return
 	}
 	httpx.NoContent(w)

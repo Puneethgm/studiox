@@ -12,6 +12,12 @@ import { Textarea } from '@/components/ui/Textarea';
 import { LEAD_STATUSES, LEAD_STATUS_LABELS, type Lead, type LeadStatus } from '@/lib/types';
 import { updateLeadStatus } from './actions';
 
+function toLocalDatetimeInput(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export function LeadEditor({ studioId, lead }: { studioId: string; lead: Lead }) {
   const router = useRouter();
   const [status, setStatus] = useState<LeadStatus>(lead.status);
@@ -29,8 +35,30 @@ export function LeadEditor({ studioId, lead }: { studioId: string; lead: Lead })
   const [currency, setCurrency] = useState(lead.currency || 'SGD');
   const [offer, setOffer] = useState(lead.offer || '');
   const [furtherNotes, setFurtherNotes] = useState(lead.furtherNotes || '');
+  const [tags, setTags] = useState<string[]>(lead.tags || []);
+  const [tagInput, setTagInput] = useState('');
+  // datetime-local inputs want "YYYY-MM-DDTHH:mm" in the browser's own
+  // local time, not the ISO/UTC string the API returns — convert once on
+  // load, and back to a full ISO string (via `new Date(...).toISOString()`,
+  // which JS interprets as local time for a timezone-less string) on save.
+  const [reminderAt, setReminderAt] = useState(() => (lead.reminderAt ? toLocalDatetimeInput(lead.reminderAt) : ''));
+  const [reminderNote, setReminderNote] = useState(lead.reminderNote || '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  function addTag() {
+    const next = tagInput.trim().toLowerCase();
+    if (!next || tags.includes(next)) {
+      setTagInput('');
+      return;
+    }
+    setTags([...tags, next]);
+    setTagInput('');
+  }
+
+  function removeTag(tag: string) {
+    setTags(tags.filter((t) => t !== tag));
+  }
 
   const dirty =
     status !== lead.status ||
@@ -47,7 +75,11 @@ export function LeadEditor({ studioId, lead }: { studioId: string; lead: Lead })
     monthlyFee !== (lead.monthlyFee || 0) ||
     currency !== (lead.currency || 'SGD') ||
     offer !== (lead.offer || '') ||
-    furtherNotes !== (lead.furtherNotes || '');
+    furtherNotes !== (lead.furtherNotes || '') ||
+    tags.length !== (lead.tags || []).length ||
+    tags.some((t) => !(lead.tags || []).includes(t)) ||
+    reminderAt !== (lead.reminderAt ? toLocalDatetimeInput(lead.reminderAt) : '') ||
+    reminderNote !== (lead.reminderNote || '');
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
@@ -75,6 +107,10 @@ export function LeadEditor({ studioId, lead }: { studioId: string; lead: Lead })
         currency,
         offer,
         furtherNotes,
+        tags,
+        // "" clears the reminder server-side — see actions.ts's doc comment.
+        reminderAt: reminderAt ? new Date(reminderAt).toISOString() : '',
+        reminderNote,
       });
       if (!result.ok) {
         const errMsg = result.error || 'Failed to update lead status.';
@@ -211,6 +247,76 @@ export function LeadEditor({ studioId, lead }: { studioId: string; lead: Lead })
             onChange={(e) => setFurtherNotes(e.target.value)}
             placeholder="Any extra follow up details…"
           />
+        </div>
+
+        <div>
+          <Label htmlFor="tagInput">Tags</Label>
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {tags.map((t) => (
+              <span
+                key={t}
+                className="inline-flex items-center gap-1 rounded-full bg-brand-500/10 px-2.5 py-1 text-xs font-bold text-brand-600 dark:text-brand-400"
+              >
+                {t}
+                <button
+                  type="button"
+                  onClick={() => removeTag(t)}
+                  className="rounded-full hover:bg-brand-500/20"
+                  aria-label={`Remove tag ${t}`}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+            {tags.length === 0 && <span className="text-xs text-zinc-400">No tags yet</span>}
+          </div>
+          <div className="flex gap-2">
+            <Input
+              id="tagInput"
+              value={tagInput}
+              onChange={(e) => setTagInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  addTag();
+                }
+              }}
+              placeholder="e.g. vip, referral — press Enter to add"
+              className="flex-1"
+            />
+            <Button variant="ghost" size="sm" type="button" onClick={addTag}>
+              Add
+            </Button>
+          </div>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <Label htmlFor="reminderAt">Follow-up reminder</Label>
+            <div className="flex gap-2">
+              <input
+                id="reminderAt"
+                type="datetime-local"
+                value={reminderAt}
+                onChange={(e) => setReminderAt(e.target.value)}
+                className="flex-1 rounded-2xl border border-zinc-200/50 bg-white/50 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-zinc-800/50 dark:bg-zinc-950/50 text-zinc-900 dark:text-white"
+              />
+              {reminderAt && (
+                <Button variant="ghost" size="sm" type="button" onClick={() => setReminderAt('')}>
+                  Clear
+                </Button>
+              )}
+            </div>
+          </div>
+          <div>
+            <Label htmlFor="reminderNote">Reminder note</Label>
+            <Input
+              id="reminderNote"
+              value={reminderNote}
+              onChange={(e) => setReminderNote(e.target.value)}
+              placeholder="What to follow up about"
+            />
+          </div>
         </div>
 
         <div className="border-t border-slate-100 pt-3 dark:border-slate-800/60 space-y-2">

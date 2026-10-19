@@ -179,6 +179,21 @@ export class SessionManager {
     return s.sock.sendMessage(jid, { text });
   }
 
+  // WhatsApp's real "delete for everyone" (REVOKE protocol message) — only
+  // ever works for messages WE sent (fromMe: true is hardcoded, not a
+  // parameter: deleting a message the customer sent is not something
+  // WhatsApp's protocol supports at all, for anyone, not just us), and only
+  // within whatever time window WhatsApp's own servers currently enforce
+  // (not something Baileys or this code controls — an expired-window
+  // deletion is rejected server-side, surfaced here as whatever error
+  // sock.sendMessage() throws, not a distinct error type of our own).
+  async deleteMessage(studioId, to, messageId) {
+    const s = this.sessions.get(studioId);
+    if (!s || s.status !== 'connected') throw new Error(`session not connected for studio ${studioId}`);
+    const jid = toJid(to);
+    return s.sock.sendMessage(jid, { delete: { remoteJid: jid, fromMe: true, id: messageId } });
+  }
+
   async sendMedia(studioId, to, mediaUrl, mediaType, caption) {
     const s = this.sessions.get(studioId);
     if (!s || s.status !== 'connected') throw new Error(`session not connected for studio ${studioId}`);

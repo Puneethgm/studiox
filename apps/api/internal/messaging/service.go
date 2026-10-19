@@ -2081,6 +2081,60 @@ func (s *Service) MarkRead(ctx context.Context, studioID, conversationID uuid.UU
 	return nil
 }
 
+// DeleteMessage requests a real WhatsApp "delete for everyone" (not a local
+// hide) for one message. Only ever possible for: a whatsapp_web
+// conversation (no equivalent exists on any other channel today — Meta
+// Cloud API, Twilio, Telegram bot/MTProto all lack a usable delete-for-
+// everyone capability, see apps/wa-web/src/sessions.js's deleteMessage doc
+// comment), an outbound message (WhatsApp's protocol has no mechanism to
+// delete a message the OTHER party sent, for anyone, ever — not a
+// limitation this code could lift), and only within whatever time window
+// WhatsApp's own servers currently enforce (not something this code
+// controls or can predict — surfaced here as whatever error wa-web's call
+// returns). The local database row is only marked deleted (body cleared)
+// AFTER WhatsApp itself confirms the delete — never optimistically, so a
+// rejected/expired-window delete never desyncs this inbox from reality.
+func (s *Service) DeleteMessage(ctx context.Context, studioID, conversationID, messageID uuid.UUID) error {
+	msg, err := s.repo.GetMessageByID(ctx, studioID, messageID)
+	if err != nil {
+		return err
+	}
+	if msg.ConversationID != conversationID {
+		return fmt.Errorf("message does not belong to this conversation")
+	}
+	if msg.DeletedAt != nil {
+		return fmt.Errorf("message already deleted")
+	}
+	if msg.Direction != DirectionOutbound {
+		return fmt.Errorf("only messages sent by this studio can be deleted — WhatsApp has no way to delete a message the other person sent")
+	}
+	if msg.ExternalID == "" {
+		return fmt.Errorf("message has no WhatsApp message ID on file, can't request a delete")
+	}
+
+	conv, err := s.repo.GetConversation(ctx, studioID, conversationID)
+	if err != nil {
+		return err
+	}
+	if conv.ChannelKind != KindWhatsAppWeb {
+		return fmt.Errorf("deleting messages isn't supported on this channel (%s) yet — only WhatsApp (QR-linked) conversations support it", conv.ChannelKind)
+	}
+
+	if err := waWebDeleteMessage(ctx, studioID, conv.ContactValue, msg.ExternalID); err != nil {
+		return fmt.Errorf("whatsapp rejected the delete request (likely outside its time window): %w", err)
+	}
+
+	if err := s.repo.MarkMessageDeleted(ctx, studioID, messageID); err != nil {
+		return err
+	}
+	s.bus.Publish(ctx, Event{
+		Kind:           EvtConversationUpdated,
+		StudioID:       studioID,
+		ConversationID: conversationID,
+	})
+	return nil
+}
+
 // SetStarred toggles the shared, studio-wide starred flag and publishes an
 // update event so every staff member's inbox reflects the change live,
 // instead of each browser tracking its own (previously localStorage-only)

@@ -466,7 +466,7 @@ func (s *Service) SetDND(ctx context.Context, studioID, id uuid.UUID, enabled bo
 	return s.repo.GetLead(ctx, studioID, id)
 }
 
-func (s *Service) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status LeadStatus, currency string, notes string, contactMade, hotLead, trialPurchased bool, firstName, lastName, fitnessPlan, assignedTo string, trialAttended, memberSold bool, monthlyFee float64, offer, furtherNotes string) error {
+func (s *Service) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status LeadStatus, currency string, notes string, contactMade, hotLead, trialPurchased bool, firstName, lastName, fitnessPlan, assignedTo string, trialAttended, memberSold bool, monthlyFee float64, offer, furtherNotes string, tags []string, reminderAt *time.Time, reminderNote string) error {
 	if !status.Valid() {
 		return fmt.Errorf("invalid status %q", status)
 	}
@@ -484,7 +484,7 @@ func (s *Service) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status
 		}
 	}
 
-	if err := s.repo.UpdateLead(ctx, studioID, id, status, currency, notes, contactMade, hotLead, trialPurchased, firstName, lastName, fitnessPlan, assignedTo, trialAttended, memberSold, monthlyFee, offer, furtherNotes); err != nil {
+	if err := s.repo.UpdateLead(ctx, studioID, id, status, currency, notes, contactMade, hotLead, trialPurchased, firstName, lastName, fitnessPlan, assignedTo, trialAttended, memberSold, monthlyFee, offer, furtherNotes, tags, reminderAt, reminderNote); err != nil {
 		return err
 	}
 
@@ -559,6 +559,10 @@ func (s *Service) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status
 
 func (s *Service) GetUniqueSources(ctx context.Context, studioID uuid.UUID) ([]string, error) {
 	return s.repo.GetUniqueSources(ctx, studioID)
+}
+
+func (s *Service) GetUniqueTags(ctx context.Context, studioID uuid.UUID) ([]string, error) {
+	return s.repo.GetUniqueTags(ctx, studioID)
 }
 
 func (s *Service) GetSheetsSettings(ctx context.Context, studioID uuid.UUID) (*StudioSheetsSettings, error) {

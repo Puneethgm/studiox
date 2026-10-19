@@ -654,6 +654,24 @@ export function InboxLive({
     }
   }, [loadMoreMessages]);
 
+  const deleteMessage = useCallback(async (conversationId: string, messageId: string) => {
+    try {
+      await api(`/api/v1/studios/${studioId}/messaging/conversations/${conversationId}/messages/${messageId}`, {
+        method: 'DELETE',
+      });
+      setMessages((prev) =>
+        prev.map((m) => (m.id === messageId ? { ...m, deletedAt: new Date().toISOString(), body: '', attachments: [] } : m)),
+      );
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        handleAuthError();
+        return;
+      }
+      console.error('Failed to delete message', error);
+      alert(error instanceof ApiError ? error.message : 'Failed to delete message');
+    }
+  }, [studioId, handleAuthError]);
+
   // Fetch functions for tabs
   const fetchTemplates = useCallback(async () => {
     setLoadingTemplates(true);
@@ -1832,7 +1850,11 @@ export function InboxLive({
                                     </span>
                                   </li>
                                 )}
-                                <MessageBubble msg={m} />
+                                <MessageBubble
+                                  msg={m}
+                                  canDelete={selected.channelKind === 'whatsapp_web'}
+                                  onDelete={() => deleteMessage(selected.id, m.id)}
+                                />
                               </Fragment>
                             );
                           })}
@@ -3127,33 +3149,57 @@ function ChannelAvatar({ kind, name, active, hideBadgeOnMobile }: { kind: Channe
   );
 }
 
-function MessageBubble({ msg }: { msg: Message }) {
+function MessageBubble({ msg, canDelete, onDelete }: { msg: Message; canDelete?: boolean; onDelete?: () => void }) {
   const isOutbound = msg.direction === 'outbound';
   const sourceTag = sourceTagFor(msg.sourceKind);
   const senderLabel = isOutbound ? 'You' : msg.senderName || 'Contact';
+  const showDelete = canDelete && isOutbound && !msg.deletedAt && onDelete;
+
+  const handleDelete = () => {
+    if (!confirm('Delete this message for everyone? This cannot be undone and only works within WhatsApp\'s own time window.')) return;
+    onDelete?.();
+  };
+
   return (
-    <li className={cn('flex flex-col gap-0.5 animate-in', isOutbound ? 'items-end' : 'items-start')}>
+    <li className={cn('group flex flex-col gap-0.5 animate-in', isOutbound ? 'items-end' : 'items-start')}>
       {/* Sender label — in a group chat this is the specific member who sent
           this message, not the group's own name */}
       <span className="px-1 text-[9px] font-black uppercase tracking-wider text-zinc-400">
         {senderLabel}
       </span>
-      <div
-        className={cn(
-          'relative max-w-[85%] px-3 py-2 text-xs shadow-sm transition-all duration-200 sm:max-w-[70%] rounded-lg border',
-          isOutbound
-            ? 'bg-slate-100 border-slate-300 text-slate-800 dark:bg-slate-800 dark:border-slate-600 dark:text-slate-100'
-            : 'bg-white border-zinc-200 text-zinc-800 dark:bg-zinc-900 dark:border-zinc-700 dark:text-zinc-100',
+      <div className="relative flex items-center gap-1.5">
+        {isOutbound && showDelete && (
+          <button
+            type="button"
+            onClick={handleDelete}
+            title="Delete for everyone"
+            className="order-first shrink-0 rounded p-1 text-zinc-400 opacity-0 transition-opacity hover:text-rose-500 group-hover:opacity-100"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
         )}
-      >
-        {sourceTag && (
+        <div
+          className={cn(
+            'relative max-w-[85%] px-3 py-2 text-xs shadow-sm transition-all duration-200 sm:max-w-[70%] rounded-lg border',
+            msg.deletedAt
+              ? 'border-dashed border-zinc-300 bg-zinc-50 text-zinc-400 italic dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-500'
+              : isOutbound
+              ? 'bg-slate-100 border-slate-300 text-slate-800 dark:bg-slate-800 dark:border-slate-600 dark:text-slate-100'
+              : 'bg-white border-zinc-200 text-zinc-800 dark:bg-zinc-900 dark:border-zinc-700 dark:text-zinc-100',
+          )}
+        >
+        {sourceTag && !msg.deletedAt && (
           <div className="mb-1 text-[9px] font-black uppercase tracking-widest opacity-50">
             {sourceTag}
           </div>
         )}
-        <div className="whitespace-pre-wrap font-medium leading-relaxed">{msg.body}</div>
+        {msg.deletedAt ? (
+          <div className="font-medium leading-relaxed">This message was deleted</div>
+        ) : (
+          <div className="whitespace-pre-wrap font-medium leading-relaxed">{msg.body}</div>
+        )}
 
-        {msg.attachments && msg.attachments.length > 0 && msg.attachments[0] && (() => {
+        {!msg.deletedAt && msg.attachments && msg.attachments.length > 0 && msg.attachments[0] && (() => {
           const att = msg.attachments[0]!;
           const type = att.type || 'image';
           return (
@@ -3188,6 +3234,7 @@ function MessageBubble({ msg }: { msg: Message }) {
         )}>
           <span suppressHydrationWarning>{formatTime(msg.sentAt)}</span>
           {isOutbound && <StatusTick status={msg.status} />}
+        </div>
         </div>
       </div>
     </li>

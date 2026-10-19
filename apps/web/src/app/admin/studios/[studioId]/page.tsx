@@ -24,11 +24,17 @@ export default async function StudioOverviewPage({
   // (identity/permissions) — campaigns/leads/stats degrade to empty instead
   // of taking down the whole dashboard on a 403. `studio` itself never
   // degrades: every role needs it, and its own endpoint isn't permission-gated.
-  const [studio, campResp, leadsResp, stats] = await Promise.all([
+  const [studio, campResp, leadsResp, stats, remindersResp] = await Promise.all([
     serverFetch<Studio>(studioEndpoint),
     serverFetch<{ campaigns: Campaign[] }>(`/api/v1/studios/${studioId}/campaigns`).catch(() => ({ campaigns: [] })),
     serverFetch<{ leads: Lead[]; total: number }>(`/api/v1/studios/${studioId}/leads?limit=5`).catch(() => ({ leads: [], total: 0 })),
     serverFetch<LeadStats>(`/api/v1/studios/${studioId}/leads/stats`).catch(() => ({ total: 0, byStatus: {} as LeadStats['byStatus'] })),
+    // Reminders Due card: reuses the regular leads list with the
+    // reminderDue filter rather than the separate GetAnalytics system
+    // (leads/stats above) — that function is a single long, shared
+    // multi-query aggregate not worth extending for one more count.
+    // limit=1 since only `total` is needed, not the rows themselves.
+    serverFetch<{ total: number }>(`/api/v1/studios/${studioId}/leads?reminderDue=true&limit=1`).catch(() => ({ total: 0 })),
   ]);
 
   // Map to the shape expected by DashboardClient
@@ -51,6 +57,7 @@ export default async function StudioOverviewPage({
       initialLeads={leadsResp.leads}
       initialLeadsTotal={leadsResp.total}
       initialStats={mappedStats}
+      remindersDueCount={remindersResp.total}
     />
   );
 }

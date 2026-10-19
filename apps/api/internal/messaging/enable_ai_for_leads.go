@@ -268,6 +268,20 @@ func (w *AIWorker) composeFollowUpFromHistory(ctx context.Context, studioID uuid
 	if studio.CommunicationStyleProfile != "" {
 		b.WriteString("House style for this studio's messages:\n" + studio.CommunicationStyleProfile + "\n\n")
 	}
+	// Without this, a confirmed production issue: this prompt only ever saw
+	// the raw history below, never the studio's knowledge base — so when
+	// told to "pick back up on whatever they last talked about," the model
+	// cheerfully repeated a discontinued offer (e.g. "early bird rate")
+	// straight out of an old staff message in that history, with no way to
+	// know the studio's KB had since banned mentioning it. The KB's rules
+	// are told to win over anything said in the history itself, since the
+	// history is exactly where a now-stale promise is likely to live.
+	kbText := availableKnowledgeText(nil, studio)
+	if kbText != "" {
+		b.WriteString("KNOWLEDGE BASE (current rules — these override anything said in the conversation history below, which may be outdated):\n\"\"\"\n")
+		b.WriteString(kbText)
+		b.WriteString("\n\"\"\"\n\n")
+	}
 	b.WriteString("Conversation history:\n")
 	for _, m := range history {
 		speaker := "Customer"

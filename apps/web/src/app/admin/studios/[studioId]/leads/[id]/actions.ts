@@ -34,6 +34,12 @@ export async function updateLeadStatus(
     currency?: string;
     offer?: string;
     furtherNotes?: string;
+    tags?: string[];
+    // "" clears the reminder — see patchLeadReq's doc comment in
+    // apps/api/internal/leads/http.go for why this has to be a string,
+    // not an optional ISO date, to actually be able to clear it.
+    reminderAt?: string;
+    reminderNote?: string;
   },
 ): Promise<UpdateLeadResult> {
   const cookieStore = await cookies();

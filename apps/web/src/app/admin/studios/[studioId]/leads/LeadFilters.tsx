@@ -11,20 +11,24 @@ export function LeadFilters({
   status,
   search,
   source,
+  tag,
   duration,
   startDate,
   endDate,
   sources = [],
+  tags = [],
   campaigns = [],
   campaignId,
 }: {
   status?: string;
   search?: string;
   source?: string;
+  tag?: string;
   duration?: string;
   startDate?: string;
   endDate?: string;
   sources?: string[];
+  tags?: string[];
   campaigns?: Campaign[];
   campaignId?: string;
 }) {
@@ -91,6 +95,14 @@ export function LeadFilters({
     router.push(`?${params.toString()}`);
   }
 
+  function setTag(next: string) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (next) params.set('tag', next);
+    else params.delete('tag');
+    params.delete('page');
+    router.push(`?${params.toString()}`);
+  }
+
   function setDuration(next: string) {
     const params = new URLSearchParams(searchParams.toString());
     if (next) {
@@ -127,6 +139,7 @@ export function LeadFilters({
   const [draftCampaignId, setDraftCampaignId] = useState(campaignId ?? '');
   const [draftDuration, setDraftDuration] = useState(duration ?? '');
   const [draftSource, setDraftSource] = useState(source ?? '');
+  const [draftTag, setDraftTag] = useState(tag ?? '');
   const [draftStatus, setDraftStatus] = useState(status ?? '');
   const [draftStartDate, setDraftStartDate] = useState(startDate ?? '');
   const [draftEndDate, setDraftEndDate] = useState(endDate ?? '');
@@ -135,6 +148,7 @@ export function LeadFilters({
     setDraftCampaignId(campaignId ?? '');
     setDraftDuration(duration ?? '');
     setDraftSource(source ?? '');
+    setDraftTag(tag ?? '');
     setDraftStatus(status ?? '');
     setDraftStartDate(startDate ?? '');
     setDraftEndDate(endDate ?? '');
@@ -153,6 +167,7 @@ export function LeadFilters({
       params.delete('endDate');
     }
     if (draftSource) params.set('source', draftSource); else params.delete('source');
+    if (draftTag) params.set('tag', draftTag); else params.delete('tag');
     if (draftStatus) params.set('status', draftStatus); else params.delete('status');
     params.delete('page');
     router.push(`?${params.toString()}`);
@@ -163,12 +178,13 @@ export function LeadFilters({
     setDraftCampaignId('');
     setDraftDuration('');
     setDraftSource('');
+    setDraftTag('');
     setDraftStatus('');
     setDraftStartDate('');
     setDraftEndDate('');
   }
 
-  const activeFilterCount = [campaignId, duration, source, status].filter(Boolean).length;
+  const activeFilterCount = [campaignId, duration, source, tag, status].filter(Boolean).length;
 
   // Portal target isn't available during SSR.
   const [mounted, setMounted] = useState(false);
@@ -265,6 +281,23 @@ export function LeadFilters({
               {(sources || []).map((src) => (
                 <option key={src} value={src}>
                   {src}
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          {/* Tag Filter */}
+          <div className="flex items-center gap-2.5">
+            <span className="text-xs font-black uppercase tracking-wider text-zinc-400">Tag:</span>
+            <Select
+              className="w-32 rounded-2xl border border-zinc-200/50 bg-white/50 py-2 focus:border-brand-500 focus:outline-none dark:border-zinc-800/50 dark:bg-zinc-950/50 text-xs font-bold"
+              value={tag ?? ''}
+              onChange={(e) => setTag(e.target.value)}
+            >
+              <option value="">All Tags</option>
+              {(tags || []).map((t) => (
+                <option key={t} value={t}>
+                  {t}
                 </option>
               ))}
             </Select>
@@ -400,6 +433,22 @@ export function LeadFilters({
                 {(sources || []).map((src) => (
                   <option key={src} value={src}>
                     {src}
+                  </option>
+                ))}
+              </Select>
+            </div>
+
+            <div>
+              <span className="text-xs font-black uppercase tracking-wider text-zinc-400 block mb-2">Tag</span>
+              <Select
+                className="w-full rounded-2xl border border-zinc-200/50 bg-white/50 py-2.5 focus:border-brand-500 focus:outline-none dark:border-zinc-800/50 dark:bg-zinc-950/50 text-sm font-bold"
+                value={draftTag}
+                onChange={(e) => setDraftTag(e.target.value)}
+              >
+                <option value="">All Tags</option>
+                {(tags || []).map((t) => (
+                  <option key={t} value={t}>
+                    {t}
                   </option>
                 ))}
               </Select>

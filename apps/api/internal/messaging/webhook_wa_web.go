@@ -647,3 +647,33 @@ func (s *waWebSender) SendText(ctx context.Context, _, _, recipient, _, body str
 	}
 	return &channels.SendResult{ExternalID: firstID}, nil
 }
+
+// waWebDeleteMessage requests a real WhatsApp "delete for everyone" via the
+// wa-web Node service — see SessionManager.deleteMessage's doc comment
+// (apps/wa-web/src/sessions.js) for the real protocol constraints: own
+// outbound messages only, within whatever time window WhatsApp's own
+// servers currently enforce, nothing this call controls. Mirrors
+// waWebSender.SendText's HTTP call shape above, just a different endpoint.
+func waWebDeleteMessage(ctx context.Context, studioID uuid.UUID, to, messageID string) error {
+	baseURL := waWebServiceURL()
+	deleteURL := fmt.Sprintf("%s/sessions/%s/delete-message", baseURL, studioID)
+
+	data, _ := json.Marshal(struct {
+		To        string `json:"to"`
+		MessageID string `json:"messageId"`
+	}{To: to, MessageID: messageID})
+
+	resp, err := doInternalPostWithRetry(ctx, deleteURL, data, map[string]string{
+		"Content-Type":   "application/json",
+		"x-internal-key": waWebInternalKey(),
+	})
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("wa-web delete-message failed %d: %s", resp.StatusCode, body)
+	}
+	return nil
+}

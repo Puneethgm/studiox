@@ -1258,12 +1258,12 @@ func (r *Repo) ListMessages(ctx context.Context, studioID, conversationID uuid.U
 			SELECT sub.id, sub.conversation_id, sub.studio_id, sub.direction, sub.source_kind, sub.source_user_id,
 			       sub.source_ref, sub.body, sub.attachments, sub.sender_jid, sub.sender_name,
 			       sub.external_id, sub.in_reply_to, sub.status,
-			       sub.failure_reason, sub.sent_at, sub.delivered_at, sub.read_at, sub.created_at
+			       sub.failure_reason, sub.sent_at, sub.delivered_at, sub.read_at, sub.created_at, sub.deleted_at
 			FROM (
 				SELECT id, conversation_id, studio_id, direction, source_kind, source_user_id,
 				       source_ref, body, attachments, sender_jid, sender_name,
 				       external_id, in_reply_to, status,
-				       failure_reason, sent_at, delivered_at, read_at, created_at
+				       failure_reason, sent_at, delivered_at, read_at, created_at, deleted_at
 				FROM messages
 				WHERE studio_id = $1 AND conversation_id = $2 AND sent_at < $3
 				ORDER BY sent_at DESC, created_at DESC
@@ -1276,12 +1276,12 @@ func (r *Repo) ListMessages(ctx context.Context, studioID, conversationID uuid.U
 			SELECT sub.id, sub.conversation_id, sub.studio_id, sub.direction, sub.source_kind, sub.source_user_id,
 			       sub.source_ref, sub.body, sub.attachments, sub.sender_jid, sub.sender_name,
 			       sub.external_id, sub.in_reply_to, sub.status,
-			       sub.failure_reason, sub.sent_at, sub.delivered_at, sub.read_at, sub.created_at
+			       sub.failure_reason, sub.sent_at, sub.delivered_at, sub.read_at, sub.created_at, sub.deleted_at
 			FROM (
 				SELECT id, conversation_id, studio_id, direction, source_kind, source_user_id,
 				       source_ref, body, attachments, sender_jid, sender_name,
 				       external_id, in_reply_to, status,
-				       failure_reason, sent_at, delivered_at, read_at, created_at
+				       failure_reason, sent_at, delivered_at, read_at, created_at, deleted_at
 				FROM messages
 				WHERE studio_id = $1 AND conversation_id = $2
 				ORDER BY sent_at DESC, created_at DESC
@@ -1303,7 +1303,7 @@ func (r *Repo) ListMessages(ctx context.Context, studioID, conversationID uuid.U
 		if err := rows.Scan(&m.ID, &m.ConversationID, &m.StudioID, &m.Direction, &m.SourceKind,
 			&m.SourceUserID, &srcRef, &m.Body, &atts, &senderJID, &senderName,
 			&externalID, &inReplyTo, &m.Status,
-			&m.FailureReason, &m.SentAt, &m.DeliveredAt, &m.ReadAt, &m.CreatedAt); err != nil {
+			&m.FailureReason, &m.SentAt, &m.DeliveredAt, &m.ReadAt, &m.CreatedAt, &m.DeletedAt); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
 		if srcRef != nil {
@@ -1334,7 +1334,7 @@ func (r *Repo) GetMessageByID(ctx context.Context, studioID, id uuid.UUID) (*Mes
 		SELECT id, conversation_id, studio_id, direction, source_kind, source_user_id,
 			   source_ref, body, attachments, sender_jid, sender_name,
 			   external_id, in_reply_to, status,
-			   failure_reason, sent_at, delivered_at, read_at, created_at
+			   failure_reason, sent_at, delivered_at, read_at, created_at, deleted_at
 		FROM messages
 		WHERE studio_id = $1 AND id = $2
 	`, studioID, id)
@@ -1344,7 +1344,7 @@ func (r *Repo) GetMessageByID(ctx context.Context, studioID, id uuid.UUID) (*Mes
 	if err := row.Scan(&m.ID, &m.ConversationID, &m.StudioID, &m.Direction, &m.SourceKind,
 		&m.SourceUserID, &srcRef, &m.Body, &atts, &senderJID, &senderName,
 		&externalID, &inReplyTo, &m.Status,
-		&m.FailureReason, &m.SentAt, &m.DeliveredAt, &m.ReadAt, &m.CreatedAt); err != nil {
+		&m.FailureReason, &m.SentAt, &m.DeliveredAt, &m.ReadAt, &m.CreatedAt, &m.DeletedAt); err != nil {
 		return nil, fmt.Errorf("get message: %w", err)
 	}
 	if srcRef != nil {
@@ -1366,6 +1366,26 @@ func (r *Repo) GetMessageByID(ctx context.Context, studioID, id uuid.UUID) (*Mes
 		_ = json.Unmarshal(atts, &m.Attachments)
 	}
 	return &m, nil
+}
+
+// MarkMessageDeleted records a real WhatsApp "delete for everyone" — called
+// only after wa-web/Baileys has confirmed the actual protocol-level delete
+// succeeded (see Service.DeleteMessage). Clears body/attachments along with
+// setting deleted_at, mirroring that the content is genuinely gone on
+// WhatsApp's own servers too, not just hidden in this database.
+func (r *Repo) MarkMessageDeleted(ctx context.Context, studioID, id uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE messages
+		SET deleted_at = now(), body = '', attachments = '[]'
+		WHERE studio_id = $1 AND id = $2
+	`, studioID, id)
+	if err != nil {
+		return fmt.Errorf("mark message deleted: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("message not found")
+	}
+	return nil
 }
 
 // SearchSemanticHistory finds the top-K messages from a conversation that are
@@ -1604,20 +1624,43 @@ func formatVec(vec []float32) string {
 // outbound_jobs
 // ============================================================
 
+// EnqueueOutbound inserts a new outbound job. When j.SourceKind is
+// "automation" and j.SourceRef matches a one-shot autocontact step
+// ("lead:<id>:followup:*" or "lead:<id>:trial_followup:*" — see the
+// idx_outbound_jobs_autocontact_step_dedup migration for why only these),
+// a job for the same (conversation_id, source_ref) that already exists —
+// e.g. a worker re-processing the same step after a crash or a failed
+// "mark sent", or a second independent trigger for the same step — does
+// NOT get a duplicate; this returns the existing job's id instead, so
+// that step can never be sent twice. Every other SourceRef (other
+// automation sends, all 'ai' sends, and jobs with no SourceRef) is never
+// deduplicated this way.
 func (r *Repo) EnqueueOutbound(ctx context.Context, j OutboundJob) (int64, error) {
 	attsBytes, _ := json.Marshal(j.Attachments)
 	atts := string(attsBytes)
 	if j.ScheduledFor.IsZero() {
 		j.ScheduledFor = time.Now().UTC()
 	}
+	sourceRef := nullIfEmpty(j.SourceRef)
 	row := r.pool.QueryRow(ctx, `
-		INSERT INTO outbound_jobs (studio_id, conversation_id, subject, body, attachments,
-		                           template_name, source_kind, source_user_id, source_ref,
-		                           scheduled_for, next_attempt_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)
-		RETURNING id
+		WITH ins AS (
+			INSERT INTO outbound_jobs (studio_id, conversation_id, subject, body, attachments,
+			                           template_name, source_kind, source_user_id, source_ref,
+			                           scheduled_for, next_attempt_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)
+			ON CONFLICT (conversation_id, source_ref) WHERE source_kind = 'automation'
+				AND (source_ref LIKE 'lead:%:followup:%' OR source_ref LIKE 'lead:%:trial_followup:%')
+				DO NOTHING
+			RETURNING id
+		)
+		SELECT id FROM ins
+		UNION ALL
+		SELECT id FROM outbound_jobs
+		WHERE conversation_id = $2 AND source_ref = $9 AND source_kind = 'automation'
+		  AND NOT EXISTS (SELECT 1 FROM ins)
+		LIMIT 1
 	`, j.StudioID, j.ConversationID, j.Subject, j.Body, atts,
-		nullIfEmpty(j.TemplateName), j.SourceKind, j.SourceUserID, nullIfEmpty(j.SourceRef),
+		nullIfEmpty(j.TemplateName), j.SourceKind, j.SourceUserID, sourceRef,
 		j.ScheduledFor)
 	var id int64
 	if err := row.Scan(&id); err != nil {

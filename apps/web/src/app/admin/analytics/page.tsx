@@ -15,7 +15,7 @@ export default async function GlobalAnalyticsPage({
 }) {
   const { studioId } = await searchParams;
 
-  const [{ studios }, campResp, leadsResp, stats, studio] = await Promise.all([
+  const [{ studios }, campResp, leadsResp, stats, studio, remindersResp] = await Promise.all([
     serverFetch<{ studios: Studio[] }>(`/api/v1/admin/studios`),
     studioId
       ? serverFetch<{ campaigns: Campaign[] }>(`/api/v1/studios/${studioId}/campaigns`)
@@ -27,6 +27,9 @@ export default async function GlobalAnalyticsPage({
       ? serverFetch<LeadStats>(`/api/v1/studios/${studioId}/leads/stats`)
       : serverFetch<LeadStats>(`/api/v1/admin/leads/stats`),
     studioId ? serverFetch<Studio>(`/api/v1/admin/studios/${studioId}`) : Promise.resolve(null),
+    studioId
+      ? serverFetch<{ total: number }>(`/api/v1/studios/${studioId}/leads?reminderDue=true&limit=1`).catch(() => ({ total: 0 }))
+      : serverFetch<{ total: number }>(`/api/v1/admin/leads?reminderDue=true&limit=1`).catch(() => ({ total: 0 })),
   ]);
 
   const mockGlobalStudio: Studio = {
@@ -65,6 +68,7 @@ export default async function GlobalAnalyticsPage({
         initialLeads={leadsResp.leads}
         initialLeadsTotal={leadsResp.total}
         initialStats={mappedStats}
+        remindersDueCount={remindersResp.total}
         defaultTab="analytics"
       />
     </div>

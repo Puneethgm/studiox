@@ -233,6 +233,17 @@ export interface Lead {
   // Set when this lead was bulk-imported from a Glofox member export (the
   // "BarcodeID" column) — see apps/api/internal/leads/service.go mapHeaders.
   glofoxMemberId?: string;
+  // Free-form, studio-defined labels (e.g. "vip", "referral") — no
+  // separate tags admin UI, same free-text-dimension approach as source/
+  // fitnessPlan. Editable via the lead detail page, filterable from the
+  // Leads tab (single tag at a time, matching the `source` filter's own
+  // shape — no multi-select widget exists anywhere in this app yet).
+  tags: string[];
+  // Manual, staff-set follow-up reminder — distinct from
+  // needsManualFollowup above (AI/system-owned). reminderAt is ISO 8601;
+  // undefined/missing means no reminder set.
+  reminderAt?: string;
+  reminderNote?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -330,6 +341,9 @@ export interface Message {
   deliveredAt?: string;
   readAt?: string;
   createdAt: string;
+  // Set after a real WhatsApp "delete for everyone" — body/attachments are
+  // cleared server-side at the same time, so render a placeholder instead.
+  deletedAt?: string;
 }
 
 // ===== Decision Trees =====

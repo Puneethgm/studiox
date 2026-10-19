@@ -33,6 +33,8 @@ interface SearchParams {
   page?: string;
   search?: string;
   source?: string;
+  tag?: string;
+  reminderDue?: string;
   duration?: string;
   startDate?: string;
   endDate?: string;
@@ -95,6 +97,8 @@ export default async function LeadsPage({
   if (filterMaxAttempts !== undefined) qs.set('maxAttempts', String(filterMaxAttempts));
   if (sp.search) qs.set('search', sp.search);
   if (sp.source) qs.set('source', sp.source);
+  if (sp.tag) qs.set('tag', sp.tag);
+  if (sp.reminderDue === 'true') qs.set('reminderDue', 'true');
   if (sp.duration) qs.set('duration', sp.duration);
   if (sp.startDate) qs.set('startDate', sp.startDate);
   if (sp.endDate) qs.set('endDate', sp.endDate);
@@ -104,7 +108,7 @@ export default async function LeadsPage({
   qs.set('limit', String(PAGE_SIZE));
   qs.set('offset', String(offset));
 
-  const [data, campaignsResp, sources] = await Promise.all([
+  const [data, campaignsResp, sources, tags] = await Promise.all([
     serverFetch<ListResp>(`/api/v1/studios/${studioId}/leads?${qs.toString()}`),
     // The campaigns list only feeds the filter + import dropdowns. A user with
     // the Leads permission but not Campaigns gets a 403 here — show the page
@@ -114,6 +118,7 @@ export default async function LeadsPage({
       throw err;
     }),
     serverFetch<string[]>(`/api/v1/studios/${studioId}/leads/sources`).catch(() => [] as string[]),
+    serverFetch<string[]>(`/api/v1/studios/${studioId}/leads/tags`).catch(() => [] as string[]),
   ]);
   const campaigns = campaignsResp.campaigns || [];
 
@@ -161,7 +166,7 @@ export default async function LeadsPage({
         {data.total} submissions captured
       </div>
 
-      {(filterStatuses.length > 0 || filterMaxAttempts !== undefined) && (
+      {(filterStatuses.length > 0 || filterMaxAttempts !== undefined || sp.reminderDue === 'true') && (
         <div className="flex items-center justify-between rounded-2xl border border-amber-300/40 bg-amber-50/40 px-4 py-2.5 text-xs font-bold text-amber-800 dark:border-amber-900/30 dark:bg-amber-950/10 dark:text-amber-300">
           <span>
             Filtered from dashboard:{' '}
@@ -169,6 +174,8 @@ export default async function LeadsPage({
               `status ${filterStatuses.map((s) => LEAD_STATUS_LABELS[s as LeadStatus]).join(', ')}`}
             {filterStatuses.length > 0 && filterMaxAttempts !== undefined && ' · '}
             {filterMaxAttempts !== undefined && `fewer than ${filterMaxAttempts} contact attempts`}
+            {(filterStatuses.length > 0 || filterMaxAttempts !== undefined) && sp.reminderDue === 'true' && ' · '}
+            {sp.reminderDue === 'true' && 'reminder due now'}
           </span>
           <Link href={`/admin/studios/${studioId}/leads`} className="underline hover:no-underline">
             Clear
@@ -182,10 +189,12 @@ export default async function LeadsPage({
         status={sp.status}
         search={sp.search}
         source={sp.source}
+        tag={sp.tag}
         duration={sp.duration}
         startDate={sp.startDate}
         endDate={sp.endDate}
         sources={sources}
+        tags={tags}
         campaigns={campaigns}
       />
 
@@ -207,8 +216,18 @@ export default async function LeadsPage({
             className="overflow-hidden rounded-[24px] border border-white/30 bg-white/30 backdrop-blur-2xl dark:border-white/5 dark:bg-neutral-900/30"
             style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15), 0 4px 16px rgba(0,0,0,0.04)' }}
           >
+            {/* Header + rows share one horizontal-scroll container (not
+                independent ones) so they always stay column-aligned while
+                scrolling — the grid-cols template below is fixed-width
+                enough (9 columns, several in px) that it just overflowed
+                and squeezed illegibly on narrower screens before, with no
+                fallback at all. min-w matches the grid's own column sum
+                (1fr/1.1fr given a generous floor here since the template
+                itself can't express one) so the scrollbar only appears
+                when actually needed, not on every viewport. */}
+            <div className="overflow-x-auto">
             {/* Column headers */}
-            <div className="relative grid grid-cols-[1fr,1.1fr,110px,80px,80px,110px,110px,100px,120px] items-center gap-4 border-b border-white/20 bg-white/20 py-3 pl-9 pr-5 dark:border-white/5 dark:bg-white/5">
+            <div className="relative grid grid-cols-[minmax(160px,1fr),minmax(180px,1.1fr),110px,80px,80px,110px,110px,100px,120px] min-w-[1200px] items-center gap-4 border-b border-white/20 bg-white/20 py-3 pl-9 pr-5 dark:border-white/5 dark:bg-white/5">
               <div className="absolute left-3 top-1/2 -translate-y-1/2">
                 <SelectAllCheckbox leadIds={data.leads.map((l) => l.id)} />
               </div>
@@ -223,7 +242,7 @@ export default async function LeadsPage({
               <span className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400 text-right">Date</span>
             </div>
 
-            <ul className="divide-y divide-white/10 dark:divide-white/5">
+            <ul className="divide-y divide-white/10 dark:divide-white/5 min-w-[1200px]">
               {data.leads.map((l) => (
                 <li key={l.id} className="group/row relative">
                   {/* Reserves its own lane on the left (pl-9 below on the
@@ -242,7 +261,7 @@ export default async function LeadsPage({
                   </div>
                   <Link
                     href={`/admin/studios/${studioId}/leads/${l.id}`}
-                    className="group grid grid-cols-[1fr,1.1fr,110px,80px,80px,110px,110px,100px,120px] items-center gap-4 py-3.5 pl-9 pr-5 transition-all hover:bg-white/30 dark:hover:bg-white/5"
+                    className="group grid grid-cols-[minmax(160px,1fr),minmax(180px,1.1fr),110px,80px,80px,110px,110px,100px,120px] min-w-[1200px] items-center gap-4 py-3.5 pl-9 pr-5 transition-all hover:bg-white/30 dark:hover:bg-white/5"
                   >
                     {/* Name */}
                     <div className="flex min-w-0 items-center gap-3">
@@ -280,6 +299,11 @@ export default async function LeadsPage({
 
                     {/* Flags */}
                     <div className="flex flex-wrap gap-1">
+                      {l.reminderAt && new Date(l.reminderAt) <= new Date() && (
+                        <span className="inline-flex items-center gap-0.5 rounded-full bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-sky-600 dark:text-sky-400">
+                          ⏰ Reminder Due
+                        </span>
+                      )}
                       {l.needsManualFollowup && (
                         <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-amber-600 dark:text-amber-400">
                           📞 Needs Follow-up
@@ -300,7 +324,7 @@ export default async function LeadsPage({
                           💬 Made
                         </span>
                       )}
-                      {!l.needsManualFollowup && !l.hotLead && !l.trialPurchased && !l.contactMade && (
+                      {!(l.reminderAt && new Date(l.reminderAt) <= new Date()) && !l.needsManualFollowup && !l.hotLead && !l.trialPurchased && !l.contactMade && (
                         <span className="text-xs text-zinc-400">-</span>
                       )}
                     </div>
@@ -319,8 +343,9 @@ export default async function LeadsPage({
                 </li>
               ))}
             </ul>
+            </div>
 
-            {/* Footer row */}
+            {/* Footer row (outside the scroll container — stays visible, doesn't scroll with the columns) */}
             <div className="flex items-center justify-between border-t border-white/10 bg-white/10 px-5 py-2.5 dark:border-white/5 dark:bg-white/5">
               <span className="text-[11px] font-semibold text-zinc-400">
                 Showing {offset + 1}–{Math.min(offset + PAGE_SIZE, data.total)} of {data.total} leads
