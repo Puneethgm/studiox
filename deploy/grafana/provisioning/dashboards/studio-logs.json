@@ -5,67 +5,750 @@
   "schemaVersion": 39,
   "version": 1,
   "refresh": "30s",
-  "time": { "from": "now-1h", "to": "now" },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
   "templating": {
     "list": [
       {
         "name": "service",
         "type": "query",
-        "datasource": { "type": "loki", "uid": "Loki" },
+        "datasource": {
+          "type": "loki",
+          "uid": "Loki"
+        },
         "query": "label_values(service)",
         "refresh": 2,
         "includeAll": true,
         "multi": false,
-        "current": { "text": "All", "value": "$__all" }
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
       },
       {
         "name": "studio_id",
         "type": "query",
-        "datasource": { "type": "loki", "uid": "Loki" },
+        "datasource": {
+          "type": "loki",
+          "uid": "Loki"
+        },
         "query": "label_values(studio_id)",
         "refresh": 2,
         "includeAll": true,
         "multi": false,
-        "current": { "text": "All", "value": "$__all" }
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
       },
       {
         "name": "level",
         "type": "query",
-        "datasource": { "type": "loki", "uid": "Loki" },
+        "datasource": {
+          "type": "loki",
+          "uid": "Loki"
+        },
         "query": "label_values(level)",
         "refresh": 2,
         "includeAll": true,
         "multi": false,
-        "current": { "text": "All", "value": "$__all" }
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
       },
       {
         "name": "search",
         "type": "textbox",
         "label": "Text search",
-        "current": { "text": "", "value": "" }
+        "current": {
+          "text": "",
+          "value": ""
+        }
       }
     ]
   },
   "panels": [
     {
+      "id": 10,
+      "title": "api",
+      "type": "stat",
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "color": "red"
+                }
+              }
+            },
+            {
+              "type": "range",
+              "options": {
+                "from": 1,
+                "to": 1000000000,
+                "result": {
+                  "text": "UP",
+                  "color": "green"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "noValue": "DOWN"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "expr": "sum(count_over_time({service=\"api\", source=\"docker\"}[10m]))",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "wa-web",
+      "type": "stat",
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 4,
+        "y": 0
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "color": "red"
+                }
+              }
+            },
+            {
+              "type": "range",
+              "options": {
+                "from": 1,
+                "to": 1000000000,
+                "result": {
+                  "text": "UP",
+                  "color": "green"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "noValue": "DOWN"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "expr": "sum(count_over_time({service=\"wa-web\", source=\"docker\"}[10m]))",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "tg-web",
+      "type": "stat",
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 8,
+        "y": 0
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "color": "red"
+                }
+              }
+            },
+            {
+              "type": "range",
+              "options": {
+                "from": 1,
+                "to": 1000000000,
+                "result": {
+                  "text": "UP",
+                  "color": "green"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "noValue": "DOWN"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "expr": "sum(count_over_time({service=\"tg-web\", source=\"docker\"}[10m]))",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "web",
+      "type": "stat",
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 12,
+        "y": 0
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "color": "red"
+                }
+              }
+            },
+            {
+              "type": "range",
+              "options": {
+                "from": 1,
+                "to": 1000000000,
+                "result": {
+                  "text": "UP",
+                  "color": "green"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "noValue": "DOWN"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "expr": "sum(count_over_time({service=\"web\", source=\"docker\"}[10m]))",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "embeddings",
+      "type": "stat",
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 16,
+        "y": 0
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "color": "red"
+                }
+              }
+            },
+            {
+              "type": "range",
+              "options": {
+                "from": 1,
+                "to": 1000000000,
+                "result": {
+                  "text": "UP",
+                  "color": "green"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "noValue": "DOWN"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "expr": "sum(count_over_time({service=\"embeddings\", source=\"docker\"}[10m]))",
+          "instant": true
+        }
+      ],
+      "description": "All 5 status tiles are the same heuristic as each channel dashboard's own \u2014 \"logged anything in the last 2m\", not a real health check. A healthy-but-idle service (no recent requests) shows DOWN here too; that's expected, not a bug \u2014 hit the service once and it flips green within ~10 minutes."
+    },
+    {
+      "id": 15,
+      "title": "Log volume by service (last 30m)",
+      "type": "piechart",
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "expr": "sum(count_over_time({service=~\"api|wa-web|tg-web|web|embeddings\", source=\"docker\"}[30m])) by (service)",
+          "legendFormat": "{{service}}",
+          "queryType": "instant"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": true,
+          "calcs": [],
+          "fields": ""
+        },
+        "pieType": "pie",
+        "displayLabels": [
+          "name",
+          "percent"
+        ],
+        "legend": {
+          "displayMode": "list",
+          "placement": "right",
+          "values": [
+            "value"
+          ]
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {}
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "title": "Requests by status code (last 30m)",
+      "type": "piechart",
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
+      "description": "From each service's http_request access-log line. 2xx/4xx/5xx grouped by first digit \u2014 exact status codes would make for a messy legend given enough traffic.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "expr": "sum(count_over_time({service=~\"api|wa-web|tg-web|web|embeddings\"} |= \"http_request\" | json status | __error__=\"\" [30m])) by (status)",
+          "legendFormat": "{{status}}",
+          "queryType": "instant"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": true,
+          "calcs": [],
+          "fields": ""
+        },
+        "pieType": "pie",
+        "displayLabels": [
+          "name",
+          "percent"
+        ],
+        "legend": {
+          "displayMode": "list",
+          "placement": "right",
+          "values": [
+            "value"
+          ]
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {}
+        }
+      ]
+    },
+    {
       "id": 1,
       "title": "Log volume",
       "type": "timeseries",
-      "datasource": { "type": "loki", "uid": "Loki" },
-      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 0 },
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 13
+      },
       "targets": [
         {
-          "datasource": { "type": "loki", "uid": "Loki" },
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
           "expr": "sum(count_over_time({service=~\"$service\", studio_id=~\"$studio_id\", level=~\"$level\"} |= \"$search\" [1m])) by (service)"
         }
       ]
     },
     {
+      "id": 5,
+      "title": "Error rate",
+      "type": "timeseries",
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 19
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "red",
+            "mode": "fixed"
+          }
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "expr": "sum(count_over_time({service=~\"$service\", studio_id=~\"$studio_id\", level=~\"ERROR|50|60\"}[1m])) by (service)",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Latency (p50 / p95 / p99) \u2014 service=$service",
+      "type": "timeseries",
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 25
+      },
+      "description": "From each request's duration_ms in its http_request access-log line. Only works when $service is a single pick, not 'All'. Only scoped by `json duration_ms` (not a blanket `| json`) \u2014 extracting every JSON key as a label (trace_id, request_id, etc.) would otherwise split this into one series per request instead of one aggregate percentile.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "expr": "quantile_over_time(0.50, {service=\"$service\", studio_id=~\"$studio_id\"} |= \"http_request\" | json duration_ms | unwrap duration_ms [$__interval])",
+          "legendFormat": "p50"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "expr": "quantile_over_time(0.95, {service=\"$service\", studio_id=~\"$studio_id\"} |= \"http_request\" | json duration_ms | unwrap duration_ms [$__interval])",
+          "legendFormat": "p95"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "expr": "quantile_over_time(0.99, {service=\"$service\", studio_id=~\"$studio_id\"} |= \"http_request\" | json duration_ms | unwrap duration_ms [$__interval])",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Traces \u2014 service=$service",
+      "type": "table",
+      "datasource": {
+        "type": "tempo",
+        "uid": "Tempo"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "description": "Recent traces (TraceQL search via Tempo). Click a row to open its full trace/flame graph. Only works when $service is a single pick, not 'All' \u2014 TraceQL needs one concrete service.name. Grafana's built-in Tempo search table only shows these 5 fixed columns regardless of query \u2014 see \"Recent requests\" below for actual URL/status.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "Tempo"
+          },
+          "refId": "A",
+          "queryType": "traceql",
+          "query": "{resource.service.name=\"$service\"}",
+          "limit": 20
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Recent requests \u2014 service=$service",
+      "type": "table",
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 42
+      },
+      "description": "Which URL was hit and whether it succeeded, extracted from each service's http_request access-log line. trace_id is the join key back to the Traces table above. Only works when $service is a single pick, not 'All'.",
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "Line",
+            "format": "json"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "includeByName": {
+              "Time": true,
+              "method": true,
+              "path": true,
+              "status": true,
+              "duration_ms": true,
+              "trace_id": true
+            },
+            "indexByName": {
+              "Time": 0,
+              "method": 1,
+              "path": 2,
+              "status": 3,
+              "duration_ms": 4,
+              "trace_id": 5
+            },
+            "excludeByName": {}
+          }
+        }
+      ],
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "refId": "A",
+          "expr": "{service=\"$service\"} |= \"http_request\""
+        }
+      ]
+    },
+    {
       "id": 2,
-      "title": "Logs — service=$service, studio_id=$studio_id",
+      "title": "Logs \u2014 service=$service, studio_id=$studio_id",
       "type": "logs",
-      "datasource": { "type": "loki", "uid": "Loki" },
-      "gridPos": { "h": 18, "w": 24, "x": 0, "y": 6 },
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "gridPos": {
+        "h": 18,
+        "w": 24,
+        "x": 0,
+        "y": 52
+      },
       "options": {
         "showTime": true,
         "showLabels": true,
@@ -74,7 +757,10 @@
       },
       "targets": [
         {
-          "datasource": { "type": "loki", "uid": "Loki" },
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
           "expr": "{service=~\"$service\", studio_id=~\"$studio_id\", level=~\"$level\"} |= \"$search\""
         }
       ]

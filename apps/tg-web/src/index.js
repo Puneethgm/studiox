@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import pino from 'pino';
 import { SessionManager } from './sessions.js';
-import { initTracing, tracingMiddleware, traceLogMixin } from './tracing.js';
+import { initTracing, tracingMiddleware, traceLogMixin, accessLogMiddleware } from './tracing.js';
 
 // Empty OTEL_EXPORTER_OTLP_ENDPOINT is a deliberate no-op (see tracing.js) —
 // local dev without the observability stack running is unaffected.
@@ -15,6 +15,7 @@ const app = express();
 // First in the chain so every downstream middleware/handler's logging runs
 // inside the span and picks up its trace_id via the pino mixin above.
 app.use(tracingMiddleware(tracer));
+app.use(accessLogMiddleware(log));
 app.use(express.json());
 
 const PORT = process.env.PORT || 3101;

@@ -10,14 +10,22 @@ datasources:
     jsonData:
       maxLines: 1000
       derivedFields:
-        # Every log line carrying a trace_id (api only, so far — see
-        # internal/platform/tracing) becomes a clickable link into Tempo.
-        # Matches both the JSON form slog produces ("trace_id":"...") and a
-        # bare trace_id=... in case any future service logs it that way.
+        # Every log line carrying a trace_id (api, wa-web, tg-web — see
+        # internal/platform/tracing / src/tracing.js) becomes a clickable
+        # link into Tempo. Matches both the JSON form slog/pino produce
+        # ("trace_id":"...") and a bare trace_id=... just in case.
         - datasourceUid: Tempo
           matcherRegex: "trace_id[\"=:]+([a-f0-9]+)"
           name: TraceID
           url: "$${__value.raw}"
+
+  - name: Prometheus
+    uid: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    jsonData:
+      httpMethod: POST
 
   - name: Tempo
     uid: Tempo
@@ -33,3 +41,13 @@ datasources:
         filterByTraceID: true
         filterBySpanID: false
         query: '{source="docker"} | trace_id="$${__trace.traceId}"'
+      # Powers the Tempo "Service Graph" view in Explore — without these,
+      # it errors "No service graph datasource selected" (confirmed live).
+      # Real uid set above (Prometheus), same "don't guess the uid" lesson
+      # as tracesToLogsV2.
+      tracesToMetrics:
+        datasourceUid: Prometheus
+      serviceMap:
+        datasourceUid: Prometheus
+      nodeGraph:
+        enabled: true

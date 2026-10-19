@@ -16,7 +16,11 @@ x-api-env: &api_env
   API_HTTP_ADDR: ":8080"
   API_ENV: production
   API_LOG_LEVEL: info
-  API_CORS_ORIGINS: ${PUBLIC_FORM_BASE_URL}
+  # Comma-separated (config.go splits on it). Defaults to just the public
+  # site, same as before — set API_CORS_ORIGINS explicitly in .env to add
+  # more (e.g. a locally-run `next dev` origin, see deploy/README.md's
+  # Observability section).
+  API_CORS_ORIGINS: ${API_CORS_ORIGINS:-${PUBLIC_FORM_BASE_URL}}
   POSTGRES_HOST: ${POSTGRES_HOST}
   POSTGRES_PORT: ${POSTGRES_PORT}
   POSTGRES_USER: ${POSTGRES_USER}
@@ -220,6 +224,14 @@ services:
       dockerfile: deploy/api.Dockerfile
     image: projectx-api:local
     restart: always
+    # Bound to localhost only, same as Grafana — lets a locally-run web dev
+    # server (apps/web's `next dev`, not containerized) reach this API
+    # directly, and lets anything on the box curl/debug it. In production,
+    # nginx is still the only public path to the API; this is additive,
+    # not a replacement route. Configurable in case 8099 collides with
+    # something else, same pattern as GRAFANA_PORT.
+    ports:
+      - "127.0.0.1:${API_PORT:-8099}:8080"
     depends_on:
       init-uploads:
         condition: service_completed_successfully
@@ -287,9 +299,14 @@ services:
       dockerfile: deploy/embeddings.Dockerfile
     image: projectx-embeddings:local
     restart: always
+    depends_on:
+      - otel-collector
     environment:
       PORT: "8001"
       MODEL_NAME: ${EMBEDDINGS_MODEL_NAME:-intfloat/multilingual-e5-base}
+      # OTLP/HTTP form, same as wa-web/tg-web — see tracing.py. Empty
+      # disables tracing, same no-op contract.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${EMBEDDINGS_OTEL_ENDPOINT:-http://otel-collector:4318/v1/traces}
     volumes:
       - embeddings_cache:/cache/huggingface
     networks:
@@ -305,6 +322,7 @@ services:
     restart: always
     depends_on:
       - api
+      - otel-collector
     environment:
       NODE_ENV: production
       PORT: "3000"
@@ -312,6 +330,9 @@ services:
       API_BASE_URL: http://api:8080
       # Server-side fetches (RSC) hit the API on the docker-internal network.
       # Browser fetches use relative paths and go through nginx.
+      # See src/instrumentation.ts. Empty disables tracing, same no-op
+      # contract as the other 3 services.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${WEB_OTEL_ENDPOINT:-http://otel-collector:4318/v1/traces}
     networks:
       - frontend
 
@@ -334,14 +355,30 @@ services:
   # ---- Observability (Phase 1: logs + traces) ----
   # Loki (log storage) + Promtail (ships every container's stdout here) +
   # Tempo (trace storage) + an OTel Collector (receives traces from
-  # instrumented services, forwards to Tempo) + Grafana (browse/search
-  # both, and jump from a log line's trace_id straight into its trace).
-  # See deploy/README.md's Observability section. Still no metrics
-  # (Prometheus) — that's a separate, later addition.
+  # instrumented services, forwards to Tempo) + Prometheus (receives
+  # service-graph/span-metrics Tempo computes from traces, powers Grafana's
+  # Tempo "Service Graph" view) + Grafana (browse/search all of it, and
+  # jump from a log line's trace_id straight into its trace). See deploy/
+  # README.md's Observability section.
   #
-  # Only the Go api is instrumented so far (internal/platform/tracing) —
-  # wa-web/tg-web/web don't emit traces yet, so Tempo and their rows in the
-  # per-channel dashboards will only ever show logs until that's added.
+  # api, wa-web, and tg-web are instrumented (internal/platform/tracing /
+  # src/tracing.js) — web (Next.js) isn't yet.
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    restart: always
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      # Lets Tempo's metrics_generator push service-graph/span-metrics here
+      # directly (remote_write) instead of Prometheus having to scrape an
+      # exporter — there's nothing to scrape yet, this stack has no app
+      # metrics endpoints.
+      - "--web.enable-remote-write-receiver"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - backend
+
   tempo:
     image: grafana/tempo:2.6.1
     restart: always
@@ -349,6 +386,8 @@ services:
     volumes:
       - ./tempo/tempo-config.yaml:/etc/tempo-config.yaml:ro
       - tempo_data:/var/tempo
+    depends_on:
+      - prometheus
     networks:
       - backend
 
@@ -360,8 +399,13 @@ services:
       - ./otel/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
     depends_on:
       - tempo
+    # Needs both networks — api/wa-web/tg-web reach it via backend, and web
+    # (frontend-only, see the web service below) needs a route to it too.
+    # It has no host-published port either way, so this doesn't widen its
+    # exposure, just which internal services can reach it.
     networks:
       - backend
+      - frontend
 
   loki:
     image: grafana/loki:2.9.8
@@ -423,6 +467,7 @@ volumes:
   loki_data:
   grafana_data:
   tempo_data:
+  prometheus_data:
 
 networks:
   backend:

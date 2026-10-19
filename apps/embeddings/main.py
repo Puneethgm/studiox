@@ -17,12 +17,15 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 
+from tracing import AccessLogMiddleware, init_tracing, setup_json_logging
+
 load_dotenv()
 
 MODEL_NAME = os.environ.get("MODEL_NAME", "intfloat/multilingual-e5-base")
 PORT = int(os.environ.get("PORT", "8001"))
 
 model: SentenceTransformer | None = None
+log = setup_json_logging()
 
 
 @asynccontextmanager
@@ -36,6 +39,19 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+# Starlette wraps middleware so the *last* one added ends up outermost —
+# AccessLogMiddleware must be added before init_tracing's instrument_app()
+# call, so the OTel span (added after, thus outermost) stays active for the
+# whole time this middleware's code runs. Added the other way around first
+# and confirmed live that trace_id was then silently missing from every
+# access-log line, despite the span itself reaching Tempo just fine.
+app.add_middleware(AccessLogMiddleware, logger=log)
+
+# Empty OTEL_EXPORTER_OTLP_ENDPOINT is a deliberate no-op (see tracing.py) —
+# local dev without the observability stack running is unaffected. Mirrors
+# apps/api / apps/wa-web|tg-web's own tracing setup.
+init_tracing("embeddings", os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", ""), app)
 
 
 class EmbedRequest(BaseModel):

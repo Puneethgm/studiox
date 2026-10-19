@@ -397,7 +397,12 @@ func main() {
 	// i.e. OTEL_EXPORTER_OTLP_ENDPOINT unset) — first in the chain so every
 	// other middleware's logging runs inside the span and picks up its
 	// trace_id via logger.FromCtx.
-	r.Use(otelhttp.NewMiddleware("api"))
+	r.Use(otelhttp.NewMiddleware("api", otelhttp.WithSpanNameFormatter(func(operation string, r *http.Request) string {
+		// Default span name is just the literal "api" for every request —
+		// useless in Tempo's trace list. Matches wa-web/tg-web's own
+		// tracingMiddleware, which names spans "$method $path" the same way.
+		return r.Method + " " + r.URL.Path
+	})))
 	r.Use(httpx.RequestID)
 	r.Use(httpx.SecurityHeaders)
 	r.Use(httpx.RateLimiter)

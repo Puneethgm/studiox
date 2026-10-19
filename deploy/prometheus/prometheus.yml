@@ -1,0 +1,13 @@
+# Minimal Prometheus — this stack has no app-level metrics endpoints to
+# scrape yet (that's separate future work). Its only job right now is to
+# receive the service-graph/span-metrics Tempo's metrics_generator computes
+# from traces and remote-writes here (see deploy/tempo/tempo-config.yaml),
+# which is what powers Grafana's Tempo "Service Graph" view.
+
+global:
+  scrape_interval: 30s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

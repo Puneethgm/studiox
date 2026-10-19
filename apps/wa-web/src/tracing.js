@@ -18,7 +18,7 @@ import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import { AsyncHooksContextManager } from '@opentelemetry/context-async-hooks';
-import { trace, context } from '@opentelemetry/api';
+import { trace, context, SpanStatusCode, SpanKind } from '@opentelemetry/api';
 
 /**
  * @param {string} serviceName
@@ -46,13 +46,50 @@ export function initTracing(serviceName, otlpEndpoint) {
 /** Express middleware: starts one span per request, runs the rest of the chain inside it. */
 export function tracingMiddleware(tracer) {
   return (req, res, next) => {
-    const span = tracer.startSpan(`${req.method} ${req.path}`);
+    // SpanKind.SERVER matters beyond labeling: Tempo's span-metrics/
+    // service-graph processors classify edges by span kind — without this
+    // every span defaults to INTERNAL and never contributes correctly to
+    // the Service Graph, even once two services are actually propagating
+    // trace context to each other (not yet true for this stack — see
+    // deploy/README.md's Observability section).
+    const span = tracer.startSpan(`${req.method} ${req.path}`, { kind: SpanKind.SERVER });
+    span.setAttribute('http.method', req.method);
+    span.setAttribute('http.target', req.originalUrl || req.path);
     const ctx = trace.setSpan(context.active(), span);
     res.on('finish', () => {
       span.setAttribute('http.status_code', res.statusCode);
+      // Matches the Go side's convention (otelhttp's default): a 4xx is the
+      // client's fault, not a server failure, so only >=500 marks the span
+      // Error. (Grafana's built-in Tempo search table doesn't surface span
+      // attributes as columns regardless — see accessLogMiddleware below
+      // for where method/path/status actually become visible.)
+      if (res.statusCode >= 500) {
+        span.setStatus({ code: SpanStatusCode.ERROR });
+      }
       span.end();
     });
     context.with(ctx, next);
+  };
+}
+
+/**
+ * Express middleware: logs one structured line per request (method/path/
+ * status/duration_ms) — matches apps/api's httpx.AccessLog field names
+ * exactly, so the "Recent requests" Loki table panel (deploy/grafana/
+ * provisioning/dashboards/) can extract the same columns from any service.
+ * Mount after tracingMiddleware so trace_id/span_id (via the pino mixin)
+ * land on this line too — that's the join key back to the Tempo trace.
+ */
+export function accessLogMiddleware(log) {
+  return (req, res, next) => {
+    const start = Date.now();
+    res.on('finish', () => {
+      log.info(
+        { method: req.method, path: req.path, status: res.statusCode, duration_ms: Date.now() - start },
+        'http_request',
+      );
+    });
+    next();
   };
 }
 

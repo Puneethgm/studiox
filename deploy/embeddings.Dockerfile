@@ -22,7 +22,7 @@ COPY apps/embeddings/requirements.txt ./
 RUN pip install --no-cache-dir torch==2.* --index-url https://download.pytorch.org/whl/cpu \
  && pip install --no-cache-dir -r requirements.txt
 
-COPY apps/embeddings/main.py ./
+COPY apps/embeddings/main.py apps/embeddings/tracing.py ./
 
 # Hugging Face's model cache — mounted as a named volume in compose so the
 # ~1.1GB model isn't re-downloaded every time this container is recreated

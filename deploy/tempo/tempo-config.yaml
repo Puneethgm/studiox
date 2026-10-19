@@ -3,11 +3,10 @@
 # deploy/grafana/provisioning/datasources/) reads them, and Loki's
 # derivedFields link a trace_id found in a log line straight here.
 #
-# No metrics_generator (service-graphs/span-metrics) — that needs
-# Prometheus remote-write, which doesn't exist on this stack (logs-only
-# phase so far). Add it when/if a Prometheus phase happens; until then
-# this gives working traces and trace<->logs correlation, just no Node
-# Graph panel.
+# metrics_generator (below) computes service-graph/span-metrics from
+# traces and remote-writes them into Prometheus — that's what makes
+# Grafana's Tempo "Service Graph" view work (without it: "No service
+# graph datasource selected", confirmed live — that's what this fixes).
 
 server:
   http_listen_port: 3200
@@ -36,3 +35,18 @@ storage:
       path: /var/tempo/traces
     wal:
       path: /var/tempo/wal
+
+metrics_generator:
+  registry:
+    external_labels:
+      source: tempo
+  storage:
+    path: /var/tempo/generator/wal
+    remote_write:
+      - url: http://prometheus:9090/api/v1/write
+        send_exemplars: true
+
+overrides:
+  defaults:
+    metrics_generator:
+      processors: [service-graphs, span-metrics]

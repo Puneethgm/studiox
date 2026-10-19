@@ -65,7 +65,7 @@ func TestAutoContactWorker_Integration(t *testing.T) {
 	}
 
 	// 3. Setup repositories & services
-	leadsRepo := leads.NewRepo(pool)
+	leadsRepo := leads.NewRepo(pool, pool)
 	leadsSvc := leads.NewService(leadsRepo, nil)
 
 	// Token encryption key
@@ -219,7 +219,7 @@ func TestAutoContactWorker_TrialBooked_Integration(t *testing.T) {
 	}
 
 	// 3. Setup repositories & services
-	leadsRepo := leads.NewRepo(pool)
+	leadsRepo := leads.NewRepo(pool, pool)
 	leadsSvc := leads.NewService(leadsRepo, nil)
 
 	keyB64 := os.Getenv("TOKEN_ENCRYPTION_KEY")
@@ -349,7 +349,7 @@ func TestService_HandleInboundWhatsAppMessage_StatusTransitions(t *testing.T) {
 		}
 	}
 
-	leadsRepo := leads.NewRepo(pool)
+	leadsRepo := leads.NewRepo(pool, pool)
 	leadsSvc := leads.NewService(leadsRepo, nil)
 
 	keyB64 := os.Getenv("TOKEN_ENCRYPTION_KEY")

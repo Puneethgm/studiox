@@ -95,7 +95,7 @@ func setupDNDTestEnv(t *testing.T) *dndTestEnv {
 		t.Fatalf("init cipher: %v", err)
 	}
 
-	leadsRepo := leads.NewRepo(pool)
+	leadsRepo := leads.NewRepo(pool, pool)
 	msgRepo := NewRepo(pool, cipher)
 	msgBus := NewInProcBus()
 	msgSvc := NewService(msgRepo, msgBus, "", "", nil, nil, "")

@@ -236,8 +236,9 @@ container's stdout to Loki — auto-discovers containers via the Docker
 socket, no per-service config needed) and Grafana (browse/search them).
 Configs live in `deploy/loki/`, `deploy/promtail/`, `deploy/grafana/`.
 
-This is logs only — no metrics (Prometheus) or alerting yet; that's
-later, separate work.
+Prometheus now runs too (for Tempo's Service Graph — see Traces below),
+but there's still no app-level metrics scraping or alerting; that's
+separate, later work.
 
 Requires `GRAFANA_ADMIN_PASSWORD` in `.env` (the `grafana` service refuses
 to start without it). The host port is configurable via `GRAFANA_PORT`
@@ -258,8 +259,9 @@ Six dashboards are auto-provisioned:
 - **Studio Logs** — cross-service overview, pick any `service` + `studio_id`.
 - **Channel: API / WhatsApp (wa-web) / Telegram (tg-web) / Web /
   Embeddings** — one dashboard per service, each with a status tile, a
-  log-rate-by-level graph, an error-rate graph, and the raw logs panel
-  (filterable by `studio_id`).
+  log-rate-by-level graph, an error-rate graph, a Traces table, a Recent
+  Requests table (method/path/status/duration — see Traces below), and
+  the raw logs panel (filterable by `studio_id`).
 
 The "Status" tile is a **heuristic, not a real health check** — it's
 green when the service has logged anything in the last 2 minutes, red
@@ -272,6 +274,26 @@ socket, so every log line in here came from a Docker container (labeled
 `source=docker`). A service run locally outside Docker (e.g. `air` for Go
 dev) never reaches Loki — there's no "local" view, because local-non-Docker
 logs simply never arrive.
+
+If you want `apps/web`'s local `next dev` (which runs on the host, not in
+Docker) to show up in these dashboards when you use it, point it at the
+containerized API instead of a host-run one: set `apps/web/.env.local`'s
+`API_BASE_URL`/`NEXT_PUBLIC_API_BASE_URL` to `http://localhost:${API_PORT:-8099}`
+(the `api` container's port, published to localhost for exactly this —
+see `.env.example`). Anything the web UI does then flows through the Go
+API container, which already logs and traces everything. Note the
+container has its own, separate database — run `docker compose --profile
+tools run --rm seed` once to create a super admin in it if you haven't.
+
+Two more `deploy/.env` values need overriding for this to actually work
+over plain `http://localhost`, or login will silently fail (the response
+sets the session cookie, but the browser discards it and bounces you back
+to the login page — confirmed live, this is exactly what happens
+otherwise): `API_CORS_ORIGINS` needs `http://localhost:3010` added
+(comma-separated, alongside the real one), and **`COOKIE_SECURE=false`**
++ **`COOKIE_DOMAIN=`** (blank) — the defaults are the production domain
+and `Secure` (HTTPS-only), which a cookie from `localhost` over plain
+HTTP can never satisfy.
 
 In Grafana, you can also use **Explore** with the Loki datasource
 directly for ad-hoc queries:
@@ -295,14 +317,84 @@ to Tempo) complete the pipeline — a log line carrying `trace_id` becomes a
 clickable link straight into its Tempo trace (and back), via Grafana's
 Loki/Tempo datasource correlation.
 
-`api` (Go), `wa-web`, and `tg-web` (both Node) emit traces —
-`internal/platform/tracing` (Go) and each service's own `src/tracing.js`
-(Node, duplicated rather than shared — wa-web and tg-web are separate
-deployables) are separate implementations of the same idea: one OTel span
-per HTTP request, `trace_id`/`span_id` stamped onto every log line written
-during that request. `web` (the Next.js frontend) isn't instrumented yet.
-`OTEL_EXPORTER_OTLP_ENDPOINT` empty disables tracing for that service — a
-deliberate no-op, not an error.
+All 5 app services now emit traces: `api` (Go, `internal/platform/tracing`),
+`wa-web`/`tg-web` (Node, each with its own `src/tracing.js` — duplicated
+rather than shared, since they're separate deployables), `web` (Next.js,
+`src/instrumentation.ts` via `@vercel/otel` — Next's own built-in hook,
+not a hand-rolled middleware), and `embeddings` (Python/FastAPI,
+`tracing.py` — uses `opentelemetry-instrumentation-fastapi` for the span
+itself, plus a custom ASGI `AccessLogMiddleware`). Every one of these is
+an independent implementation of the same idea: one OTel span per HTTP
+request. `OTEL_EXPORTER_OTLP_ENDPOINT` empty disables tracing for that
+service — a deliberate no-op, not an error.
+
+One real gotcha hit building `embeddings`: Starlette wraps middleware so
+the *last one added* ends up outermost. Adding `AccessLogMiddleware`
+*after* `instrument_app()` put it outside the OTel span — the span landed
+in Tempo fine, but `trace_id` was silently missing from every access-log
+line, since the span's context had already closed by the time that code
+ran. Confirmed by testing both orderings live. Fixed by registering
+`AccessLogMiddleware` before `instrument_app()` runs, so it nests inside
+the span instead.
+
+All 5 services now stamp `trace_id`/`span_id` onto every log line written
+during a traced request (so Loki's derivedField can link a log line
+straight to its Tempo trace). `web` was the holdout — `deploy/web.Dockerfile`
+runs Next's own generated `server.js` (standalone output, not a file this
+repo writes), so there was no middleware chain of ours to hook into the
+way the other 4 services do, and production `next start` prints nothing
+to stdout for a normal request on its own — confirmed live, this also
+meant its "Up" dashboard tile could never go green, since there was
+nothing to count.
+
+Fixed in `src/instrumentation.ts` by monkey-patching Node's
+`http.Server.prototype.emit` at `register()` time — the same technique
+OTel's own http auto-instrumentation uses — so every request through
+whatever server Next.js creates internally gets one structured
+access-log line. One real build-breaking gotcha along the way: Next.js
+bundles `instrumentation.ts` for *both* the edge and nodejs runtimes, and
+the edge/webpack bundler can't resolve a `node:http` import at all —
+confirmed live, both a top-level import and a plain
+`await import('node:http')` broke the production build the same way
+("UnhandledSchemeError"). The fix was webpack's `webpackIgnore` magic
+comment on that one import, leaving it for Node to resolve at runtime
+(exactly where this code actually runs — it's gated behind
+`NEXT_RUNTIME === 'nodejs'` already).
+
+Each dashboard (overview + the 5 channel ones) has two request-level
+panels:
+
+- **Traces** — a TraceQL search against Tempo, listing that service's
+  recent traces; click a row to open its full trace/flame graph. Grafana's
+  built-in Tempo search table only ever shows 5 fixed columns (Trace ID,
+  Start time, Service, Name, Duration) — confirmed live, span attributes
+  like `http.status_code` never surface here no matter how the query is
+  written, regardless of query mode (`traceql` raw text vs `traceqlSearch`
+  filter builder) or panel type (`traces` vs `table`).
+- **Recent requests** — the actual answer to "which URL was hit and did it
+  succeed": a Loki table extracting `method`/`path`/`status`/`duration_ms`/
+  `trace_id` from each service's `http_request` access-log line
+  (`apps/api`'s `httpx.AccessLog`, `apps/wa-web`/`tg-web`'s
+  `accessLogMiddleware` — same field names on purpose). `trace_id` there is
+  the join key back to the Traces table and the full flame graph.
+
+Neither panel is yet filterable by `studio_id` — that's only a log field
+today, not a span attribute, so only `service` and time range narrow them
+down.
+
+**Service Graph** (Explore → Tempo → Query type: Service Graph) needs
+Prometheus, which is now wired (`tempo`'s `metrics_generator` remote-writes
+service-graph/span-metrics into it). Per-service request-rate metrics
+(`traces_spanmetrics_calls_total`) work today — confirmed live. The graph
+*edges* don't yet: they need two services to actually propagate trace
+context across an HTTP call to each other (a client span on the caller,
+linked via a `traceparent` header to a server span on the callee, same
+trace), and nothing in this stack does that yet — every current span is a
+single isolated request, not part of a cross-service chain. Confirmed
+live: Explore's Service Graph went from erroring "No service graph
+datasource selected" to the honest "No service graph data found" once
+Prometheus was wired — that's the correct state until context propagation
+is added, not a bug.
 
 ---
 

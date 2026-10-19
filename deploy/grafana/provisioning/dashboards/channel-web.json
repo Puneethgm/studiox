@@ -43,8 +43,21 @@
   },
   "panels": [
     {
+      "id": 20,
+      "title": "Identity & Health",
+      "type": "row",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
       "id": 1,
-      "title": "Status (logged in last 2m)",
+      "title": "Up",
       "type": "stat",
       "datasource": {
         "type": "loki",
@@ -52,9 +65,9 @@
       },
       "gridPos": {
         "h": 5,
-        "w": 6,
+        "w": 4,
         "x": 0,
-        "y": 0
+        "y": 1
       },
       "options": {
         "reduceOptions": {
@@ -62,7 +75,7 @@
             "lastNotNull"
           ]
         },
-        "textMode": "value_and_name"
+        "textMode": "value"
       },
       "fieldConfig": {
         "defaults": {
@@ -71,8 +84,19 @@
               "type": "value",
               "options": {
                 "0": {
-                  "text": "DOWN / SILENT",
+                  "text": "DOWN",
                   "color": "red"
+                }
+              }
+            },
+            {
+              "type": "range",
+              "options": {
+                "from": 1,
+                "to": 1000000000,
+                "result": {
+                  "text": "UP",
+                  "color": "green"
                 }
               }
             }
@@ -90,7 +114,7 @@
               }
             ]
           },
-          "noValue": "DOWN / SILENT"
+          "noValue": "DOWN"
         }
       },
       "targets": [
@@ -99,11 +123,278 @@
             "type": "loki",
             "uid": "Loki"
           },
-          "expr": "sum(count_over_time({service=\"web\", source=\"docker\"}[2m]))",
+          "expr": "sum(count_over_time({service=\"web\", source=\"docker\"}[10m]))",
           "instant": true
         }
       ],
-      "description": "Heuristic only \u2014 \"has this service logged anything in the last 2 minutes\". Not a real health check: a hung-but-silent process would still show green. True liveness needs Prometheus + a real health-check exporter (deferred, Phase 2)."
+      "description": "Heuristic only \u2014 \"has this service logged anything in the last 10 minutes\". Widened from an earlier 2-minute window, which flapped to DOWN during completely normal idle gaps between requests even though older requests were still visible in the Traces/Recent Requests/Logs panels below (those show the whole dashboard time range, not just the last few minutes) \u2014 confirmed live, this was confusing, not useful. 10 minutes is still just a heuristic, not a real health check: a hung-but-silent process would still show green."
+    },
+    {
+      "id": 29,
+      "title": "Mode",
+      "type": "text",
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 4,
+        "y": 1
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "<div style=\"text-align:center;font-size:32px;font-weight:600;color:#58a6ff;padding-top:6px\">Docker</div>"
+      },
+      "description": "Static \u2014 every service in this stack runs as a Docker container (that's the only thing Promtail can even see, by design)."
+    },
+    {
+      "id": 25,
+      "title": "Request rate",
+      "type": "stat",
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 8,
+        "y": 1
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "graphMode": "area"
+          },
+          "unit": "reqps",
+          "decimals": 2
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "expr": "sum(rate({service=\"web\"} |= \"http_request\" [5m]))",
+          "legendFormat": "Request rate"
+        }
+      ]
+    },
+    {
+      "id": 26,
+      "title": "Error rate",
+      "type": "stat",
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 12,
+        "y": 1
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "graphMode": "area"
+          },
+          "unit": "percent",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 5
+              },
+              {
+                "color": "red",
+                "value": 20
+              }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "expr": "(sum(count_over_time({service=\"web\", level=~\"ERROR|50|60\"}[10m])) / sum(count_over_time({service=\"web\"}[10m]))) * 100",
+          "legendFormat": "Error rate"
+        }
+      ],
+      "description": "Share of ALL this service's log lines at ERROR level \u2014 not strictly failed-HTTP-request rate, since background/non-request errors count too (e.g. a periodic background job failing). See the Recent Requests table below for exact HTTP status codes instead."
+    },
+    {
+      "id": 27,
+      "title": "p95 latency",
+      "type": "stat",
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 16,
+        "y": 1
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "graphMode": "area"
+          },
+          "unit": "ms",
+          "decimals": 0
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "expr": "quantile_over_time(0.95, {service=\"web\"} |= \"http_request\" | json duration_ms | unwrap duration_ms [$__interval])",
+          "legendFormat": "p95 latency"
+        }
+      ]
+    },
+    {
+      "id": 28,
+      "title": "Span throughput (Tempo span-metrics)",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 20,
+        "y": 1
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "graphMode": "area"
+          },
+          "unit": "ops",
+          "decimals": 2
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "sum(rate(traces_spanmetrics_calls_total{service=\"web\"}[5m]))",
+          "legendFormat": "Span throughput (Tempo span-metrics)"
+        }
+      ],
+      "description": "From Tempo's metrics_generator (derived from traces, not logs) \u2014 confirms the OTel pipeline itself is alive end to end, independent of the Loki-based panels. Needs Prometheus (deploy/prometheus/), wired alongside the Service Graph work."
+    },
+    {
+      "id": 21,
+      "title": "Request Rate & Latency",
+      "type": "row",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      }
+    },
+    {
+      "id": 7,
+      "title": "Latency (p50 / p95 / p99)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 7
+      },
+      "description": "From each request's duration_ms in its http_request access-log line (apps/api's httpx.AccessLog / apps/wa-web|tg-web's accessLogMiddleware). Only scoped by json duration_ms (not a blanket `| json`) \u2014 extracting every JSON key as a label (trace_id, request_id, etc.) would otherwise split this into one series per request instead of one aggregate percentile. embeddings/web aren't wired up yet, so this stays empty for those.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "expr": "quantile_over_time(0.50, {service=\"web\", studio_id=~\"$studio_id\"} |= \"http_request\" | json duration_ms | unwrap duration_ms [$__interval])",
+          "legendFormat": "p50"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "expr": "quantile_over_time(0.95, {service=\"web\", studio_id=~\"$studio_id\"} |= \"http_request\" | json duration_ms | unwrap duration_ms [$__interval])",
+          "legendFormat": "p95"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "expr": "quantile_over_time(0.99, {service=\"web\", studio_id=~\"$studio_id\"} |= \"http_request\" | json duration_ms | unwrap duration_ms [$__interval])",
+          "legendFormat": "p99"
+        }
+      ]
     },
     {
       "id": 2,
@@ -114,10 +405,10 @@
         "uid": "Loki"
       },
       "gridPos": {
-        "h": 8,
-        "w": 18,
-        "x": 6,
-        "y": 0
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 14
       },
       "targets": [
         {
@@ -130,40 +421,118 @@
       ]
     },
     {
-      "id": 3,
-      "title": "Error rate",
-      "type": "timeseries",
+      "id": 22,
+      "title": "Traces & Requests",
+      "type": "row",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 21
+      }
+    },
+    {
+      "id": 4,
+      "title": "Traces \u2014 Web (Next.js frontend)",
+      "type": "table",
+      "datasource": {
+        "type": "tempo",
+        "uid": "Tempo"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 22
+      },
+      "description": "Recent traces for this service (TraceQL search via Tempo). Click a row to open its full trace/flame graph. Grafana's built-in Tempo search table only shows these 5 fixed columns (confirmed \u2014 span attributes like http.method/status don't surface here no matter how the query is written); see the \"Recent requests\" table below for the actual URL/status per request. Not yet filterable by studio_id \u2014 that needs studio_id added as a span attribute, not just a log field.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "Tempo"
+          },
+          "refId": "A",
+          "queryType": "traceql",
+          "query": "{resource.service.name=\"web\"}",
+          "limit": 20
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Recent requests",
+      "type": "table",
       "datasource": {
         "type": "loki",
         "uid": "Loki"
       },
       "gridPos": {
-        "h": 7,
+        "h": 10,
         "w": 24,
         "x": 0,
-        "y": 8
+        "y": 32
       },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "fixedColor": "red",
-            "mode": "fixed"
+      "description": "Which URL was hit, and whether it succeeded \u2014 extracted from each service's http_request access-log line (apps/api's httpx.AccessLog / apps/wa-web|tg-web's accessLogMiddleware, same field names). trace_id here is the join key back to the Traces table above and the full flame graph in Tempo. embeddings/web aren't wired up yet, so this stays empty for those.",
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "source": "Line",
+            "format": "json"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "includeByName": {
+              "Time": true,
+              "method": true,
+              "path": true,
+              "status": true,
+              "duration_ms": true,
+              "trace_id": true
+            },
+            "indexByName": {
+              "Time": 0,
+              "method": 1,
+              "path": 2,
+              "status": 3,
+              "duration_ms": 4,
+              "trace_id": 5
+            },
+            "excludeByName": {}
           }
         }
-      },
+      ],
       "targets": [
         {
           "datasource": {
             "type": "loki",
             "uid": "Loki"
           },
-          "expr": "sum(count_over_time({service=\"web\", studio_id=~\"$studio_id\", level=~\"ERROR|50|60\"}[1m]))",
-          "legendFormat": "errors/min"
+          "refId": "A",
+          "expr": "{service=\"web\"} |= \"http_request\""
         }
       ]
     },
     {
-      "id": 4,
+      "id": 23,
+      "title": "Logs",
+      "type": "row",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 42
+      }
+    },
+    {
+      "id": 5,
       "title": "Logs \u2014 Web (Next.js frontend), studio_id=$studio_id",
       "type": "logs",
       "datasource": {
@@ -174,7 +543,7 @@
         "h": 16,
         "w": 24,
         "x": 0,
-        "y": 15
+        "y": 43
       },
       "options": {
         "showTime": true,
