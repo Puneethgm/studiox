@@ -3167,27 +3167,31 @@ function MessageBubble({ msg, canDelete, onDelete }: { msg: Message; canDelete?:
       <span className="px-1 text-[9px] font-black uppercase tracking-wider text-zinc-400">
         {senderLabel}
       </span>
-      <div className="relative flex items-center gap-1.5">
-        {isOutbound && showDelete && (
+      <div
+        className={cn(
+          'relative max-w-[85%] px-3 py-2 text-xs shadow-sm transition-all duration-200 sm:max-w-[70%] rounded-lg border',
+          msg.deletedAt
+            ? 'border-dashed border-zinc-300 bg-zinc-50 text-zinc-400 italic dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-500'
+            : isOutbound
+            ? 'bg-slate-100 border-slate-300 text-slate-800 dark:bg-slate-800 dark:border-slate-600 dark:text-slate-100'
+            : 'bg-white border-zinc-200 text-zinc-800 dark:bg-zinc-900 dark:border-zinc-700 dark:text-zinc-100',
+        )}
+      >
+        {/* Absolutely positioned relative to the bubble (not a flex sibling)
+            so it can never affect the bubble's own width — a flex row
+            wrapping the bubble previously made its max-w-[%] resolve
+            against the whole message list instead of its own content,
+            leaving a large gap between the icon and a short bubble. */}
+        {showDelete && (
           <button
             type="button"
             onClick={handleDelete}
             title="Delete for everyone"
-            className="order-first shrink-0 rounded p-1 text-zinc-400 opacity-0 transition-opacity hover:text-rose-500 group-hover:opacity-100"
+            className="absolute right-full top-1/2 mr-1.5 -translate-y-1/2 shrink-0 rounded p-1 text-zinc-400 opacity-0 transition-opacity hover:text-rose-500 group-hover:opacity-100"
           >
             <Trash2 className="h-3.5 w-3.5" />
           </button>
         )}
-        <div
-          className={cn(
-            'relative max-w-[85%] px-3 py-2 text-xs shadow-sm transition-all duration-200 sm:max-w-[70%] rounded-lg border',
-            msg.deletedAt
-              ? 'border-dashed border-zinc-300 bg-zinc-50 text-zinc-400 italic dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-500'
-              : isOutbound
-              ? 'bg-slate-100 border-slate-300 text-slate-800 dark:bg-slate-800 dark:border-slate-600 dark:text-slate-100'
-              : 'bg-white border-zinc-200 text-zinc-800 dark:bg-zinc-900 dark:border-zinc-700 dark:text-zinc-100',
-          )}
-        >
         {sourceTag && !msg.deletedAt && (
           <div className="mb-1 text-[9px] font-black uppercase tracking-widest opacity-50">
             {sourceTag}
@@ -3234,7 +3238,6 @@ function MessageBubble({ msg, canDelete, onDelete }: { msg: Message; canDelete?:
         )}>
           <span suppressHydrationWarning>{formatTime(msg.sentAt)}</span>
           {isOutbound && <StatusTick status={msg.status} />}
-        </div>
         </div>
       </div>
     </li>
