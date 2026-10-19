@@ -17,7 +17,9 @@ import (
 	"github.com/projectx/api/internal/integrations/crm"
 	"github.com/projectx/api/internal/integrations/embeddings"
 	"github.com/projectx/api/internal/integrations/glofox"
+	"github.com/projectx/api/internal/platform/audit"
 	platmail "github.com/projectx/api/internal/platform/mail"
+	s3pkg "github.com/projectx/api/internal/platform/s3"
 )
 
 type Service struct {
@@ -28,10 +30,17 @@ type Service struct {
 	embeddings  *embeddings.Client
 	mailer      *platmail.Sender
 	frontendURL string
+	// s3Uploader and auditLogger back the account-deletion/archive flow
+	// (deletion_service.go) — that flow's email sends and audit-log calls
+	// already follow this same Service-does-business-logic pattern (see
+	// CreateStudioWithAdmin's mailer usage above), so the archive upload
+	// belongs here too rather than split out into the Handler.
+	s3Uploader  *s3pkg.Uploader
+	auditLogger *audit.Logger
 }
 
-func NewService(repo *Repo, id *identity.Repo, gf *glofox.Client, crmExecutor *crm.Executor, embClient *embeddings.Client, mailer *platmail.Sender, frontendURL string) *Service {
-	return &Service{repo: repo, identity: id, glofox: gf, crmExecutor: crmExecutor, embeddings: embClient, mailer: mailer, frontendURL: frontendURL}
+func NewService(repo *Repo, id *identity.Repo, gf *glofox.Client, crmExecutor *crm.Executor, embClient *embeddings.Client, mailer *platmail.Sender, frontendURL string, s3Uploader *s3pkg.Uploader, auditLogger *audit.Logger) *Service {
+	return &Service{repo: repo, identity: id, glofox: gf, crmExecutor: crmExecutor, embeddings: embClient, mailer: mailer, frontendURL: frontendURL, s3Uploader: s3Uploader, auditLogger: auditLogger}
 }
 
 // SyncLeadToGlofoxByID pushes a lead to Glofox CRM as trial/member. Used by

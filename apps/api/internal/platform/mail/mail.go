@@ -279,6 +279,92 @@ func (s *Sender) SendEscalationAlert(toEmail, studioName, contactName, contactPh
 	return s.send(toEmail, fmt.Sprintf("⚠️ Escalation: %s — %s", studioName, reason), html)
 }
 
+// SendAccountDeletionPending emails a studio's registered contact right
+// after an account-deletion request is made — the "pre-deletion email"
+// step of init.md §4.5. It explains the account is about to be permanently
+// deleted, that studio data will stop being reachable through the active
+// account once that happens, and that confirmLink must be clicked to
+// actually proceed. The link is single-use (the confirm token is consumed
+// on use) and expires after 24 hours.
+func (s *Sender) SendAccountDeletionPending(toEmail, studioName, confirmLink string) error {
+	html := fmt.Sprintf(`<!doctype html>
+<html>
+<body style="margin:0;padding:0;background:#f4f4f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%%" cellpadding="0" cellspacing="0" style="padding:32px 0;">
+    <tr><td align="center">
+      <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;padding:40px;">
+        <tr><td>
+          <h1 style="margin:0 0 16px;font-size:20px;font-weight:800;color:#18181b;">Confirm account deletion</h1>
+          <p style="margin:0 0 8px;font-size:14px;line-height:1.6;color:#52525b;">
+            A request was made to permanently delete <strong>%s</strong>'s account on 1Hero Social.
+          </p>
+          <p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:#52525b;">
+            Once confirmed, the account and its data will be permanently deleted and will no longer be
+            available through the active account. Click the button below to confirm. This link can only
+            be used once and expires in 24 hours.
+          </p>
+          <p style="margin:0 0 24px;">
+            <a href="%s" style="display:inline-block;background:#dc2626;color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 24px;border-radius:12px;">
+              Confirm permanent deletion
+            </a>
+          </p>
+          <p style="margin:0 0 24px;font-size:12px;line-height:1.6;color:#a1a1aa;">
+            If you didn't request this, you can safely ignore this email — the account will not be deleted
+            unless this link is clicked.
+          </p>
+          %s
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`, htmlpkg.EscapeString(studioName), confirmLink, signatureHTML())
+
+	return s.send(toEmail, fmt.Sprintf("Confirm deletion of %s's account", studioName), html)
+}
+
+// SendAccountDeletedConfirmation emails a studio's registered contact once
+// account deletion has actually completed — the "post-deletion
+// confirmation email" step of init.md §4.5. It confirms the account is
+// gone and that the encrypted data archive taken just before deletion can
+// be recovered/downloaded via recoveryLink within 7 days, after which the
+// link expires permanently and the archive can no longer be recovered.
+func (s *Sender) SendAccountDeletedConfirmation(toEmail, studioName, recoveryLink string) error {
+	html := fmt.Sprintf(`<!doctype html>
+<html>
+<body style="margin:0;padding:0;background:#f4f4f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%%" cellpadding="0" cellspacing="0" style="padding:32px 0;">
+    <tr><td align="center">
+      <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;padding:40px;">
+        <tr><td>
+          <h1 style="margin:0 0 16px;font-size:20px;font-weight:800;color:#18181b;">Account deleted</h1>
+          <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#52525b;">
+            <strong>%s</strong>'s account on 1Hero Social has been permanently deleted, as requested.
+          </p>
+          <p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:#52525b;">
+            An encrypted backup of the account's data was made before deletion. You can recover or
+            download it using the link below within the next 7 days — after that, the link expires
+            permanently and the backup can no longer be recovered.
+          </p>
+          <p style="margin:0 0 24px;">
+            <a href="%s" style="display:inline-block;background:#7c3aed;color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 24px;border-radius:12px;">
+              Recover my data
+            </a>
+          </p>
+          <p style="margin:0 0 24px;font-size:12px;line-height:1.6;color:#a1a1aa;">
+            If you didn't request this deletion, contact support immediately using the details below.
+          </p>
+          %s
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`, htmlpkg.EscapeString(studioName), recoveryLink, signatureHTML())
+
+	return s.send(toEmail, fmt.Sprintf("%s's account has been deleted", studioName), html)
+}
+
 func (s *Sender) send(toEmail, subject, html string) error {
 	if !s.cfg.Enabled() {
 		return fmt.Errorf("smtp not configured")

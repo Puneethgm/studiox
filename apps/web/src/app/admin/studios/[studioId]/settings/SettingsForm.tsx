@@ -1642,6 +1642,8 @@ function DeleteAccountForm({ studioId, studioName }: { studioId: string; studioN
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [confirmChecked, setConfirmChecked] = useState(false);
+  const [requested, setRequested] = useState(false);
 
   const handleDelete = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1652,33 +1654,34 @@ function DeleteAccountForm({ studioId, studioName }: { studioId: string; studioN
       return;
     }
 
+    setConfirmChecked(false);
     setShowConfirmDialog(true);
   };
 
   const handleConfirmDelete = async () => {
-    setShowConfirmDialog(false);
+    if (!confirmChecked) return;
     setDeleting(true);
+    setError('');
     try {
-      const res = await fetch(`/api/v1/me/studios/${studioId}/delete-account`, {
-        method: 'DELETE',
+      const res = await fetch(`/api/v1/me/studios/${studioId}/delete-account/request`, {
+        method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
         },
-        body: JSON.stringify({ email: deleteEmail }),
+        body: JSON.stringify({ email: deleteEmail, confirm: true }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
       if (!res.ok) {
-        setError(data.error || 'Failed to delete account');
+        setError(data?.error || 'Failed to request account deletion');
         return;
       }
 
-      alert('✅ Account deleted successfully. You will be logged out.');
-      localStorage.removeItem('token');
-      window.location.href = '/';
+      setShowConfirmDialog(false);
+      setRequested(true);
     } catch (err: any) {
-      setError(err.message || 'Error deleting account');
+      setError(err.message || 'Error requesting account deletion');
     } finally {
       setDeleting(false);
     }
@@ -1693,7 +1696,16 @@ function DeleteAccountForm({ studioId, studioName }: { studioId: string; studioN
             <p className="text-[10px] text-red-600/70 dark:text-red-400/70 mt-1">Permanently delete your account and all data</p>
           </div>
 
-          {!showDeleteForm ? (
+          {requested ? (
+            <div className="p-6">
+              <p className="text-sm font-bold text-zinc-800 dark:text-zinc-100 mb-1">Check your email</p>
+              <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                We sent a confirmation link to <strong>{deleteEmail}</strong>. Nothing has been deleted yet — open that
+                email and click the link to permanently delete {studioName}'s account. The link expires after a while,
+                so confirm soon if you want to go ahead.
+              </p>
+            </div>
+          ) : !showDeleteForm ? (
             <div className="p-6">
               <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
                 Once you delete your account, there is no going back. Please be certain.
@@ -1722,7 +1734,9 @@ function DeleteAccountForm({ studioId, studioName }: { studioId: string; studioN
               </div>
 
               <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-xs text-red-700 dark:text-red-400">
-                ⚠️ <strong>Warning:</strong> This will permanently delete your account, all conversations, and all data associated with {studioName}. This action cannot be undone.
+                ⚠️ <strong>Warning:</strong> This will send a confirmation email. Clicking the link in that email
+                permanently deletes your account, all conversations, and all data associated with {studioName}. This
+                action cannot be undone.
               </div>
 
               <div className="flex items-center gap-2 border-t border-red-500/20 pt-4">
@@ -1740,7 +1754,6 @@ function DeleteAccountForm({ studioId, studioName }: { studioId: string; studioN
                 </Button>
                 <Button
                   type="submit"
-                  loading={deleting}
                   className="flex-1 bg-red-600 hover:bg-red-700 text-white text-xs font-black"
                 >
                   Permanently Delete
@@ -1763,7 +1776,7 @@ function DeleteAccountForm({ studioId, studioName }: { studioId: string; studioN
               <div className="bg-red-100/50 dark:bg-red-950/50 border border-red-300 dark:border-red-800 rounded-lg p-4">
                 <p className="text-sm font-semibold text-red-900 dark:text-red-100 mb-2">⚠️ This action cannot be undone.</p>
                 <p className="text-sm text-red-800 dark:text-red-200">
-                  You are about to permanently delete:
+                  We will email you a confirmation link. Clicking it will permanently delete:
                 </p>
                 <ul className="mt-3 space-y-1 text-sm text-red-800 dark:text-red-200 ml-4">
                   <li>✗ Your account and login credentials</li>
@@ -1777,6 +1790,22 @@ function DeleteAccountForm({ studioId, studioName }: { studioId: string; studioN
               <p className="text-sm text-slate-600 dark:text-slate-400">
                 This will delete all data associated with <strong>{studioName}</strong>. Are you absolutely sure?
               </p>
+
+              {error && <FieldError message={error} />}
+
+              <label htmlFor="confirmSureCheckbox" className="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  id="confirmSureCheckbox"
+                  checked={confirmChecked}
+                  onChange={(e) => setConfirmChecked(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-red-300 text-red-600 focus:ring-red-500 cursor-pointer"
+                  suppressHydrationWarning
+                />
+                <span className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+                  I am sure I want to permanently delete this account
+                </span>
+              </label>
             </div>
 
             <div className="border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 px-6 py-4 flex items-center gap-3">
@@ -1784,6 +1813,7 @@ function DeleteAccountForm({ studioId, studioName }: { studioId: string; studioN
                 type="button"
                 variant="ghost"
                 onClick={() => setShowConfirmDialog(false)}
+                disabled={deleting}
                 className="flex-1"
               >
                 Cancel
@@ -1791,10 +1821,11 @@ function DeleteAccountForm({ studioId, studioName }: { studioId: string; studioN
               <Button
                 type="button"
                 onClick={handleConfirmDelete}
-                disabled={deleting}
+                loading={deleting}
+                disabled={!confirmChecked}
                 className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold"
               >
-                {deleting ? 'Deleting...' : 'Yes, Delete Everything'}
+                Yes, Delete Everything
               </Button>
             </div>
           </div>

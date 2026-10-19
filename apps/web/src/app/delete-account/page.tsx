@@ -54,16 +54,16 @@ export default function DeleteAccountPage() {
                 <li className="flex gap-4">
                   <span className="flex-shrink-0 w-8 h-8 bg-violet-600 text-white rounded-full flex items-center justify-center font-bold">5</span>
                   <div>
-                    <h3 className="font-bold mb-1">Enter your email address</h3>
-                    <p className="text-sm">Confirm your email address to verify your identity</p>
+                    <h3 className="font-bold mb-1">Enter your email and check the confirmation box</h3>
+                    <p className="text-sm">Confirm your account email and tick "I am sure I want to permanently delete this account"</p>
                   </div>
                 </li>
 
                 <li className="flex gap-4">
                   <span className="flex-shrink-0 w-8 h-8 bg-violet-600 text-white rounded-full flex items-center justify-center font-bold">6</span>
                   <div>
-                    <h3 className="font-bold mb-1">Confirm deletion</h3>
-                    <p className="text-sm">A final warning will appear. Click Permanently Delete to confirm</p>
+                    <h3 className="font-bold mb-1">Check your email</h3>
+                    <p className="text-sm">We send a confirmation link to your account email. Nothing is deleted yet — open that email and click the link to proceed</p>
                   </div>
                 </li>
 
@@ -71,7 +71,7 @@ export default function DeleteAccountPage() {
                   <span className="flex-shrink-0 w-8 h-8 bg-violet-600 text-white rounded-full flex items-center justify-center font-bold">7</span>
                   <div>
                     <h3 className="font-bold mb-1">Account deleted</h3>
-                    <p className="text-sm">You will be logged out immediately. Complete deletion takes up to 24 hours</p>
+                    <p className="text-sm">Clicking the emailed link permanently deletes your account. A separate email with a 7-day recovery link is sent right after, in case you change your mind</p>
                   </div>
                 </li>
               </ol>
@@ -128,7 +128,7 @@ export default function DeleteAccountPage() {
                 </li>
                 <li className="flex items-start gap-3">
                   <span className="text-slate-400 font-bold mt-1">•</span>
-                  <span><strong>Deleted data backups:</strong> 24 hours (safe recovery window)</span>
+                  <span><strong>Deleted data backups:</strong> 7 days (self-service recovery window)</span>
                 </li>
               </ul>
             </section>
@@ -139,16 +139,20 @@ export default function DeleteAccountPage() {
 
               <div className="space-y-3">
                 <div className="flex gap-4">
-                  <div className="flex-shrink-0 w-24 font-bold text-violet-600">Immediately</div>
-                  <div>Your session ends and you are logged out. All API tokens are revoked.</div>
+                  <div className="flex-shrink-0 w-32 font-bold text-violet-600">On request</div>
+                  <div>We email a confirmation link to your account email. Nothing is deleted yet.</div>
                 </div>
                 <div className="flex gap-4">
-                  <div className="flex-shrink-0 w-24 font-bold text-violet-600">5 minutes</div>
-                  <div>Account is marked for deletion in our system</div>
+                  <div className="flex-shrink-0 w-32 font-bold text-violet-600">On confirmation</div>
+                  <div>Clicking the emailed link runs the deletion immediately: all data, messages, files, and credentials are permanently removed.</div>
                 </div>
                 <div className="flex gap-4">
-                  <div className="flex-shrink-0 w-24 font-bold text-violet-600">24 hours</div>
-                  <div>Complete deletion: All data, messages, files, and credentials are permanently removed</div>
+                  <div className="flex-shrink-0 w-32 font-bold text-violet-600">Right after</div>
+                  <div>A second email is sent with a 7-day recovery link and instructions for downloading an archive of your data.</div>
+                </div>
+                <div className="flex gap-4">
+                  <div className="flex-shrink-0 w-32 font-bold text-violet-600">After 7 days</div>
+                  <div>The recovery archive expires and is permanently removed. Deletion is then final.</div>
                 </div>
               </div>
             </section>
@@ -156,24 +160,23 @@ export default function DeleteAccountPage() {
             <section>
               <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">After Deletion</h2>
               <ul className="space-y-3">
-                <li>You will receive a confirmation email at your registered email address</li>
+                <li>You will receive a confirmation email once deletion is complete, with a separate 7-day recovery link</li>
                 <li>You can no longer log in with your credentials</li>
                 <li>Your studio name and profile will no longer be visible</li>
                 <li>All third-party integrations (Stripe, Meta, etc.) will be disconnected</li>
-                <li>You cannot undo or recover your account after 30 days</li>
+                <li>You cannot undo or recover your account after the 7-day recovery window closes</li>
               </ul>
             </section>
 
             <section>
               <h2 className="text-2xl font-bold mb-4 text-slate-900 dark:text-white">Recovery Window</h2>
-              <p className="mb-4">You have 30 days to request account recovery after deletion:</p>
+              <p className="mb-4">You have 7 days from the moment of deletion to recover your data yourself:</p>
               <ol className="list-decimal pl-6 space-y-1">
-                <li>Contact support immediately: <a href="mailto:1herosocialai@gmail.com" className="text-blue-600 dark:text-blue-400 underline">1herosocialai@gmail.com</a></li>
-                <li>Subject: Account Recovery Request</li>
-                <li>Include your email and reason for recovery</li>
-                <li>We will restore your account within 5 business days</li>
+                <li>Open the recovery link from the email sent right after deletion</li>
+                <li>Re-enter your studio&apos;s registered account email to confirm it&apos;s you</li>
+                <li>Download the account archive (a ZIP file) directly from the page</li>
               </ol>
-              <p className="mt-4 text-sm text-slate-600 dark:text-slate-400">After 30 days, permanent deletion is final and recovery is not possible.</p>
+              <p className="mt-4 text-sm text-slate-600 dark:text-slate-400">After 7 days, the recovery link expires and the archive is permanently removed.</p>
             </section>
 
             <section>

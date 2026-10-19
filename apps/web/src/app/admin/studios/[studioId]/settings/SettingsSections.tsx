@@ -408,28 +408,37 @@ export function SecuritySection({ studio }: { studio: Studio }) {
         </form>
       </div>
 
-      <DangerZone studioId={studio.id} />
+      <DangerZone studioId={studio.id} contactEmail={studio.contactEmail} />
     </div>
   );
 }
 
-function DangerZone({ studioId }: { studioId: string }) {
+function DangerZone({ studioId, contactEmail }: { studioId: string; contactEmail?: string }) {
   const [confirming, setConfirming] = useState(false);
   const [confirmText, setConfirmText] = useState('');
+  const [email, setEmail] = useState(contactEmail ?? '');
+  const [sureChecked, setSureChecked] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [requested, setRequested] = useState(false);
 
   async function onDelete() {
     setDeleting(true);
     setError(null);
     try {
-      const res = await fetch(`/api/v1/me/studios/${studioId}/delete-account`, { method: 'POST' });
+      const res = await fetch(`/api/v1/me/studios/${studioId}/delete-account/request`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, confirm: true }),
+      });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
-        setError(body?.error ?? 'Failed to delete account');
+        setError(body?.error ?? 'Failed to request account deletion');
         return;
       }
-      window.location.href = '/login';
+      setRequested(true);
+      setConfirming(false);
     } finally {
       setDeleting(false);
     }
@@ -440,40 +449,76 @@ function DangerZone({ studioId }: { studioId: string }) {
       <h4 className="mb-2 text-xs font-bold uppercase tracking-wide text-red-500">Danger Zone</h4>
       <div className="rounded-xl border border-red-200 bg-red-50 p-5 dark:border-red-900/40 dark:bg-red-950/10">
         <p className="text-sm font-bold text-red-600 dark:text-red-400">Delete Account</p>
-        <p className="mt-1 text-xs text-red-600/70 dark:text-red-400/70">
-          Permanently delete your account and all data. There is no going back.
-        </p>
-        {!confirming ? (
-          <Button
-            type="button"
-            variant="outline"
-            className="mt-3 border-red-300 text-red-600 hover:bg-red-100 dark:border-red-900/50 dark:text-red-400 dark:hover:bg-red-950/30"
-            onClick={() => setConfirming(true)}
-          >
-            Delete Account
-          </Button>
+        {requested ? (
+          <p className="mt-2 text-xs font-medium text-red-600/80 dark:text-red-400/80">
+            Check your email at <strong>{email}</strong> for a confirmation link. Nothing has been deleted yet — the
+            account is only deleted once you click that link.
+          </p>
         ) : (
-          <div className="mt-3 space-y-2">
-            <Label htmlFor="confirmDelete" className="text-red-600 dark:text-red-400">
-              Type DELETE to confirm
-            </Label>
-            <Input id="confirmDelete" value={confirmText} onChange={(e) => setConfirmText(e.target.value)} className="max-w-xs" />
-            {error && <p className="text-xs font-medium text-red-500">{error}</p>}
-            <div className="flex gap-2">
+          <>
+            <p className="mt-1 text-xs text-red-600/70 dark:text-red-400/70">
+              Permanently delete your account and all data. There is no going back.
+            </p>
+            {!confirming ? (
               <Button
                 type="button"
-                loading={deleting}
-                disabled={confirmText !== 'DELETE'}
-                className="bg-red-600 hover:bg-red-700 text-white"
-                onClick={onDelete}
+                variant="outline"
+                className="mt-3 border-red-300 text-red-600 hover:bg-red-100 dark:border-red-900/50 dark:text-red-400 dark:hover:bg-red-950/30"
+                onClick={() => setConfirming(true)}
               >
-                Confirm Delete
+                Delete Account
               </Button>
-              <Button type="button" variant="outline" onClick={() => setConfirming(false)} disabled={deleting}>
-                Cancel
-              </Button>
-            </div>
-          </div>
+            ) : (
+              <div className="mt-3 space-y-3">
+                <div>
+                  <Label htmlFor="confirmDeleteEmail" className="text-red-600 dark:text-red-400">
+                    Account email
+                  </Label>
+                  <Input
+                    id="confirmDeleteEmail"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="max-w-xs"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="confirmDelete" className="text-red-600 dark:text-red-400">
+                    Type DELETE to confirm
+                  </Label>
+                  <Input id="confirmDelete" value={confirmText} onChange={(e) => setConfirmText(e.target.value)} className="max-w-xs" />
+                </div>
+                <label htmlFor="sureCheckbox" className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    id="sureCheckbox"
+                    checked={sureChecked}
+                    onChange={(e) => setSureChecked(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded border-red-300 text-red-600 focus:ring-red-500 cursor-pointer"
+                    suppressHydrationWarning
+                  />
+                  <span className="text-xs font-semibold text-red-600 dark:text-red-400">
+                    I am sure I want to permanently delete this account
+                  </span>
+                </label>
+                {error && <p className="text-xs font-medium text-red-500">{error}</p>}
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    loading={deleting}
+                    disabled={confirmText !== 'DELETE' || !sureChecked || !email}
+                    className="bg-red-600 hover:bg-red-700 text-white"
+                    onClick={onDelete}
+                  >
+                    Confirm Delete
+                  </Button>
+                  <Button type="button" variant="outline" onClick={() => setConfirming(false)} disabled={deleting}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

@@ -193,8 +193,11 @@ func (h *Handler) SelfRoutes(r chi.Router) {
 	r.Get("/studios/{id}/trial-page-layout", h.getTrialPageLayout)
 	r.Put("/studios/{id}/trial-page-layout", h.putTrialPageLayout)
 
-	// Account deletion
-	r.Delete("/studios/{id}/delete-account", h.deleteAccount)
+	// Account deletion — request step only. The confirm and recover steps
+	// are reached via emailed links where the owner may not have an active
+	// browser session, so they're PUBLIC routes registered in PublicRoutes
+	// below (mirroring how identity's /auth/reset-password is public too).
+	r.Post("/studios/{id}/delete-account/request", h.requestAccountDeletion)
 }
 
 // PublicRoutes expose the studio's brand info for the public form to render.
@@ -208,6 +211,12 @@ func (h *Handler) PublicRoutes(r chi.Router) {
 	r.Get("/public/studios/{slug}/trial-page-layout", h.publicGetTrialPageLayout)
 	r.Post("/public/leads/{leadId}/trial-payment-intent", h.publicCreateTrialPaymentIntent)
 	r.Post("/public/leads/{leadId}/plan-payment-intent", h.publicCreatePlanPaymentIntent)
+
+	// Account deletion confirm + recovery — reached via emailed links, no
+	// session cookie available. Rate-limited the same way identity's
+	// password-reset endpoints are (httpx.AuthRateLimiter).
+	r.With(httpx.AuthRateLimiter).Post("/account/delete/confirm", h.confirmAccountDeletion)
+	r.With(httpx.AuthRateLimiter).Post("/recover", h.recoverArchive)
 }
 
 // isGlobalScope reports whether the request targets the "global" pseudo-studio,
@@ -3323,30 +3332,29 @@ func (h *Handler) deletePlan(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
-// deleteAccount godoc
+// requestAccountDeletion godoc
 //
-//	@Summary		Delete a studio account
-//	@Description	Permanently deletes the studio and all associated data (cascading via foreign key constraints), after confirming the caller-supplied email matches the studio's contact email. Caller must belong to the studio being deleted.
+//	@Summary		Request permanent deletion of a studio account
+//	@Description	Step 1 of the compliant account-deletion flow (init.md §4.5). Validates the caller is the studio's admin and that the supplied email matches the studio's contact email, requires an explicit confirm=true acknowledgement ("I am sure I want to permanently delete this account"), then creates a pending deletion request and emails a single-use, 24-hour confirmation link to the studio's contact email. Nothing is deleted yet — see POST /api/v1/account/delete/confirm.
 //	@Tags			Studios
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
 //	@Param			id		path		string					true	"Studio ID"
-//	@Param			body	body		map[string]interface{}	true	"Confirmation email (email)"
+//	@Param			body	body		map[string]interface{}	true	"Confirmation (email, confirm)"
 //	@Success		200		{object}	map[string]interface{}
-//	@Failure		400		{object}	httpx.ErrorResponse	"invalid studio id, invalid JSON, or email mismatch"
-//	@Failure		403		{object}	httpx.ErrorResponse	"caller does not belong to this studio"
+//	@Failure		400		{object}	httpx.ErrorResponse	"invalid studio id, invalid JSON, confirm not true, or email mismatch"
+//	@Failure		403		{object}	httpx.ErrorResponse	"caller does not belong to this studio or is not a studio admin"
 //	@Failure		404		{object}	httpx.ErrorResponse	"studio not found"
-//	@Failure		500		{object}	httpx.ErrorResponse	"delete failed"
-//	@Router			/api/v1/me/studios/{id}/delete-account [delete]
-func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request) {
+//	@Failure		500		{object}	httpx.ErrorResponse
+//	@Router			/api/v1/me/studios/{id}/delete-account/request [post]
+func (h *Handler) requestAccountDeletion(w http.ResponseWriter, r *http.Request) {
 	studioID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid studio id")
 		return
 	}
 
-	// Get authenticated user claims
 	claims := identity.MustClaims(r.Context())
 	if claims.StudioID == nil || claims.StudioID.String() != studioID.String() {
 		httpx.WriteError(w, http.StatusForbidden, "forbidden", "you do not have permission to delete this studio")
@@ -3360,36 +3368,109 @@ func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Email string `json:"email"`
+		Email   string `json:"email"`
+		Confirm bool   `json:"confirm"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "invalid_json", "failed to decode request")
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	// The "I am sure I want to permanently delete this account" checkbox,
+	// enforced server-side — deletion cannot proceed without it.
+	if !req.Confirm {
+		httpx.WriteError(w, http.StatusBadRequest, "confirm_required", "you must confirm you are sure you want to permanently delete this account")
 		return
 	}
 
-	// Verify email matches
-	studio, err := h.svc.GetByID(r.Context(), studioID)
-	if err != nil || studio == nil {
-		httpx.WriteError(w, http.StatusNotFound, "not_found", "studio not found")
+	if err := h.svc.RequestAccountDeletion(r.Context(), studioID, claims.UserID, req.Email); err != nil {
+		switch {
+		case errors.Is(err, ErrNotFound):
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "studio not found")
+		case errors.Is(err, ErrEmailMismatch):
+			httpx.WriteError(w, http.StatusBadRequest, "email_mismatch", "email does not match studio contact email")
+		default:
+			slog.Error("requestAccountDeletion failed", "err", err, "studio_id", studioID)
+			httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		}
 		return
 	}
 
-	if studio.ContactEmail != req.Email {
-		httpx.WriteError(w, http.StatusBadRequest, "email_mismatch", "email does not match studio contact email")
+	httpx.JSON(w, http.StatusOK, map[string]string{"status": "pending_confirmation"})
+}
+
+// confirmAccountDeletion godoc
+//
+//	@Summary		Confirm and execute permanent account deletion
+//	@Description	Step 2 ("final verification") of the account-deletion flow (init.md §4.5). Public endpoint reached via the single-use link emailed by the request step — no session cookie required, since the owner may click it without an active browser session. Validates the token, then synchronously builds an encrypted archive of the studio's data, copies payment records into 7-year retention, permanently deletes the studio, and emails a 7-day recovery link.
+//	@Tags			Studios (Public)
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		map[string]interface{}	true	"Confirmation token"
+//	@Success		200		{object}	map[string]interface{}
+//	@Failure		400		{object}	httpx.ErrorResponse	"invalid, already-used, or missing token"
+//	@Failure		410		{object}	httpx.ErrorResponse	"token expired"
+//	@Failure		500		{object}	httpx.ErrorResponse
+//	@Router			/api/v1/account/delete/confirm [post]
+func (h *Handler) confirmAccountDeletion(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Token string `json:"token"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if strings.TrimSpace(req.Token) == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "token is required")
 		return
 	}
 
-	// Delete the studio and all associated data (cascading delete via FK constraints)
-	_, err = h.svc.repo.Pool().Exec(r.Context(), `
-		DELETE FROM studios WHERE id = $1
-	`, studioID)
-
-	if err != nil {
-		// Log the actual error for debugging
-		fmt.Fprintf(os.Stderr, "studio deletion error: %v\n", err)
-		httpx.WriteError(w, http.StatusInternalServerError, "delete_failed", "failed to delete studio")
+	if err := h.svc.ConfirmAccountDeletion(r.Context(), req.Token); err != nil {
+		switch {
+		case errors.Is(err, ErrDeletionRequestNotFound):
+			httpx.WriteError(w, http.StatusBadRequest, "invalid_token", "this confirmation link is invalid")
+		case errors.Is(err, ErrDeletionRequestExpired):
+			httpx.WriteError(w, http.StatusGone, "token_expired", "this confirmation link has expired")
+		case errors.Is(err, ErrDeletionRequestInvalidState):
+			httpx.WriteError(w, http.StatusBadRequest, "invalid_token", "this confirmation link has already been used")
+		default:
+			slog.Error("confirmAccountDeletion failed", "err", err)
+			httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to process deletion")
+		}
 		return
 	}
 
 	httpx.JSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// recoverArchive godoc
+//
+//	@Summary		Recover/download a deleted account's encrypted data archive
+//	@Description	Public endpoint reached via the 7-day recovery link emailed after account deletion completes (init.md §4.5). Re-verifies the requester with the opaque recovery token plus the studio's registered contact email (not a password, which may be stale for a deleted account). On success, streams the decrypted archive as a zip file. Every attempt — successful or not — is recorded in the audit log; failures return a generic error without revealing which check failed.
+//	@Tags			Studios (Public)
+//	@Accept			json
+//	@Produce		application/zip
+//	@Param			body	body	map[string]interface{}	true	"Recovery token and registered email"
+//	@Success		200
+//	@Failure		400	{object}	httpx.ErrorResponse	"invalid token/email, or link expired"
+//	@Router			/api/v1/recover [post]
+func (h *Handler) recoverArchive(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Token string `json:"token"`
+		Email string `json:"email"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	zipBytes, err := h.svc.RecoverArchive(r.Context(), req.Token, req.Email)
+	if err != nil {
+		// Deliberately generic — never reveal which check (token/expiry/
+		// email) failed, same "don't reveal account existence" posture as
+		// password reset elsewhere in this codebase.
+		httpx.WriteError(w, http.StatusBadRequest, "recovery_failed", "unable to recover this archive — check your link and email and try again")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="account-archive.zip"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(zipBytes)
 }
