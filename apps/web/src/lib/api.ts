@@ -16,7 +16,7 @@ import { notifySessionExpiring } from './sessionGuard';
 // the cookie to be sent automatically but can never read its value (browser
 // same-origin policy) to also forge a matching header, which the API
 // compares against the session's own sealed CSRFToken claim.
-function readCSRFCookie(): string | undefined {
+export function readCSRFCookie(): string | undefined {
   if (typeof document === 'undefined') return undefined;
   const match = document.cookie.match(/(?:^|; )px_csrf=([^;]*)/);
   const raw = match?.[1];

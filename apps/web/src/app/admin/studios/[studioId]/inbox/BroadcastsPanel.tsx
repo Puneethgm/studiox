@@ -7,7 +7,7 @@ import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
 import { Badge } from '@/components/ui/Badge';
-import { ApiError, api } from '@/lib/api';
+import { ApiError, api, readCSRFCookie } from '@/lib/api';
 import { formatDateTime } from '@/lib/datetime';
 import { jobFailureReason } from '@/lib/jobFailureReason';
 
@@ -155,10 +155,12 @@ export function BroadcastsPanel({ studioId }: { studioId: string }) {
     try {
       const form = new FormData();
       form.append('file', file);
+      const csrfToken = readCSRFCookie();
       const res = await fetch(`/api/v1/studios/${studioId}/messaging/broadcasts/import`, {
         method: 'POST',
         body: form,
         credentials: 'include',
+        headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : undefined,
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null) as { error?: string } | null;
@@ -247,10 +249,12 @@ export function BroadcastsPanel({ studioId }: { studioId: string }) {
     try {
       const form = new FormData();
       form.append('file', file);
+      const csrfToken = readCSRFCookie();
       const res = await fetch(`/api/v1/studios/${studioId}/messaging/upload`, {
         method: 'POST',
         body: form,
         credentials: 'include',
+        headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : undefined,
       });
       if (!res.ok) throw new Error('upload failed');
       const data = (await res.json()) as { url: string; filename: string };
