@@ -82,3 +82,99 @@ export async function updateLeadStatus(
 
   return { ok: true };
 }
+
+// Minimal partial update for the Contact details card's click-to-edit
+// Email/Phone fields — same true-partial-update endpoint as updateLeadTags,
+// so sending just one of these never touches the other unsaved form state.
+export async function updateLeadContact(
+  studioId: string,
+  leadId: string,
+  fields: { email?: string; phone?: string },
+): Promise<UpdateLeadResult> {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
+  const res = await fetch(
+    `${API_BASE}/api/v1/studios/${studioId}/leads/${leadId}`,
+    {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+        ...(await csrfHeader()),
+      },
+      body: JSON.stringify(fields),
+      cache: 'no-store',
+    },
+  );
+
+  type ErrBody = { error?: string; details?: Record<string, string> };
+  const body = (await res.json().catch(() => null)) as ErrBody | null;
+
+  if (!res.ok) {
+    return {
+      ok: false,
+      error: body?.error ?? `HTTP ${res.status}`,
+      details: body?.details,
+    };
+  }
+
+  revalidatePath(`/admin/studios/${studioId}`);
+  revalidatePath(`/admin/studios/${studioId}/pipeline`);
+  revalidatePath(`/admin/studios/${studioId}/leads`);
+  revalidatePath(`/admin/studios/${studioId}/leads/${leadId}`);
+
+  return { ok: true };
+}
+
+// Tags auto-save on every add/remove (no "Save changes" click needed) — a
+// separate, minimal PATCH so adding a tag can't accidentally carry along
+// whatever's currently typed into the rest of the (unsaved) form. The API
+// is a true partial update (see patchLeadReq in apps/api/internal/leads/
+// http.go), so sending only `tags` leaves every other field untouched.
+export async function updateLeadTags(
+  studioId: string,
+  leadId: string,
+  tags: string[],
+): Promise<UpdateLeadResult> {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
+  const res = await fetch(
+    `${API_BASE}/api/v1/studios/${studioId}/leads/${leadId}`,
+    {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+        ...(await csrfHeader()),
+      },
+      body: JSON.stringify({ tags }),
+      cache: 'no-store',
+    },
+  );
+
+  type ErrBody = { error?: string; details?: Record<string, string> };
+  const body = (await res.json().catch(() => null)) as ErrBody | null;
+
+  if (!res.ok) {
+    return {
+      ok: false,
+      error: body?.error ?? `HTTP ${res.status}`,
+      details: body?.details,
+    };
+  }
+
+  revalidatePath(`/admin/studios/${studioId}`);
+  revalidatePath(`/admin/studios/${studioId}/pipeline`);
+  revalidatePath(`/admin/studios/${studioId}/leads`);
+  revalidatePath(`/admin/studios/${studioId}/leads/${leadId}`);
+
+  return { ok: true };
+}

@@ -78,8 +78,8 @@ export function ContactDetailsPanel({
   const [expandedSection, setExpandedSection] = useState<'contact' | 'social' | 'hapana' | null>('contact');
   const [searchQuery, setSearchQuery] = useState('');
   
-  // Custom tag management
-  const [customTags, setCustomTags] = useState<string[]>([]);
+  // Tag management — persisted on the lead itself (lead.tags), same field
+  // the Leads page's editor saves to, rather than browser-local storage.
   const [isAddingTag, setIsAddingTag] = useState(false);
   const [newTagInput, setNewTagInput] = useState('');
 
@@ -123,50 +123,20 @@ export function ContactDetailsPanel({
       .catch((err) => console.error('Failed to load studio users:', err));
   }, [studioId]);
 
-  // Load custom tags from local storage when lead changes
-  useEffect(() => {
-    if (leadId) {
-      try {
-        const stored = localStorage.getItem(`projectx_lead_tags_${leadId}`);
-        if (stored) {
-          setCustomTags(JSON.parse(stored));
-        } else {
-          setCustomTags([]);
-        }
-      } catch (e) {
-        console.error('Failed to load custom tags', e);
-      }
-    } else {
-      setCustomTags([]);
-    }
-  }, [leadId]);
-
-  // Save custom tags
-  const saveCustomTags = (tags: string[]) => {
-    setCustomTags(tags);
-    if (leadId) {
-      try {
-        localStorage.setItem(`projectx_lead_tags_${leadId}`, JSON.stringify(tags));
-      } catch (e) {
-        console.error('Failed to save custom tags', e);
-      }
-    }
-  };
+  const leadTags = lead?.tags ?? [];
 
   const handleAddTag = (e: React.FormEvent) => {
     e.preventDefault();
     const tag = newTagInput.trim();
-    if (tag && !customTags.includes(tag)) {
-      const nextTags = [...customTags, tag];
-      saveCustomTags(nextTags);
+    if (tag && !leadTags.includes(tag)) {
+      updateLeadField({ tags: [...leadTags, tag] });
     }
     setNewTagInput('');
     setIsAddingTag(false);
   };
 
   const handleRemoveTag = (tagToRemove: string) => {
-    const nextTags = customTags.filter(t => t !== tagToRemove);
-    saveCustomTags(nextTags);
+    updateLeadField({ tags: leadTags.filter((t) => t !== tagToRemove) });
   };
 
   async function updateLeadField(fields: Partial<Lead>) {
@@ -263,7 +233,7 @@ export function ContactDetailsPanel({
       ].filter(Boolean) as { label: string; style: string }[]
     : [];
 
-  const totalTagsCount = systemTags.length + customTags.length;
+  const totalTagsCount = systemTags.length + leadTags.length;
 
   return (
     <aside className="fixed inset-0 z-40 flex w-full flex-col bg-white dark:bg-neutral-950 lg:static lg:z-auto lg:w-80 lg:shrink-0 lg:border-l lg:border-zinc-200 lg:bg-white/5 lg:dark:border-white/5 lg:dark:bg-neutral-950/10">
@@ -575,8 +545,8 @@ export function ContactDetailsPanel({
                     {t.label}
                   </span>
                 ))}
-                {/* Custom User-Added Tags */}
-                {customTags.map((tag) => (
+                {/* Custom User-Added Tags (persisted on lead.tags) */}
+                {leadTags.map((tag) => (
                   <span
                     key={`custom-${tag}`}
                     className="flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-bold tracking-wide uppercase bg-sky-500/15 text-sky-600 dark:bg-sky-500/25 dark:text-sky-400 shadow-sm border border-black/5 dark:border-white/5"
@@ -666,10 +636,26 @@ export function ContactDetailsPanel({
                       </button>
                       {expandedSection === 'contact' && (
                         <div className="p-3 bg-white/5 dark:bg-neutral-900/10 space-y-1">
-                          <RowField label="First name" value={lead.firstName || (lead.name ? lead.name.split(' ')[0] : '')} />
-                          <RowField label="Last name" value={lead.lastName || (lead.name && lead.name.split(' ').length > 1 ? lead.name.split(' ').slice(1).join(' ') : '')} />
-                          <RowField label="Email" value={isPlaceholderEmail(lead.email) ? '' : lead.email} />
-                          <RowField label="Phone" value={lead.phone} />
+                          <EditableRowField
+                            label="First name"
+                            value={lead.firstName || (lead.name ? lead.name.split(' ')[0] : '')}
+                            onSave={(v) => updateLeadField({ firstName: v })}
+                          />
+                          <EditableRowField
+                            label="Last name"
+                            value={lead.lastName || (lead.name && lead.name.split(' ').length > 1 ? lead.name.split(' ').slice(1).join(' ') : '')}
+                            onSave={(v) => updateLeadField({ lastName: v })}
+                          />
+                          <EditableRowField
+                            label="Email"
+                            value={isPlaceholderEmail(lead.email) ? '' : lead.email}
+                            onSave={(v) => updateLeadField({ email: v })}
+                          />
+                          <EditableRowField
+                            label="Phone"
+                            value={lead.phone}
+                            onSave={(v) => updateLeadField({ phone: v })}
+                          />
                           <RowField label="Contact source" value={lead.source} />
                           <RowField label="Referred by" value={lead.referrer} placeholder="--" />
                         </div>
@@ -688,10 +674,25 @@ export function ContactDetailsPanel({
                       </button>
                       {expandedSection === 'social' && (
                         <div className="p-3 bg-white/5 dark:bg-neutral-900/10 space-y-1">
-                          <RowField label="Offer Claimed" value={lead.offer} placeholder="No active offers found." />
+                          <EditableRowField
+                            label="Offer Claimed"
+                            value={lead.offer}
+                            placeholder="No active offers found."
+                            onSave={(v) => updateLeadField({ offer: v })}
+                          />
                           <RowField label="Fitness Goals" value={lead.goals} />
-                          <RowField label="Notes" value={lead.notes} />
-                          <RowField label="Further Notes" value={lead.furtherNotes} />
+                          <EditableRowField
+                            label="Notes"
+                            value={lead.notes}
+                            multiline
+                            onSave={(v) => updateLeadField({ notes: v })}
+                          />
+                          <EditableRowField
+                            label="Further Notes"
+                            value={lead.furtherNotes}
+                            multiline
+                            onSave={(v) => updateLeadField({ furtherNotes: v })}
+                          />
                         </div>
                       )}
                     </div>
@@ -708,7 +709,12 @@ export function ContactDetailsPanel({
                       </button>
                       {expandedSection === 'hapana' && (
                         <div className="p-3 bg-white/5 dark:bg-neutral-900/10 space-y-1">
-                          <RowField label="Fitness Plan" value={lead.fitnessPlan} placeholder="--" />
+                          <EditableRowField
+                            label="Fitness Plan"
+                            value={lead.fitnessPlan}
+                            placeholder="--"
+                            onSave={(v) => updateLeadField({ fitnessPlan: v })}
+                          />
                         </div>
                       )}
                     </div>
@@ -830,6 +836,99 @@ function RowField({ label, value, placeholder }: { label: string; value?: string
       <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200 block mt-0.5">
         {value || placeholder || '--'}
       </span>
+    </div>
+  );
+}
+
+// Click-to-edit row — shows the saved value until clicked, then swaps to an
+// input/textarea; Enter or blur saves via onSave, Escape discards the draft.
+function EditableRowField({
+  label,
+  value,
+  placeholder,
+  onSave,
+  multiline,
+}: {
+  label: string;
+  value?: string;
+  placeholder?: string;
+  onSave: (value: string) => void | Promise<void>;
+  multiline?: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value || '');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!editing) setDraft(value || '');
+  }, [value, editing]);
+
+  async function commit() {
+    setEditing(false);
+    if (draft === (value || '')) return;
+    setSaving(true);
+    try {
+      await onSave(draft);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const inputClass =
+    'w-full mt-0.5 rounded border border-brand-500/50 bg-white/40 px-1.5 py-0.5 text-xs font-bold text-zinc-800 dark:bg-white/10 dark:text-zinc-100 focus:outline-none';
+
+  return (
+    <div className="py-1.5 border-b border-zinc-100 dark:border-white/5 last:border-none">
+      <span className="text-[9px] font-extrabold uppercase tracking-wider text-zinc-400 block">
+        {label}
+      </span>
+      {editing ? (
+        multiline ? (
+          <textarea
+            autoFocus
+            rows={3}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setDraft(value || '');
+                setEditing(false);
+              }
+            }}
+            className={inputClass}
+          />
+        ) : (
+          <input
+            type="text"
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') e.currentTarget.blur();
+              if (e.key === 'Escape') {
+                setDraft(value || '');
+                setEditing(false);
+              }
+            }}
+            className={inputClass}
+          />
+        )
+      ) : (
+        <button
+          type="button"
+          onClick={() => setEditing(true)}
+          disabled={saving}
+          className="w-full -mx-0.5 block rounded px-0.5 py-0 text-left text-xs font-bold text-zinc-800 transition-colors hover:bg-white/10 dark:text-zinc-200"
+        >
+          {saving ? (
+            <Loader2 className="mt-0.5 h-3 w-3 animate-spin text-zinc-400" />
+          ) : (
+            <span className="mt-0.5 block whitespace-pre-wrap">{value || placeholder || '--'}</span>
+          )}
+        </button>
+      )}
     </div>
   );
 }

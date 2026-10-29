@@ -466,9 +466,17 @@ func (s *Service) SetDND(ctx context.Context, studioID, id uuid.UUID, enabled bo
 	return s.repo.GetLead(ctx, studioID, id)
 }
 
-func (s *Service) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status LeadStatus, currency string, notes string, contactMade, hotLead, trialPurchased bool, firstName, lastName, fitnessPlan, assignedTo string, trialAttended, memberSold bool, monthlyFee float64, offer, furtherNotes string, tags []string, reminderAt *time.Time, reminderNote string) error {
+func (s *Service) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status LeadStatus, currency string, notes string, contactMade, hotLead, trialPurchased bool, firstName, lastName, fitnessPlan, assignedTo string, trialAttended, memberSold bool, monthlyFee float64, offer, furtherNotes string, tags []string, reminderAt *time.Time, reminderNote string, phone, email string) error {
 	if !status.Valid() {
 		return fmt.Errorf("invalid status %q", status)
+	}
+	if phone != "" && !phoneRe.MatchString(phone) {
+		return fmt.Errorf("invalid phone number")
+	}
+	if email != "" {
+		if _, err := mail.ParseAddress(email); err != nil {
+			return fmt.Errorf("invalid email")
+		}
 	}
 	if status == StatusTrialBooked {
 		trialPurchased = true
@@ -484,7 +492,7 @@ func (s *Service) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status
 		}
 	}
 
-	if err := s.repo.UpdateLead(ctx, studioID, id, status, currency, notes, contactMade, hotLead, trialPurchased, firstName, lastName, fitnessPlan, assignedTo, trialAttended, memberSold, monthlyFee, offer, furtherNotes, tags, reminderAt, reminderNote); err != nil {
+	if err := s.repo.UpdateLead(ctx, studioID, id, status, currency, notes, contactMade, hotLead, trialPurchased, firstName, lastName, fitnessPlan, assignedTo, trialAttended, memberSold, monthlyFee, offer, furtherNotes, tags, reminderAt, reminderNote, phone, email); err != nil {
 		return err
 	}
 
@@ -511,7 +519,13 @@ func (s *Service) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status
 		leadID := id
 		leadName := fn + " " + ln
 		leadEmail := existing.Email
+		if email != "" {
+			leadEmail = email
+		}
 		leadPhone := existing.Phone
+		if phone != "" {
+			leadPhone = phone
+		}
 		leadGender := existing.Gender
 		leadBirthDate := ""
 		if existing.DateOfBirth != nil {

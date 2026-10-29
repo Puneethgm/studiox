@@ -7,6 +7,7 @@ import { serverFetch } from '@/lib/auth';
 import { formatDateTime } from '@/lib/datetime';
 import type { Lead, MemberSubscription } from '@/lib/types';
 import { LeadEditor } from './editor';
+import { EditableContactField } from './EditableContactField';
 
 const STATUS_LABEL: Record<string, string> = {
   active: 'Active',
@@ -98,8 +99,8 @@ export default async function LeadDetailPage({
         <div className="space-y-6 md:col-span-2">
           <Card title="Contact details">
             <dl className="grid grid-cols-2 gap-x-6 gap-y-5 text-sm">
-              <Field label="Email" value={lead.email} />
-              <Field label="Phone" value={lead.phone} />
+              <EditableContactField studioId={studioId} leadId={id} label="Email" field="email" value={lead.email} />
+              <EditableContactField studioId={studioId} leadId={id} label="Phone" field="phone" value={lead.phone} />
               <Field label="Fitness plan" value={lead.fitnessPlan} />
               <Field label="Source" value={lead.source} />
               {lead.glofoxMemberId && <Field label="Glofox Member ID" value={lead.glofoxMemberId} />}
