@@ -833,6 +833,8 @@ type patchLeadReq struct {
 	// entirely, which still means "leave unchanged".
 	ReminderAt   *string `json:"reminderAt"`
 	ReminderNote *string `json:"reminderNote"`
+	Phone        *string `json:"phone"`
+	Email        *string `json:"email"`
 }
 
 type setLeadDNDReq struct {
@@ -885,7 +887,7 @@ func (h *Handler) setLeadDND(w http.ResponseWriter, r *http.Request) {
 // patchLead godoc
 //
 //	@Summary		Update a lead
-//	@Description	Partially updates a lead (status, notes, contact/hot-lead/trial flags, fitness plan, name, assignment, trial attendance, member sold, monthly fee, currency, offer, further notes). Unset fields keep their current value; returns the lead after applying the requested changes. Mounted at both the super-admin prefix and the studio-scoped prefix; see resolveStudioID note on createCampaign above regarding studioId resolution at the super-admin prefix.
+//	@Description	Partially updates a lead (status, notes, contact/hot-lead/trial flags, fitness plan, name, assignment, trial attendance, member sold, monthly fee, currency, offer, further notes, phone, email). Unset fields keep their current value; returns the lead after applying the requested changes. Mounted at both the super-admin prefix and the studio-scoped prefix; see resolveStudioID note on createCampaign above regarding studioId resolution at the super-admin prefix.
 //	@Tags			Leads
 //	@Accept			json
 //	@Produce		json
@@ -940,6 +942,8 @@ func (h *Handler) patchLead(w http.ResponseWriter, r *http.Request) {
 	tags := current.Tags
 	reminderAt := current.ReminderAt
 	reminderNote := current.ReminderNote
+	phone := current.Phone
+	email := current.Email
 
 	if req.Status != nil {
 		status = *req.Status
@@ -1004,8 +1008,14 @@ func (h *Handler) patchLead(w http.ResponseWriter, r *http.Request) {
 	if req.ReminderNote != nil {
 		reminderNote = *req.ReminderNote
 	}
+	if req.Phone != nil {
+		phone = *req.Phone
+	}
+	if req.Email != nil {
+		email = *req.Email
+	}
 
-	if err := h.svc.UpdateLead(r.Context(), studioID, id, status, currency, notes, contactMade, hotLead, trialPurchased, firstName, lastName, fitnessPlan, assignedTo, trialAttended, memberSold, monthlyFee, offer, furtherNotes, tags, reminderAt, reminderNote); err != nil {
+	if err := h.svc.UpdateLead(r.Context(), studioID, id, status, currency, notes, contactMade, hotLead, trialPurchased, firstName, lastName, fitnessPlan, assignedTo, trialAttended, memberSold, monthlyFee, offer, furtherNotes, tags, reminderAt, reminderNote, phone, email); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
 		return
 	}

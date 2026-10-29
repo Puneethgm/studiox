@@ -10,7 +10,7 @@ import { FieldError, Label } from '@/components/ui/Label';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import { LEAD_STATUSES, LEAD_STATUS_LABELS, type Lead, type LeadStatus } from '@/lib/types';
-import { updateLeadStatus } from './actions';
+import { updateLeadStatus, updateLeadTags } from './actions';
 
 function toLocalDatetimeInput(iso: string): string {
   const d = new Date(iso);
@@ -37,6 +37,7 @@ export function LeadEditor({ studioId, lead }: { studioId: string; lead: Lead })
   const [furtherNotes, setFurtherNotes] = useState(lead.furtherNotes || '');
   const [tags, setTags] = useState<string[]>(lead.tags || []);
   const [tagInput, setTagInput] = useState('');
+  const [tagSaving, setTagSaving] = useState(false);
   // datetime-local inputs want "YYYY-MM-DDTHH:mm" in the browser's own
   // local time, not the ISO/UTC string the API returns — convert once on
   // load, and back to a full ISO string (via `new Date(...).toISOString()`,
@@ -46,18 +47,41 @@ export function LeadEditor({ studioId, lead }: { studioId: string; lead: Lead })
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Tags save themselves the instant they change — no "Save changes" click
+  // needed. Updates local state optimistically, persists in the background,
+  // and reverts + toasts on failure (e.g. a dropped connection) so the UI
+  // never silently disagrees with what's actually saved.
+  async function persistTags(next: string[], previous: string[]) {
+    setTags(next);
+    setTagSaving(true);
+    try {
+      const result = await updateLeadTags(studioId, lead.id, next);
+      if (!result.ok) {
+        setTags(previous);
+        showToast(result.error || 'Failed to save tag.', 'error');
+        return;
+      }
+      showToast('Tags updated.', 'success');
+    } catch (err: any) {
+      setTags(previous);
+      showToast(err?.message || 'Failed to save tag.', 'error');
+    } finally {
+      setTagSaving(false);
+    }
+  }
+
   function addTag() {
     const next = tagInput.trim().toLowerCase();
     if (!next || tags.includes(next)) {
       setTagInput('');
       return;
     }
-    setTags([...tags, next]);
     setTagInput('');
+    void persistTags([...tags, next], tags);
   }
 
   function removeTag(tag: string) {
-    setTags(tags.filter((t) => t !== tag));
+    void persistTags(tags.filter((t) => t !== tag), tags);
   }
 
   const dirty =
@@ -76,8 +100,9 @@ export function LeadEditor({ studioId, lead }: { studioId: string; lead: Lead })
     currency !== (lead.currency || 'SGD') ||
     offer !== (lead.offer || '') ||
     furtherNotes !== (lead.furtherNotes || '') ||
-    tags.length !== (lead.tags || []).length ||
-    tags.some((t) => !(lead.tags || []).includes(t)) ||
+    // tags are intentionally excluded — they auto-save on every add/remove
+    // (see persistTags above), so they're never part of the "Save changes"
+    // button's pending-edits state.
     reminderAt !== (lead.reminderAt ? toLocalDatetimeInput(lead.reminderAt) : '') ||
     reminderNote !== (lead.reminderNote || '');
 
@@ -107,7 +132,7 @@ export function LeadEditor({ studioId, lead }: { studioId: string; lead: Lead })
         currency,
         offer,
         furtherNotes,
-        tags,
+        // tags auto-save separately via persistTags — not sent here.
         // "" clears the reminder server-side — see actions.ts's doc comment.
         reminderAt: reminderAt ? new Date(reminderAt).toISOString() : '',
         reminderNote,
@@ -250,7 +275,14 @@ export function LeadEditor({ studioId, lead }: { studioId: string; lead: Lead })
         </div>
 
         <div>
-          <Label htmlFor="tagInput">Tags</Label>
+          <div className="flex items-center gap-2">
+            <Label htmlFor="tagInput">Tags</Label>
+            {tagSaving && (
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+                Saving…
+              </span>
+            )}
+          </div>
           <div className="flex flex-wrap gap-1.5 mb-2">
             {tags.map((t) => (
               <span

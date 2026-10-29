@@ -773,14 +773,14 @@ func (r *Repo) Stats(ctx context.Context, studioID uuid.UUID) (*LeadStats, error
 	return out, rows.Err()
 }
 
-func (r *Repo) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status LeadStatus, currency string, notes string, contactMade, hotLead, trialPurchased bool, firstName, lastName, fitnessPlan, assignedTo string, trialAttended, memberSold bool, monthlyFee float64, offer, furtherNotes string, tags []string, reminderAt *time.Time, reminderNote string) error {
+func (r *Repo) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status LeadStatus, currency string, notes string, contactMade, hotLead, trialPurchased bool, firstName, lastName, fitnessPlan, assignedTo string, trialAttended, memberSold bool, monthlyFee float64, offer, furtherNotes string, tags []string, reminderAt *time.Time, reminderNote string, phone, email string) error {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var oldStatus, oldNotes, oldFirstName, oldLastName, oldFitnessPlan, oldAssignedTo, oldOffer, oldFurtherNotes, oldCurrency string
+	var oldStatus, oldNotes, oldFirstName, oldLastName, oldFitnessPlan, oldAssignedTo, oldOffer, oldFurtherNotes, oldCurrency, oldPhone, oldEmail string
 	var oldContactMade, oldHotLead, oldTrialPurchased, oldTrialAttended, oldMemberSold bool
 	var oldMonthlyFee float64
 	var oldTags []string
@@ -790,12 +790,12 @@ func (r *Repo) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status Le
 		SELECT status, COALESCE(notes, ''), COALESCE(first_name, ''), COALESCE(last_name, ''), COALESCE(fitness_plan, ''),
 		       contact_made, hot_lead, trial_purchased,
 		       COALESCE(assigned_to, ''), trial_attended, member_sold, monthly_fee, currency,
-		       COALESCE(offer, ''), COALESCE(further_notes, ''), tags, reminder_at, reminder_note
+		       COALESCE(offer, ''), COALESCE(further_notes, ''), tags, reminder_at, reminder_note, COALESCE(phone, ''), COALESCE(email, '')
 		FROM leads WHERE studio_id = $1 AND id = $2
 	`, studioID, id).Scan(&oldStatus, &oldNotes, &oldFirstName, &oldLastName, &oldFitnessPlan,
 		&oldContactMade, &oldHotLead, &oldTrialPurchased,
 		&oldAssignedTo, &oldTrialAttended, &oldMemberSold, &oldMonthlyFee, &oldCurrency,
-		&oldOffer, &oldFurtherNotes, &oldTags, &oldReminderAt, &oldReminderNote)
+		&oldOffer, &oldFurtherNotes, &oldTags, &oldReminderAt, &oldReminderNote, &oldPhone, &oldEmail)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrLeadNotFound
@@ -814,10 +814,10 @@ func (r *Repo) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status Le
 		    first_name = $8, last_name = $9, fitness_plan = $10, name = $11,
 		    assigned_to = $12, trial_attended = $13, member_sold = $14, monthly_fee = $15,
 		    currency = $16, offer = $17, further_notes = $18, tags = $19,
-		    reminder_at = $20, reminder_note = $21, updated_at = now()
+		    reminder_at = $20, reminder_note = $21, phone = $22, email = $23, updated_at = now()
 		WHERE studio_id = $1 AND id = $2
 	`, studioID, id, string(status), notes, contactMade, hotLead, trialPurchased, firstName, lastName, fitnessPlan, name,
-		assignedTo, trialAttended, memberSold, monthlyFee, currency, offer, furtherNotes, tags, reminderAt, reminderNote)
+		assignedTo, trialAttended, memberSold, monthlyFee, currency, offer, furtherNotes, tags, reminderAt, reminderNote, phone, email)
 	if err != nil {
 		return fmt.Errorf("update lead: %w", err)
 	}
@@ -831,7 +831,7 @@ func (r *Repo) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status Le
 		contactMade != oldContactMade || hotLead != oldHotLead || trialPurchased != oldTrialPurchased ||
 		assignedTo != oldAssignedTo || trialAttended != oldTrialAttended || memberSold != oldMemberSold ||
 		monthlyFee != oldMonthlyFee || currency != oldCurrency || offer != oldOffer || furtherNotes != oldFurtherNotes ||
-		!slices.Equal(tags, oldTags) || reminderAtChanged || reminderNote != oldReminderNote
+		!slices.Equal(tags, oldTags) || reminderAtChanged || reminderNote != oldReminderNote || phone != oldPhone || email != oldEmail
 
 	if changed {
 		l, err := r.GetLeadTx(ctx, tx, studioID, id)
