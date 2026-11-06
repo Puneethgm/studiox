@@ -21,6 +21,8 @@ import {
   saveInitialContactDelay,
   getAIReplyDelay,
   saveAIReplyDelay,
+  getStaffActiveWindow,
+  saveStaffActiveWindow,
   getAIActiveHours,
   saveAIActiveHours,
   getSheetsSettings,
@@ -620,6 +622,7 @@ export function IntegrationsSection({ studio, onChange }: { studio: Studio; onCh
   const [coldStalledDays, setColdStalledDays] = useState(7);
   const [initialDelayMinutes, setInitialDelayMinutes] = useState(0);
   const [aiReplyDelay, setAiReplyDelay] = useState(0);
+  const [staffActiveWindowMinutes, setStaffActiveWindowMinutes] = useState(10);
   const [aiActiveHoursEnabled, setAiActiveHoursEnabled] = useState(false);
   const [aiActiveHoursStart, setAiActiveHoursStart] = useState('00:00');
   const [aiActiveHoursEnd, setAiActiveHoursEnd] = useState('23:59');
@@ -628,13 +631,14 @@ export function IntegrationsSection({ studio, onChange }: { studio: Studio; onCh
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [spacingRes, dailyLimitRes, glofoxRes, coldRes, delayRes, aiDelayRes, aiHoursRes] = await Promise.all([
+      const [spacingRes, dailyLimitRes, glofoxRes, coldRes, delayRes, aiDelayRes, staffWindowRes, aiHoursRes] = await Promise.all([
         getWhatsAppSendSpacing(studio.id),
         getWhatsAppDailyMessageLimit(studio.id),
         getGlofoxFirstSession(studio.id),
         getColdLeadThresholds(studio.id),
         getInitialContactDelay(studio.id),
         getAIReplyDelay(studio.id),
+        getStaffActiveWindow(studio.id),
         getAIActiveHours(studio.id),
       ]);
       if (cancelled) return;
@@ -647,6 +651,7 @@ export function IntegrationsSection({ studio, onChange }: { studio: Studio; onCh
       }
       if (delayRes.ok && delayRes.data) setInitialDelayMinutes(delayRes.data.initialContactDelayMinutes);
       if (aiDelayRes.ok && aiDelayRes.data) setAiReplyDelay(aiDelayRes.data.aiReplyDelaySeconds);
+      if (staffWindowRes.ok && staffWindowRes.data) setStaffActiveWindowMinutes(staffWindowRes.data.staffActiveWindowMinutes);
       if (aiHoursRes.ok && aiHoursRes.data) {
         setAiActiveHoursEnabled(aiHoursRes.data.aiActiveHoursEnabled);
         setAiActiveHoursStart(aiHoursRes.data.aiActiveHoursStart);
@@ -814,6 +819,17 @@ export function IntegrationsSection({ studio, onChange }: { studio: Studio; onCh
               onSave={async (n) => {
                 const res = await saveAIReplyDelay(studio.id, n);
                 if (res.ok) setAiReplyDelay(n);
+                return res;
+              }}
+            />
+            <EditableNumberRow
+              label="Staff-Active Window"
+              description="After a staff member replies in a conversation, the AI stays silent for this many minutes (never interrupts a human who's already handling it). 0 = gate disabled, AI can reply right after staff."
+              value={staffActiveWindowMinutes}
+              suffix="min"
+              onSave={async (n) => {
+                const res = await saveStaffActiveWindow(studio.id, n);
+                if (res.ok) setStaffActiveWindowMinutes(n);
                 return res;
               }}
             />
