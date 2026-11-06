@@ -29,10 +29,12 @@ func tgWebServiceURL() string {
 	return "http://tg-web:3101"
 }
 
+// tgWebInternalKey is tg-web's own secret (TG_WEB_INTERNAL_KEY), distinct
+// from wa-web's — a single shared secret between bridges meant a request
+// authenticated for one bridge would also authenticate for the other.
+// See waWebInternalKey's doc comment (platform-security-hardening task 0.4).
 func tgWebInternalKey() string {
-	// Shares the same internal key as wa-web — both are internal-network-only
-	// sidecars authenticated by the same shared secret.
-	return waWebInternalKey()
+	return os.Getenv("TG_WEB_INTERNAL_KEY")
 }
 
 // ============================================================

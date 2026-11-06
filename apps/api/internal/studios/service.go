@@ -306,8 +306,8 @@ func (s *Service) CreateStudioWithAdmin(ctx context.Context, in CreateStudioInpu
 	// set-your-own-password link (see below); the public Stripe self-signup
 	// flow (ProvisionPlatformStudio) still supplies one directly since the
 	// customer is choosing it themselves at checkout.
-	if in.AdminPassword != "" && len(in.AdminPassword) < 8 {
-		errs["adminPassword"] = "must be at least 8 characters"
+	if in.AdminPassword != "" && len(in.AdminPassword) < identity.MinPasswordLength {
+		errs["adminPassword"] = fmt.Sprintf("must be at least %d characters", identity.MinPasswordLength)
 	}
 	if in.ContactEmail != "" {
 		if _, err := mail.ParseAddress(in.ContactEmail); err != nil {
@@ -480,8 +480,6 @@ type UpdateStudioInput struct {
 	ManagedBy1Hero                bool
 	AvailabilitySlots             []AvailabilitySlot  `json:"availabilitySlots"`
 	AvailabilityTimezone          string              `json:"availabilityTimezone"`
-	GeminiAPIKey                  string              `json:"geminiApiKey"`
-	GroqAPIKey                    string              `json:"groqApiKey"`
 	MetaAppID                     string              `json:"metaAppId"`
 	MetaAppSecret                 string              `json:"metaAppSecret"`
 	GoogleClientID                string              `json:"googleClientId"`
@@ -525,7 +523,6 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput
 	in.LogoURL = strings.TrimSpace(in.LogoURL)
 	in.ContactEmail = strings.ToLower(strings.TrimSpace(in.ContactEmail))
 	in.ContactPhone = strings.TrimSpace(in.ContactPhone)
-	in.GeminiAPIKey = strings.TrimSpace(in.GeminiAPIKey)
 	in.MetaAppID = strings.TrimSpace(in.MetaAppID)
 	in.MetaAppSecret = strings.TrimSpace(in.MetaAppSecret)
 	in.GoogleClientID = strings.TrimSpace(in.GoogleClientID)
@@ -557,14 +554,16 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, in UpdateStudioInput
 	if len(errs) > 0 {
 		return errs, nil
 	}
-	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.ContactPhone, in.Active, in.ManagedBy1Hero, in.AvailabilitySlots, in.AvailabilityTimezone, in.GeminiAPIKey, in.GroqAPIKey, in.MetaAppID, in.MetaAppSecret, in.GoogleClientID, in.GoogleClientSecret, in.GoogleDeveloperToken, in.SocialPlannerEnabled, in.KnowledgeBase, in.KnowledgeBaseFiles, in.GreetingMessage, in.TrialAmountSGD, in.BookingHeroImageURL, in.BookingHeroVideoURL, in.TrialConfirmationMessage, in.MembershipConfirmationMessage, in.TrialGlofoxMembershipID, in.TrialGlofoxPlanCode, in.MembershipGlofoxMembershipID, in.MembershipGlofoxPlanCode, in.Currency, actorID); err != nil {
+	if err := s.repo.Update(ctx, id, in.Name, in.BrandColor, in.LogoURL, in.ContactEmail, in.ContactPhone, in.Active, in.ManagedBy1Hero, in.AvailabilitySlots, in.AvailabilityTimezone, in.MetaAppID, in.MetaAppSecret, in.GoogleClientID, in.GoogleClientSecret, in.GoogleDeveloperToken, in.SocialPlannerEnabled, in.KnowledgeBase, in.KnowledgeBaseFiles, in.GreetingMessage, in.TrialAmountSGD, in.BookingHeroImageURL, in.BookingHeroVideoURL, in.TrialConfirmationMessage, in.MembershipConfirmationMessage, in.TrialGlofoxMembershipID, in.TrialGlofoxPlanCode, in.MembershipGlofoxMembershipID, in.MembershipGlofoxPlanCode, in.Currency, actorID); err != nil {
 		return nil, err
 	}
 
-	// Trigger RAG embedding rebuild if knowledge base or API key changed
+	// Trigger RAG embedding rebuild if the knowledge base changed (the
+	// Gemini-key clause here used to also catch a per-studio key change —
+	// Gemini is a centralized key now, so a key change no longer
+	// correlates with this one studio's rebuild)
 	kbChanged := oldStudio == nil ||
 		oldStudio.KnowledgeBase != in.KnowledgeBase ||
-		oldStudio.GeminiAPIKey != in.GeminiAPIKey ||
 		len(oldStudio.KnowledgeBaseFiles) != len(in.KnowledgeBaseFiles)
 
 	if !kbChanged && oldStudio != nil {
@@ -840,6 +839,22 @@ func (s *Service) DeletePlan(ctx context.Context, studioID, planID uuid.UUID) er
 	return s.repo.DeletePlan(ctx, studioID, planID)
 }
 
+func (s *Service) ListOffers(ctx context.Context, studioID uuid.UUID) ([]Offer, error) {
+	return s.repo.ListOffers(ctx, studioID)
+}
+
+func (s *Service) CreateOffer(ctx context.Context, studioID uuid.UUID, in CreateOfferInput) (Offer, error) {
+	return s.repo.CreateOffer(ctx, studioID, in)
+}
+
+func (s *Service) UpdateOffer(ctx context.Context, studioID, offerID uuid.UUID, in UpdateOfferInput) error {
+	return s.repo.UpdateOffer(ctx, studioID, offerID, in)
+}
+
+func (s *Service) DeleteOffer(ctx context.Context, studioID, offerID uuid.UUID) error {
+	return s.repo.DeleteOffer(ctx, studioID, offerID)
+}
+
 func (s *Service) ListMemberSubscriptions(ctx context.Context, studioID uuid.UUID) ([]MemberSubscription, error) {
 	return s.repo.ListMemberSubscriptions(ctx, studioID)
 }
@@ -921,7 +936,6 @@ func (s *Service) ResolveKnowledgeGap(ctx context.Context, studioID, gapID uuid.
 		ContactEmail: studio.ContactEmail, ContactPhone: studio.ContactPhone,
 		Active: studio.Active, ManagedBy1Hero: studio.ManagedBy1Hero,
 		AvailabilitySlots: studio.AvailabilitySlots, AvailabilityTimezone: studio.AvailabilityTimezone,
-		GeminiAPIKey: studio.GeminiAPIKey, GroqAPIKey: studio.GroqAPIKey,
 		MetaAppID: studio.MetaAppID, MetaAppSecret: studio.MetaAppSecret,
 		GoogleClientID: studio.GoogleClientID, GoogleClientSecret: studio.GoogleClientSecret,
 		GoogleDeveloperToken: studio.GoogleDeveloperToken, SocialPlannerEnabled: studio.SocialPlannerEnabled,

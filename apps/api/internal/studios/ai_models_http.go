@@ -2,6 +2,8 @@ package studios
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -10,78 +12,80 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/projectx/api/internal/identity"
-	"github.com/projectx/api/internal/integrations/claude"
-	"github.com/projectx/api/internal/integrations/gemini"
-	"github.com/projectx/api/internal/integrations/groq"
+	"github.com/projectx/api/internal/integrations/bifrost"
 	"github.com/projectx/api/internal/integrations/llm"
 	"github.com/projectx/api/internal/integrations/mistral"
 	"github.com/projectx/api/internal/platform/httpx"
+	"github.com/projectx/api/internal/platform/riskalert"
+	"github.com/projectx/api/internal/platform/secaudit"
 )
 
-// aiProviderKeyGetters reads the studio's saved key for provider, so the
-// test/add-model handler doesn't need a second provider->column switch.
-var aiProviderKeyGetters = map[string]func(*Studio) string{
-	"gemini":  func(s *Studio) string { return s.GeminiAPIKey },
-	"groq":    func(s *Studio) string { return s.GroqAPIKey },
-	"claude":  func(s *Studio) string { return s.ClaudeAPIKey },
-	"mistral": func(s *Studio) string { return s.MistralAPIKey },
+// chatReplyProviders are the providers centrally managed from the
+// superadmin AI Provider Settings page (/admin/settings) — Groq/Gemini/
+// Claude, each routed through the embedded Bifrost client. Mistral stays a
+// per-studio key (OCR only, internal/studios/knowledge_base_ocr.go — not a
+// chat-reply provider, so it isn't part of this centralized list) and keeps
+// its own studio-scoped routes below.
+var chatReplyProviders = map[string]bifrost.ProviderName{
+	"groq":   bifrost.ProviderGroq,
+	"gemini": bifrost.ProviderGemini,
+	"claude": bifrost.ProviderAnthropic,
+	"openai": bifrost.ProviderOpenAI,
 }
 
-func isKnownProvider(provider string) bool {
-	_, ok := aiProviderKeyGetters[provider]
+func isKnownChatProvider(provider string) bool {
+	_, ok := chatReplyProviders[provider]
 	return ok
-}
-
-// keySuffix returns the last 4 characters of key for display (e.g. "ends
-// in cHwK"), or "" if there's no key to show one for. Provider keys are
-// stored plaintext today (see UpdateAIProviderKey), so this is a plain
-// substring — never derived from the encrypted form.
-func keySuffix(key string) string {
-	if len(key) < 4 {
-		return ""
-	}
-	return key[len(key)-4:]
 }
 
 const testPingPrompt = "Reply with the single word: pong"
 
-// testProviderModel makes one trivial live request to provider/model with
-// apiKey, used both by PostAIModel (add+test a specific model) and
-// PostAITestKey (verify a key works at all, using a representative model).
-func testProviderModel(ctx context.Context, provider, claudeAPIURL, apiKey, model string) error {
-	switch provider {
-	case "groq":
-		client := groq.New(apiKey)
-		_, err := client.GenerateReply(ctx, testPingPrompt, model)
-		return err
-	case "gemini":
-		_, err := gemini.New().GenerateReplyForModel(ctx, apiKey, model, testPingPrompt)
-		return err
-	case "claude":
-		client, err := claude.New(claudeAPIURL, apiKey)
-		if err != nil {
-			return err
-		}
-		if client == nil {
-			return errors.New("claude client not configured")
-		}
-		_, err = client.GenerateReplyForModel(ctx, testPingPrompt, model)
-		return err
-	case "mistral":
-		// Mistral isn't a chat-reply provider here (OCR-only, see
-		// internal/integrations/mistral) — a cheap auth check stands in for
-		// the reply-generation test the other providers do.
-		return mistral.New().ValidateKey(ctx, apiKey)
-	default:
+// testPlatformProviderModel makes one trivial live Bifrost request to
+// provider/model with apiKey — used both by PostPlatformAIModel (add+test a
+// specific model) and PostPlatformAITestKey (verify a key works at all,
+// using a representative model).
+func testPlatformProviderModel(ctx context.Context, bifrostClient *bifrost.Client, provider, apiKey, model string) error {
+	bfProvider, ok := chatReplyProviders[provider]
+	if !ok {
 		return fmt.Errorf("unsupported provider %q", provider)
 	}
+	if bifrostClient == nil {
+		return errors.New("bifrost gateway not configured")
+	}
+	_, err := bifrostClient.Complete(ctx, bifrost.Request{
+		Provider:  bfProvider,
+		Model:     model,
+		DirectKey: apiKey,
+		Prompt:    testPingPrompt,
+		// Reasoning models (e.g. Groq's openai/gpt-oss-120b) spend tokens on
+		// hidden reasoning before any visible reply text — 16 was enough for
+		// non-reasoning models but left zero budget for the actual "pong",
+		// so Bifrost reported it as an empty response. 128 gives reasoning
+		// models room to think and still answer.
+		MaxTokens: 128,
+	})
+	return err
+}
+
+// fingerprintSecret returns a short, non-reversible fingerprint of key
+// (sha256, first 8 hex chars) so two keys can be told apart without any
+// character of either being derivable from the result. Replaces the
+// previous keySuffix() last-4-characters reveal — see
+// openspec/changes/platform-security-hardening, task 0.2.
+func fingerprintSecret(key string) string {
+	if key == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:])[:8]
 }
 
 // aiModelResponse is the wire shape for one row in the checkbox list —
-// covers both a persisted studio_ai_models row and a virtual (unsaved)
-// default shown so the admin can see what's actually running.
+// covers both a persisted platform_ai_models row and a virtual (unsaved)
+// default shown so the superadmin can see what's actually running.
 type aiModelResponse struct {
 	ID            string `json:"id,omitempty"`
 	ModelName     string `json:"modelName"`
@@ -93,49 +97,33 @@ type aiModelResponse struct {
 }
 
 type aiProviderResponse struct {
-	Provider  string            `json:"provider"`
-	HasAPIKey bool              `json:"hasApiKey"`
-	KeySuffix string            `json:"keySuffix,omitempty"`
-	Models    []aiModelResponse `json:"models"`
+	Provider       string            `json:"provider"`
+	HasAPIKey      bool              `json:"hasApiKey"`
+	KeyFingerprint string            `json:"keyFingerprint,omitempty"`
+	KeyStatus      string            `json:"keyStatus,omitempty"` // "active" | "disabled" | "failing", "" if no key ever saved
+	Models         []aiModelResponse `json:"models"`
 }
 
-// GetAIModels godoc
+// GetPlatformAIModels godoc
 //
-//	@Summary		List AI provider config
-//	@Description	Per-provider (groq/gemini/claude) API key status and model checklist for this studio — persisted models the studio has added/tested, or the platform's implicit default model(s) shown unchecked when the studio hasn't configured any yet.
-//	@Tags			AI Assistant Settings
+//	@Summary		List centralized AI provider config
+//	@Description	Per-provider (groq/gemini/claude/openai) API key status and model checklist, shared by every studio — persisted models the superadmin has added/tested, or the platform's implicit default model(s) shown unchecked when none has been configured yet.
+//	@Tags			AI Provider Settings
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			studioId	path		string	true	"Studio ID"
-//	@Success		200			{object}	map[string]any
-//	@Failure		400			{object}	httpx.ErrorResponse
-//	@Failure		500			{object}	httpx.ErrorResponse
-//	@Router			/studios/{studioId}/ai-models [get]
-func (h *Handler) GetAIModels(w http.ResponseWriter, r *http.Request) {
-	studioID, err := uuid.Parse(chi.URLParam(r, "studioId"))
-	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
-		return
-	}
-	studio, err := h.svc.GetByID(r.Context(), studioID)
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
-		return
-	}
-
-	providers := []string{"groq", "gemini", "claude", "mistral"}
+//	@Success		200	{object}	map[string]any
+//	@Failure		500	{object}	httpx.ErrorResponse
+//	@Router			/admin/ai-providers [get]
+func (h *Handler) GetPlatformAIModels(w http.ResponseWriter, r *http.Request) {
+	providers := []string{"groq", "gemini", "claude", "openai"}
 	out := make([]aiProviderResponse, 0, len(providers))
 	for _, provider := range providers {
-		rows, err := h.llmRepo.ListStudioModels(r.Context(), studioID, llm.ProviderName(provider))
+		rows, err := h.llmRepo.ListModels(r.Context(), llm.ProviderName(provider))
 		if err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 			return
 		}
 
-		// Always a non-nil slice — a provider with no rows AND no entry in
-		// DefaultModels (e.g. mistral, which isn't a chat-reply provider)
-		// would otherwise stay a nil slice, which encoding/json marshals as
-		// JSON null instead of [], breaking the frontend's config.models.filter(...).
 		models := []aiModelResponse{}
 		if len(rows) == 0 {
 			for _, name := range llm.DefaultModels[llm.ProviderName(provider)] {
@@ -157,48 +145,52 @@ func (h *Handler) GetAIModels(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		key := aiProviderKeyGetters[provider](studio)
+		hasKey, fingerprint, err := h.svc.repo.GetPlatformAIProviderKeyFingerprint(r.Context(), provider)
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+			return
+		}
+		keyStatus, err := h.svc.repo.GetPlatformAIProviderKeyStatus(r.Context(), provider)
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+			return
+		}
 		out = append(out, aiProviderResponse{
-			Provider:  provider,
-			HasAPIKey: key != "",
-			KeySuffix: keySuffix(key),
-			Models:    models,
+			Provider:       provider,
+			HasAPIKey:      hasKey,
+			KeyFingerprint: fingerprint,
+			KeyStatus:      keyStatus,
+			Models:         models,
 		})
 	}
 
 	httpx.JSON(w, http.StatusOK, map[string]any{"providers": out})
 }
 
-type putAIProviderKeyReq struct {
+type putPlatformAIProviderKeyReq struct {
 	APIKey string `json:"apiKey"`
 }
 
-// PutAIProviderKey godoc
+// PutPlatformAIProviderKey godoc
 //
-//	@Summary		Save an AI provider's API key
-//	@Tags			AI Assistant Settings
+//	@Summary		Save a centralized AI provider's API key
+//	@Tags			AI Provider Settings
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			studioId	path	string					true	"Studio ID"
-//	@Param			provider	path	string					true	"groq | gemini | claude"
-//	@Param			body		body	putAIProviderKeyReq	true	"API key"
+//	@Param			provider	path	string							true	"groq | gemini | claude | openai"
+//	@Param			body		body	putPlatformAIProviderKeyReq	true	"API key"
 //	@Success		200			{object}	map[string]any
 //	@Failure		400			{object}	httpx.ErrorResponse
 //	@Failure		500			{object}	httpx.ErrorResponse
-//	@Router			/studios/{studioId}/ai-models/{provider}/key [put]
-func (h *Handler) PutAIProviderKey(w http.ResponseWriter, r *http.Request) {
-	studioID, err := uuid.Parse(chi.URLParam(r, "studioId"))
-	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
-		return
-	}
+//	@Router			/admin/ai-providers/{provider}/key [put]
+func (h *Handler) PutPlatformAIProviderKey(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
-	if !isKnownProvider(provider) {
+	if !isKnownChatProvider(provider) {
 		httpx.WriteError(w, http.StatusBadRequest, "bad_provider", "unsupported provider")
 		return
 	}
-	var req putAIProviderKeyReq
+	var req putPlatformAIProviderKeyReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
@@ -207,83 +199,213 @@ func (h *Handler) PutAIProviderKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c := identity.MustClaims(r.Context())
-	if err := h.svc.repo.UpdateAIProviderKey(r.Context(), studioID, provider, req.APIKey, &c.UserID); err != nil {
+	if err := h.svc.repo.SetPlatformAIProviderKey(r.Context(), provider, req.APIKey, &c.UserID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	h.logSecurityEvent(r.Context(), r, &c.UserID, string(c.Role), nil, "ai_provider_key.set", secaudit.OutcomeSuccess, map[string]any{"provider": provider})
+	if riskalert.SecretChanged() {
+		h.sendRiskAlert("Platform AI provider key changed", fmt.Sprintf("The %s provider key was set/replaced by a super_admin.", provider))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// PostPlatformAIProviderKeyRotate godoc
+//
+//	@Summary		Rotate a centralized AI provider's API key
+//	@Description	Replaces the stored key with a freshly re-encrypted envelope (new data key) and records the change as a "rotated" audit action, distinct from the first save.
+//	@Tags			AI Provider Settings
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			provider	path	string							true	"groq | gemini | claude | openai"
+//	@Param			body		body	putPlatformAIProviderKeyReq	true	"New API key"
+//	@Success		200			{object}	map[string]any
+//	@Failure		400			{object}	httpx.ErrorResponse
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/admin/ai-providers/{provider}/key/rotate [post]
+func (h *Handler) PostPlatformAIProviderKeyRotate(w http.ResponseWriter, r *http.Request) {
+	provider := chi.URLParam(r, "provider")
+	if !isKnownChatProvider(provider) {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_provider", "unsupported provider")
+		return
+	}
+	var req putPlatformAIProviderKeyReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if strings.TrimSpace(req.APIKey) == "" {
+		httpx.WriteValidationError(w, map[string]string{"apiKey": "required"})
+		return
+	}
+	c := identity.MustClaims(r.Context())
+	if err := h.svc.repo.RotatePlatformAIProviderKey(r.Context(), provider, req.APIKey, &c.UserID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	h.logSecurityEvent(r.Context(), r, &c.UserID, string(c.Role), nil, "ai_provider_key.rotated", secaudit.OutcomeSuccess, map[string]any{"provider": provider})
+	if riskalert.SecretChanged() {
+		h.sendRiskAlert("Platform AI provider key rotated", fmt.Sprintf("The %s provider key was rotated by a super_admin.", provider))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// PatchPlatformAIProviderKeyStatus godoc
+//
+//	@Summary		Disable or re-enable a centralized AI provider's key
+//	@Description	A disabled key is treated as "not configured" by every caller (GetPlatformAIProviderKey) until re-enabled — the ciphertext is kept, not deleted, so re-enabling doesn't require re-entering the key.
+//	@Tags			AI Provider Settings
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			provider	path	string	true	"groq | gemini | claude | openai"
+//	@Param			body		body	patchPlatformAIProviderKeyStatusReq	true	"status: active | disabled"
+//	@Success		200			{object}	map[string]any
+//	@Failure		400			{object}	httpx.ErrorResponse
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/admin/ai-providers/{provider}/key/status [patch]
+func (h *Handler) PatchPlatformAIProviderKeyStatus(w http.ResponseWriter, r *http.Request) {
+	provider := chi.URLParam(r, "provider")
+	if !isKnownChatProvider(provider) {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_provider", "unsupported provider")
+		return
+	}
+	var req patchPlatformAIProviderKeyStatusReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if req.Status != "active" && req.Status != "disabled" {
+		httpx.WriteValidationError(w, map[string]string{"status": "must be \"active\" or \"disabled\""})
+		return
+	}
+	c := identity.MustClaims(r.Context())
+	if err := h.svc.repo.SetPlatformAIProviderKeyStatus(r.Context(), provider, req.Status, &c.UserID); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// PostAITestKey godoc
+type patchPlatformAIProviderKeyStatusReq struct {
+	Status string `json:"status"`
+}
+
+// GetAIAlertThresholds godoc
 //
-//	@Summary		Test an AI provider's API key
-//	@Description	Saves apiKey (if provided) and sends one trivial live request using an already-enabled model for this provider, or the platform default if none is enabled yet — verifies the key works without requiring the admin to add a specific model first.
-//	@Tags			AI Assistant Settings
-//	@Accept			json
+//	@Summary		Get the AI alert thresholds
+//	@Description	Failure-rate-spike %, its rolling window, and the daily spend budget — the trigger points for the two threshold-based AI alerts.
+//	@Tags			AI Provider Settings
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			studioId	path	string					true	"Studio ID"
-//	@Param			provider	path	string					true	"groq | gemini | claude"
-//	@Param			body		body	putAIProviderKeyReq	true	"API key (omit to test the already-saved key)"
-//	@Success		200			{object}	map[string]any
-//	@Failure		400			{object}	httpx.ErrorResponse
-//	@Failure		422			{object}	httpx.ErrorResponse	"the live test failed"
-//	@Router			/studios/{studioId}/ai-models/{provider}/test-key [post]
-func (h *Handler) PostAITestKey(w http.ResponseWriter, r *http.Request) {
-	studioID, err := uuid.Parse(chi.URLParam(r, "studioId"))
-	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
-		return
-	}
-	provider := chi.URLParam(r, "provider")
-	if !isKnownProvider(provider) {
-		httpx.WriteError(w, http.StatusBadRequest, "bad_provider", "unsupported provider")
-		return
-	}
-	var req putAIProviderKeyReq
-	if !httpx.DecodeJSON(w, r, &req) {
-		return
-	}
-
-	studio, err := h.svc.GetByID(r.Context(), studioID)
+//	@Success		200	{object}	studios.AIAlertThresholds
+//	@Router			/admin/ai-providers/alert-thresholds [get]
+func (h *Handler) GetAIAlertThresholds(w http.ResponseWriter, r *http.Request) {
+	t, err := h.svc.repo.GetAIAlertThresholds(r.Context())
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return
 	}
+	httpx.JSON(w, http.StatusOK, t)
+}
+
+// PutAIAlertThresholds godoc
+//
+//	@Summary		Set the AI alert thresholds
+//	@Tags			AI Provider Settings
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			body	body	studios.AIAlertThresholds	true	"thresholds"
+//	@Success		200		{object}	map[string]any
+//	@Failure		400		{object}	httpx.ErrorResponse
+//	@Router			/admin/ai-providers/alert-thresholds [put]
+func (h *Handler) PutAIAlertThresholds(w http.ResponseWriter, r *http.Request) {
+	var req AIAlertThresholds
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	c := identity.MustClaims(r.Context())
+	if err := h.svc.repo.SetAIAlertThresholds(r.Context(), req, &c.UserID); err != nil {
+		httpx.WriteValidationError(w, map[string]string{"thresholds": err.Error()})
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// GetAIAlerts godoc
+//
+//	@Summary		List recent AI alerts
+//	@Description	Most recent platform_alerts rows — all-providers-failed, a key failing, provider failure-rate spikes, daily spend over budget.
+//	@Tags			AI Provider Settings
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	map[string]any
+//	@Router			/admin/ai-providers/alerts [get]
+func (h *Handler) GetAIAlerts(w http.ResponseWriter, r *http.Request) {
+	alerts, err := h.svc.repo.ListRecentPlatformAlerts(r.Context(), 50)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"alerts": alerts})
+}
+
+// PostPlatformAITestKey godoc
+//
+//	@Summary		Test a centralized AI provider's API key
+//	@Description	Saves apiKey (if provided) and sends one trivial live request using an already-enabled model for this provider, or the platform default if none is enabled yet — verifies the key works without requiring the superadmin to add a specific model first.
+//	@Tags			AI Provider Settings
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			provider	path	string							true	"groq | gemini | claude | openai"
+//	@Param			body		body	putPlatformAIProviderKeyReq	true	"API key (omit to test the already-saved key)"
+//	@Success		200			{object}	map[string]any
+//	@Failure		400			{object}	httpx.ErrorResponse
+//	@Failure		422			{object}	httpx.ErrorResponse	"the live test failed"
+//	@Router			/admin/ai-providers/{provider}/test-key [post]
+func (h *Handler) PostPlatformAITestKey(w http.ResponseWriter, r *http.Request) {
+	provider := chi.URLParam(r, "provider")
+	if !isKnownChatProvider(provider) {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_provider", "unsupported provider")
+		return
+	}
+	var req putPlatformAIProviderKeyReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+
 	apiKey := strings.TrimSpace(req.APIKey)
 	if apiKey == "" {
-		apiKey = aiProviderKeyGetters[provider](studio)
+		var err error
+		apiKey, err = h.svc.repo.GetPlatformAIProviderKey(r.Context(), provider)
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+			return
+		}
 	}
 	if apiKey == "" {
 		httpx.WriteValidationError(w, map[string]string{"apiKey": "required"})
 		return
 	}
 
-	// mistral is OCR-only — it has no chat-reply models to enable (see
-	// testProviderModel's mistral case, which ignores the model param
-	// entirely), so it must skip the "needs an enabled model" requirement
-	// every other provider here has.
-	testModel := ""
-	if provider != "mistral" {
-		models, err := h.llmRepo.EnabledModelsForStudio(r.Context(), studioID, llm.ProviderName(provider))
-		if err != nil || len(models) == 0 {
-			httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
-			return
-		}
-		testModel = models[0]
+	models, err := h.llmRepo.EnabledModels(r.Context(), llm.ProviderName(provider))
+	if err != nil || len(models) == 0 {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
 	}
+	testModel := models[0]
 
 	testCtx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	if testErr := testProviderModel(testCtx, provider, h.claudeAPIURL, apiKey, testModel); testErr != nil {
+	if testErr := testPlatformProviderModel(testCtx, h.bifrostClient, provider, apiKey, testModel); testErr != nil {
 		httpx.WriteValidationError(w, map[string]string{"apiKey": testErr.Error()})
 		return
 	}
 
-	// Only touch storage after a successful test — save the key if a new one was submitted.
 	if strings.TrimSpace(req.APIKey) != "" {
 		c := identity.MustClaims(r.Context())
-		if err := h.svc.repo.UpdateAIProviderKey(r.Context(), studioID, provider, req.APIKey, &c.UserID); err != nil {
+		if err := h.svc.repo.SetPlatformAIProviderKey(r.Context(), provider, req.APIKey, &c.UserID); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 			return
 		}
@@ -291,37 +413,31 @@ func (h *Handler) PostAITestKey(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true, "testedModel": testModel})
 }
 
-type postAIModelReq struct {
+type postPlatformAIModelReq struct {
 	ModelName string `json:"modelName"`
 }
 
-// PostAIModel godoc
+// PostPlatformAIModel godoc
 //
 //	@Summary		Add and live-test a model for a provider
-//	@Description	Sends a trivial live request to the provider using the studio's saved key. On success the model is persisted and enabled; on failure nothing is written.
-//	@Tags			AI Assistant Settings
+//	@Description	Sends a trivial live request using the centrally-configured key. On success the model is persisted and enabled for every studio; on failure nothing is written.
+//	@Tags			AI Provider Settings
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			studioId	path	string			true	"Studio ID"
-//	@Param			provider	path	string			true	"groq | gemini | claude"
-//	@Param			body		body	postAIModelReq	true	"Model name"
+//	@Param			provider	path	string					true	"groq | gemini | claude | openai"
+//	@Param			body		body	postPlatformAIModelReq	true	"Model name"
 //	@Success		200			{object}	map[string]any
 //	@Failure		400			{object}	httpx.ErrorResponse
 //	@Failure		422			{object}	httpx.ErrorResponse	"the live test failed"
-//	@Router			/studios/{studioId}/ai-models/{provider}/models [post]
-func (h *Handler) PostAIModel(w http.ResponseWriter, r *http.Request) {
-	studioID, err := uuid.Parse(chi.URLParam(r, "studioId"))
-	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
-		return
-	}
+//	@Router			/admin/ai-providers/{provider}/models [post]
+func (h *Handler) PostPlatformAIModel(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
-	if !isKnownProvider(provider) {
+	if !isKnownChatProvider(provider) {
 		httpx.WriteError(w, http.StatusBadRequest, "bad_provider", "unsupported provider")
 		return
 	}
-	var req postAIModelReq
+	var req postPlatformAIModelReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
@@ -331,12 +447,11 @@ func (h *Handler) PostAIModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	studio, err := h.svc.GetByID(r.Context(), studioID)
+	apiKey, err := h.svc.repo.GetPlatformAIProviderKey(r.Context(), provider)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return
 	}
-	apiKey := aiProviderKeyGetters[provider](studio)
 	if apiKey == "" {
 		httpx.WriteValidationError(w, map[string]string{"apiKey": "save an API key for this provider first"})
 		return
@@ -345,13 +460,18 @@ func (h *Handler) PostAIModel(w http.ResponseWriter, r *http.Request) {
 	testCtx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
-	if testErr := testProviderModel(testCtx, provider, h.claudeAPIURL, apiKey, modelName); testErr != nil {
+	if testErr := testPlatformProviderModel(testCtx, h.bifrostClient, provider, apiKey, modelName); testErr != nil {
 		httpx.WriteValidationError(w, map[string]string{"modelName": testErr.Error()})
 		return
 	}
 
-	m, err := h.llmRepo.UpsertStudioModelResult(r.Context(), studioID, llm.ProviderName(provider), modelName, true, "")
+	m, err := h.llmRepo.UpsertModelResult(r.Context(), llm.ProviderName(provider), modelName, true, "")
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23514" {
+			httpx.WriteValidationError(w, map[string]string{"provider": "this provider isn't enabled for custom models yet"})
+			return
+		}
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return
 	}
@@ -362,41 +482,33 @@ func (h *Handler) PostAIModel(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-type patchAIModelReq struct {
+type patchPlatformAIModelReq struct {
 	Enabled bool `json:"enabled"`
 }
 
-// PatchAIModel godoc
+// PatchPlatformAIModel godoc
 //
 //	@Summary		Enable or disable an already-tested model
-//	@Tags			AI Assistant Settings
+//	@Tags			AI Provider Settings
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			studioId	path	string			true	"Studio ID"
-//	@Param			provider	path	string			true	"groq | gemini | claude"
-//	@Param			modelId		path	string			true	"Model ID"
-//	@Param			body		body	patchAIModelReq	true	"Enabled state"
-//	@Success		200			{object}	map[string]any
-//	@Failure		400			{object}	httpx.ErrorResponse
-//	@Failure		404			{object}	httpx.ErrorResponse
-//	@Router			/studios/{studioId}/ai-models/{provider}/models/{modelId} [patch]
-func (h *Handler) PatchAIModel(w http.ResponseWriter, r *http.Request) {
-	studioID, err := uuid.Parse(chi.URLParam(r, "studioId"))
-	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
-		return
-	}
+//	@Param			modelId	path	string					true	"Model ID"
+//	@Param			body	body	patchPlatformAIModelReq	true	"Enabled state"
+//	@Success		200		{object}	map[string]any
+//	@Failure		404		{object}	httpx.ErrorResponse
+//	@Router			/admin/ai-providers/models/{modelId} [patch]
+func (h *Handler) PatchPlatformAIModel(w http.ResponseWriter, r *http.Request) {
 	modelID, err := uuid.Parse(chi.URLParam(r, "modelId"))
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid model id")
 		return
 	}
-	var req patchAIModelReq
+	var req patchPlatformAIModelReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	if err := h.llmRepo.SetStudioModelEnabled(r.Context(), studioID, modelID, req.Enabled); err != nil {
+	if err := h.llmRepo.SetModelEnabled(r.Context(), modelID, req.Enabled); err != nil {
 		if errors.Is(err, llm.ErrNotFound) {
 			httpx.WriteError(w, http.StatusNotFound, "not_found", "model not found")
 			return
@@ -407,36 +519,30 @@ func (h *Handler) PatchAIModel(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-type patchAIModelOrderReq struct {
+type patchPlatformAIModelOrderReq struct {
 	ModelIDs []string `json:"modelIds"`
 }
 
-// PatchAIModelOrder godoc
+// PatchPlatformAIModelOrder godoc
 //
 //	@Summary		Reorder a provider's models
 //	@Description	Sets the try-order for provider's models — modelIds[0] is tried first by the waterfall, modelIds[1] is the fallback, and so on.
-//	@Tags			AI Assistant Settings
+//	@Tags			AI Provider Settings
 //	@Accept			json
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			studioId	path	string					true	"Studio ID"
-//	@Param			provider	path	string					true	"groq | gemini | claude"
-//	@Param			body		body	patchAIModelOrderReq	true	"Model IDs in the desired try-order"
+//	@Param			provider	path	string							true	"groq | gemini | claude | openai"
+//	@Param			body		body	patchPlatformAIModelOrderReq	true	"Model IDs in the desired try-order"
 //	@Success		200			{object}	map[string]any
 //	@Failure		400			{object}	httpx.ErrorResponse
-//	@Router			/studios/{studioId}/ai-models/{provider}/order [patch]
-func (h *Handler) PatchAIModelOrder(w http.ResponseWriter, r *http.Request) {
-	studioID, err := uuid.Parse(chi.URLParam(r, "studioId"))
-	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
-		return
-	}
+//	@Router			/admin/ai-providers/{provider}/order [patch]
+func (h *Handler) PatchPlatformAIModelOrder(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
-	if !isKnownProvider(provider) {
+	if !isKnownChatProvider(provider) {
 		httpx.WriteError(w, http.StatusBadRequest, "bad_provider", "unsupported provider")
 		return
 	}
-	var req patchAIModelOrderReq
+	var req patchPlatformAIModelOrderReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
@@ -449,44 +555,165 @@ func (h *Handler) PatchAIModelOrder(w http.ResponseWriter, r *http.Request) {
 		}
 		ids = append(ids, id)
 	}
-	if err := h.llmRepo.SetStudioModelOrder(r.Context(), studioID, llm.ProviderName(provider), ids); err != nil {
+	if err := h.llmRepo.SetModelOrder(r.Context(), llm.ProviderName(provider), ids); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// DeleteAIModel godoc
+// DeletePlatformAIModel godoc
 //
-//	@Summary		Remove a model a studio added
-//	@Tags			AI Assistant Settings
+//	@Summary		Remove a model the superadmin added
+//	@Tags			AI Provider Settings
 //	@Produce		json
 //	@Security		CookieAuth
-//	@Param			studioId	path	string	true	"Studio ID"
-//	@Param			provider	path	string	true	"groq | gemini | claude"
-//	@Param			modelId		path	string	true	"Model ID"
-//	@Success		200			{object}	map[string]any
-//	@Failure		400			{object}	httpx.ErrorResponse
-//	@Failure		404			{object}	httpx.ErrorResponse
-//	@Router			/studios/{studioId}/ai-models/{provider}/models/{modelId} [delete]
-func (h *Handler) DeleteAIModel(w http.ResponseWriter, r *http.Request) {
-	studioID, err := uuid.Parse(chi.URLParam(r, "studioId"))
-	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
-		return
-	}
+//	@Param			modelId	path	string	true	"Model ID"
+//	@Success		200		{object}	map[string]any
+//	@Failure		404		{object}	httpx.ErrorResponse
+//	@Router			/admin/ai-providers/models/{modelId} [delete]
+func (h *Handler) DeletePlatformAIModel(w http.ResponseWriter, r *http.Request) {
 	modelID, err := uuid.Parse(chi.URLParam(r, "modelId"))
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid model id")
 		return
 	}
-	if err := h.llmRepo.DeleteStudioModel(r.Context(), studioID, modelID); err != nil {
+	if err := h.llmRepo.DeleteModel(r.Context(), modelID); err != nil {
 		if errors.Is(err, llm.ErrNotFound) {
 			httpx.WriteError(w, http.StatusNotFound, "not_found", "model not found")
 			return
 		}
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// ── Mistral (OCR-only, per-studio BYOK — unaffected by AI provider centralization) ──
+
+// GetStudioMistralKey godoc
+//
+//	@Summary		Get a studio's Mistral OCR key status
+//	@Description	Presence/suffix only — the actual key value is never returned.
+//	@Tags			AI Assistant Settings
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			studioId	path	string	true	"Studio ID"
+//	@Success		200			{object}	map[string]any
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/me/studios/{studioId}/mistral-key [get]
+func (h *Handler) GetStudioMistralKey(w http.ResponseWriter, r *http.Request) {
+	studioID, err := uuid.Parse(chi.URLParam(r, "studioId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	studio, err := h.svc.GetByID(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"hasApiKey":      studio.MistralAPIKey != "",
+		"keyFingerprint": studio.MistralAPIKeyFingerprint,
+	})
+}
+
+type putStudioMistralKeyReq struct {
+	APIKey string `json:"apiKey"`
+}
+
+// PutStudioMistralKey godoc
+//
+//	@Summary		Save a studio's Mistral OCR API key
+//	@Description	Mistral is used for Knowledge Base image OCR only, not the chat-reply waterfall — it stays a per-studio key.
+//	@Tags			AI Assistant Settings
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			studioId	path	string					true	"Studio ID"
+//	@Param			body		body	putStudioMistralKeyReq	true	"API key"
+//	@Success		200			{object}	map[string]any
+//	@Failure		400			{object}	httpx.ErrorResponse
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/me/studios/{studioId}/mistral-key [put]
+func (h *Handler) PutStudioMistralKey(w http.ResponseWriter, r *http.Request) {
+	studioID, err := uuid.Parse(chi.URLParam(r, "studioId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	var req putStudioMistralKeyReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if strings.TrimSpace(req.APIKey) == "" {
+		httpx.WriteValidationError(w, map[string]string{"apiKey": "required"})
+		return
+	}
+	c := identity.MustClaims(r.Context())
+	if err := h.svc.repo.UpdateAIProviderKey(r.Context(), studioID, "mistral", req.APIKey, &c.UserID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	h.logSecurityEvent(r.Context(), r, &c.UserID, string(c.Role), &studioID, "studio_secret.set", secaudit.OutcomeSuccess, map[string]any{"provider": "mistral"})
+	if riskalert.SecretChanged() {
+		h.sendRiskAlert("Studio secret changed", fmt.Sprintf("Studio %s set/replaced its mistral key.", studioID))
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// PostStudioMistralTestKey godoc
+//
+//	@Summary		Test a studio's Mistral OCR API key
+//	@Tags			AI Assistant Settings
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			studioId	path	string					true	"Studio ID"
+//	@Param			body		body	putStudioMistralKeyReq	true	"API key (omit to test the already-saved key)"
+//	@Success		200			{object}	map[string]any
+//	@Failure		400			{object}	httpx.ErrorResponse
+//	@Failure		422			{object}	httpx.ErrorResponse	"the live test failed"
+//	@Router			/me/studios/{studioId}/mistral-key/test [post]
+func (h *Handler) PostStudioMistralTestKey(w http.ResponseWriter, r *http.Request) {
+	studioID, err := uuid.Parse(chi.URLParam(r, "studioId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	var req putStudioMistralKeyReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	studio, err := h.svc.GetByID(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	apiKey := strings.TrimSpace(req.APIKey)
+	if apiKey == "" {
+		apiKey = studio.MistralAPIKey
+	}
+	if apiKey == "" {
+		httpx.WriteValidationError(w, map[string]string{"apiKey": "required"})
+		return
+	}
+
+	testCtx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	if testErr := mistral.New().ValidateKey(testCtx, apiKey); testErr != nil {
+		httpx.WriteValidationError(w, map[string]string{"apiKey": testErr.Error()})
+		return
+	}
+
+	if strings.TrimSpace(req.APIKey) != "" {
+		c := identity.MustClaims(r.Context())
+		if err := h.svc.repo.UpdateAIProviderKey(r.Context(), studioID, "mistral", req.APIKey, &c.UserID); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+			return
+		}
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }

@@ -57,7 +57,7 @@ var permissionPrefixes = []struct {
 	{"/style-refresh-interval", []string{"knowledge-base"}}, // same
 	{"/program-start-date", []string{"knowledge-base"}},     // same
 	{"/google-oauth", []string{"channels"}},                 // corrected: only called from the Channels page (Connect Google Ads), not Settings
-	{"/ai-models", []string{"settings"}},
+	{"/mistral-key", []string{"settings"}}, // Groq/Gemini/Claude moved to /admin/ai-providers (superadmin-only, own role gate)
 	{"/stripe-oauth", []string{"settings"}}, // no frontend caller found at all currently — kept as a safe default, unverified
 	{"/initial-contact-delay", []string{"settings"}},
 	{"/ai-reply-delay", []string{"settings"}},

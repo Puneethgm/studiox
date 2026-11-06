@@ -94,13 +94,18 @@ func (r *Repo) CreatePasswordResetToken(ctx context.Context, userID uuid.UUID, t
 // never be replayed even if the two statements below race with a second
 // request for the same token, since the UPDATE's WHERE clause only matches
 // while used_at IS NULL.
-func (r *Repo) ConsumePasswordResetToken(ctx context.Context, rawToken, newPasswordHash string) error {
+// ConsumePasswordResetToken returns the affected user's ID so the caller
+// can also end all of that user's sessions (platform-security-hardening
+// task 1.4) — a password reset via this flow typically means the
+// previous credential may have been compromised, exactly when every
+// other session should end too.
+func (r *Repo) ConsumePasswordResetToken(ctx context.Context, rawToken, newPasswordHash string) (uuid.UUID, error) {
 	sum := sha256.Sum256([]byte(rawToken))
 	hash := hex.EncodeToString(sum[:])
 
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("begin: %w", err)
+		return uuid.Nil, fmt.Errorf("begin: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
@@ -113,19 +118,19 @@ func (r *Repo) ConsumePasswordResetToken(ctx context.Context, rawToken, newPassw
 	`, hash).Scan(&userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrResetTokenInvalid
+			return uuid.Nil, ErrResetTokenInvalid
 		}
-		return fmt.Errorf("consume reset token: %w", err)
+		return uuid.Nil, fmt.Errorf("consume reset token: %w", err)
 	}
 
 	if _, err := tx.Exec(ctx, `
 		UPDATE users SET password_hash = $2, must_reset_password = false, updated_at = now()
 		WHERE id = $1
 	`, userID, newPasswordHash); err != nil {
-		return fmt.Errorf("update password from reset token: %w", err)
+		return uuid.Nil, fmt.Errorf("update password from reset token: %w", err)
 	}
 
-	return tx.Commit(ctx)
+	return userID, tx.Commit(ctx)
 }
 
 // GetStudioName looks up just a studio's display name — identity can't

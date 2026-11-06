@@ -71,9 +71,9 @@ func TestDeleteAccountRequiresStudioAdmin(t *testing.T) {
 	h := &Handler{}
 	sid := uuid.New()
 	r := chi.NewRouter()
-	r.Delete("/me/studios/{id}/delete-account", h.deleteAccount)
+	r.Post("/me/studios/{id}/delete-account/request", h.requestAccountDeletion)
 
-	req := claimsReq(http.MethodDelete, "/me/studios/"+sid.String()+"/delete-account", identity.RoleStudioStaff, &sid)
+	req := claimsReq(http.MethodPost, "/me/studios/"+sid.String()+"/delete-account/request", identity.RoleStudioStaff, &sid)
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 	if rr.Code != http.StatusForbidden {

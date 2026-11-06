@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import Script from 'next/script';
 import { loadStripe } from '@stripe/stripe-js';
 import { Elements, CardNumberElement, CardExpiryElement, CardCvcElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import { CheckCircle2, AlertCircle, Loader2, Eye } from 'lucide-react';
@@ -25,6 +26,38 @@ const STRIPE_STYLE = {
 const fieldCls = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm placeholder:text-gray-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Ad-tracking GTM container for FS8 Tanjong Pagar only (studio request) —
+// this page is a shared template every studio's trial link resolves to, so
+// this must stay gated on studioSlug rather than added to the root layout,
+// which would fire it for every other studio's trial page too.
+const FS8_STUDIO_SLUG = 'fs8-tanjong-pagar';
+const FS8_GTM_ID = 'GTM-MFMVVD3D';
+
+function Fs8GoogleTagManager({ nonce }: { nonce?: string }) {
+  return (
+    <>
+      {/* suppressHydrationWarning: browsers hide a script's nonce attribute
+          from DOM reads after insertion, so React's hydration check falsely
+          flags a mismatch against the real server-rendered value. */}
+      <Script id="fs8-gtm" strategy="afterInteractive" nonce={nonce} suppressHydrationWarning>
+        {`(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+})(window,document,'script','dataLayer','${FS8_GTM_ID}');`}
+      </Script>
+      <noscript>
+        <iframe
+          src={`https://www.googletagmanager.com/ns.html?id=${FS8_GTM_ID}`}
+          height="0"
+          width="0"
+          style={{ display: 'none', visibility: 'hidden' }}
+        />
+      </noscript>
+    </>
+  );
+}
 
 function FieldInput({ label, value, onChange, type = 'text', required, content }: {
   label: string; value: string; onChange: (v: string) => void; type?: string; required?: boolean; content: FieldBlockContent;
@@ -347,7 +380,7 @@ function CanvasForm({ blocks, background, leadInfo, amount, leadId, studioSlug, 
   );
 }
 
-export function TrialPaymentPage({ leadId, preview, standalone, studioSlug: studioSlugProp }: { leadId?: string; preview?: boolean; standalone?: boolean; studioSlug?: string }) {
+export function TrialPaymentPage({ leadId, preview, standalone, studioSlug: studioSlugProp, nonce }: { leadId?: string; preview?: boolean; standalone?: boolean; studioSlug?: string; nonce?: string }) {
   const searchParams = useSearchParams();
   const studioSlug = studioSlugProp || searchParams.get('studio') || '';
   // Presence of planId switches this same page from "pay the trial fee" to
@@ -438,6 +471,7 @@ export function TrialPaymentPage({ leadId, preview, standalone, studioSlug: stud
 
   return (
     <div className="min-h-screen bg-gray-50 sm:bg-gradient-to-br sm:from-slate-100 sm:via-gray-50 sm:to-slate-100 flex items-center justify-center p-6">
+      {studioSlug === FS8_STUDIO_SLUG && <Fs8GoogleTagManager nonce={nonce} />}
       <div className="w-full max-w-md">
         {loadError ? (
           <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center space-y-2 shadow-sm">

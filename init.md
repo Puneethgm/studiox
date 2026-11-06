@@ -200,6 +200,18 @@ o	Studio operations
 •	99.9% uptime SLA 
 •	Failover & disaster recovery 
 
+4.5 Account Deletion, Data Recovery, Audit Logs & Backup Policy
+•	Log retention: all system and account-related logs retained ≥90 days, securely stored, accessible for audit/troubleshooting. Payment/financial records subject to the longer retention in this section are handled separately from the 90-day log policy.
+•	Pre-deletion flow: studio owner requests deletion → confirmation screen → explicit "I am sure I want to permanently delete this account" checkbox (deletion cannot proceed without it) → pre-deletion email to the studio owner's registered email explaining the account will be permanently deleted and data will no longer be available via the active account → final verification.
+•	Backup before delete: before permanent deletion, create a complete encrypted backup/archive of the studio's data — studio info, users, leads/contacts, conversations, campaigns, settings, integrations, uploaded files, and other account-related data. Store securely, separate from the active dataset.
+•	Deletion & notification: delete the active studio account/data → send a post-deletion confirmation email to the owner.
+•	Recovery link: post-deletion email includes a secure, unique, revocable, time-limited link to recover/download the archive. Expires automatically after 7 days. Access requires authentication/verification before the archive is released.
+•	Payment/financial retention: payment and transaction records tied to processed payments are retained 7 years where required for financial, tax, accounting, legal, or regulatory purposes — stored separately from deleted operational data, limited to the minimum information needed for those obligations.
+•	Encryption: archives and backups encrypted at rest and in transit. Encryption keys managed separately from the archived data (never derived from or equal to the studio's plaintext password — the password itself is never stored in plain text; any credential tying the archive key to the studio's registered email/password must go through a proper KDF + separately-managed key, not raw password storage).
+•	Audit trail: every step — deletion request, confirmation, pre-deletion email, archive creation, account deletion, recovery-link generation, recovery/download attempts, data restoration, and backup/restore operations — is recorded in the audit log, subject to the 90-day minimum retention (longer where legal/financial retention applies).
+•	Database resilience (ties to §8.6 Reliability & DR): production DB has a read replica for read scaling/failover support, with its own security, monitoring, and backup policies; a separate automated backup/DR strategy supports restoring the application and database after DB failure, server failure, accidental deletion, data corruption, infrastructure outage, or a security incident.
+•	Status: specified for a future phase — not built at the current L1 level (see docs/skills.md §1). Flag when planning the phase that will include tenant offboarding / compliance hardening.
+
 5. Data Model (High-Level)
 Entities:
 •	Vendor 

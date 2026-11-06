@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/projectx/api/internal/identity"
-	"github.com/projectx/api/internal/integrations/llm"
+	"github.com/projectx/api/internal/integrations/llmgateway"
 	"github.com/projectx/api/internal/platform/httpx"
 	"github.com/projectx/api/internal/studios"
 )
@@ -58,58 +58,52 @@ type TestChatResponse struct {
 // conversation/lead — used by the Knowledge Base admin page's test-chat
 // drawer so an admin can validate retrieval + tone before enabling live AI
 // replies. Deliberately reuses the same building blocks as the real
-// per-message pipeline (studios.ClassifyIntent/ExpandQuery/RerankChunks,
-// SearchKnowledgeChunksHybrid, SearchStyleExamples, buildPrompt,
-// llmWaterfall) rather than handleMessage, which is tightly coupled to real
-// Message/Conversation/Lead records and has side effects (DB writes, job
-// enqueuing) that would be wrong here.
+// per-message pipeline (SearchKnowledgeChunksHybrid, SearchStyleExamples,
+// buildPrompt, llmWaterfall) rather than handleMessage, which is tightly
+// coupled to real Message/Conversation/Lead records and has side effects
+// (DB writes, job enqueuing) that would be wrong here.
 func (w *AIWorker) TestChat(ctx context.Context, studioID uuid.UUID, req TestChatRequest) (string, []string, error) {
 	studio, err := w.studiosRepo.GetByID(ctx, studioID)
 	if err != nil {
 		return "", nil, fmt.Errorf("fetch studio: %w", err)
 	}
 
-	apiKey := studio.GeminiAPIKey
-	if apiKey == "" {
-		if pk, err := w.studiosRepo.GetPlatformSetting(ctx, "gemini_api_key"); err == nil && pk != "" {
-			apiKey = pk
-		}
-	}
+	// Gemini-configured gate for the retrieval calls below — same
+	// pre-existing gate ai_worker.go's handleMessage uses; see its comment
+	// on the equivalent apiKey declaration.
+	apiKey, _ := w.studiosRepo.GetPlatformAIProviderKey(ctx, "gemini")
 
+	// Test Chat has no pre-reply intent/sentiment classification to feed
+	// buildPrompt (ai-reply-flow-llm-design: collapsed into the single
+	// structured reply call in the real pipeline — Test Chat uses the
+	// simpler plain-text llmWaterfall path below, which has no structured
+	// output to classify from either, so these just stay at neutral
+	// defaults).
 	intent := "general_question"
 	sentiment := 0
 	var kbChunks []string
 	var sources []string
 	var styleExamples []StyleExample
 
-	geminiModel := ""
-	if models, mErr := w.llmRepo.EnabledModelsForStudio(ctx, studioID, llm.ProviderGemini); mErr == nil && len(models) > 0 {
-		geminiModel = models[0]
-	}
-
 	if apiKey != "" && req.Message != "" {
-		i, s, _ := studios.ClassifyIntent(ctx, apiKey, geminiModel, req.Message)
-		intent, sentiment = i, s
-		expandedQuery := studios.ExpandQuery(ctx, apiKey, geminiModel, req.Message)
-
-		if queryVec, err := w.embeddings.EmbedQuery(ctx, expandedQuery); err == nil {
-			if matched, err := w.studiosRepo.SearchKnowledgeChunksHybrid(ctx, studioID, queryVec, expandedQuery, "all", 8); err == nil && len(matched) > 0 {
-				contents := make([]string, len(matched))
-				sourceByContent := make(map[string]string, len(matched))
-				for idx, m := range matched {
-					contents[idx] = m.Content
-					sourceByContent[m.Content] = m.SourceName
+		// Embed the raw message directly — no LLM query expansion — and
+		// take the hybrid search's top 4 results as-is (already ordered by
+		// RRF fusion relevance) — no separate LLM rerank call either.
+		if queryVec, err := w.embeddings.EmbedQuery(ctx, req.Message); err == nil {
+			if matched, err := w.studiosRepo.SearchKnowledgeChunksHybrid(ctx, studioID, queryVec, req.Message, "all", 8); err == nil && len(matched) > 0 {
+				topN := 4
+				if len(matched) < topN {
+					topN = len(matched)
 				}
-				kbChunks = studios.RerankChunks(ctx, apiKey, geminiModel, req.Message, contents, 4)
-
 				seenSource := make(map[string]bool)
-				for _, c := range kbChunks {
-					name := sourceByContent[c]
-					if name == "" || seenSource[name] {
+				for idx := 0; idx < topN; idx++ {
+					m := matched[idx]
+					kbChunks = append(kbChunks, m.Content)
+					if m.SourceName == "" || seenSource[m.SourceName] {
 						continue
 					}
-					seenSource[name] = true
-					sources = append(sources, name)
+					seenSource[m.SourceName] = true
+					sources = append(sources, m.SourceName)
 				}
 			}
 			if examples, err := w.msgRepo.SearchStyleExamples(ctx, studioID, queryVec, 3); err == nil {
@@ -121,6 +115,10 @@ func (w *AIWorker) TestChat(ctx context.Context, studioID uuid.UUID, req TestCha
 	plans, err := w.msgRepo.ListActivePlans(ctx, studioID)
 	if err != nil {
 		plans = []Plan{}
+	}
+	offers, err := w.msgRepo.ListActiveOffers(ctx, studioID)
+	if err != nil {
+		offers = []Offer{}
 	}
 
 	// Convert the client-supplied prior turns into the same []Message shape
@@ -145,9 +143,9 @@ func (w *AIWorker) TestChat(ctx context.Context, studioID uuid.UUID, req TestCha
 	// answering the question just asked.
 	history = append(history, Message{Direction: DirectionInbound, Body: req.Message, SentAt: now})
 
-	prompt := w.buildPrompt(ctx, history, nil, styleExamples, nil, nil, studio, plans, sentiment, nil, kbChunks, intent, len(kbChunks) >= 2, "")
+	prompt := w.buildPrompt(ctx, history, styleExamples, nil, nil, studio, plans, offers, sentiment, nil, kbChunks, intent, len(kbChunks) >= 2, "")
 
-	reply, _ := llmWaterfall(ctx, w.studiosRepo, w.llmRepo, w.msgRepo, w.claude, w.claudeAPIURL, w.log, studioID, studio, prompt, w.answerCache, "test_chat")
+	reply, _ := llmWaterfall(ctx, w.llmGateway, studioID, studio, prompt, llmgateway.FeatureTestChat)
 	if reply == "" {
 		return "", nil, ErrNoProviderConfigured
 	}

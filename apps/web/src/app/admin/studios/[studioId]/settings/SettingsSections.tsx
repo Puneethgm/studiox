@@ -21,6 +21,8 @@ import {
   saveInitialContactDelay,
   getAIReplyDelay,
   saveAIReplyDelay,
+  getAIActiveHours,
+  saveAIActiveHours,
   getSheetsSettings,
   saveSheetsSettings,
   listExternalLeadsSheets,
@@ -551,6 +553,64 @@ function EditableNumberRow({
   );
 }
 
+// A "HH:MM" time-of-day field, saved instantly on blur (same one-click-
+// intent philosophy as ToggleRow/SelectEditRow — no separate pencil-to-
+// edit step) rather than EditableTextRow's click-to-edit interaction,
+// since a native <input type="time"> is already its own clear affordance.
+function TimeEditRow({
+  label,
+  description,
+  value,
+  onSave,
+}: {
+  label: string;
+  description?: string;
+  value: string;
+  onSave: (next: string) => Promise<{ ok: boolean; error?: string; code?: string }>;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [current, setCurrent] = useState(value);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => setCurrent(value), [value]);
+
+  async function commit(next: string) {
+    if (!next || next === current) return;
+    const prev = current;
+    setCurrent(next);
+    setSaving(true);
+    setError(null);
+    const res = await onSave(next);
+    setSaving(false);
+    if (!res.ok) {
+      setCurrent(prev);
+      setError(res.error ?? 'Failed to save');
+    }
+  }
+
+  return (
+    <SettingsRow label={label} description={description}>
+      <input
+        type="time"
+        defaultValue={current}
+        key={current}
+        disabled={saving}
+        onBlur={(e) => commit(e.target.value)}
+        className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-800 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+      />
+      {error && <p className="mt-1 text-xs font-medium text-red-500">{error}</p>}
+    </SettingsRow>
+  );
+}
+
+// The full IANA timezone list, built in-browser (Intl.supportedValuesOf —
+// no hardcoded/curated list, no extra dependency) rather than a static
+// array that would need maintaining.
+const IANA_TIMEZONE_OPTIONS: { value: string; label: string }[] =
+  typeof Intl !== 'undefined' && 'supportedValuesOf' in Intl
+    ? (Intl as any).supportedValuesOf('timeZone').map((tz: string) => ({ value: tz, label: tz }))
+    : [{ value: 'UTC', label: 'UTC' }];
+
 export function IntegrationsSection({ studio, onChange }: { studio: Studio; onChange: (patch: Partial<Studio>) => void }) {
   const [loading, setLoading] = useState(true);
   const [sendSpacing, setSendSpacing] = useState(20);
@@ -560,17 +620,22 @@ export function IntegrationsSection({ studio, onChange }: { studio: Studio; onCh
   const [coldStalledDays, setColdStalledDays] = useState(7);
   const [initialDelayMinutes, setInitialDelayMinutes] = useState(0);
   const [aiReplyDelay, setAiReplyDelay] = useState(0);
+  const [aiActiveHoursEnabled, setAiActiveHoursEnabled] = useState(false);
+  const [aiActiveHoursStart, setAiActiveHoursStart] = useState('00:00');
+  const [aiActiveHoursEnd, setAiActiveHoursEnd] = useState('23:59');
+  const [aiActiveHoursTimezone, setAiActiveHoursTimezone] = useState('UTC');
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [spacingRes, dailyLimitRes, glofoxRes, coldRes, delayRes, aiDelayRes] = await Promise.all([
+      const [spacingRes, dailyLimitRes, glofoxRes, coldRes, delayRes, aiDelayRes, aiHoursRes] = await Promise.all([
         getWhatsAppSendSpacing(studio.id),
         getWhatsAppDailyMessageLimit(studio.id),
         getGlofoxFirstSession(studio.id),
         getColdLeadThresholds(studio.id),
         getInitialContactDelay(studio.id),
         getAIReplyDelay(studio.id),
+        getAIActiveHours(studio.id),
       ]);
       if (cancelled) return;
       if (spacingRes.ok && spacingRes.data) setSendSpacing(spacingRes.data.whatsappSendSpacingSeconds);
@@ -582,6 +647,12 @@ export function IntegrationsSection({ studio, onChange }: { studio: Studio; onCh
       }
       if (delayRes.ok && delayRes.data) setInitialDelayMinutes(delayRes.data.initialContactDelayMinutes);
       if (aiDelayRes.ok && aiDelayRes.data) setAiReplyDelay(aiDelayRes.data.aiReplyDelaySeconds);
+      if (aiHoursRes.ok && aiHoursRes.data) {
+        setAiActiveHoursEnabled(aiHoursRes.data.aiActiveHoursEnabled);
+        setAiActiveHoursStart(aiHoursRes.data.aiActiveHoursStart);
+        setAiActiveHoursEnd(aiHoursRes.data.aiActiveHoursEnd);
+        setAiActiveHoursTimezone(aiHoursRes.data.aiActiveHoursTimezone);
+      }
       setLoading(false);
     })();
     return () => {
@@ -600,6 +671,24 @@ export function IntegrationsSection({ studio, onChange }: { studio: Studio; onCh
       const patch: Partial<Studio> = { [field]: value } as any;
       if (hasFlag[field]) patch[hasFlag[field]] = true as any;
       onChange(patch);
+    }
+    return res;
+  }
+
+  async function saveAIHours(patch: Partial<{ enabled: boolean; start: string; end: string; timezone: string }>) {
+    const next = {
+      enabled: aiActiveHoursEnabled,
+      start: aiActiveHoursStart,
+      end: aiActiveHoursEnd,
+      timezone: aiActiveHoursTimezone,
+      ...patch,
+    };
+    const res = await saveAIActiveHours(studio.id, next.enabled, next.start, next.end, next.timezone);
+    if (res.ok) {
+      setAiActiveHoursEnabled(next.enabled);
+      setAiActiveHoursStart(next.start);
+      setAiActiveHoursEnd(next.end);
+      setAiActiveHoursTimezone(next.timezone);
     }
     return res;
   }
@@ -727,6 +816,43 @@ export function IntegrationsSection({ studio, onChange }: { studio: Studio; onCh
                 if (res.ok) setAiReplyDelay(n);
                 return res;
               }}
+            />
+          </>
+        )}
+      </SettingsCard>
+
+      <SettingsCard title="AI Active Hours">
+        {loading ? (
+          <div className="flex items-center gap-2 px-5 py-4 text-sm text-zinc-400">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading…
+          </div>
+        ) : (
+          <>
+            <ToggleRow
+              label="Restrict AI to a Daily Window"
+              description="Off by default — the AI replies any time. Turn this on to only let it auto-reply during the window below, in the chosen timezone; outside it, the conversation hands off like any other gated reply."
+              checked={aiActiveHoursEnabled}
+              onSave={(v) => saveAIHours({ enabled: v })}
+            />
+            <TimeEditRow
+              label="Start Time"
+              description="The AI starts auto-replying at this time each day."
+              value={aiActiveHoursStart}
+              onSave={(v) => saveAIHours({ start: v })}
+            />
+            <TimeEditRow
+              label="End Time"
+              description="The AI stops auto-replying at this time each day. An end time earlier than the start time is treated as an overnight window (e.g. 22:00 → 02:00)."
+              value={aiActiveHoursEnd}
+              onSave={(v) => saveAIHours({ end: v })}
+            />
+            <SelectEditRow
+              label="Timezone"
+              description="Any IANA timezone — the start/end times above are interpreted in this zone."
+              value={aiActiveHoursTimezone}
+              options={IANA_TIMEZONE_OPTIONS}
+              onSave={(v) => saveAIHours({ timezone: v })}
             />
           </>
         )}

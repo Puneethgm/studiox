@@ -58,3 +58,4 @@ func TestFormatVectorAsString(t *testing.T) {
 		t.Errorf("FormatVectorAsString() = %s, want %s", got, want)
 	}
 }
+

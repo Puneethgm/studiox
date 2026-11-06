@@ -8,54 +8,56 @@ import (
 	"regexp"
 	"runtime/debug"
 	"strings"
-	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/projectx/api/internal/decisiontree"
-	"github.com/projectx/api/internal/integrations/claude"
+	"github.com/projectx/api/internal/integrations/bifrost"
 	"github.com/projectx/api/internal/integrations/embeddings"
-	"github.com/projectx/api/internal/integrations/gemini"
-	"github.com/projectx/api/internal/integrations/groq"
+	"github.com/projectx/api/internal/integrations/glofox"
 	"github.com/projectx/api/internal/integrations/llm"
+	"github.com/projectx/api/internal/integrations/llmgateway"
 	"github.com/projectx/api/internal/leads"
+	"github.com/projectx/api/internal/messaging/prompts"
 	"github.com/projectx/api/internal/studios"
 )
 
 const (
 	aiResyncInterval = 30 * time.Second
+	// aiPipelineVersion tags every ai_turns row (task 9.2/doc §8.9) with
+	// which generation of the reply pipeline produced it — bump this
+	// when a change to the structured-call/tools/guards pipeline would
+	// make old and new turns not directly comparable in a report.
+	aiPipelineVersion = "ai-reply-flow-llm-design-v1"
 )
 
 type AIWorker struct {
-	bus          Bus
-	msgRepo      *Repo
-	msgSvc       *Service
-	studiosRepo  *studios.Repo
-	leadsRepo    *leads.Repo
-	dtSvc        *decisiontree.Service
-	claude       *claude.Client
-	claudeAPIURL string
-	geminiClient *gemini.Client
-	embeddings   *embeddings.Client
-	llmRepo      *llm.Repo
-	log          *slog.Logger
-	subs         map[uuid.UUID]func()
-	httpClient   *http.Client
-	answerCache  *AnswerCache
+	bus           Bus
+	msgRepo       *Repo
+	msgSvc        *Service
+	studiosRepo   *studios.Repo
+	leadsRepo     *leads.Repo
+	dtSvc         *decisiontree.Service
+	bifrostClient *bifrost.Client
+	embeddings    *embeddings.Client
+	llmRepo       *llm.Repo
+	llmGateway    *llmgateway.Client
+	log           *slog.Logger
+	subs          map[uuid.UUID]func()
+	httpClient    *http.Client
+	// glofoxClient serves the reply-tools capability (task 7.2) —
+	// optional (nil if Glofox isn't configured for this deployment), set
+	// via WithGlofoxClient after construction so NewAIWorker's existing
+	// call sites don't all need updating for one new optional dependency.
+	glofoxClient *glofox.Client
 
-	// pendingReplies debounces rapid-fire inbound messages so a customer
-	// sending several messages back to back (e.g. "hi", "I mean the Tuesday
-	// class", "is there a discount") gets ONE reply addressing all of them,
-	// not one reply per message — confirmed as a real complaint: separate
-	// replies read as repetitive and the AI sometimes answered an earlier
-	// message in the burst before the later ones (with more context) had
-	// even been read. Keyed by conversation ID; see debounceInboundMessage.
-	pendingReplies   map[uuid.UUID]*time.Timer
-	pendingMessageID map[uuid.UUID]uuid.UUID
-	pendingStudioID  map[uuid.UUID]uuid.UUID
-	pendingMu        sync.Mutex
+	// Debounce of rapid-fire inbound messages (so a customer sending
+	// several messages back to back gets ONE reply addressing all of
+	// them, not one per message) is durable since task 5.2 — see
+	// debounceInboundMessage/RunDebouncePoll and the pending_ai_replies
+	// table; no in-memory state is kept on this struct for it anymore.
 }
 
 // inboundDebounceWindow is how long AIWorker waits after an inbound message
@@ -67,7 +69,7 @@ type AIWorker struct {
 // delayed.
 const inboundDebounceWindow = 6 * time.Second
 
-func NewAIWorker(bus Bus, msgRepo *Repo, msgSvc *Service, studiosRepo *studios.Repo, leadsRepo *leads.Repo, dtSvc *decisiontree.Service, cl *claude.Client, claudeAPIURL string, embClient *embeddings.Client, llmRepo *llm.Repo, log *slog.Logger, answerCache *AnswerCache) *AIWorker {
+func NewAIWorker(bus Bus, msgRepo *Repo, msgSvc *Service, studiosRepo *studios.Repo, leadsRepo *leads.Repo, dtSvc *decisiontree.Service, bifrostClient *bifrost.Client, embClient *embeddings.Client, llmRepo *llm.Repo, llmGateway *llmgateway.Client, log *slog.Logger) *AIWorker {
 	transport := &http.Transport{
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 100,
@@ -78,33 +80,32 @@ func NewAIWorker(bus Bus, msgRepo *Repo, msgSvc *Service, studiosRepo *studios.R
 		Timeout:   30 * time.Second,
 	}
 	return &AIWorker{
-		bus:              bus,
-		msgRepo:          msgRepo,
-		msgSvc:           msgSvc,
-		studiosRepo:      studiosRepo,
-		leadsRepo:        leadsRepo,
-		dtSvc:            dtSvc,
-		claude:           cl,
-		claudeAPIURL:     claudeAPIURL,
-		geminiClient:     gemini.New(),
-		embeddings:       embClient,
-		llmRepo:          llmRepo,
-		log:              log,
-		subs:             make(map[uuid.UUID]func()),
-		httpClient:       client,
-		answerCache:      answerCache,
-		pendingReplies:   make(map[uuid.UUID]*time.Timer),
-		pendingMessageID: make(map[uuid.UUID]uuid.UUID),
-		pendingStudioID:  make(map[uuid.UUID]uuid.UUID),
+		bus:           bus,
+		msgRepo:       msgRepo,
+		msgSvc:        msgSvc,
+		studiosRepo:   studiosRepo,
+		leadsRepo:     leadsRepo,
+		dtSvc:         dtSvc,
+		bifrostClient: bifrostClient,
+		embeddings:    embClient,
+		llmRepo:       llmRepo,
+		llmGateway:    llmGateway,
+		log:           log,
+		subs:          make(map[uuid.UUID]func()),
+		httpClient:    client,
 	}
 }
 
+// WithGlofoxClient sets the Glofox client the reply-tools capability
+// (task 7.2) calls for check_availability/create_booking. Optional — a
+// nil client (the default, if this is never called) makes
+// executeToolCalls fail closed per tool-call attempt rather than panic.
+func (w *AIWorker) WithGlofoxClient(c *glofox.Client) *AIWorker {
+	w.glofoxClient = c
+	return w
+}
+
 func (w *AIWorker) Run(ctx context.Context) {
-	if w.claude == nil {
-		w.log.Info("claude not configured; ai worker will run using studio-configured Gemini API keys where available")
-	} else {
-		w.log.Info("claude configured; starting ai worker")
-	}
 	w.log.Info("ai worker started")
 	// Subscribe immediately so messages arriving in the first 30s are not missed.
 	w.syncSubscriptions(ctx)
@@ -158,6 +159,17 @@ func (w *AIWorker) listenStudio(ctx context.Context, studioID uuid.UUID, ch <-ch
 					continue
 				}
 				w.debounceInboundMessage(ctx, studioID, evt.ConversationID, *evt.MessageID)
+			case EvtMessageSent:
+				// Cancel a pending debounced reply on ANY staff message in
+				// this conversation (ai-reply-flow-llm-design task 5.3) —
+				// not just a DND trigger, which is all the old behavior
+				// covered (see handleMessage's DND branch, which only
+				// cancels already-scheduled outbound jobs, never the
+				// debounce window itself).
+				if evt.MessageID == nil {
+					continue
+				}
+				go w.cancelPendingReplyIfStaffSent(context.Background(), studioID, evt.ConversationID, *evt.MessageID)
 			case EvtWAWebBackfillDone:
 				if evt.ChannelAccountID == nil {
 					continue
@@ -174,47 +186,98 @@ func (w *AIWorker) listenStudio(ctx context.Context, studioID uuid.UUID, ch <-ch
 
 // debounceInboundMessage replaces an immediate per-message handleMessage
 // call with a short, per-conversation quiet window (inboundDebounceWindow):
-// each new inbound message from the same conversation resets the timer
+// each new inbound message from the same conversation resets the window
 // instead of firing its own reply, so a customer sending several messages
 // back to back ("hi", "I mean Tuesday", "is there a discount?") gets exactly
 // ONE reply once they've actually paused, addressing everything in the
 // burst — not one reply per message. handleMessage itself needs no changes:
-// by the time the timer fires, every message in the burst is already
+// by the time the window elapses, every message in the burst is already
 // persisted, so the single handleMessage call (anchored on the LATEST
 // message ID seen) loads them all as ordinary conversation history.
+//
+// Durable since ai-reply-flow-llm-design task 5.2: this writes a
+// pending_ai_replies row instead of starting an in-memory time.AfterFunc,
+// so a process restart during the window doesn't drop the pending reply —
+// RunDebouncePoll (started once at process startup, see main.go) is what
+// actually fires it once fire_at elapses, from any process that happens
+// to be running the poll loop when that time comes.
 func (w *AIWorker) debounceInboundMessage(ctx context.Context, studioID, conversationID, messageID uuid.UUID) {
-	w.pendingMu.Lock()
-	defer w.pendingMu.Unlock()
-
-	w.pendingMessageID[conversationID] = messageID
-	w.pendingStudioID[conversationID] = studioID
-
-	if existing, ok := w.pendingReplies[conversationID]; ok {
-		existing.Stop()
+	fireAt := time.Now().Add(inboundDebounceWindow)
+	if err := w.msgRepo.UpsertPendingAIReply(ctx, conversationID, studioID, messageID, fireAt); err != nil {
+		w.log.Error("durable debounce: upsert pending ai reply failed", "conversation_id", conversationID, "err", err)
 	}
-	w.pendingReplies[conversationID] = time.AfterFunc(inboundDebounceWindow, func() {
-		w.pendingMu.Lock()
-		msgID, ok := w.pendingMessageID[conversationID]
-		sID := w.pendingStudioID[conversationID]
-		delete(w.pendingReplies, conversationID)
-		delete(w.pendingMessageID, conversationID)
-		delete(w.pendingStudioID, conversationID)
-		w.pendingMu.Unlock()
-		if !ok {
+}
+
+// cancelPendingReplyIfStaffSent deletes conversationID's pending debounced
+// reply when messageID turns out to be a staff-authored send (task 5.3).
+// Checked here rather than filtered at the event-subscription level since
+// EvtMessageSent doesn't carry SourceKind itself — only GetMessageByID
+// does, same pattern style_worker.go's learnFromMessageIfStaffReply uses
+// for the identical "is this actually a human, not AI/automation" check.
+func (w *AIWorker) cancelPendingReplyIfStaffSent(ctx context.Context, studioID, conversationID, messageID uuid.UUID) {
+	msg, err := w.msgRepo.GetMessageByID(ctx, studioID, messageID)
+	if err != nil || msg == nil || msg.SourceKind != SourceStudioUser {
+		return
+	}
+	if err := w.msgRepo.DeletePendingAIReply(ctx, conversationID); err != nil {
+		w.log.Warn("durable debounce: cancel on staff message failed", "conversation_id", conversationID, "err", err)
+	}
+}
+
+// debouncePollInterval is how often RunDebouncePoll checks for a pending
+// reply whose fire_at has elapsed — short relative to inboundDebounceWindow
+// (6s) so the actual send latency this adds is small, but not so short it
+// turns into a busy-poll; matches this package's other poll workers' "cheap
+// query when nothing is due" pattern (style_worker.go/worker.go), just at a
+// tighter interval since this one is latency-sensitive.
+const debouncePollInterval = 1 * time.Second
+
+// RunDebouncePoll is the durable counterpart to the old in-memory timer —
+// started once at process startup (main.go), it fires every pending reply
+// whose debounce window has elapsed. A process restart mid-window simply
+// means the row is picked up by whichever process's poll loop next ticks
+// past fire_at, instead of being lost (ai-reply-flow-llm-design task 5.2).
+func (w *AIWorker) RunDebouncePoll(ctx context.Context) {
+	w.log.Info("ai debounce poll worker started", "poll_interval", debouncePollInterval)
+	t := time.NewTicker(debouncePollInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			w.log.Info("ai debounce poll worker stopping")
 			return
+		case <-t.C:
+			w.fireDuePendingReplies(ctx)
 		}
-		// Without recover(), a panic anywhere in handleMessage kills this
-		// goroutine silently — no error logged, no reply sent, no trace.
-		defer func() {
-			if r := recover(); r != nil {
-				w.log.Error("ai handle message panicked", "message_id", msgID, "studio_id", sID,
-					"panic", r, "stack", string(debug.Stack()))
-			}
-		}()
-		if err := w.handleMessage(ctx, sID, msgID); err != nil {
-			w.log.Error("ai handle message", "err", err)
+	}
+}
+
+func (w *AIWorker) fireDuePendingReplies(ctx context.Context) {
+	due, err := w.msgRepo.ClaimDuePendingAIReplies(ctx, time.Now())
+	if err != nil {
+		w.log.Error("durable debounce: claim due pending ai replies failed", "err", err)
+		return
+	}
+	for _, p := range due {
+		go w.fireOnePendingReply(ctx, p)
+	}
+}
+
+func (w *AIWorker) fireOnePendingReply(ctx context.Context, p PendingAIReply) {
+	// Without recover(), a panic anywhere in handleMessage kills this
+	// goroutine silently — no error logged, no reply sent, no trace.
+	defer func() {
+		if r := recover(); r != nil {
+			w.log.Error("ai handle message panicked", "message_id", p.MessageID, "studio_id", p.StudioID,
+				"panic", r, "stack", string(debug.Stack()))
 		}
-	})
+	}()
+	if err := w.handleMessage(ctx, p.StudioID, p.MessageID); err != nil {
+		w.log.Error("ai handle message", "err", err)
+	}
+	if err := w.msgRepo.DeletePendingAIReply(ctx, p.ConversationID); err != nil {
+		w.log.Warn("durable debounce: cleanup after firing failed", "conversation_id", p.ConversationID, "err", err)
+	}
 }
 
 // summarizeConversationsAfterBackfill generates and stores a short internal
@@ -291,7 +354,7 @@ func (w *AIWorker) summarizeMessagesInto(ctx context.Context, studioID, convID u
 // (Groq -> Gemini -> Claude) but is factored out standalone since
 // summarization has no Message/decision-tree/KB context to gather.
 func (w *AIWorker) runSummaryWaterfall(ctx context.Context, studioID uuid.UUID, studio *studios.Studio, prompt string) (text string, sourceRef string) {
-	return llmWaterfall(ctx, w.studiosRepo, w.llmRepo, w.msgRepo, w.claude, w.claudeAPIURL, w.log, studioID, studio, prompt, w.answerCache, "summary")
+	return llmWaterfall(ctx, w.llmGateway, studioID, studio, prompt, llmgateway.FeatureSummary)
 }
 
 // aiHistoryWindow is how many recent messages handleMessage loads as the model's
@@ -334,115 +397,42 @@ func shouldRefreshRollingSummary(total int) bool {
 	return total == aiHistoryWindow+1 || total%rollingSummaryRefreshEvery == 0
 }
 
-// llmWaterfall is a Redis-cache-first wrapper around llmWaterfallUncached:
-// on a hit for this exact (studioID, kind, prompt), it returns the cached
-// answer without touching Groq/Gemini/Claude at all; on a miss, it runs the
-// real waterfall and — if a provider actually answered — stores the result
-// before returning it. cache may be nil (caching disabled); see AnswerCache.
+// llmWaterfall is a thin wrapper around the LLM gateway
+// (internal/integrations/llmgateway) shared by this package's background
+// AI callers (summary, style_profile, test_chat, template_gen).
 //
-// kind namespaces the cache by caller (e.g. "summary", "style_profile",
-// "test_chat", "template_gen", "incoming_reply") so two different features
-// can never collide even on an identical prompt.
-func llmWaterfall(ctx context.Context, studiosRepo *studios.Repo, llmRepo *llm.Repo, msgRepo *Repo, claudeClient *claude.Client, claudeAPIURL string, log *slog.Logger, studioID uuid.UUID, studio *studios.Studio, prompt string, cache *AnswerCache, kind string) (text string, sourceRef string) {
-	if cachedText, cachedSource, ok := cache.Get(ctx, studioID, kind, prompt); ok {
-		return cachedText, cachedSource
+// No longer Redis-cache-first (ai-reply-flow-llm-design task 8.1): the
+// AnswerCache this used to check/populate was torn down per the design
+// doc's §9 and an explicit user decision recorded in this change's
+// proposal.md, since a cached answer can't carry the per-call facts/
+// guards the new structured-reply pipeline (task 3+) requires — every
+// call now genuinely hits the gateway.
+func llmWaterfall(ctx context.Context, gw *llmgateway.Client, studioID uuid.UUID, studio *studios.Studio, prompt string, feature llmgateway.Feature) (text string, sourceRef string) {
+	// Superadmin-only master switch — a studio with this off never gets any
+	// AI call through this shared waterfall (summary, style_profile,
+	// test_chat, template_gen, enable_ai_followup), regardless of which
+	// keys/models are centrally configured.
+	if studio != nil && !studio.AIAccessEnabled {
+		return "", ""
 	}
-	text, sourceRef = llmWaterfallUncached(ctx, studiosRepo, llmRepo, msgRepo, claudeClient, claudeAPIURL, log, studioID, studio, prompt)
-	cache.Set(ctx, studioID, kind, prompt, text, sourceRef)
+	var err error
+	text, sourceRef, err = gw.Complete(ctx, feature, studioID, prompt)
+	if err != nil {
+		// Only returned for a missing ai_feature_routes row — a config
+		// bug (every feature this function serves is seeded by migration
+		// 20261029090004), not a provider failure, so it's worth a loud
+		// log even though callers here only ever check text=="".
+		slog.Default().Error("llm gateway: no route configured for feature", "feature", feature, "err", err)
+		return "", ""
+	}
 	return text, sourceRef
 }
 
-// llmWaterfallUncached tries Groq → Gemini → Claude in order, falling
-// through on error or an empty reply, and logs every attempt via
-// msgRepo.LogLLMUsage. This is the platform's one shared "give me a
-// completion for this prompt, I don't care which provider" path — used
-// both for AI reply generation (via runSummaryWaterfall above) and for any
-// other background task that needs an LLM call without depending on a
-// specific provider being configured (see StyleWorker, which can't assume
-// Claude is set up since it's a single platform-wide key while Groq/Gemini
-// are per-studio).
-//
-// Which MODEL each provider tries is read from studio_ai_models via
-// llmRepo.EnabledModelsForStudio, not hardcoded — a studio's AI Assistant
-// settings page controls this list (internal/studios/ai_models_http.go). A
-// provider with several enabled models tries each in order (first success
-// wins), same as Groq's small-then-large fallback used to be hardcoded.
-func llmWaterfallUncached(ctx context.Context, studiosRepo *studios.Repo, llmRepo *llm.Repo, msgRepo *Repo, claudeClient *claude.Client, claudeAPIURL string, log *slog.Logger, studioID uuid.UUID, studio *studios.Studio, prompt string) (text string, sourceRef string) {
-	groqKey := studio.GroqAPIKey
-	if groqKey == "" {
-		if pk, e := studiosRepo.GetPlatformSetting(ctx, "groq_api_key"); e == nil {
-			groqKey = pk
-		}
-	}
-	if groqKey != "" {
-		groqClient := groq.New(groqKey)
-		models, _ := llmRepo.EnabledModelsForStudio(ctx, studioID, llm.ProviderGroq)
-		for _, model := range models {
-			t0 := time.Now()
-			gr, gerr := groqClient.GenerateReply(ctx, prompt, model)
-			latMs := int(time.Since(t0).Milliseconds())
-			errMsg := ""
-			if gerr != nil {
-				errMsg = gerr.Error()
-			}
-			ok := gerr == nil && strings.TrimSpace(gr.Text) != ""
-			msgRepo.LogLLMUsage(ctx, studioID, "groq", model, latMs, ok, errMsg, gr.TokensIn, gr.TokensOut)
-			if ok {
-				return gr.Text, "groq:" + model
-			}
-		}
-	}
-
-	geminiKey := studio.GeminiAPIKey
-	if geminiKey == "" {
-		if pk, e := studiosRepo.GetPlatformSetting(ctx, "gemini_api_key"); e == nil {
-			geminiKey = pk
-		}
-	}
-	if geminiKey != "" {
-		models, _ := llmRepo.EnabledModelsForStudio(ctx, studioID, llm.ProviderGemini)
-		for _, model := range models {
-			t0 := time.Now()
-			gemReply, gerr := gemini.New().GenerateReplyForModel(ctx, geminiKey, model, prompt)
-			latMs := int(time.Since(t0).Milliseconds())
-			errMsg := ""
-			if gerr != nil {
-				errMsg = gerr.Error()
-			}
-			ok := gerr == nil && gemReply.Text != ""
-			msgRepo.LogLLMUsage(ctx, studioID, "gemini", model, latMs, ok, errMsg, gemReply.TokensIn, gemReply.TokensOut)
-			if ok {
-				return gemReply.Text, "gemini:" + model
-			}
-		}
-	}
-
-	claudeCl := claudeClient
-	if studio.ClaudeAPIKey != "" {
-		if c, cerr := claude.New(claudeAPIURL, studio.ClaudeAPIKey); cerr == nil && c != nil {
-			claudeCl = c
-		}
-	}
-	if claudeCl != nil {
-		models, _ := llmRepo.EnabledModelsForStudio(ctx, studioID, llm.ProviderClaude)
-		for _, model := range models {
-			t0 := time.Now()
-			cr, cerr := claudeCl.GenerateReplyForModel(ctx, prompt, model)
-			latMs := int(time.Since(t0).Milliseconds())
-			errMsg := ""
-			if cerr != nil {
-				errMsg = cerr.Error()
-			}
-			ok := cerr == nil && cr.Text != ""
-			msgRepo.LogLLMUsage(ctx, studioID, "claude", model, latMs, ok, errMsg, cr.TokensIn, cr.TokensOut)
-			if ok {
-				return cr.Text, "claude:" + model
-			}
-		}
-	}
-
-	return "", ""
-}
+// bifrostAttemptProvider, reasoning-block stripping, auth-failure
+// detection, and failing-key flagging all moved to
+// internal/integrations/llmgateway (see that package's gateway.go) once
+// handleMessage's inline customer_reply waterfall — their last caller —
+// was migrated to llmGateway.Complete.
 
 // analyzeSentiment returns: sentiment (-1=negative, 0=neutral, 1=positive), confidence score, and detected keywords
 func (w *AIWorker) analyzeSentiment(text string) (int, float64, []string) {
@@ -623,6 +613,14 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		return fmt.Errorf("fetch studio for ai context: %w", err)
 	}
 
+	// Superadmin-only master switch — separate from conv.AIEnabled above.
+	// A studio with this off never gets AI replies, regardless of
+	// per-conversation state or which keys/models are centrally configured.
+	if !studio.AIAccessEnabled {
+		w.log.Info("ai worker: studio ai_access_enabled=false — no reply sent", "studio_id", studioID)
+		return nil
+	}
+
 	// Delay the AI's reply by a configurable number of seconds so it doesn't
 	// look robotically instant. Only applies to replies within an
 	// already-started conversation — the first outreach to a brand-new lead
@@ -639,23 +637,26 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		plans = []Plan{} // fallback to empty
 	}
 
+	// Active offers (ai-reply-flow-llm-design task 2.5) — same
+	// fail-open-to-empty treatment as plans above: a lookup failure
+	// should degrade the prompt, not block the reply.
+	offers, err := w.msgRepo.ListActiveOffers(ctx, studioID)
+	if err != nil {
+		w.log.Error("fetch offers for ai context failed", "err", err)
+		offers = []Offer{}
+	}
+
 	// Keyword sentiment as initial fallback
 	sentiment, confidence, keywords := w.analyzeSentiment(msg.Body)
 
-	// Resolve Gemini API key (studio key takes priority over platform key)
-	apiKey := studio.GeminiAPIKey
-	if apiKey == "" {
-		if platformKey, err := w.studiosRepo.GetPlatformSetting(ctx, "gemini_api_key"); err == nil && platformKey != "" {
-			apiKey = platformKey
-		}
-	}
-	// Single model pick (no waterfall needed here) for the classification/
-	// expansion/rerank helper calls below — studio-configured via the AI
-	// Assistant settings page, falling back to gemini.Models[0].
-	geminiModel := ""
-	if models, mErr := w.llmRepo.EnabledModelsForStudio(ctx, studioID, llm.ProviderGemini); mErr == nil && len(models) > 0 {
-		geminiModel = models[0]
-	}
+	// Gemini's centrally-configured key (superadmin AI Provider Settings) —
+	// shared by the gate below (classification/expansion/rerank only run if
+	// Gemini is configured, same pre-existing gate as before this
+	// migration — the "intent_classify"/"query_expand"/"rerank" routes
+	// themselves fall back to Groq internally via llmGateway, but that
+	// fallback only ever kicks in once this gate has already let the call
+	// through).
+	apiKey, _ := w.studiosRepo.GetPlatformAIProviderKey(ctx, "gemini")
 
 	// Recent-message window for the model's immediate context; ensureRollingSummary
 	// (below) covers anything further back so a long conversation doesn't lose it.
@@ -663,6 +664,23 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	if err != nil {
 		w.log.Error("fetch message history for ai context failed", "err", err)
 		history = []Message{*msg}
+	}
+
+	// Reply gates (ai-reply-flow-llm-design task 6) — on top of the
+	// AI-off/DND/bot-flow gates already checked above. Same "silent to the
+	// customer, visible to staff" treatment as the AIEnabled/DND gates
+	// right above: no reply is sent (none of these warrant yet another
+	// automated "someone will help you" message — staff-active literally
+	// means staff is already there), but a platform_alerts row keeps this
+	// from being silent to the team, per the doc's "never silent" principle
+	// applied to staff visibility rather than customer messaging.
+	if reason := w.checkReplyGates(ctx, studioID, conv, studio, history); reason != "" {
+		w.log.Info("ai worker: reply gate blocked this reply", "studio_id", studioID, "conversation_id", conv.ID, "reason", reason)
+		w.msgRepo.RecordAlert(ctx, "reply_gate_"+reason, map[string]any{
+			"conversation_id": conv.ID,
+			"message_id":      msg.ID,
+		}, studioID)
+		return nil
 	}
 
 	go func() { // best-effort, off the critical path
@@ -706,7 +724,6 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	}
 
 	var kbChunks []string
-	var semanticHistory []SemanticMatch
 	var styleExamples []StyleExample
 	var intent string
 	// kbConfident tracks whether retrieval found high-confidence chunks.
@@ -790,46 +807,19 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 
 	if apiKey != "" && msg.Body != "" {
 		retrievalRan = true
-		// Step 1+2 in parallel: classify intent and expand query simultaneously.
-		// Neither depends on the other so we save one full LLM round-trip.
-		type classifyResult struct {
-			intent    string
-			sentiment int
-			conf      float64
-		}
-		classifyCh := make(chan classifyResult, 1)
-		expandCh := make(chan string, 1)
-		go func() {
-			i, s, c := studios.ClassifyIntent(ctx, apiKey, geminiModel, msg.Body)
-			classifyCh <- classifyResult{i, s, c}
-		}()
-		go func() {
-			expandCh <- studios.ExpandQuery(ctx, apiKey, geminiModel, msg.Body)
-		}()
-
-		cr := <-classifyCh
-		if intent == "" {
-			intent = cr.intent
-		}
-		sentiment = cr.sentiment
-		confidence = cr.conf
-		keywords = []string{intent}
-		// Re-apply keyword override in case LLM classification overwrote it.
-		if strings.Contains(lowerBody, "trail") ||
-			strings.Contains(lowerBody, "book trial") || strings.Contains(lowerBody, "book a trial") {
-			intent = "booking_inquiry"
-		} else if strings.Contains(lowerBody, "become a member") || strings.Contains(lowerBody, "become member") ||
-			strings.Contains(lowerBody, "want to join") || strings.Contains(lowerBody, "sign me up") ||
-			strings.Contains(lowerBody, "want membership") || strings.Contains(lowerBody, "get membership") {
-			intent = "ready_to_buy"
-		}
-
-		expandedQuery := <-expandCh
-
-		// Step 3: Embed the expanded query.
-		queryVec, err := w.embeddings.EmbedQuery(ctx, expandedQuery)
+		// Step 1: embed the raw customer message directly for retrieval —
+		// no separate LLM query-expansion call. Intent/sentiment/language
+		// classification for prompt-shaping no longer happens here either;
+		// the single structured reply call below reads the raw message
+		// itself and classifies inline (ai-reply-flow-llm-design: collapsed
+		// to satisfy the structured-reply spec's "exactly one LLM call for
+		// intent/expansion/rerank/reply combined" requirement). `intent`
+		// here keeps whatever the free keyword overrides above set it to
+		// (or "" if none matched) — used only for the decision-tree/
+		// complaint-escalation checks below, not for prompt-shaping.
+		queryVec, err := w.embeddings.EmbedQuery(ctx, msg.Body)
 		if err == nil {
-			// Step 3b: Persist original message embedding fully async — not needed for this response.
+			// Step 1b: Persist original message embedding fully async — not needed for this response.
 			capturedIntent, capturedSentiment, capturedConf := intent, sentiment, confidence
 			go func() {
 				saveCtx := context.Background()
@@ -847,19 +837,22 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 				}
 			}()
 
-			// Step 4+8 in parallel: KB retrieval/rerank and semantic history simultaneously.
+			// Step 2 + style-example retrieval in parallel. Semantic history
+			// (SearchSemanticHistory) removed from this fan-out — see
+			// ai-reply-flow-llm-design task 3.3's removal note at buildPrompt.
 			type kbResult struct {
 				chunks    []string
 				confident bool
 			}
 			kbCh := make(chan kbResult, 1)
-			semHistCh := make(chan []SemanticMatch, 1)
 			styleCh := make(chan []StyleExample, 1)
 
 			go func() {
-				// Hybrid retrieval (8 candidates) → rerank to top 4 directly.
-				// MMR diversity pass removed: saves 4-6 sequential embedding API calls per request.
-				matched, searchErr := w.studiosRepo.SearchKnowledgeChunksHybrid(ctx, studioID, queryVec, expandedQuery, "all", 8)
+				// Hybrid retrieval (8 candidates), already ordered by RRF
+				// fusion relevance — take the top 4 directly. No separate LLM
+				// rerank call (ai-reply-flow-llm-design: collapsed into the
+				// single structured reply call, see structured_reply.go).
+				matched, searchErr := w.studiosRepo.SearchKnowledgeChunksHybrid(ctx, studioID, queryVec, msg.Body, "all", 8)
 				if searchErr != nil || len(matched) == 0 {
 					if searchErr != nil {
 						w.log.Warn("failed to search knowledge chunks", "studio_id", studioID, "err", searchErr)
@@ -867,31 +860,15 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 					kbCh <- kbResult{}
 					return
 				}
-				contents := make([]string, len(matched))
-				for i, m := range matched {
-					contents[i] = m.Content
+				topN := 4
+				if len(matched) < topN {
+					topN = len(matched)
 				}
-				reranked := studios.RerankChunks(ctx, apiKey, geminiModel, msg.Body, contents, 4)
-				kbCh <- kbResult{chunks: reranked, confident: len(reranked) >= 2}
-			}()
-
-			go func() {
-				recentIDs := make([]uuid.UUID, len(history))
-				for i, m := range history {
-					recentIDs[i] = m.ID
+				top := make([]string, topN)
+				for i := 0; i < topN; i++ {
+					top[i] = matched[i].Content
 				}
-				semHist, semErr := w.msgRepo.SearchSemanticHistory(ctx, studioID, conv.ID, queryVec, recentIDs, 3)
-				if semErr != nil || len(semHist) == 0 {
-					semHistCh <- nil
-					return
-				}
-				var filtered []SemanticMatch
-				for _, sm := range semHist {
-					if sm.Score >= 0.75 {
-						filtered = append(filtered, sm)
-					}
-				}
-				semHistCh <- filtered
+				kbCh <- kbResult{chunks: top, confident: len(top) >= 2}
 			}()
 
 			go func() {
@@ -929,11 +906,6 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 				w.log.Info("rag pipeline complete", "studio_id", studioID, "final", len(kbChunks), "confident", kbConfident)
 			}
 
-			if semResults := <-semHistCh; len(semResults) > 0 {
-				semanticHistory = semResults
-				w.log.Info("retrieved semantic history", "studio_id", studioID, "count", len(semanticHistory))
-			}
-
 			if styleResults := <-styleCh; len(styleResults) > 0 {
 				styleExamples = styleResults
 				w.log.Info("retrieved style examples", "studio_id", studioID, "count", len(styleExamples))
@@ -957,17 +929,6 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 			skipTreeForOptionReply = true
 			w.log.Info("ai worker: bare option reply detected, skipping decision tree", "lead_id", lead.ID, "status", lead.Status, "message", msg.Body)
 		}
-	}
-
-	// The classifier can spot politely or diplomatically worded criticism that the phrase
-	// check above can't, so escalate on its complaint_or_feedback label too.
-	if intent == "complaint_or_feedback" {
-		w.log.Info("ai worker: classifier flagged a complaint or feedback, escalating",
-			"studio_id", studioID, "conversation_id", conv.ID)
-		w.escalateWithHandoff(ctx, studioID, conv.ID,
-			"Customer complaint or negative feedback",
-			complaintHandoffBody, "complaint_handoff", replyDelay)
-		return nil
 	}
 
 	// Decision tree: check if the studio has an active tree that matches this message.
@@ -1058,6 +1019,40 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 				}
 				return nil
 			case decisiontree.ActionBookTrial:
+				// A lead who's already been a trialist (lifetime, regardless
+				// of their current status) never sees the options menu again
+				// — go straight to the ineligibility reply instead of
+				// offering "1. Book a Trial" to someone who can't.
+				if lead != nil && lead.HasBeenTrialist() {
+					w.log.Info("decision tree matched book_trial, but lead already a trialist — sending ineligible reply", "studio_id", studioID, "node", treeResult.NodeLabel, "lead", lead.ID)
+					firstName := lead.FirstName
+					if firstName == "" {
+						firstName = lead.Name
+					}
+					if firstName == "" {
+						firstName = conv.ContactDisplayName
+					}
+					if firstName == "" {
+						firstName = "there"
+					}
+					_, err = w.msgRepo.EnqueueOutbound(ctx, OutboundJob{
+						StudioID:       studioID,
+						ConversationID: msg.ConversationID,
+						Body:           trialIneligibleBody(firstName),
+						SourceKind:     SourceAI,
+						SourceRef:      "trial_ineligible",
+						ScheduledFor:   time.Now().UTC().Add(replyDelay),
+					})
+					if err != nil {
+						return fmt.Errorf("enqueue trial-ineligible reply: %w", err)
+					}
+					w.bus.Publish(ctx, Event{
+						Kind:           EvtOutboundJobEnqueued,
+						StudioID:       studioID,
+						ConversationID: msg.ConversationID,
+					})
+					return nil
+				}
 				// Tree matched a booking node — drive the lead into the options menu.
 				w.log.Info("decision tree matched book_trial, triggering booking flow", "studio_id", studioID, "node", treeResult.NodeLabel)
 				if lead != nil {
@@ -1416,113 +1411,172 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 		w.log.Warn("fetch conversation ai summary failed", "err", err)
 		aiContextSummary = ""
 	}
-	prompt := w.buildPrompt(ctx, history, semanticHistory, styleExamples, conv, lead, studio, plans, sentiment, keywords, kbChunks, intent, kbConfident, aiContextSummary)
+	prompt := w.buildPrompt(ctx, history, styleExamples, conv, lead, studio, plans, offers, sentiment, keywords, kbChunks, intent, kbConfident, aiContextSummary)
+
+	// Shadow mode (ai-reply-flow-llm-design task 9.2): when enabled for
+	// this studio, everything from here on (structured call, tools,
+	// guards) still runs for real against this real inbound message, but
+	// the reply is never enqueued and no escalation/alert fires — only an
+	// ai_turns row is written, with outcome "shadow", so the new
+	// pipeline's real behavior against real traffic can be reviewed
+	// before this studio's customers are switched onto it. Does not
+	// affect the hard knowledge-gap gates above (kbCoversQuestion etc.) —
+	// those are pre-existing behavior this change doesn't alter, not part
+	// of what shadow mode is validating.
+	shadowMode, shadowErr := w.msgRepo.aiShadowMode(ctx, studioID)
+	if shadowErr != nil {
+		w.log.Warn("read ai shadow mode failed, defaulting to live", "studio_id", studioID, "err", shadowErr)
+		shadowMode = false
+	}
 
 	var resp string
 	var sourceRef string
+	pipelineStart := time.Now()
 
-	// Redis-cache-first: an identical prompt for this studio (same history,
-	// lead, KB chunks, plans etc. — buildPrompt folds all of that in) skips
-	// the provider waterfall entirely. See AnswerCache.
-	cachedResp, cachedSource, cacheHit := w.answerCache.Get(ctx, studioID, "incoming_reply", prompt)
-	if cacheHit {
-		resp = cachedResp
-		sourceRef = cachedSource
-	}
+	{
+		// One structured call per debounced batch (ai-reply-flow-llm-design
+		// task 3.2), replacing the old plain-text Complete call — the
+		// provider waterfall (order, per-provider settings, time budget)
+		// still lives in ai_feature_routes under feature "customer_reply",
+		// applied via llmGateway, unchanged by this.
+		structured, structuredRef, err := llmgateway.CompleteStructured[StructuredReply](
+			ctx, w.llmGateway, llmgateway.FeatureCustomerReply, studioID, prompt,
+			StructuredReplySchemaName, StructuredReplyJSONSchema,
+		)
+		guardsPassed := true
+		handoffRequested := false
+		var structuredForTurn any
+		var toolCallsForTurn any
+		if err != nil {
+			w.log.Error("llm gateway: structured customer reply failed", "studio_id", studioID, "err", err)
+		} else {
+			sourceRef = structuredRef
+			structuredForTurn = structured
 
-	if resp == "" {
-		// Waterfall: Groq → Gemini → Claude. Which model(s) each provider
-		// tries is read from studio_ai_models (studio's AI Assistant
-		// settings page), not hardcoded — see llmWaterfall's doc comment.
-
-		// 1. Try Groq (fast + cheap) — use studio key first, fall back to platform key
-		groqKey := studio.GroqAPIKey
-		if groqKey == "" {
-			if pk, e := w.studiosRepo.GetPlatformSetting(ctx, "groq_api_key"); e == nil {
-				groqKey = pk
-			}
-		}
-		if groqKey != "" {
-			groqClient := groq.New(groqKey)
-			groqModels, _ := w.llmRepo.EnabledModelsForStudio(ctx, studioID, llm.ProviderGroq)
-			for _, model := range groqModels {
-				w.log.Info("generating ai reply using groq", "studio_id", studioID, "message_id", msg.ID, "model", model)
-				t0 := time.Now()
-				gr, gerr := groqClient.GenerateReply(ctx, prompt, model)
-				latMs := int(time.Since(t0).Milliseconds())
-				errMsg := ""
-				if gerr != nil {
-					errMsg = gerr.Error()
+			// Tool calls (ai-reply-flow-llm-design task 7.2), bounded to
+			// maxToolCallRounds total LLM calls (this first one plus at
+			// most one follow-up) — a model that asks for tools again on
+			// the follow-up is not honored a 3rd round; its reply is used
+			// as final regardless. In shadow mode, a side-effecting call
+			// (create_booking) is recorded as requested but not actually
+			// executed — see executeToolCalls' shadow parameter.
+			if len(structured.ToolCalls) > 0 {
+				results := w.executeToolCalls(ctx, studioID, conv.ID, lead, structured.ToolCalls, shadowMode)
+				toolCallsForTurn = results
+				if maxToolCallRounds > 1 {
+					followupPrompt := appendToolResultsToPrompt(prompt, structured.ToolCalls, results)
+					followup, followupRef, followupErr := llmgateway.CompleteStructured[StructuredReply](
+						ctx, w.llmGateway, llmgateway.FeatureCustomerReply, studioID, followupPrompt,
+						StructuredReplySchemaName, StructuredReplyJSONSchema,
+					)
+					if followupErr == nil {
+						structured = followup
+						sourceRef = followupRef
+						structuredForTurn = structured
+					} else {
+						w.log.Warn("tool-call follow-up structured call failed, using pre-tool reply", "studio_id", studioID, "err", followupErr)
+					}
 				}
-				// A short reply is treated as a soft failure (Groq's small models
-				// sometimes truncate) so the next enabled model gets a turn.
-				ok := gerr == nil && len(strings.TrimSpace(gr.Text)) >= 15
-				w.msgRepo.LogLLMUsage(ctx, studioID, "groq", model, latMs, ok, errMsg, gr.TokensIn, gr.TokensOut)
+			}
+
+			w.log.Info("structured reply",
+				"studio_id", studioID, "conversation_id", conv.ID,
+				"action", structured.Action, "language", structured.Language,
+				"intent", structured.Intent, "sentiment", structured.Sentiment,
+				"facts_used", structured.FactsUsed, "tool_calls", len(structured.ToolCalls),
+				"shadow", shadowMode)
+
+			// The structured call's own "handoff" action (ai-reply-flow-llm-
+			// design: replaces the old pre-reply ClassifyIntent-based
+			// complaint check, now that classification happens inline with
+			// generation rather than before it) — a complaint, negative
+			// feedback, bad-review threat, or other sensitive request the
+			// free keyword checks above didn't already catch. No guard
+			// check or send; this goes to a person instead.
+			if structured.Action == "handoff" {
+				handoffRequested = true
+			} else {
+				// Guard check + bounded repair (ai-reply-flow-llm-design task 4.5),
+				// before this reply is cached or sent.
+				pack := buildGuardDataPack(plans, offers, structured.Language, knownCustomerFieldsFromLead(lead))
+				repaired, ok := w.checkAndRepair(ctx, studioID, structured, pack)
 				if ok {
-					resp = gr.Text
-					sourceRef = "groq:" + model
-					break
-				}
-				w.log.Info("groq model failed or short, trying next", "studio_id", studioID, "model", model, "err", gerr)
-			}
-		}
-
-		// 2. Gemini fallback
-		if resp == "" && apiKey != "" {
-			geminiModels, _ := w.llmRepo.EnabledModelsForStudio(ctx, studioID, llm.ProviderGemini)
-			for _, model := range geminiModels {
-				w.log.Info("generating ai reply using gemini", "studio_id", studioID, "message_id", msg.ID, "model", model)
-				t0 := time.Now()
-				gemReply, gerr := w.geminiClient.GenerateReplyForModel(ctx, apiKey, model, prompt)
-				latMs := int(time.Since(t0).Milliseconds())
-				errMsg := ""
-				if gerr != nil {
-					errMsg = gerr.Error()
-				}
-				ok := gerr == nil && gemReply.Text != ""
-				w.msgRepo.LogLLMUsage(ctx, studioID, "gemini", model, latMs, ok, errMsg, gemReply.TokensIn, gemReply.TokensOut)
-				if ok {
-					resp = gemReply.Text
-					sourceRef = "gemini:" + model
-					break
+					resp = repaired
+				} else {
+					guardsPassed = false
 				}
 			}
 		}
 
-		// 3. Claude fallback — studio's own key if set, else the platform client
-		claudeClient := w.claude
-		if studio.ClaudeAPIKey != "" {
-			if c, cerr := claude.New(w.claudeAPIURL, studio.ClaudeAPIKey); cerr == nil && c != nil {
-				claudeClient = c
-			}
+		latencyMS := int(time.Since(pipelineStart).Milliseconds())
+		guardOutcome := "passed"
+		switch {
+		case handoffRequested:
+			guardOutcome = "n/a"
+		case !guardsPassed:
+			guardOutcome = "failed"
 		}
-		if resp == "" && claudeClient != nil {
-			claudeModels, _ := w.llmRepo.EnabledModelsForStudio(ctx, studioID, llm.ProviderClaude)
-			for _, model := range claudeModels {
-				w.log.Info("generating ai reply using claude", "studio_id", studioID, "message_id", msg.ID, "model", model)
-				t0 := time.Now()
-				cr, cerr := claudeClient.GenerateReplyForModel(ctx, prompt, model)
-				latMs := int(time.Since(t0).Milliseconds())
-				errMsg := ""
-				if cerr != nil {
-					errMsg = cerr.Error()
-				}
-				ok := cerr == nil && cr.Text != ""
-				w.msgRepo.LogLLMUsage(ctx, studioID, "claude", model, latMs, ok, errMsg, cr.TokensIn, cr.TokensOut)
-				if ok {
-					resp = cr.Text
-					sourceRef = "claude:" + model
-					break
-				}
-			}
+		turnOutcome := "sent"
+		switch {
+		case handoffRequested:
+			turnOutcome = "handoff"
+		case !guardsPassed:
+			turnOutcome = "guard_failed"
+		case resp == "":
+			turnOutcome = "all_providers_failed"
+		case shadowMode:
+			turnOutcome = "shadow"
+		}
+		if turnErr := w.msgRepo.InsertAITurn(ctx, AITurn{
+			ConversationID:   conv.ID,
+			StudioID:         studioID,
+			PipelineVersion:  aiPipelineVersion,
+			StructuredOutput: structuredForTurn,
+			GuardOutcome:     guardOutcome,
+			ToolCalls:        toolCallsForTurn,
+			LatencyMS:        &latencyMS,
+			Outcome:          turnOutcome,
+		}); turnErr != nil {
+			w.log.Warn("insert ai turn failed", "studio_id", studioID, "conversation_id", conv.ID, "err", turnErr)
 		}
 
-		if resp == "" {
-			w.log.Warn("skipping ai reply: all providers failed or not configured", "studio_id", studioID)
+		if shadowMode {
+			w.log.Info("ai worker: shadow mode — pipeline ran and was recorded, reply not sent",
+				"studio_id", studioID, "conversation_id", conv.ID, "outcome", turnOutcome)
 			return nil
 		}
 
-		w.answerCache.Set(ctx, studioID, "incoming_reply", prompt, resp, sourceRef)
+		if handoffRequested {
+			w.log.Info("ai worker: structured reply requested human handoff", "studio_id", studioID, "conversation_id", conv.ID)
+			w.escalateWithHandoff(ctx, studioID, conv.ID,
+				"AI determined this conversation needs a human (complaint, negative feedback, or sensitive request)",
+				complaintHandoffBody, "ai_requested_handoff", replyDelay)
+			return nil
+		}
+
+		if !guardsPassed {
+			w.log.Warn("ai reply: failed guard checks even after repair, escalating to staff", "studio_id", studioID, "conversation_id", conv.ID)
+			w.msgRepo.RecordAlert(ctx, "guard_check_failed", map[string]any{
+				"conversation_id": conv.ID,
+				"message_id":      messageID,
+			}, studioID)
+			w.escalateWithHandoff(ctx, studioID, conv.ID,
+				"AI reply failed a safety guard check and could not be repaired",
+				guardFailedHandoffBody, "guard_failed_handoff", replyDelay)
+			return nil
+		}
+
+		if resp == "" {
+			w.log.Warn("ai reply: all providers failed or not configured, escalating to staff", "studio_id", studioID, "conversation_id", conv.ID)
+			w.msgRepo.RecordAlert(ctx, "all_providers_failed", map[string]any{
+				"conversation_id": conv.ID,
+				"message_id":      messageID,
+			}, studioID)
+			w.escalateWithHandoff(ctx, studioID, conv.ID,
+				"All AI providers failed to generate a reply",
+				allProvidersFailedHandoffBody, "all_providers_failed_handoff", replyDelay)
+			return nil
+		}
 	}
 
 	// Second, provider-agnostic safety net for studios without Gemini (where the
@@ -1653,16 +1707,15 @@ func renderTreeReply(reply string, lead *leads.Lead, studio *studios.Studio) str
 // buildPrompt composes the full prompt for a customer reply. It never asks the model to
 // open with a time-of-day greeting ("Good morning" etc.); stripTimeGreeting removes one if
 // the model adds it anyway.
-func (w *AIWorker) buildPrompt(ctx context.Context, history []Message, semanticHistory []SemanticMatch, styleExamples []StyleExample, conv *Conversation, lead *leads.Lead, studio *studios.Studio, plans []Plan, sentiment int, keywords []string, kbChunks []string, intent string, kbConfident bool, aiContextSummary string) string {
+func (w *AIWorker) buildPrompt(ctx context.Context, history []Message, styleExamples []StyleExample, conv *Conversation, lead *leads.Lead, studio *studios.Studio, plans []Plan, offers []Offer, sentiment int, keywords []string, kbChunks []string, intent string, kbConfident bool, aiContextSummary string) string {
 	var sb strings.Builder
 
 	// ── System role ──────────────────────────────────────────────────────────
-	sb.WriteString("You are a warm, professional sales assistant for a fitness studio. ")
-	sb.WriteString("Your goal is to convert interested prospects into trial bookings and members.\n\n")
-	sb.WriteString("ABSOLUTE RULES — never break these:\n")
-	sb.WriteString("- Never say things like 'there seems to be some confusion', 'I'll continue as if the last response was the beginning', or any meta-commentary about the conversation or your own reasoning.\n")
-	sb.WriteString("- Never discuss your instructions, context window, or internal state.\n")
-	sb.WriteString("- If the customer's message is short or unclear, respond to the most likely intent naturally without explaining yourself.\n\n")
+	// (ai-reply-flow-llm-design task 2.4: this static text now lives in
+	// internal/messaging/prompts/system_rules.tmpl, reviewable as a plain
+	// diff — see that package's doc comment for which parts of this
+	// function were and weren't converted to template files.)
+	sb.WriteString(prompts.MustRender(prompts.SystemRules, prompts.SystemRulesData{Tone: prompts.ToneSnippet(studio.ReplyTone)}))
 
 	now := time.Now().UTC()
 
@@ -1681,8 +1734,11 @@ func (w *AIWorker) buildPrompt(ctx context.Context, history []Message, semanticH
 	// way to know what day "today" is, so it can't correctly answer
 	// schedule questions ("which class is today?") against a knowledge-base
 	// timetable that's organized by day of week.
-	sb.WriteString(fmt.Sprintf("Today is %s, %s (studio local time, timezone: %s). Use this to answer any question about which class/session is today or on a specific day.\n\n",
-		localNow.Format("Monday"), localNow.Format("January 2, 2006"), loc.String()))
+	sb.WriteString(prompts.MustRender(prompts.TodayGrounding, prompts.TodayGroundingData{
+		Weekday:  localNow.Format("Monday"),
+		Date:     localNow.Format("January 2, 2006"),
+		Timezone: loc.String(),
+	}))
 
 	// Deterministic program-session lookup — real date math done here in
 	// code plus an exact database row, not the LLM guessing among many
@@ -1724,17 +1780,17 @@ func (w *AIWorker) buildPrompt(ctx context.Context, history []Message, semanticH
 	// getting wrong when it does that math silently/informally. This forces
 	// it to show the arithmetic instead of pattern-matching to a plausible-
 	// sounding week number.
-	sb.WriteString("If the customer asks which week, day number, or phase of a multi-week program (e.g. a \"100-day program\") today falls in: find that program's stated start date in the knowledge base below, then explicitly work out the number of days between that start date and today's date (grounded above) — count carefully, don't estimate — and only then state the week/day number, showing that count (e.g. \"that's day 22, so Week 4\") so the arithmetic is checkable. If the knowledge base doesn't state a start date for that program at all, say you don't have the program's start date on file rather than guessing a week number.\n\n")
+	sb.WriteString(prompts.MustRender(prompts.WeekArithmetic, nil))
 
 	// Schedules/timetables read far better as a table than as prose — do
 	// this for every channel that asks. On channels without table rendering
 	// (WhatsApp/SMS), the markdown pipe syntax still shows up as plain text,
 	// but keeps day/session/time visually grouped by line, which is more
 	// scannable than a paragraph even unrendered.
-	sb.WriteString("If the customer asks about a schedule, timetable, or weekly class/session plan: first check whether the knowledge base below actually contains real schedule information — specific days, session names, or times. Only if it does, format that part of your answer as a markdown table (e.g. `| Day | Session | Time |`) instead of prose, using ONLY the days/sessions/times explicitly stated there — never invent or assume a class exists on a day, or at a time, that isn't mentioned. If a day/session IS listed but one specific detail about it (e.g. the time) isn't stated, just leave that detail out of the table rather than inventing it or refusing the whole answer — show what's actually known. Reserve \"I don't have that on file\" for when there is NO real schedule information at all to work with, or the customer asks about a day/class that's genuinely not covered anywhere.\n\n")
+	sb.WriteString(prompts.MustRender(prompts.ScheduleTable, nil))
 
 	// No time-of-day greeting, ever — go straight to the answer.
-	sb.WriteString("Do NOT open with a greeting such as Good morning/afternoon/evening/night — jump straight into the answer. ")
+	sb.WriteString(prompts.MustRender(prompts.NoGreetingOpening, nil))
 	// Name-greeting ("Hi Puneeth!") on every single turn of an active
 	// back-and-forth reads as robotic and repetitive — only resume with one
 	// when the customer has actually come back after a real pause.
@@ -1783,8 +1839,33 @@ func (w *AIWorker) buildPrompt(ctx context.Context, history []Message, semanticH
 	if len(plans) > 0 {
 		sb.WriteString("MEMBERSHIP PLANS (SGD):\n")
 		for _, p := range plans {
-			sb.WriteString(fmt.Sprintf("  • %s — S$%.2f/%s | %s\n",
-				p.PlanName, float64(p.PriceSGD)/100.0, p.BillingCycle, strings.Join(p.Features, ", ")))
+			line := fmt.Sprintf("  • %s — S$%.2f/%s | %s",
+				p.PlanName, float64(p.PriceSGD)/100.0, p.BillingCycle, strings.Join(p.Features, ", "))
+			// payment_link (ai-reply-flow-llm-design task 2.5) — handed
+			// directly so the model never constructs/guesses a payment URL.
+			if p.PaymentLink != "" {
+				line += " | Payment link: " + p.PaymentLink
+			}
+			sb.WriteString(line + "\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	// ── Offers (ai-reply-flow-llm-design task 2.5) ──────────────────────────
+	// Only ACTIVE offers ever reach this prompt (offers is already filtered
+	// by ListActiveOffers at the call site) — an inactive/expired offer
+	// must never be mentioned to a customer.
+	if len(offers) > 0 {
+		sb.WriteString("ACTIVE OFFERS (SGD) — use ONLY these, never mention an offer not listed here:\n")
+		for _, o := range offers {
+			line := fmt.Sprintf("  • %s — S$%.2f", o.Name, float64(o.PriceSGD)/100.0)
+			if o.Description != "" {
+				line += " | " + o.Description
+			}
+			if o.Terms != "" {
+				line += " | Terms: " + o.Terms
+			}
+			sb.WriteString(line + "\n")
 		}
 		sb.WriteString("\n")
 	}
@@ -1933,18 +2014,12 @@ func (w *AIWorker) buildPrompt(ctx context.Context, history []Message, semanticH
 	}
 	sb.WriteString("Keep the reply concise: 2–4 sentences maximum. Never make up facts.\n\n")
 
-	// ── Semantic history (high-confidence past context) ───────────────────────
-	if len(semanticHistory) > 0 {
-		sb.WriteString("--- RELEVANT PAST CONTEXT (earlier messages semantically similar to today's query) ---\n")
-		for _, sm := range semanticHistory {
-			label := "Assistant (earlier)"
-			if sm.Direction == DirectionInbound {
-				label = "Customer (earlier)"
-			}
-			sb.WriteString(fmt.Sprintf("%s [similarity %.2f]: %s\n", label, sm.Score, sm.Body))
-		}
-		sb.WriteString("\n")
-	}
+	// Semantic history ("--- RELEVANT PAST CONTEXT ---") removed
+	// (ai-reply-flow-llm-design task 3.3, per doc §9: a semantic search
+	// over prior conversation turns was the source of the wrong-week bug
+	// this whole change traces back to — facts now come only from the
+	// studio data pack above, never from similarity-matched past
+	// messages).
 
 	// ── Prior context summary (from imported chat history, if any) ───────────
 	if aiContextSummary != "" {

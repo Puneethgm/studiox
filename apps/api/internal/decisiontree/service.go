@@ -10,29 +10,53 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/projectx/api/internal/integrations/groq"
+	"github.com/projectx/api/internal/integrations/bifrost"
+	"github.com/projectx/api/internal/integrations/llm"
 )
 
-type Service struct {
-	repo *Repo
+// PlatformSettings is the one studios.Repo method Service needs — the
+// centrally-configured, superadmin-managed Groq key (see
+// studios.Repo.GetPlatformAIProviderKey). Declared as an interface here,
+// not imported from internal/studios directly, to keep this package free of
+// that dependency.
+type PlatformSettings interface {
+	GetPlatformAIProviderKey(ctx context.Context, provider string) (string, error)
 }
 
-func NewService(repo *Repo) *Service { return &Service{repo: repo} }
+type Service struct {
+	repo             *Repo
+	bifrostClient    *bifrost.Client
+	llmRepo          *llm.Repo
+	platformSettings PlatformSettings
+}
 
-// SuggestKeywords asks Groq for a short list of keywords/phrases a customer
-// might type that should trigger this node, based on its label and reply
-// text. Returned as a plain suggestion — the caller/admin edits before
-// saving, this never persists anything itself.
+func NewService(repo *Repo, bifrostClient *bifrost.Client, llmRepo *llm.Repo, platformSettings PlatformSettings) *Service {
+	return &Service{repo: repo, bifrostClient: bifrostClient, llmRepo: llmRepo, platformSettings: platformSettings}
+}
+
+// SuggestKeywords asks Groq (via the embedded Bifrost client, using the
+// centrally-configured platform key — see BIFROST_MIGRATION_PLAN.md Phase
+// 5) for a short list of keywords/phrases a customer might type that
+// should trigger this node, based on its label and reply text. Returned as
+// a plain suggestion — the caller/admin edits before saving, this never
+// persists anything itself.
 //
 // Always returns something usable, never an error to the caller: when no
-// Groq key is configured (studio or platform), or the AI call itself fails
-// for any reason, this falls back to extractKeywordsLocally — a plain
-// word-frequency heuristic over the label/reply text. Lower quality than the
-// LLM, but the feature should never just silently do nothing.
+// Groq key is centrally configured, or the AI call itself fails for any
+// reason, this falls back to extractKeywordsLocally — a plain
+// word-frequency heuristic over the label/reply text. Lower quality than
+// the LLM, but the feature should never just silently do nothing.
+//
+// studioID is accepted for API compatibility with callers but unused —
+// Groq's key and model list are platform-wide now, not per-studio.
 func (s *Service) SuggestKeywords(ctx context.Context, studioID uuid.UUID, label, replyTemplate string) ([]string, error) {
-	key, err := s.repo.resolveGroqKey(ctx, studioID)
+	key, err := s.platformSettings.GetPlatformAIProviderKey(ctx, "groq")
 	if err != nil || key == "" {
 		return extractKeywordsLocally(label, replyTemplate), nil
+	}
+	model := ""
+	if models, mErr := s.llmRepo.EnabledModels(ctx, llm.ProviderGroq); mErr == nil && len(models) > 0 {
+		model = models[0]
 	}
 
 	prompt := fmt.Sprintf(`You are helping configure a WhatsApp bot's decision tree for a fitness studio.
@@ -44,7 +68,15 @@ Suggest 4 to 8 short keywords or phrases a customer might type in WhatsApp that 
 
 Reply with ONLY a valid JSON array of strings — no markdown, no explanation. Example: ["price", "how much", "cost"]`, label, replyTemplate)
 
-	reply, err := groq.New(key).GenerateReply(ctx, prompt, groq.Model8B)
+	if s.bifrostClient == nil {
+		return extractKeywordsLocally(label, replyTemplate), nil
+	}
+	reply, err := s.bifrostClient.Complete(ctx, bifrost.Request{
+		Provider:  bifrost.ProviderGroq,
+		Model:     model,
+		DirectKey: key,
+		Prompt:    prompt,
+	})
 	if err != nil {
 		return extractKeywordsLocally(label, replyTemplate), nil
 	}

@@ -61,7 +61,7 @@ func TestTokenIssuer_PermissionsAndMustResetPasswordSurviveRoundTrip(t *testing.
 	u := &User{
 		ID: uuid.New(), StudioID: &studioID, Role: RoleStudioStaff, MustResetPassword: true,
 	}
-	token, exp, jti, csrfToken, err := issuer.Issue(u, []string{"leads", "inbox"})
+	token, exp, jti, csrfToken, sessionID, err := issuer.Issue(context.Background(), u, []string{"leads", "inbox"}, nil)
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestTokenIssuer_PermissionsAndMustResetPasswordSurviveRoundTrip(t *testing.
 		t.Error("Issue returned an empty csrfToken")
 	}
 
-	claims, err := issuer.Parse(token)
+	claims, err := issuer.Parse(context.Background(), token)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -94,17 +94,20 @@ func TestTokenIssuer_PermissionsAndMustResetPasswordSurviveRoundTrip(t *testing.
 	if claims.CSRFToken != csrfToken {
 		t.Errorf("claims.CSRFToken (%q) did not survive the round trip, want %q", claims.CSRFToken, csrfToken)
 	}
+	if claims.SessionID != sessionID {
+		t.Errorf("claims.SessionID (%v) did not survive the round trip, want %v", claims.SessionID, sessionID)
+	}
 
 	t.Run("Refresh slides the absolute expiry and idle deadline forward but preserves the hard backstop, and mints a new jti", func(t *testing.T) {
 		time.Sleep(1100 * time.Millisecond) // jwt.NumericDate has 1-second precision
-		refreshed, newExp, newJTI, err := issuer.Refresh(u, claims.Permissions, claims.SessionMaxExpiresAt.Time, claims.CSRFToken)
+		refreshed, newExp, newJTI, err := issuer.Refresh(context.Background(), u, claims.Permissions, claims.SessionMaxExpiresAt.Time, claims.CSRFToken, claims.SessionID, nil)
 		if err != nil {
 			t.Fatalf("refresh: %v", err)
 		}
 		if newJTI == jti {
 			t.Error("Refresh should mint a new jti, not reuse the old one")
 		}
-		newClaims, err := issuer.Parse(refreshed)
+		newClaims, err := issuer.Parse(context.Background(), refreshed)
 		if err != nil {
 			t.Fatalf("parse refreshed: %v", err)
 		}
@@ -124,15 +127,18 @@ func TestTokenIssuer_PermissionsAndMustResetPasswordSurviveRoundTrip(t *testing.
 		if newClaims.CSRFToken != claims.CSRFToken {
 			t.Errorf("Refresh should NOT change the CSRF token: got %q, want %q", newClaims.CSRFToken, claims.CSRFToken)
 		}
+		if newClaims.SessionID != claims.SessionID {
+			t.Errorf("Refresh should NOT change the session ID: got %v, want %v", newClaims.SessionID, claims.SessionID)
+		}
 	})
 
 	t.Run("super_admin gets no embedded permissions but HasPermission is always true", func(t *testing.T) {
 		super := &User{ID: uuid.New(), Role: RoleSuperAdmin}
-		token, _, _, _, err := issuer.Issue(super, nil)
+		token, _, _, _, _, err := issuer.Issue(context.Background(), super, nil, nil)
 		if err != nil {
 			t.Fatalf("issue: %v", err)
 		}
-		claims, err := issuer.Parse(token)
+		claims, err := issuer.Parse(context.Background(), token)
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
@@ -213,7 +219,7 @@ func TestPermissionKeyForPath(t *testing.T) {
 		{"/style-refresh-interval", []string{"knowledge-base"}, true},
 		{"/program-start-date", []string{"knowledge-base"}, true},
 		{"/google-oauth", []string{"channels"}, true}, // corrected: Channels page (Connect Google Ads), not Settings
-		{"/ai-models", []string{"settings"}, true},
+		{"/mistral-key", []string{"settings"}, true},
 		{"/totally-unmapped-path", nil, false},
 	}
 	for _, c := range cases {

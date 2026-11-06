@@ -24,6 +24,8 @@ import {
   saveInitialContactDelay,
   getAIReplyDelay,
   saveAIReplyDelay,
+  getStaffActiveWindow,
+  saveStaffActiveWindow,
 } from './actions';
 import { AvailabilitySettings } from './AvailabilitySettings';
 import { PlansManagement } from './PlansManagement';
@@ -173,6 +175,7 @@ export function SettingsForm({
   const [initialDelayValue, setInitialDelayValue] = useState(0);
   const [initialDelayUnit, setInitialDelayUnit] = useState<'minutes' | 'hours'>('minutes');
   const [aiReplyDelaySeconds, setAiReplyDelaySeconds] = useState(0);
+  const [staffActiveWindowMinutes, setStaffActiveWindowMinutes] = useState(10);
   const [initialDelaySaving, setInitialDelaySaving] = useState(false);
   const [initialDelayError, setInitialDelayError] = useState<string | null>(null);
   const [metaSaving, setMetaSaving] = useState(false);
@@ -262,6 +265,12 @@ export function SettingsForm({
         setAiReplyDelaySeconds(res.data.aiReplyDelaySeconds ?? 0);
       }
     })();
+    void (async () => {
+      const res = await getStaffActiveWindow(studio.id);
+      if (res.ok && res.data) {
+        setStaffActiveWindowMinutes(res.data.staffActiveWindowMinutes ?? 10);
+      }
+    })();
   }, [studio.id]);
 
   async function onSaveSendSpacing(e: React.FormEvent) {
@@ -324,15 +333,19 @@ export function SettingsForm({
     setInitialDelaySaving(true);
     try {
       const minutes = initialDelayUnit === 'hours' ? initialDelayValue * 60 : initialDelayValue;
-      const [delayRes, aiReplyRes] = await Promise.all([
+      const [delayRes, aiReplyRes, staffWindowRes] = await Promise.all([
         saveInitialContactDelay(studio.id, minutes),
         saveAIReplyDelay(studio.id, aiReplyDelaySeconds),
+        saveStaffActiveWindow(studio.id, staffActiveWindowMinutes),
       ]);
-      if (delayRes.ok && aiReplyRes.ok) {
+      if (delayRes.ok && aiReplyRes.ok && staffWindowRes.ok) {
         showToast('Message timing saved successfully.');
       } else {
         setInitialDelayError(
-          (!delayRes.ok && delayRes.error) || (!aiReplyRes.ok && aiReplyRes.error) || 'Failed to save timing.'
+          (!delayRes.ok && delayRes.error) ||
+            (!aiReplyRes.ok && aiReplyRes.error) ||
+            (!staffWindowRes.ok && staffWindowRes.error) ||
+            'Failed to save timing.'
         );
       }
     } catch (err: any) {
@@ -546,7 +559,7 @@ export function SettingsForm({
           { id: 'booking', label: 'Booking Page', icon: Eye },
           { id: 'sheets', label: 'Google Sheets', icon: Database },
           { id: 'integrations', label: 'Integrations', icon: Cpu },
-          { id: 'ai-assistant', label: 'AI Assistant', icon: Bot },
+          { id: 'ai-assistant', label: 'Knowledge Base OCR', icon: Bot },
           { id: 'security', label: 'Security', icon: Lock },
           { id: 'billing', label: 'Platform Billing', icon: DollarSign },
         ].map((item) => {
@@ -1483,6 +1496,25 @@ export function SettingsForm({
                     Separate from the delay above — this is how long the AI waits before replying to a message
                     within an already-started conversation (not the first outreach). e.g. 8 = wait 8 seconds
                     after a lead messages in before the AI's reply goes out. 0 = instant.
+                  </FieldHint>
+                </div>
+
+                <div className="max-w-xs border-t border-zinc-200 dark:border-zinc-800 pt-4">
+                  <Label htmlFor="staffActiveWindowMinutes">Staff-Active Window (minutes)</Label>
+                  <Input
+                    id="staffActiveWindowMinutes"
+                    type="number"
+                    min={0}
+                    max={60}
+                    value={staffActiveWindowMinutes}
+                    onChange={(e) =>
+                      setStaffActiveWindowMinutes(Math.max(0, Math.min(60, Number(e.target.value) || 0)))
+                    }
+                  />
+                  <FieldHint>
+                    After a staff member replies in a conversation, the AI stays silent for this many minutes
+                    (never interrupts a human who&apos;s already handling it). 0 = gate disabled, AI can reply
+                    right after staff.
                   </FieldHint>
                 </div>
 

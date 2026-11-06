@@ -6,9 +6,9 @@ import { Database, FileText, Trash2, Upload, AlertCircle, CheckCircle, ChevronDo
 import { Button } from '@/components/ui/Button';
 import { Label, FieldHint } from '@/components/ui/Label';
 import { Dialog, DialogHeader } from '@/components/ui/Dialog';
-import { api } from '@/lib/api';
+import { api, readCSRFCookie } from '@/lib/api';
 import type { Studio } from '@/lib/types';
-import { parseDocument, ocrImage, updateKnowledgeBase, updateCommunicationStyle, updateStyleRefreshInterval, updateProgramStartDate, listKnowledgeGaps } from './actions';
+import { parseDocument, ocrImage, updateKnowledgeBase, updateCommunicationStyle, updateReplyTone, updateStyleRefreshInterval, updateProgramStartDate, listKnowledgeGaps } from './actions';
 import { TestChatDrawer } from './TestChatDrawer';
 import { NeedsAnswersTab } from './NeedsAnswersTab';
 
@@ -174,8 +174,13 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
       try {
         const formData = new FormData();
         formData.append('file', next!);
+        const csrfToken = readCSRFCookie();
         const [uploadRes, ocrRes] = await Promise.all([
-          fetch(`/api/v1/studios/${studio.id}/messaging/upload`, { method: 'POST', body: formData }),
+          fetch(`/api/v1/studios/${studio.id}/messaging/upload`, {
+            method: 'POST',
+            body: formData,
+            headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : undefined,
+          }),
           ocrImage(studio.id, formData),
         ]);
         if (!uploadRes.ok) {
@@ -342,6 +347,30 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
   const [styleError, setStyleError] = useState<string | null>(null);
   const [styleSuccess, setStyleSuccess] = useState<string | null>(null);
 
+  const [replyTone, setReplyTone] = useState(studio.replyTone || 'professional');
+  const [savingTone, setSavingTone] = useState(false);
+  const [toneError, setToneError] = useState<string | null>(null);
+
+  async function handleSelectTone(tone: 'professional' | 'casual' | 'friendly') {
+    if (tone === replyTone || savingTone) return;
+    const previous = replyTone;
+    setReplyTone(tone);
+    setToneError(null);
+    setSavingTone(true);
+    try {
+      const res = await updateReplyTone(studio.id, tone);
+      if (!res.ok) {
+        setReplyTone(previous);
+        throw new Error(res.error || 'Failed to save changes');
+      }
+      router.refresh();
+    } catch (err: any) {
+      setToneError(err.message || 'An error occurred while saving.');
+    } finally {
+      setSavingTone(false);
+    }
+  }
+
   async function handleSaveStyle() {
     setStyleError(null);
     setStyleSuccess(null);
@@ -432,9 +461,11 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
         const formData = new FormData();
         formData.append('file', file);
 
+        const csrfToken = readCSRFCookie();
         const uploadRes = await fetch(`/api/v1/studios/${studio.id}/messaging/upload`, {
           method: 'POST',
           body: formData,
+          headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : undefined,
         });
 
         if (!uploadRes.ok) {
@@ -735,6 +766,31 @@ export function KnowledgeBaseForm({ studio }: { studio: Studio }) {
                   <span>{styleError}</span>
                 </div>
               )}
+              <div>
+                <Label>Overall reply tone</Label>
+                <div className="mt-1.5 inline-flex rounded-xl border border-slate-300 p-1 dark:border-slate-700">
+                  {(['professional', 'casual', 'friendly'] as const).map((tone) => (
+                    <Button
+                      key={tone}
+                      type="button"
+                      size="sm"
+                      variant={replyTone === tone ? 'primary' : 'ghost'}
+                      disabled={savingTone}
+                      onClick={() => handleSelectTone(tone)}
+                      className="capitalize"
+                    >
+                      {tone}
+                    </Button>
+                  ))}
+                </div>
+                {toneError && (
+                  <p className="mt-1.5 text-xs font-semibold text-rose-600 dark:text-rose-400">{toneError}</p>
+                )}
+                <FieldHint>
+                  The coarse tone every AI reply starts from. "Professional" is the default for every studio.
+                  The learned style below layers on top of whichever tone you pick here.
+                </FieldHint>
+              </div>
               <div>
                 <Label htmlFor="styleProfile">How your team talks to customers</Label>
                 <textarea

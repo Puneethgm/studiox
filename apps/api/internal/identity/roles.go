@@ -102,6 +102,28 @@ func (r *Repo) GetRole(ctx context.Context, studioID, roleID uuid.UUID) (*Studio
 	return role, err
 }
 
+// ListUserIDsByRole returns every active user currently assigned roleID —
+// used to end their sessions when the role is deactivated or its
+// permissions change (platform-security-hardening task 1.4), since both
+// are baked into the JWT at issue time (Claims.Permissions) and would
+// otherwise only take effect at each user's next login.
+func (r *Repo) ListUserIDsByRole(ctx context.Context, roleID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := r.pool.Query(ctx, `SELECT id FROM users WHERE role_id = $1 AND deleted_at IS NULL`, roleID)
+	if err != nil {
+		return nil, fmt.Errorf("list user ids by role: %w", err)
+	}
+	defer rows.Close()
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan user id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // DeleteRole rejects deletion if any user still has this role assigned
 // (spec: identity/studio-roles — "a role in use cannot be deleted without
 // reassignment"). The FK itself (users.role_id REFERENCES studio_roles(id),

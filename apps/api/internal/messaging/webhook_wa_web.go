@@ -65,11 +65,14 @@ func waWebServiceURL() string {
 	return "http://wa-web:3100"
 }
 
+// waWebInternalKey is the secret the Go API presents to wa-web's own
+// internal-key check (apps/wa-web/src/index.js). Each bridge gets its own
+// env var now — WA_WEB_INTERNAL_KEY, not the old shared INTERNAL_API_KEY
+// — with no insecure fallback: an unset key is a startup error (see
+// config.Load), not a silent "changeme" (platform-security-hardening
+// task 0.4).
 func waWebInternalKey() string {
-	if k := os.Getenv("INTERNAL_API_KEY"); k != "" {
-		return k
-	}
-	return "changeme"
+	return os.Getenv("WA_WEB_INTERNAL_KEY")
 }
 
 // ============================================================
@@ -575,6 +578,13 @@ func (h *Handler) waWebStudios(w http.ResponseWriter, r *http.Request) {
 // waWebSender implements channels.Sender by calling the wa-web Node service.
 type waWebSender struct {
 	studioID uuid.UUID
+	// jobID is this outbound job's own ID, reused unchanged across every
+	// retry of the same job. Passed to wa-web as an idempotency key so a
+	// retry triggered by a lost/timed-out HTTP response (the real send
+	// already succeeded, we just never heard back) returns the original
+	// result instead of sending the message to the customer a second time.
+	// See SessionManager.sendMessage's idempotency cache on the wa-web side.
+	jobID int64
 }
 
 func (s *waWebSender) SendText(ctx context.Context, _, _, recipient, _, body string, attachments []channels.Attachment) (*channels.SendResult, error) {
@@ -582,11 +592,12 @@ func (s *waWebSender) SendText(ctx context.Context, _, _, recipient, _, body str
 	sendURL := fmt.Sprintf("%s/sessions/%s/send", baseURL, s.studioID)
 
 	type sendPayload struct {
-		To        string `json:"to"`
-		Text      string `json:"text,omitempty"`
-		MediaURL  string `json:"mediaUrl,omitempty"`
-		MediaType string `json:"mediaType,omitempty"`
-		Caption   string `json:"caption,omitempty"`
+		To             string `json:"to"`
+		Text           string `json:"text,omitempty"`
+		MediaURL       string `json:"mediaUrl,omitempty"`
+		MediaType      string `json:"mediaType,omitempty"`
+		Caption        string `json:"caption,omitempty"`
+		IdempotencyKey string `json:"idempotencyKey,omitempty"`
 	}
 
 	// doSend returns the WhatsApp message ID wa-web assigned to the send.
@@ -617,9 +628,19 @@ func (s *waWebSender) SendText(ctx context.Context, _, _, recipient, _, body str
 		return parsed.MessageID, nil
 	}
 
+	// Each attachment (or the lone text message) gets its own idempotency
+	// key, suffixed by index, so a multi-attachment job doesn't dedupe its
+	// second photo against its first.
+	idemKey := func(i int) string {
+		if s.jobID == 0 {
+			return "" // no key configured for this sender → idempotency disabled
+		}
+		return fmt.Sprintf("%d:%d", s.jobID, i)
+	}
+
 	// Send text message (unless there are attachments — in that case text becomes caption on first media)
 	if len(attachments) == 0 {
-		id, err := doSend(sendPayload{To: recipient, Text: body})
+		id, err := doSend(sendPayload{To: recipient, Text: body, IdempotencyKey: idemKey(0)})
 		return &channels.SendResult{ExternalID: id}, err
 	}
 
@@ -633,10 +654,11 @@ func (s *waWebSender) SendText(ctx context.Context, _, _, recipient, _, body str
 			caption = body
 		}
 		id, err := doSend(sendPayload{
-			To:        recipient,
-			MediaURL:  att.URL,
-			MediaType: string(att.Type),
-			Caption:   caption,
+			To:             recipient,
+			MediaURL:       att.URL,
+			MediaType:      string(att.Type),
+			Caption:        caption,
+			IdempotencyKey: idemKey(i),
 		})
 		if err != nil {
 			return nil, err

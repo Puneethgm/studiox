@@ -490,6 +490,62 @@ export async function saveWhatsAppSendSpacing(studioId: string, seconds: number)
   return { ok: true };
 }
 
+export interface StaffActiveWindowResult {
+  ok: boolean;
+  error?: string;
+  data?: { staffActiveWindowMinutes: number };
+}
+
+export async function getStaffActiveWindow(studioId: string): Promise<StaffActiveWindowResult> {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/staff-active-window`, {
+      method: 'GET',
+      headers: {
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      },
+      cache: 'no-store',
+    });
+    if (!res.ok) {
+      return { ok: false, error: `HTTP ${res.status}` };
+    }
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (err: any) {
+    return { ok: false, error: err.message };
+  }
+}
+
+export async function saveStaffActiveWindow(studioId: string, minutes: number): Promise<UpdateStudioResult> {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
+  const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/staff-active-window`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      ...(await csrfHeader()),
+    },
+    body: JSON.stringify({ staffActiveWindowMinutes: minutes }),
+    cache: 'no-store',
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    return { ok: false, error: body?.error || `HTTP ${res.status}`, code: body?.code };
+  }
+  return { ok: true };
+}
+
 export interface AIReplyDelayResult {
   ok: boolean;
   error?: string;
@@ -704,5 +760,77 @@ export async function deleteExternalLeadsSheet(studioId: string, sheetId: string
     return { ok: false, error: body?.error ?? `HTTP ${res.status}`, code: body?.code };
   }
   revalidatePath(`/admin/studios/${studioId}/settings`);
+  return { ok: true };
+}
+
+export interface AIActiveHoursResult {
+  ok: boolean;
+  error?: string;
+  data?: {
+    aiActiveHoursEnabled: boolean;
+    aiActiveHoursStart: string;
+    aiActiveHoursEnd: string;
+    aiActiveHoursTimezone: string;
+  };
+}
+
+export async function getAIActiveHours(studioId: string): Promise<AIActiveHoursResult> {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/messaging/settings/ai-active-hours`, {
+      method: 'GET',
+      headers: {
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      },
+      cache: 'no-store',
+    });
+    if (!res.ok) {
+      return { ok: false, error: `HTTP ${res.status}` };
+    }
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (err: any) {
+    return { ok: false, error: err.message };
+  }
+}
+
+export async function saveAIActiveHours(
+  studioId: string,
+  enabled: boolean,
+  start: string,
+  end: string,
+  timezone: string,
+): Promise<UpdateStudioResult> {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
+  const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/messaging/settings/ai-active-hours`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      ...(await csrfHeader()),
+    },
+    body: JSON.stringify({
+      aiActiveHoursEnabled: enabled,
+      aiActiveHoursStart: start,
+      aiActiveHoursEnd: end,
+      aiActiveHoursTimezone: timezone,
+    }),
+    cache: 'no-store',
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    return { ok: false, error: body?.error || `HTTP ${res.status}`, code: body?.code };
+  }
   return { ok: true };
 }

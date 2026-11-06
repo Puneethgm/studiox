@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import { PoweredByFooter } from './PoweredByFooter';
 import {
   BarChart2,
   Building2,
@@ -116,6 +117,12 @@ function navItemsFor(me: Me, currentPath: string, onOpenSettings: () => void): N
         label: 'LLM Monitor',
         icon: <BarChart2 className="h-[18px] w-[18px]" />,
         match: (p) => p.startsWith('/admin/llm-monitoring'),
+      },
+      {
+        href: '/admin/eval-report',
+        label: 'Eval Report',
+        icon: <ClipboardCheck className="h-[18px] w-[18px]" />,
+        match: (p) => p.startsWith('/admin/eval-report'),
       },
       {
         href: '/admin/crm-integrations',
@@ -324,6 +331,7 @@ export function AppShell({ me, children }: { me: Me; children: ReactNode }) {
           >
             {children}
           </main>
+          <PoweredByFooter />
         </div>
       </div>
 
@@ -663,6 +671,9 @@ function Topbar({
   } else if (pathname.includes('/llm-monitoring')) {
     pageTitle = 'LLM Monitor';
     pageIcon = <BarChart2 className="h-[18px] w-[18px] text-violet-500" />;
+  } else if (pathname.includes('/eval-report')) {
+    pageTitle = 'Eval Report';
+    pageIcon = <ClipboardCheck className="h-[18px] w-[18px] text-emerald-500" />;
   } else if (pathname.includes('/templates')) {
     pageTitle = 'Templates';
     pageIcon = <MessageSquareText className="h-[18px] w-[18px] text-brand-500" />;
@@ -755,6 +766,14 @@ function Topbar({
                   </div>
                 </div>
                 <div className="p-1">
+                  <Link
+                    href="/admin/account/sessions"
+                    onClick={() => setOpen(false)}
+                    className="flex w-full items-center gap-3 rounded px-4 py-2.5 text-xs font-bold text-slate-700 transition-colors hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+                  >
+                    <ShieldCheck className="h-4 w-4" />
+                    Active sessions
+                  </Link>
                   <button
                     onClick={logout}
                     className="flex w-full items-center gap-3 rounded px-4 py-2.5 text-xs font-bold text-red-600 transition-colors hover:bg-red-50 dark:hover:bg-red-500/10"

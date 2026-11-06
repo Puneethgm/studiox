@@ -1,0 +1,92 @@
+name: Security
+
+# platform-security-hardening group 5 — secret scanning, Go/Node
+# dependency vulnerability scanning, Go static analysis, and container
+# image scanning, blocking merge on any high-severity finding (task 5.3
+# via each job's own non-zero exit + branch-protection "required checks").
+on:
+  pull_request:
+  push:
+    branches: [main, dev]
+
+jobs:
+  backup-encryption-check:
+    name: Backup encryption round-trip (task 6.4)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./deploy/backup_encryption_check.sh
+
+  secret-scan:
+    name: Secret scanning (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  go-vuln-scan:
+    name: Go dependency vulnerabilities (govulncheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/api/go.mod
+      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - run: govulncheck ./...
+        working-directory: apps/api
+
+  go-static-analysis:
+    name: Go static analysis (gosec)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/api/go.mod
+      # -fmt sarif + exit-code 1 on anything of medium+ confidence/severity
+      # is gosec's own merge-blocking behavior (task 5.3) — no custom
+      # wrapper script needed (see task 5.4's note).
+      - run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+      - run: gosec -exclude-dir=node_modules ./...
+        working-directory: apps/api
+
+  npm-audit:
+    name: npm audit (apps/web)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # --audit-level=high is the merge-blocking threshold (task 5.3) —
+      # npm itself exits non-zero once any finding meets/exceeds it.
+      - run: npm audit --audit-level=high
+        working-directory: apps/web
+
+  container-scan:
+    name: Container image scanning (Trivy)
+    runs-on: ubuntu-latest
+    needs: []
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build API image
+        run: docker build -t projectx-api:ci -f apps/api/Dockerfile apps/api
+      - name: Scan API image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: projectx-api:ci
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+      - name: Build web image
+        run: docker build -t projectx-web:ci -f apps/web/Dockerfile apps/web
+      - name: Scan web image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: projectx-web:ci
+          severity: HIGH,CRITICAL
+          exit-code: "1"

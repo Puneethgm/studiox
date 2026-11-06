@@ -73,17 +73,14 @@ func (s SMTPConfig) Enabled() bool {
 	return s.Host != "" && s.User != "" && s.Password != ""
 }
 
-// RedisConfig backs the per-studio AI-answer cache (internal/messaging.AnswerCache).
-// Redis being unreachable degrades to always calling the model — it is
-// never required for the app to boot or serve requests. Discrete
-// host/port/password fields (not a redis://user:pass@host URL) so a
-// password containing URL-special characters is never mis-parsed.
+// RedisConfig backs identity.SessionStore (session revocation + idle
+// timeout). Discrete host/port/password fields (not a redis://user:pass@host
+// URL) so a password containing URL-special characters is never mis-parsed.
 type RedisConfig struct {
-	Host           string
-	Port           int
-	Password       string
-	DB             int
-	AnswerCacheTTL time.Duration
+	Host     string
+	Port     int
+	Password string
+	DB       int
 }
 
 func (r RedisConfig) Addr() string {
@@ -192,6 +189,12 @@ type SessionConfig struct {
 	// longer than IdleTimeout — this exists purely as an outer security
 	// ceiling, not as the everyday logout trigger.
 	MaxAge time.Duration
+	// SuperAdminIdleTimeout/SuperAdminMaxAge are the same two concepts
+	// above, but tighter — a super_admin can reach every studio's data,
+	// so its session gets a shorter leash (platform-security-hardening
+	// task 1.8). Every other role uses IdleTimeout/MaxAge.
+	SuperAdminIdleTimeout time.Duration
+	SuperAdminMaxAge      time.Duration
 }
 
 type SuperUserConfig struct {
@@ -224,15 +227,21 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	answerCacheTTL, err := durationDefault("AI_ANSWER_CACHE_TTL", 30*time.Minute)
-	if err != nil {
-		return Config{}, err
-	}
 	sessionIdleTimeout, err := durationDefault("SESSION_IDLE_TIMEOUT", 30*time.Minute)
 	if err != nil {
 		return Config{}, err
 	}
 	sessionMaxAge, err := durationDefault("SESSION_MAX_AGE", 7*24*time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
+	// super_admin sessions get a tighter ceiling than every other role —
+	// platform-security-hardening task 1.8.
+	superAdminIdleTimeout, err := durationDefault("SUPER_ADMIN_SESSION_IDLE_TIMEOUT", 15*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	superAdminMaxAge, err := durationDefault("SUPER_ADMIN_SESSION_MAX_AGE", 8*time.Hour)
 	if err != nil {
 		return Config{}, err
 	}
@@ -270,8 +279,10 @@ func Load() (Config, error) {
 			Password: getEnv("SUPER_ADMIN_PASSWORD", ""),
 		},
 		Session: SessionConfig{
-			IdleTimeout: sessionIdleTimeout,
-			MaxAge:      sessionMaxAge,
+			IdleTimeout:           sessionIdleTimeout,
+			MaxAge:                sessionMaxAge,
+			SuperAdminIdleTimeout: superAdminIdleTimeout,
+			SuperAdminMaxAge:      superAdminMaxAge,
 		},
 		PublicFormBaseURL: getEnv("PUBLIC_FORM_BASE_URL", "http://localhost:3000"),
 		PublicAPIBaseURL:  getEnv("PUBLIC_API_BASE_URL", "http://localhost:8080"),
@@ -307,11 +318,10 @@ func Load() (Config, error) {
 			BranchID: getEnv("GLOFOX_BRANCH_ID", ""),
 		},
 		Redis: RedisConfig{
-			Host:           getEnv("REDIS_HOST", "localhost"),
-			Port:           redisPort,
-			Password:       getEnv("REDIS_PASSWORD", ""),
-			DB:             redisDB,
-			AnswerCacheTTL: answerCacheTTL,
+			Host:     getEnv("REDIS_HOST", "localhost"),
+			Port:     redisPort,
+			Password: getEnv("REDIS_PASSWORD", ""),
+			DB:       redisDB,
 		},
 		SMTP: SMTPConfig{
 			Host:     getEnv("SMTP_HOST", ""),
@@ -333,6 +343,29 @@ func Load() (Config, error) {
 	}
 	if cfg.TokenEncryptionKey == "" {
 		return cfg, errors.New("TOKEN_ENCRYPTION_KEY is required (generate with `openssl rand -base64 32`)")
+	}
+	// Outside local dev, a non-Secure session cookie can travel over plain
+	// HTTP — refuse to start rather than silently serving with it off
+	// (COOKIE_SECURE defaulted to "false" in production until this check
+	// was added; see platform-security-hardening task 0.1).
+	if cfg.Env != "local" && !cfg.Cookie.Secure {
+		return cfg, errors.New("COOKIE_SECURE must be true outside API_ENV=local")
+	}
+	// WA_WEB_INTERNAL_KEY/TG_WEB_INTERNAL_KEY authenticate the Go API to
+	// each bridge sidecar (internal/messaging/webhook_wa_web.go,
+	// webhook_tg_web.go). They replace a single shared INTERNAL_API_KEY
+	// that also silently fell back to the literal string "changeme" if
+	// unset — that fallback is removed entirely, not just renamed, so a
+	// missing key is a startup error rather than an insecure default
+	// (platform-security-hardening task 0.4). Required in every
+	// environment, matching the bridges' own startup checks
+	// (apps/wa-web/src/index.js, apps/tg-web/src/index.js already refuse
+	// to start without their half of this key).
+	if os.Getenv("WA_WEB_INTERNAL_KEY") == "" {
+		return cfg, errors.New("WA_WEB_INTERNAL_KEY is required")
+	}
+	if os.Getenv("TG_WEB_INTERNAL_KEY") == "" {
+		return cfg, errors.New("TG_WEB_INTERNAL_KEY is required")
 	}
 	return cfg, nil
 }

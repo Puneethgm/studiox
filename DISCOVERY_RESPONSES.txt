@@ -1,0 +1,703 @@
+CURRENT STATE DISCOVERY CHECKLIST — RESPONSES
+Answered from the codebase/config as of 2026-10-28.
+
+Note on method: these answers are grounded in the actual repo (apps/api, apps/web, apps/wa-web,
+apps/tg-web, deploy/) — file/line citations are given where useful. Anything that depends on
+business records, team practices, cloud-console access logs, or external accounts (who holds SSH
+keys, past incidents, pen-test history, cloud spend, growth plans, legal contracts) cannot be
+pulled from code and is marked "not discoverable from the repo — needs team/business input"
+rather than guessed. For secrets: only names/locations are given below, never values, per the
+checklist's own instruction.
+
+
+====================================================================
+1. SECURITY
+====================================================================
+
+1.1 Login and access
+--------------------
+- Login methods: password only, for all three user types (super_admin, studio_admin,
+  studio_staff). No Google/OAuth-SSO, no OTP, no magic link. (The one OAuth integration in the
+  repo, internal/integrations/google/oauth.go, is Google Ads channel-connect for a studio's
+  marketing integration — unrelated to user login.)
+
+- 2FA: not in place. No TOTP/MFA code anywhere in internal/identity.
+
+- Passwords: bcrypt, cost factor 12 (internal/identity/password.go:12). No explicit minimum-
+  length/complexity rule found server-side. New accounts (studio_staff, and studio_admins created
+  by a super-admin) get a random 16-character one-time password (GenerateTempPassword, ~93 bits
+  of entropy) with must_reset_password=true forcing a change before any other route works. Reset
+  flow exists (forgotPassword/resetPassword in identity/http.go). Lockout: no per-account failed-
+  login counter/lockout — only an IP-based rate limit (10 requests/minute per IP) on login and
+  password-change endpoints (httpx.AuthRateLimiter, identity/http.go:209), in-process/in-memory,
+  not shared across instances.
+
+- Sessions: JWT (HS256), but the cookie value is not a bare JWT — the signed JWS is AES-256-GCM
+  encrypted again before being set as the cookie (identity/jwt.go TokenIssuer), so it can't be
+  base64-decoded client-side to read role/permissions. Defaults: JWT_TTL 30 min (absolute, slides
+  forward on activity), SESSION_IDLE_TIMEOUT 30 min (idle deadline, also slides), SESSION_MAX_AGE
+  7 days (hard backstop from original login that activity never extends) — all env-overridable
+  (internal/platform/config/config.go). Cookie: HttpOnly true, SameSite Strict, Secure driven by
+  COOKIE_SECURE env var (defaults false if unset — THIS NEEDS TO BE CONFIRMED true IN THE
+  PRODUCTION .env). A second, deliberately non-HttpOnly px_csrf cookie carries the CSRF token for
+  the double-submit pattern (X-CSRF-Token header, constant-time compared server-side). Logout
+  revokes the session server-side immediately (Redis SessionStore.Revoke, fails closed on a Redis
+  outage). No explicit "admin force-logout a specific user" feature exists; deactivating a user
+  blocks their *next* login, but because the JWT's claims are trusted without a DB re-check on
+  every request (a deliberate trade-off documented in jwt.go), an already-logged-in user keeps
+  working until their JWT's 30-min idle/absolute window lapses, not instantly.
+
+- Roles: fixed three-tier set — super_admin (platform-wide, bypasses all permission checks),
+  studio_admin (bypasses permission checks within their one studio), studio_staff (the only role
+  actually gated by the permission catalog, via studio-defined studio_roles/
+  studio_role_permissions). The permission catalog itself is fixed platform-wide; studios bundle
+  existing permissions into named roles, they can't invent new permission keys.
+
+- Studio isolation: enforced per-query (WHERE studio_id = $1 on essentially every studio-scoped
+  table — 37+ occurrences just in messaging/repo.go) and at the claims layer
+  (Claims.EffectiveStudioID) — NOT Postgres Row-Level Security; no RLS policies exist in any
+  migration. middleware_global_test.go covers some of this, but there is no DB-enforced backstop
+  if a query ever omitted the studio_id filter.
+
+- Super-admin impersonation / "login as studio": not in place — not found anywhere in identity.
+
+- Webhook signature verification: Meta (WhatsApp Business API/Messenger/Instagram) webhooks
+  verify X-Hub-Signature-256 HMAC-SHA256 against the app secret, constant-time compared
+  (messaging/webhook_meta.go). Stripe webhooks verify via Stripe's SDK
+  webhook.ConstructEventWithOptions against STRIPE_WEBHOOK_SECRET (studios/webhook_stripe.go).
+  The WhatsApp-web (Baileys) and Telegram-web (GramJS) bridges are not public webhooks — they're
+  internal sidecar processes authenticated back to the API by a shared INTERNAL_API_KEY secret,
+  not a public signature scheme.
+
+1.2 Secrets and keys
+---------------------
+- Local/dev secrets live in .env (gitignored; .env.example documents names only). Production
+  secrets live in the server's own .env read by Docker Compose — there is no cloud secret manager
+  (AWS Secrets Manager/Vault) integration in the repo.
+- Git history secret-scanning: not found — no .gitleaks.toml, no CI step, nothing.
+- Platform LLM keys (Groq/Gemini/Claude/OpenAI): platform_settings key-value table, encrypted at
+  rest (AES via internal/platform/secrets.Cipher, keyed by TOKEN_ENCRYPTION_KEY). The API never
+  returns the raw key — only a hasApiKey boolean + last-4-char keySuffix
+  (studios/ai_models_http.go). Studio-level Mistral (OCR) key follows the same pattern.
+- WhatsApp (Baileys) session credentials: stored as PLAINTEXT FILES on local disk via Baileys' own
+  useMultiFileAuthState(dataPath) (apps/wa-web/src/sessions.js:557) — not encrypted, not in the
+  DB/Redis. Anyone with filesystem access to that host has full control of every connected
+  WhatsApp number. Flagging this explicitly as a gap.
+- Telegram (GramJS) session: a single session string, stored encrypted in Postgres by the Go API
+  and handed to the tg-web sidecar on startup (per docker-compose comments) — not file-based.
+- Other third-party tokens (Meta app secret/webhook verify token, Stripe keys, SMTP password, AWS
+  creds, Glofox API key/token): all env vars (see .env.example), no separate secret-manager layer.
+- Secret rotation: no automated process found.
+
+1.3 Infrastructure security
+-----------------------------
+- Production access model: not fully determinable from the repo — deploy/setup-ec2.sh only
+  documents opening inbound ports 22/80(/443) in the EC2 security group; no bastion/VPN script.
+  WHO ACTUALLY HOLDS SSH KEYS/CONSOLE ACCESS IS NOT DISCOVERABLE FROM THE REPO — needs team input.
+- Postgres/Redis exposure: the root docker-compose.yml (dev) publishes Postgres on host port
+  5435/5436 and Redis on 6379 with no loopback-only binding. In docker-compose.prod.yml these are
+  not published to the host at all beyond what setup-ec2.sh's security group opens (22/80/443
+  only) — so Postgres/Redis are likely NOT internet-reachable in production, but this should be
+  confirmed directly against the live EC2 security group, not just the script.
+- TLS: terminated by an nginx reverse-proxy container, certs from Let's Encrypt
+  (/etc/letsencrypt mounted read-only into nginx; renewal automation itself — e.g. a host
+  certbot timer — is not visible in the repo). DB connection mode: POSTGRES_SSLMODE=disable in
+  .env.example — Postgres connections are NOT TLS-encrypted by default.
+- Encryption at rest: app-level secrets (LLM keys etc.) are encrypted via the app's own cipher;
+  whether the underlying EBS volume/disk itself has encryption enabled is not discoverable from
+  the repo.
+- Which ports/services are public: domain 1herosocial.ai/www.1herosocial.ai hardcoded in
+  nginx.conf; only nginx (80/443) is the public entry point — /api/* and /webhook/* route to the
+  Go API container, /uploads/* to a static volume, everything else to Next.js. No CDN, no load
+  balancer beyond this single nginx instance — single point of failure for all inbound traffic.
+- Backups: deploy/backup.sh — nightly pg_dump (gzip) via cron at 03:00 UTC (installed by
+  setup-ec2.sh), retained 14 days locally, optionally copied to S3 if S3_BUCKET is set (gated,
+  not guaranteed). No explicit encryption step on the dump itself beyond S3's own at-rest
+  settings. No point-in-time recovery — just nightly full dumps. WHETHER A RESTORE HAS EVER BEEN
+  TESTED IS NOT DISCOVERABLE FROM THE REPO.
+
+1.4 Detection and response
+----------------------------
+- Audit log: exists, but narrow — internal/platform/audit covers only the studio account-
+  deletion/archive/recovery flow (see Section 4.2), not general login/settings-change/export/
+  key-view/user-add actions. Fields: studio_id, actor_user_id, action, metadata (JSON),
+  timestamp. Retention: purged after 90 days by a daily worker (audit.RetentionWorker), no
+  append-only/immutability guarantee beyond normal table permissions. THERE IS NO GENERAL-PURPOSE
+  AUDIT TRAIL FOR LOGINS, SETTINGS CHANGES, EXPORTS, OR KEY VIEWS.
+- Suspicious-login alerting (new device/country): not in place.
+- Logging of sensitive data: webhook/messaging handlers log structured fields (studio_id,
+  outbox_id, provider, etc.) via slog; message bodies, passwords, and raw tokens were not found
+  being logged in the handlers reviewed, though an exhaustive line-by-line audit of every log
+  call site in the codebase was not performed.
+- Incident runbook: not found in the repo.
+- Past security incidents: not discoverable from the repo — needs team input (the checklist
+  mentions "this incident" without detail provided to us; no record of it exists in-repo).
+
+1.5 Application security
+---------------------------
+- CSP (production, apps/web/next.config.mjs), exact header:
+  default-src 'self'; script-src 'self' 'unsafe-inline' https://www.googletagmanager.com
+  https://js.stripe.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+  img-src 'self' data: blob: https:; font-src 'self' data: https://fonts.gstatic.com;
+  connect-src 'self' https://*.stripe.com https://www.google-analytics.com
+  https://www.googletagmanager.com; frame-src 'self' https://js.stripe.com
+  https://hooks.stripe.com https://*.stripe.com; object-src 'none'; base-uri 'self';
+  form-action 'self'
+  ('unsafe-eval' is added to script-src only in dev, for Next.js hot-reload.) No violation-report
+  endpoint is configured.
+- CAPTCHA: not in place anywhere.
+- Rate limiting: a strict 10 req/min/IP limiter on login and password-change; a global
+  10,000 req/min/IP limiter on everything else (httpx.RateLimiter, main.go). No OTP-specific
+  limit (no OTP exists). No extra limit on public webhook endpoints beyond the global one. Both
+  limiters are in-process/in-memory, not shared across instances — reset per-process, don't hold
+  under horizontal scaling.
+- File uploads: content-type is passed through to S3 as given by the caller; no explicit server-
+  side file-type allowlist or size-limit enforcement, and no malware scanning, were found in the
+  S3 uploader itself. Uploaded files are served from a separate bucket/CDN URL, not the app's own
+  domain.
+- CI security checks: none — there is no .github directory and no CI/CD pipeline at all in this
+  repo. Dependency scanning, SAST, secret scanning, and container-image scanning are all absent.
+- Past pen test / VAPT: not discoverable from the repo — needs team input.
+
+
+====================================================================
+2. AI FLOW
+====================================================================
+
+2.1 End-to-end flow
+----------------------
+Path from inbound webhook to a sent AI reply (apps/api/internal/messaging/ai_worker.go):
+
+1. Webhook handler persists the inbound message, publishes an event on the in-process event bus.
+2. AIWorker.listenStudio receives it and calls debounceInboundMessage (ai_worker.go:174) — starts
+   or resets a per-conversation 6-second timer (inboundDebounceWindow). Each new message from the
+   same conversation within the window resets the timer, so a burst of messages produces exactly
+   ONE reply once the customer pauses. If staff replies manually during that 6s window, nothing
+   currently cancels the pending AI timer — the AI still fires afterward, addressing the original
+   message(s); there's no staff-reply-cancels-ai-timer logic.
+3. When the timer fires, handleMessage (line ~522) runs these gates in order, any of which can
+   skip sending a reply:
+   - Not a customer inbound message -> skip.
+   - Conversation/channel/message not found -> skip.
+   - Cancel any pending "no-reply follow-up" jobs for the lead (always runs regardless).
+   - conv.AIEnabled == false (per-conversation staff toggle) -> skip, logs "ai_enabled=false — no
+     reply sent".
+   - DND: lead.DNDEnabled, conv.DNDEnabled, or a STOP keyword -> enable DND, cancel pending jobs,
+     skip, logs "dnd active — no reply sent".
+   - Lead mid-flow in a bot-owned decision-tree stage -> skip, logs "skipping — bot owns this
+     stage".
+   - Automation already enqueued a reply for this exact message -> skip ("skipping — automation
+     already replied").
+   - studio.AIAccessEnabled == false (superadmin master switch, added 2026-10-28) -> skip, logs
+     "studio ai_access_enabled=false — no reply sent".
+   - First message ever in a new conversation + a configured greeting -> sends only the greeting
+     (plus a hardcoded, non-editable "You're chatting with {studio}'s AI assistant..." disclosure)
+     and returns — no decision tree, no LLM call, for that turn.
+   - Explicit "talk to a human" phrase -> immediate escalation, bypasses the rest.
+   - Decision-tree evaluation; a match can short-circuit to a scripted reply or escalate.
+   - Otherwise: intent classification, KB retrieval/rerank, prompt build, LLM waterfall, reply.
+
+   Skip reason IS logged, but as hand-written log-message strings (slog, not a dedicated
+   structured "skip_reason" field/enum) — a reply/skip breakdown report means grepping/parsing
+   these distinct strings from logs, not querying one column.
+
+- What triggers an LLM call: every inbound customer message (after debounce, main waterfall);
+  background conversation summarization (on WA-Web backfill completion, and periodically via
+  ensureRollingSummary — every 5th message past a 15-message window); StyleWorker's periodic
+  "communication style" profile rebuild (not per-message); Test Chat (manual, staff-triggered);
+  intent classification / query expansion / KB reranking helper calls inside handleMessage itself
+  (separate Gemini->Groq fallback, not the main waterfall); decision-tree keyword suggestion
+  (manual, staff clicks "suggest keywords"). No scheduled retries of a failed/empty waterfall —
+  it is not automatically retried later.
+
+- Debounce and send delay: debounce is a fixed 6 seconds, hardcoded (inboundDebounceWindow), not
+  configurable per studio. Separately, once the waterfall decides what to send, a configurable
+  per-studio ai_reply_delay_seconds (studios/repo.go:291, GetAIReplyDelaySeconds) is used as the
+  ScheduledFor time on the enqueued outbound job — the "don't look robotically instant" delay,
+  independent of the 6s debounce; value is whatever each studio has set (0 if unset — no single
+  global default documented in Go). A different setting, initial_contact_delay_minutes
+  (autocontact_worker.go), governs first-touch outreach to a brand-new lead, not inspected in
+  detail.
+
+- Queue and workers: no external job queue (no Redis-backed queue, no Sidekiq/Celery-equivalent)
+  — everything is in-process Go goroutines + Postgres tables used as the queue:
+  - AIWorker: one goroutine per studio, subscribed to the in-process event bus; debounce timers
+    are per-conversation time.Timers held in a map.
+  - OutboundWorker: single polling loop (2s interval, batch size 10), claims rows from
+    outbound_jobs via "FOR UPDATE SKIP LOCKED" (Postgres-native queue), one goroutine per studio
+    per tick so a slow channel for one studio doesn't block another; retries with exponential
+    backoff (capped ~30 min, or up to ~85 min across 12 attempts for transient network errors).
+  - StyleWorker, autocontact worker, external-leads-sheet worker, broadcast worker, cold scanner,
+    social worker: each its own goroutine/ticker (5s-30s range).
+  - audit.RetentionWorker: daily, purges audit_logs older than 90 days.
+  If the API process restarts mid-job: in-memory debounce timers and anything not yet durably
+  queued in outbound_jobs are lost — the inbound message itself is already persisted in Postgres,
+  but a reply "in flight" inside the 6s debounce window at restart time is gone (the customer
+  would need to send another message). outbound_jobs rows themselves survive a restart since
+  they live in Postgres, and the next poll tick picks up anything still pending there.
+  Process supervision: Docker's own "restart: unless-stopped" policy per service in
+  docker-compose.prod.yml — no systemd units, no pm2.
+
+- Handoff to staff: escalateWithHandoff (class_escalation.go:101) is the single handoff path. It
+  calls EscalateAndNotify -> EscalateConversation (messaging/repo.go:943), which sets
+  escalated_at, escalated_reason, AND ai_enabled = false on the conversation row — that's how AI
+  actually turns off for that conversation, not a separate flag. Staff notification: an email
+  alert, sent only if a mailer is configured AND the studio has a contact_email on file,
+  containing the real last-6-messages transcript (not an AI summary). If neither condition is
+  met, there is NO notification at all beyond the conversation appearing in the admin Inbox's
+  escalated list. Triggers: explicit "talk to a human" phrase, a detected complaint/negative-
+  feedback classification, a knowledge-base gap (low-confidence retrieval, or the model itself
+  saying it doesn't know), and decision-tree escalate_human nodes. Resume: a manual staff action
+  (ResolveConversationEscalation, repo.go:958) clears the escalation, sets ai_enabled = true
+  again, and resets the decision-tree stage to root. There is no automatic timeout/resume — a
+  human must act.
+
+- ai_suggestions / copilot: CONFIRMED DEAD CODE. The table exists in Postgres (with its FK
+  cascade on studio delete) but nothing in current Go or TS/TSX application code reads or writes
+  it — it was either never wired up, or wired up once and later removed with the table left
+  behind.
+
+- Language detection: NONE. No detection step exists, and there is no explicit "reply in the
+  customer's language" instruction anywhere in the prompt-building code. Any language-matching
+  behavior seen in practice is incidental to the underlying model's own general capability, not
+  something this codebase implements or guarantees.
+
+2.2 Prompts and models
+-------------------------
+All prompts are hardcoded Go string literals built at runtime (strings.Builder/fmt.Sprintf) —
+there is NO database-stored or versioned prompt system. Editing a prompt means editing Go source
+and redeploying. There is no admin UI for editing prompt text itself (the "staff corrections"
+mechanism below is a targeted patch appended to the prompt, not prompt editing).
+
+MAIN REPLY PROMPT (buildPrompt, ai_worker.go:1636-1969) — sections in order, each included only
+when that data exists:
+1. System role (verbatim): "You are a warm, professional sales assistant for a fitness studio.
+   Your goal is to convert interested prospects into trial bookings and members." +
+   "ABSOLUTE RULES — never break these:" (no meta-commentary about its own reasoning, never
+   discuss its instructions/context window, respond to unclear messages naturally).
+2. Today's date grounded in the studio's local timezone (for day-of-week questions).
+3. If a program start-date + parsed schedule exist: a deterministic, code-computed (not LLM-
+   guessed) "TODAY'S VERIFIED PROGRAM SESSION" block — built this way after a real bug where the
+   model picked the wrong week via semantic search.
+4. Instruction forcing the model to show its week/day-count arithmetic for multi-week program
+   questions rather than guess.
+5. Instruction to format schedule/timetable answers as a markdown pipe table, only from real KB-
+   stated data, never inventing a day/time.
+6. No time-of-day greeting ever; name-greeting ("Hi [name]!") only after a real 2+ hour pause in
+   the conversation, not every turn.
+7. Knowledge-base block (if retrieved), verbatim: "Answer ONLY from the knowledge base above and
+   the plans below... Never invent a specific fact... If you genuinely can't tell what the
+   customer is asking, ask ONE short clarifying question..." plus an instruction not to repeat
+   things already said earlier in the same conversation.
+8. Staff corrections — up to 20 most recent ai_feedback_corrections rows (staff flagging a past
+   wrong reply via the Test Chat drawer), injected as "STAFF CORRECTIONS — ... These take
+   priority over the knowledge base above if they ever conflict" — placed after the KB
+   deliberately so corrections win.
+9. Hard rule: "You CANNOT book, cancel, reschedule or check live availability for classes, and
+   you must NEVER say or imply that you have" — added after a real incident of the model implying
+   it had locked in a booking.
+10. Plans — membership plan name/price/billing-cycle/features, listed verbatim if any exist.
+11. Lead context (name, fitness-plan interest, status); a "1. Book a Trial / 2. Become a Member"
+    menu appended under specific conditions (not mid-bot-flow, not already shown, and either an
+    explicit booking question or a generic/first message with no unrelated specific question).
+12. Intent-aware instructions, learned studio voice (style examples + StyleWorker's distilled
+    profile), high-confidence semantic history matches, a prior imported-chat summary, and the
+    recent conversation window — each only when present.
+
+SUMMARY PROMPT (summarizeMessagesInto, ai_worker.go:254) — verbatim: "Summarize this WhatsApp
+conversation history in 2-3 short sentences, focused on what the customer wants and where things
+were left off. Be concise and factual — no greeting, no filler." followed by the transcript as
+"Customer: ..." / "Studio: ..." lines.
+
+STYLE-PROFILE PROMPT (rebuildProfile, style_worker.go:297) — verbatim: "You are analyzing real
+customer-service message transcripts from a single fitness studio, to describe HOW this studio's
+staff talk to customers — not what the business does. Read the transcripts below and write a
+short (120-180 word), plain-English profile covering: overall tone/formality, phrases or
+greetings they reuse often, emoji usage (if any), and how they typically handle pricing
+questions or hesitant customers. Write it as direct instructions to someone else who will
+impersonate this studio's voice..." — fed real recent staff-authored replies.
+
+INTENT CLASSIFICATION PROMPT (ClassifyIntent, embeddings.go:169) — verbatim: "You are a fitness
+studio CRM classifier. Classify this customer message... Use complaint_or_feedback for any
+complaint... Reply with ONLY valid JSON — no markdown, no explanation: {"intent": "<one of:
+pricing_question | booking_inquiry | objection | ready_to_buy | complaint_or_feedback |
+general_question | off_topic>", "sentiment": <-1/0/1>, "confidence": <0.0-1.0>}". MaxTokens 80,
+temperature 0.0.
+
+QUERY EXPANSION PROMPT (ExpandQuery, embeddings.go:303) — verbatim: "You are a search query
+optimizer for a fitness studio. Generate 3 alternative phrasings of this customer query that
+capture the same intent but use different vocabulary. Return ONLY a JSON array of strings, no
+markdown. Query: \"%s\"".
+
+RERANKING PROMPT (RerankChunks, embeddings.go:217) — verbatim: "You are a relevance ranker for a
+fitness studio FAQ system. Customer query: \"%s\" Candidate passages: %s Return ONLY a JSON array
+of passage indices sorted by relevance (most relevant first), e.g. [2,0,1]. Include only the top
+%d most relevant. No explanation." MaxTokens 50, temperature 0.0.
+
+DECISION-TREE KEYWORD SUGGESTION PROMPT (SuggestKeywords, decisiontree/service.go:63) — verbatim:
+"You are helping configure a WhatsApp bot's decision tree for a fitness studio. A node in the
+tree is labeled: %q When it fires, the bot replies: %q Suggest 4 to 8 short keywords or phrases a
+customer might type in WhatsApp that should trigger this node. Keep them short (1-3 words each),
+lowercase, and directly relevant. Reply with ONLY a valid JSON array of strings — no markdown, no
+explanation."
+
+PER-CALL-TYPE PROVIDER/MODEL/PARAMS:
+
+  Call type                   | Provider waterfall            | MaxTokens          | Temp
+  -----------------------------------------------------------------------------------------
+  Main reply                  | Groq->Gemini->Claude->OpenAI   | 512/0/512/512      | 0.7 (Groq
+                               | (OpenAI added 2026-10-28)      |                    | only), else
+                               |                                |                    | provider
+                               |                                |                    | default
+  Summary / style profile /   | same waterfall (llmWaterfall)  | same as above      | same
+  test chat                   |                                |                    |
+  Intent classify / query     | Gemini->Groq only              | 80 / unset / 50    | 0.0
+  expand / rerank             | (bifrostCompleteWithFallback)  |                    |
+  Decision-tree keyword       | Groq only                      | unset (provider    | unset
+  suggestion                  |                                | default)           |
+
+  Model selection: read from platform_ai_models (superadmin-configured per provider), or
+  gemini.Models[0]/groq default if nothing configured yet. Groq's main-reply path treats a reply
+  under 15 characters as a soft failure and falls through to the next provider.
+
+JSON/structured output: never enforced via a provider's native JSON-mode/structured-output
+feature — every JSON-returning call type just instructs "reply with ONLY valid JSON" in the
+prompt, then does a plain json.Unmarshal after stripping ```json fences, with a safe fallback
+(neutral classification, local heuristic, or unreordered chunks) if parsing fails.
+
+Chat history / trimming: 15 most recent messages loaded as immediate context
+(aiHistoryWindow). Beyond that, a single rolling AI-generated summary (ai_context_summary) is
+refreshed every 5th message past the window — not sliding/map-reduce, just one summary string
+kept current. Staff messages ARE included in the history window (no author-type filtering
+observed).
+
+Studio context injected into the prompt: studio name, local timezone/current date, program
+start-date + verified session lookup, greeting message, active membership plans, lead
+name/status/plan interest, KB chunks, staff corrections, learned style profile + real example
+replies, semantic history matches, prior-conversation summary. No explicit "tone" setting field
+exists — tone only comes from the learned style profile, if one has been built.
+
+Post-processing of output: formatMarkdownTablesAsPlainText (worker.go:198) converts any markdown
+pipe-table in the final reply into a plain line-per-row format before sending over channels with
+no table rendering (WhatsApp/Telegram/SMS) — the only concrete output post-processing found. No
+separate stripping of hidden "reasoning" text (not applicable to how these models are used for
+replies), no explicit length cap beyond MaxTokens, no link-handling logic, no banned-word filter.
+
+Guardrails actually implemented:
+- Deterministic "does the KB even cover this topic" word-overlap check (kbCoversQuestion,
+  class_escalation.go:216) — escalates rather than guessing on zero topical overlap.
+- Explicit anti-hallucination instructions in the prompt (never invent prices/days/times/
+  policies, no placeholder text).
+- Hardcoded "cannot book/cancel/reschedule, never imply you have" rule.
+- looksLikeAIDoesNotKnow (class_escalation.go:163) — string-matches the model's own reply for
+  hedging phrases as a provider-agnostic escalation trigger.
+- looksReadyToBuy — provider-agnostic purchase-intent detector so a studio without Gemini still
+  gets the safe booking menu instead of the model inventing a payment flow.
+- NO explicit prompt-injection defense — nothing detects or neutralizes a customer message trying
+  to override the system prompt (e.g. "ignore previous instructions"); the ABSOLUTE RULES section
+  is a plain instruction relying entirely on the underlying model's own robustness, not a
+  technical safeguard.
+- NO PII-handling guardrail — nothing redacts or special-cases PII in prompts or logs (see
+  Section 4 for retention).
+
+2.3 Knowledge and business data
+----------------------------------
+- KB structure: studio_knowledge_chunks table (migration 20260604000001) — studio_id,
+  source_type ('text'|'file'), source_name, chunk_index, content, embedding vector(768) (Gemini
+  text-embedding-004 dimensions), created_at. Indexed on studio_id for per-studio isolation/
+  retrieval; no other metadata columns (no page number, no document-level grouping beyond
+  source_name+chunk_index). Live chunk counts/samples were not pulled — no production DB access
+  from this environment; would need a direct query against prod.
+- Chunking: ChunkTextSemantic (embeddings.go:19) — paragraph -> sentence-boundary splitting (not
+  raw fixed-size); maxChars=800, overlap=150 at the real call sites (service.go:636,644). A
+  sentence longer than maxChars is kept whole rather than cut mid-sentence. (Note: the
+  TestChunkText unit test currently fails — a pre-existing issue, unrelated to this session's
+  Bifrost/provider work, not yet root-caused.)
+- Plans/prices/schedules: the plans table (name, price in SGD cents, billing cycle, features) is
+  the only structured pricing store, and it's injected directly into the prompt — not duplicated
+  into KB chunks. No separate "offers" table with start/end dates exists — any promotions would
+  have to live as free-text KB content with no structured expiry enforcement. No general
+  weekly-timetable table beyond studio_program_sessions (used only for the specific multi-week-
+  program verified-session lookup) — general schedules live as free-text KB content.
+- Booking/CRM integrations, actually implemented vs. scaffolded only:
+  - Glofox: the only concretely implemented CRM integration (real sync/import code, attendance
+    tables, first-session tracking).
+  - Mindbody: mentioned only in a doc comment as a second hypothetical example of what the
+    generic crm.Provider abstraction is designed to support — NOT actually implemented.
+  - Google Sheets: a real, implemented inbound/outbound integration for importing leads from a
+    studio's spreadsheet.
+  - No Excel/.xlsx-specific integration beyond whatever the Sheets import handles.
+
+2.4 Quality, goals, and cost
+-------------------------------
+- Per-studio AI goal / success measurement: no explicit "goal" field or success-metric tracking
+  exists — the system prompt's stated goal is hardcoded and identical for every studio. No
+  tracking of booking conversion attributable to AI replies specifically.
+- Eval set / QA process: none beyond the manual, staff-facing Test Chat feature — a human-in-the-
+  loop sanity check, not an automated eval suite or regression test over real conversation
+  outcomes. The ai_feedback_corrections table (staff flags a wrong past reply) is the closest
+  thing to a feedback loop, and it only feeds forward into future prompts — it doesn't grade past
+  replies retroactively.
+- Per-studio AI settings — confirmed directly against the Studio struct:
+    On/off master switch (ai_access_enabled)     -> YES (superadmin-only, added 2026-10-28)
+    Per-conversation AI on/off (ai_enabled)       -> YES (staff-togglable)
+    Reply delay (ai_reply_delay_seconds)          -> YES (per-studio configurable)
+    Greeting message                             -> YES (per-studio configurable)
+    Working hours gate                            -> NOT IN PLACE
+    Tone setting                                  -> NOT IN PLACE (only emerges from learned
+                                                      style profile, not a picked setting)
+    Language setting                              -> NOT IN PLACE
+    Auto-reply vs. suggest-only mode              -> NOT IN PLACE (always auto-reply; no
+                                                      "suggest for staff approval" mode — the
+                                                      dead ai_suggestions table may once have
+                                                      been intended for this)
+- LLM spend tracking: implemented THIS SESSION (2026-10-28) — llm_usage_logs.cost_usd, populated
+  from Bifrost's own per-call cost computation, aggregated per provider/model/day and per studio.
+  CRITICALLY: historical cost data before today does not exist — spend analysis is only valid
+  from today forward. The checklist's "~244k calls for ~467 replies" question cannot be
+  reconciled retroactively, since the usage-logging granularity needed didn't exist before
+  today's change; it CAN be answered going forward from llm_usage_logs.
+- Groq plan / rate limits: not discoverable from the repo — this is an account-level fact on
+  Groq's own dashboard/billing page.
+
+
+====================================================================
+3. INFRA SETUP TODAY (for the Kubernetes move)
+====================================================================
+
+3.1 Hosting and services
+---------------------------
+AWS, single EC2 instance, single account/region (region not pinned in any script — whatever the
+operator chose at launch time; deploy/setup-ec2.sh is a generic Ubuntu bootstrap with no AWS
+region/account logic in it). No instance-sizing info in the repo — not discoverable from the
+repo.
+
+Every service runs as a Docker container defined in deploy/docker-compose.prod.yml, orchestrated
+by plain `docker compose` — no Kubernetes/ECS/Nomad today.
+- Go API (deploy/api.Dockerfile): container `api`, listens :8080 internally, not published to
+  the host — only reachable via the nginx container.
+- Next.js web (deploy/web.Dockerfile): container `web`, :3000 internally, SSR (a real Next.js
+  server, not a static export) — API_BASE_URL=http://api:8080 baked in at build time; server-side
+  fetches hit the API over the internal Docker network, browser fetches go through nginx same-
+  origin.
+- Embeddings sidecar (deploy/embeddings.Dockerfile): its own Dockerfile/service under
+  apps/embeddings; it was not confirmed to be listed as a running service in
+  docker-compose.prod.yml in this pass — NEEDS CONFIRMATION whether it's actually deployed in
+  production or still dev-only.
+- wa-web (Baileys bridge): one container, one shared process for all studios' WhatsApp numbers —
+  NOT one process per number. Session auth state persisted to a named Docker volume
+  (wa_auth_data), surviving container restarts. Only one instance can run at a time (single
+  volume + Baileys' own file-lock semantics) — no horizontal scaling or blue/green here; a deploy
+  means a restart with a connection gap.
+- tg-web (GramJS bridge): one container, no volume — the GramJS session is a single string stored
+  encrypted in Postgres by the Go API and handed to tg-web on startup, so it's recoverable
+  without a volume.
+
+Background work: all in-process goroutines inside the API container, ticker-driven (see Section
+2.1's queue/workers answer for the full list and restart-safety behavior). Process supervision:
+Docker's "restart: unless-stopped" policy per service — no systemd units, no pm2.
+
+3.2 Data services
+--------------------
+- Postgres: pgvector/pgvector:pg16 (Postgres 16 + pgvector), self-hosted in the same Docker
+  Compose stack on the EC2 box — NOT a managed service (no RDS). Streaming-replication scripts
+  exist (deploy/postgres/init-replication.sql, init-replication-hba.sh,
+  replica-entrypoint.sh) but these are NOT wired into docker-compose.prod.yml — no replica
+  service is actually defined/running there. Read-replica support exists as infra scripts but is
+  NOT actually deployed today — flagging this explicitly as a gap between "scripts exist" and
+  "replication is live."
+- PgBouncer: present in the dev docker-compose.yml (transaction-mode pooling, 200 max client
+  conns, 20 default pool size) — NOT present in docker-compose.prod.yml. Production does not
+  appear to run connection pooling in front of Postgres today — worth confirming directly with
+  the team.
+- Backups: see Section 1.3 (deploy/backup.sh — nightly, 14-day local retention, optional S3
+  copy, no PITR, restore-tested status unknown).
+- Redis: self-hosted (redis:7-alpine in the same Compose stack), password-required (fails to
+  start without REDIS_PASSWORD), no persistence volume configured in prod compose (a comment in
+  the file confirms this is deliberate: "losing it on restart just means re-auth + recompute
+  cached answers"). Used for: AnswerCache (cached AI answers) and identity.SessionStore (session
+  revocation + idle timeout).
+- File/media storage: internal/platform/s3 — two upload paths: UploadImage (public URL, likely
+  studio logos/brand assets) and UploadPrivate + PresignGet (private, time-limited signed URL
+  only) — the account-deletion archives use the private path.
+- DB migrations: goose. Applied via a dedicated one-shot `migrate` service in
+  docker-compose.prod.yml (profiles: ["tools"], run on demand with
+  `docker compose --profile tools run migrate`) — NOT automatically run on every deploy.
+
+3.3 Networking
+-----------------
+- Single nginx reverse-proxy container, TLS via Let's Encrypt (cert files mounted read-only;
+  renewal automation itself is not visible in the repo — likely a host-level cron/certbot timer,
+  not confirmed).
+- Domain: 1herosocial.ai / www.1herosocial.ai, hardcoded into nginx.conf. A commented-out
+  HTTP-only fallback block for raw-IP access exists but is inactive.
+- Routing: /api/* and /webhook/* -> Go API; /uploads/* -> static volume; everything else ->
+  Next.js.
+- No CDN, no load balancer beyond this single nginx instance.
+- Inbound webhooks: WhatsApp (via Baileys, not Meta's official Business API webhook), Telegram
+  (via GramJS), Stripe. No IP allowlisting found anywhere in nginx or the Go handlers.
+- No evidence of a reserved/fixed outbound egress IP — the EC2 instance's own public IP is the de
+  facto egress IP, but nothing pins it; replacing the instance would change it.
+- All inter-service traffic flows over Docker's internal bridge networks (backend/frontend in
+  Compose), not the public internet.
+
+3.4 Delivery
+--------------
+- Repo structure: monorepo — apps/api (Go), apps/web (Next.js), apps/wa-web (Baileys/Node),
+  apps/tg-web (GramJS/Node), apps/embeddings (Python sidecar).
+- NO CI/CD pipeline exists — no .github/workflows directory, nothing else resembling CI config.
+  Deploys are manual, via deploy/deploy.sh run by hand on the EC2 box.
+- No rollback automation — rollback means manually checking out a prior commit and re-running the
+  deploy script, or restoring a Postgres backup for data.
+- No staging environment found — only .env/.env.example for a single environment's worth of
+  config; local dev happens via `make dev`, and the only other environment implied is the single
+  production .env on the EC2 box. No dev/staging/prod three-tier setup.
+- NO Infrastructure-as-Code (no Terraform/Pulumi/CloudFormation anywhere) — the EC2 box is
+  provisioned by hand plus setup-ec2.sh.
+- Config/secrets injection: a single .env file on the EC2 box, read by Docker Compose — not a
+  secrets manager.
+
+3.5 Monitoring
+-----------------
+- Loki + Promtail + Grafana stack (deploy/loki, deploy/promtail, deploy/grafana), self-hosted
+  alongside the app. Dashboards exist (LogQL-based, e.g. a channel/API dashboard) — dashboard
+  detail was established earlier this session, not re-verified in this pass.
+- NO Sentry or any error-tracking service — confirmed absent.
+- NO uptime monitoring (no Pingdom/UptimeRobot/healthchecks.io) — confirmed absent; nginx does
+  expose a /health endpoint in the dev compose config, but nothing external polls it per the
+  repo.
+- NO alerting rules configured in Grafana provisioning — dashboards exist, alerts don't.
+
+3.6 Scale, cost and plans
+-----------------------------
+Not discoverable from the repo — needs business/ops input: current studio/user/message counts,
+peak throughput, 6-12 month growth plan, monthly AWS spend, outage history, and the actual
+rationale/budget/timeline for a Kubernetes move.
+
+
+====================================================================
+4. DATA RETENTION
+====================================================================
+
+4.1 What we hold
+-------------------
+  Data                          | Where                              | Retention/expiry found
+  ------------------------------------------------------------------------------------------
+  Lead profiles                 | leads table                        | None — kept until studio
+                                 |                                     | deletion
+  Chat messages                 | messages table                     | None
+  Media (images/voice/docs)     | S3 (UploadImage/UploadPrivate)     | None found
+  OCR output + KB embeddings    | studio_knowledge_chunks (pgvector) | None
+  LLM prompts/responses + usage | llm_usage_logs                     | None — grows forever (no
+                                 |                                     | purge job, unlike
+                                 |                                     | audit_logs)
+  ai_suggestions                | own table (dead code, see 2.1)     | None
+  CRM imports                   | studio-scoped import tables        | None
+  Billing/payment data          | studio_subscriptions (live) +      | 7-year retention on the
+                                 | retained_payment_records (post-    | post-deletion snapshot
+                                 | deletion snapshot)                 | specifically
+  Staff accounts (users)        | users table                        | None — cascades on studio
+                                 |                                     | delete
+  Logs/analytics events         | Loki (app logs)                    | 30 days (retention_period
+                                 |                                     | : 720h)
+  audit_logs                    | own table                          | Purged after 90 days
+  WhatsApp/Telegram session     | wa-web Docker volume (file-based); | None found
+  data                          | tg-web session string (encrypted,  |
+                                 | in Postgres)                       |
+
+- Data sent to LLM providers: Groq, Google Gemini, Anthropic Claude, and (as of this session)
+  OpenAI — all via the embedded Bifrost client, direct API calls using the platform's own key. NO
+  zero-data-retention or training-opt-out configuration exists in the code — this is governed
+  entirely by each provider's own default API terms, not anything this codebase configures; not
+  something to claim is handled, because it isn't.
+- Other third parties receiving personal data: SMTP provider (transactional email — account
+  deletion/recovery emails), AWS S3 (media + archives), Stripe (billing). NO analytics/tracking
+  third party found (no Mixpanel/Segment/GA4 SDK anywhere in the codebase) — confirmed absent.
+
+4.2 Retention and deletion
+------------------------------
+The only deletion flow in the codebase is the studio-level account-deletion flow
+(internal/studios/deletion_service.go, built against a written spec in init.md Section 4.5), and
+it is thorough:
+
+1. REQUEST (RequestAccountDeletion): a studio admin submits the request; the caller-supplied
+   email must match the studio's own contact email exactly; a single-use, hashed, 24-hour
+   confirm token is emailed to that contact address. This is self-service — any studio admin can
+   trigger it for their own studio, not a superadmin-only action.
+2. CONFIRM (ConfirmAccountDeletion): clicking the emailed link verifies the token, then — in
+   strict backup-before-delete order — builds a full SQL-based archive of the studio's data, AES-
+   encrypts it with a per-archive wrapped data key, uploads it to S3 privately, THEN (only after
+   that upload succeeds) runs the payment-record copy + studio hard-delete inside one DB
+   transaction. If the S3 upload fails, nothing is deleted. If the DB transaction then fails, the
+   studio isn't deleted either (an orphaned S3 archive is the accepted, safer failure mode).
+3. The studio row delete is a HARD DELETE (DELETE FROM studios WHERE id = $1), cascading via the
+   same FK ON DELETE CASCADE chain covering leads, messages, conversations, users, knowledge
+   chunks, etc. (37 FK constraints reference studio_id, all CASCADE except two SET NULL).
+4. 7-DAY RECOVERY WINDOW: a recovery email with a single-use, hashed, 7-day token is sent after
+   deletion. RecoverArchive requires both the token and the original contact email to match
+   before decrypting and returning the archive — a wrong guess gets a generic error (deliberately,
+   so it never confirms whether a token/email exists).
+5. Payment records: studio_subscriptions rows are snapshotted into retained_payment_records with
+   a 7-year retain_until, before the live studio row (and its live subscription rows) are deleted
+   — satisfying financial-record retention independently of the main hard-delete.
+6. Every step is audit-logged (deletion_requested, pre_deletion_email_sent, deletion_confirmed,
+   archive_created, account_deleted, recovery_link_generated, recovery_download_attempt/_success,
+   post_deletion_email_sent).
+
+No studio-level EXPORT-WITHOUT-DELETION feature exists — the only way to get a data export today
+is to delete the account (which produces the archive) and recover it within 7 days. No self-
+service "export my data, keep my account" flow exists.
+
+No other automatic deletion/archiving jobs exist beyond this and the 90-day audit-log purge —
+leads, messages, media, KB chunks, and llm_usage_logs all accumulate indefinitely otherwise.
+
+- Backup retention: 14 days local disk, optional indefinite S3 copy (no S3 lifecycle rule found
+  in the repo to expire those — if one exists, it would be configured directly on the S3 bucket,
+  not in code).
+- Log retention: Loki, 30 days (retention_period: 720h), compactor-enforced.
+- Redis TTLs on personal data: not found — no SETEX/EXPIRE call site located in the cache/session
+  code that specifically targets phone numbers or message content (session-store behavior not
+  independently re-verified beyond what's noted in 3.2 — flag for confirmation if this matters
+  for the audit).
+
+4.3 Legal and contracts
+---------------------------
+- Privacy policy: published and live, at /privacy (apps/web/src/app/privacy/page.tsx), dated
+  "Effective June 9, 2026," under the product name 1HeroSocial. It explicitly states studios act
+  as data controllers for their own leads' data, with 1HeroSocial as the processor; states
+  categories collected (account data, lead/customer data, usage data, AI processing data); and
+  states that customer data is NOT used to train AI models without explicit consent. This is a
+  real, substantive policy already in place, not a stub.
+- Consent/opt-out: no WhatsApp opt-in capture mechanism found. What exists is a per-lead "Do Not
+  Disturb" (DND) toggle (internal/leads/service.go SetDND) that staff can flip to silence all
+  automated outbound messages to that lead and cancel anything pending — this is a staff-operated
+  suppression switch, not a self-service customer opt-out link. Worth being precise about that
+  distinction.
+- Data location/cross-border transfer, studio contracts/DPA, Data Protection Officer appointment,
+  past breaches, studio-expected retention periods: NOT DISCOVERABLE FROM THE REPO — needs legal/
+  ops input. Note for the response: the LLM calls to Groq/Gemini/Anthropic/OpenAI are, by nature,
+  a cross-border transfer of lead message content to US-based providers; the code does not
+  configure any region restriction on this.
+
+
+====================================================================
+PLEASE SHARE (per the checklist's own request) — status of each
+====================================================================
+- Flow diagram: not produced in this pass (can be drawn from Section 2.1 if still wanted).
+- All prompts: included verbatim in Section 2.2 above.
+- Model settings per call type: included in Section 2.2's table.
+- 30 sample conversations (anonymised): NOT pulled — would need direct read access to the
+  production `messages` table with phone numbers/names masked; not available from this
+  environment (only a local dev DB with test data was accessible this session).
+- 10 KB chunks: NOT pulled for the same reason — would need production DB access.
+- Reply/skip breakdown + LLM-calls-by-type numbers: NOT pulled — llm_usage_logs query-ready
+  going forward (see 2.4), but historical skip-reason breakdown would require parsing the actual
+  production log strings described in 2.1, which requires log access this environment doesn't
+  have.
+- Dockerfiles/docker-compose, infra diagram, last month's cloud bill, cron job list: Dockerfiles/
+  docker-compose are reflected in Section 3 above; an infra diagram was not drawn; the cloud bill
+  and a clean standalone cron-job list are not separately compiled here (see Section 3.1/3.6).
+- Privacy policy, DPA template, data-store/third-party list, backup/log retention settings:
+  the privacy policy's existence and content are confirmed in 4.3; a DPA template was not found
+  in the repo; the data-store list is in Section 4.1; backup/log retention settings are in 1.3
+  and 4.2.

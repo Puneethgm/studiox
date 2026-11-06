@@ -11,7 +11,6 @@ import {
   Users,
   Globe,
   CheckCircle,
-  Star,
   PenLine,
   ChevronDown,
   Activity,
@@ -156,6 +155,16 @@ export default function Home() {
       <div className="absolute top-0 right-0 -z-10 h-[800px] w-[800px] rounded-full bg-violet-100/50 blur-[130px] pointer-events-none" />
       <div className="absolute top-[600px] -left-10 -z-10 h-[700px] w-[700px] rounded-full bg-indigo-100/40 blur-[120px] pointer-events-none" />
       <div className="absolute bottom-[800px] right-10 -z-10 h-[900px] w-[900px] rounded-full bg-fuchsia-100/30 blur-[150px] pointer-events-none" />
+      {/* Faint dot-grid texture across the hero for depth, fading out below it */}
+      <div
+        className="absolute inset-x-0 top-0 -z-10 h-[760px] pointer-events-none opacity-[0.4]"
+        style={{
+          backgroundImage: 'radial-gradient(circle, rgba(124,58,237,0.16) 1px, transparent 1px)',
+          backgroundSize: '26px 26px',
+          maskImage: 'linear-gradient(to bottom, black, transparent)',
+          WebkitMaskImage: 'linear-gradient(to bottom, black, transparent)',
+        }}
+      />
 
       {/* ── Navigation (Full Width) ─────────────────── */}
       <header className="sticky top-0 z-50 w-full border-b border-slate-200/50 bg-[#FAF9F6]/75 backdrop-blur-md">
@@ -220,8 +229,11 @@ export default function Home() {
 
           {/* Left Text Column */}
           <div className="lg:col-span-7 space-y-6 md:space-y-8 text-left">
-            <div className="inline-flex items-center gap-2 bg-violet-600/5 border border-violet-600/10 text-violet-700 text-xs font-bold px-4 py-2 rounded-full backdrop-blur-sm">
-              <Star className="h-3.5 w-3.5 fill-violet-600 text-violet-600" />
+            <div className="inline-flex items-center gap-2 bg-white/70 border border-violet-600/15 text-violet-700 text-xs font-bold px-4 py-2 rounded-full backdrop-blur-sm shadow-sm shadow-violet-600/5">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-500 opacity-60" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-violet-600" />
+              </span>
               Empowering Multi-Studio Gym Owners Worldwide
             </div>
 
@@ -266,17 +278,19 @@ export default function Home() {
 
           {/* Right Hero Image/Graphic Column */}
           <div className="lg:col-span-5 relative min-w-0">
-            <div className="absolute inset-0 bg-gradient-to-br from-violet-600/10 to-indigo-600/10 rounded-3xl blur-2xl -z-10" />
-            <div className="bg-white border border-slate-200 rounded-3xl p-4 sm:p-6 shadow-2xl relative overflow-hidden min-w-0">
-              <div className="flex justify-between items-center border-b border-slate-100 pb-4 mb-4">
-                <div className="flex items-center gap-2">
-                  <span className="h-3 w-3 rounded-full bg-red-400" />
-                  <span className="h-3 w-3 rounded-full bg-yellow-400" />
-                  <span className="h-3 w-3 rounded-full bg-green-400" />
-                  <span className="text-xs font-bold text-slate-400 ml-2">Studio Command Hub</span>
+            <div className="absolute -inset-4 bg-gradient-to-br from-violet-600/20 via-fuchsia-500/10 to-indigo-600/20 rounded-[2rem] blur-3xl -z-10" />
+            <div className="absolute -top-6 -right-6 h-20 w-20 rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 blur-2xl opacity-30 -z-10" />
+            <div className="p-[1.5px] rounded-[1.75rem] bg-gradient-to-br from-violet-300/70 via-white/40 to-indigo-300/70 shadow-[0_30px_60px_-20px_rgba(109,40,217,0.35)]">
+              <div className="bg-white/95 backdrop-blur-xl rounded-[calc(1.75rem-1.5px)] p-4 sm:p-6 relative overflow-hidden min-w-0">
+                <div className="flex justify-between items-center border-b border-slate-100 pb-4 mb-4">
+                  <div className="flex items-center gap-2">
+                    <span className="h-3 w-3 rounded-full bg-red-400" />
+                    <span className="h-3 w-3 rounded-full bg-yellow-400" />
+                    <span className="h-3 w-3 rounded-full bg-green-400" />
+                    <span className="text-xs font-bold text-slate-400 ml-2">Studio Command Hub</span>
+                  </div>
+                  <span className="text-[10px] bg-violet-50 text-violet-600 font-bold px-2 py-0.5 rounded border border-violet-100">Location A</span>
                 </div>
-                <span className="text-[10px] bg-violet-50 text-violet-600 font-bold px-2 py-0.5 rounded border border-violet-100">Location A</span>
-              </div>
 
               {/* Graphical representation of channels */}
               <div className="space-y-3.5">
@@ -320,12 +334,13 @@ export default function Home() {
                   <div className="text-[10px] text-slate-400 uppercase font-bold">Monthly Conversions</div>
                   <div className="text-2xl font-black text-slate-900">+48 Members</div>
                 </div>
-                <div className="h-10 w-24 bg-gradient-to-tr from-violet-100 to-fuchsia-50 rounded-lg flex items-end p-1 justify-around border border-violet-100/50">
-                  <div className="w-2.5 h-3 bg-violet-400 rounded-sm" />
-                  <div className="w-2.5 h-5 bg-violet-400 rounded-sm" />
-                  <div className="w-2.5 h-4 bg-violet-400 rounded-sm" />
-                  <div className="w-2.5 h-7 bg-violet-500 rounded-sm" />
-                  <div className="w-2.5 h-6 bg-violet-600 rounded-sm animate-pulse" />
+                  <div className="h-10 w-24 bg-gradient-to-tr from-violet-100 to-fuchsia-50 rounded-lg flex items-end p-1 justify-around border border-violet-100/50">
+                    <div className="w-2.5 h-3 bg-violet-400 rounded-sm" />
+                    <div className="w-2.5 h-5 bg-violet-400 rounded-sm" />
+                    <div className="w-2.5 h-4 bg-violet-400 rounded-sm" />
+                    <div className="w-2.5 h-7 bg-violet-500 rounded-sm" />
+                    <div className="w-2.5 h-6 bg-violet-600 rounded-sm animate-pulse" />
+                  </div>
                 </div>
               </div>
             </div>
@@ -376,7 +391,7 @@ export default function Home() {
               {simulatedLeads.map((lead) => (
                 <div
                   key={lead.id}
-                  className="bg-white border border-slate-200/60 rounded-2xl p-4 sm:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all hover:border-violet-300 hover:shadow-md hover:shadow-violet-600/[0.02]"
+                  className="bg-white border border-slate-200/60 border-l-4 border-l-transparent rounded-2xl p-4 sm:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all duration-300 hover:border-violet-200 hover:border-l-violet-500 hover:shadow-lg hover:shadow-violet-600/[0.05] hover:-translate-y-0.5"
                 >
                   <div className="flex items-start gap-4">
                     <div className={`h-11 w-11 rounded-xl flex items-center justify-center font-black text-white shadow-sm bg-gradient-to-br ${lead.source === 'Instagram' ? 'from-purple-500 via-pink-500 to-red-500' :
@@ -516,8 +531,9 @@ export default function Home() {
             </div>
 
             {/* Results Display */}
-            <div className="bg-gradient-to-br from-violet-500 to-indigo-600 text-white rounded-3xl p-4 sm:p-6 flex flex-col justify-between shadow-xl relative overflow-hidden">
+            <div className="bg-gradient-to-br from-violet-500 via-violet-600 to-indigo-600 text-white rounded-3xl p-4 sm:p-6 flex flex-col justify-between shadow-xl shadow-violet-600/20 relative overflow-hidden">
               <div className="absolute top-0 right-0 -translate-y-4 translate-x-4 h-24 w-24 rounded-full bg-white/10 blur-xl pointer-events-none" />
+              <div className="absolute inset-0 opacity-[0.07] pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle, white 1px, transparent 1px)', backgroundSize: '18px 18px' }} />
 
               <div>
                 <span className="text-[10px] uppercase font-extrabold tracking-wider bg-white/20 text-white px-3 py-1.5 rounded-full border border-white/20">
@@ -574,9 +590,9 @@ export default function Home() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
 
             {/* Box 1 (Span 2 columns) */}
-            <div className="md:col-span-2 p-5 sm:p-8 rounded-3xl bg-slate-50 border border-slate-200 hover:border-violet-400 transition-all group flex flex-col justify-between">
+            <div className="md:col-span-2 p-5 sm:p-8 rounded-3xl bg-slate-50 border border-slate-200 hover:border-violet-300 hover:shadow-lg hover:shadow-violet-600/[0.06] hover:-translate-y-0.5 transition-all duration-300 group flex flex-col justify-between">
               <div>
-                <div className="h-12 w-12 rounded-xl bg-violet-600/5 text-violet-600 border border-violet-600/10 flex items-center justify-center mb-6 group-hover:scale-105 transition-transform duration-200">
+                <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-violet-600/10 to-violet-600/5 text-violet-600 ring-1 ring-violet-600/10 flex items-center justify-center mb-6 group-hover:scale-110 group-hover:ring-violet-600/25 transition-all duration-300">
                   <Building2 className="h-6 w-6" />
                 </div>
                 <h3 className="text-xl font-bold text-slate-900 mb-2">Multi-Studio Isolated Command Architecture</h3>
@@ -591,9 +607,9 @@ export default function Home() {
             </div>
 
             {/* Box 2 (Span 1 column) */}
-            <div className="p-5 sm:p-8 rounded-3xl bg-slate-50 border border-slate-200 hover:border-violet-400 transition-all group flex flex-col justify-between">
+            <div className="p-5 sm:p-8 rounded-3xl bg-slate-50 border border-slate-200 hover:border-indigo-300 hover:shadow-lg hover:shadow-indigo-600/[0.06] hover:-translate-y-0.5 transition-all duration-300 group flex flex-col justify-between">
               <div>
-                <div className="h-12 w-12 rounded-xl bg-indigo-600/5 text-indigo-600 border border-indigo-600/10 flex items-center justify-center mb-6 group-hover:scale-105 transition-transform duration-200">
+                <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-indigo-600/10 to-indigo-600/5 text-indigo-600 ring-1 ring-indigo-600/10 flex items-center justify-center mb-6 group-hover:scale-110 group-hover:ring-indigo-600/25 transition-all duration-300">
                   <MessageSquare className="h-6 w-6" />
                 </div>
                 <h3 className="text-xl font-bold text-slate-900 mb-2">Intelligent RAG Answers</h3>
@@ -607,9 +623,9 @@ export default function Home() {
             </div>
 
             {/* Box 3 (Span 1 column) */}
-            <div className="p-5 sm:p-8 rounded-3xl bg-slate-50 border border-slate-200 hover:border-violet-400 transition-all group flex flex-col justify-between">
+            <div className="p-5 sm:p-8 rounded-3xl bg-slate-50 border border-slate-200 hover:border-fuchsia-300 hover:shadow-lg hover:shadow-fuchsia-600/[0.06] hover:-translate-y-0.5 transition-all duration-300 group flex flex-col justify-between">
               <div>
-                <div className="h-12 w-12 rounded-xl bg-fuchsia-600/5 text-fuchsia-600 border border-fuchsia-600/10 flex items-center justify-center mb-6 group-hover:scale-105 transition-transform duration-200">
+                <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-fuchsia-600/10 to-fuchsia-600/5 text-fuchsia-600 ring-1 ring-fuchsia-600/10 flex items-center justify-center mb-6 group-hover:scale-110 group-hover:ring-fuchsia-600/25 transition-all duration-300">
                   <Users className="h-6 w-6" />
                 </div>
                 <h3 className="text-xl font-bold text-slate-900 mb-2">Visual Deal Pipelines</h3>
@@ -623,9 +639,9 @@ export default function Home() {
             </div>
 
             {/* Box 4 (Span 2 columns) */}
-            <div className="md:col-span-2 p-5 sm:p-8 rounded-3xl bg-slate-50 border border-slate-200 hover:border-violet-400 transition-all group flex flex-col justify-between">
+            <div className="md:col-span-2 p-5 sm:p-8 rounded-3xl bg-slate-50 border border-slate-200 hover:border-emerald-300 hover:shadow-lg hover:shadow-emerald-600/[0.06] hover:-translate-y-0.5 transition-all duration-300 group flex flex-col justify-between">
               <div>
-                <div className="h-12 w-12 rounded-xl bg-emerald-600/5 text-emerald-600 border border-emerald-600/10 flex items-center justify-center mb-6 group-hover:scale-105 transition-transform duration-200">
+                <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-emerald-600/10 to-emerald-600/5 text-emerald-600 ring-1 ring-emerald-600/10 flex items-center justify-center mb-6 group-hover:scale-110 group-hover:ring-emerald-600/25 transition-all duration-300">
                   <Globe className="h-6 w-6" />
                 </div>
                 <h3 className="text-xl font-bold text-slate-900 mb-2">Seamless Stripe Billing Integration</h3>
@@ -681,14 +697,16 @@ export default function Home() {
             ].map((faq, idx) => (
               <div
                 key={idx}
-                className="bg-[#FAF9F6] border border-slate-200 rounded-2xl overflow-hidden transition-all hover:bg-slate-50/50"
+                className={`bg-[#FAF9F6] border rounded-2xl overflow-hidden transition-all duration-300 ${openFaqIndex === idx ? 'border-violet-300 shadow-md shadow-violet-600/[0.06]' : 'border-slate-200 hover:border-violet-200 hover:bg-slate-50/50'}`}
               >
                 <button
                   onClick={() => toggleFaq(idx)}
-                  className="w-full py-4 px-5 sm:py-5 sm:px-6 flex items-center justify-between text-left focus:outline-none"
+                  className="w-full py-4 px-5 sm:py-5 sm:px-6 flex items-center justify-between gap-4 text-left focus:outline-none"
                 >
                   <span className="font-bold text-slate-900 text-sm sm:text-base">{faq.q}</span>
-                  <ChevronDown className={`h-4.5 w-4.5 text-slate-400 transition-transform duration-300 ${openFaqIndex === idx ? 'rotate-180 text-violet-600' : ''}`} />
+                  <span className={`shrink-0 h-7 w-7 rounded-full flex items-center justify-center transition-all duration-300 ${openFaqIndex === idx ? 'bg-violet-600 rotate-180' : 'bg-slate-100'}`}>
+                    <ChevronDown className={`h-4 w-4 transition-colors duration-300 ${openFaqIndex === idx ? 'text-white' : 'text-slate-500'}`} />
+                  </span>
                 </button>
 
                 <div
@@ -704,7 +722,7 @@ export default function Home() {
       </section>
 
       {/* ── Premium High-Impact CTA (Full Width) ────── */}
-      <section ref={ctaRef} className="relative overflow-hidden bg-gradient-to-br from-violet-950 to-indigo-900 py-20 sm:py-32 px-4 sm:px-6 text-center text-white">
+      <section ref={ctaRef} className="relative overflow-hidden bg-gradient-to-br from-violet-950 via-indigo-950 to-indigo-900 py-20 sm:py-32 px-4 sm:px-6 text-center text-white">
         <div className="absolute inset-0 z-0 opacity-10">
           <img
             src="https://images.unsplash.com/photo-1540497077202-7c8a3999166f?q=80&w=2000&auto=format&fit=crop"
@@ -713,6 +731,8 @@ export default function Home() {
           />
         </div>
         <div className="absolute inset-0 z-0 bg-gradient-to-b from-transparent via-[#09070F]/20 to-[#09070F]/50" />
+        <div className="absolute inset-0 z-0 opacity-[0.08] pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle, white 1px, transparent 1px)', backgroundSize: '28px 28px' }} />
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 h-[500px] w-[500px] rounded-full bg-fuchsia-600/20 blur-[140px] pointer-events-none" />
 
         <div className="relative z-10 mx-auto max-w-4xl px-6">
           <h2 className="text-3xl sm:text-5xl lg:text-6xl font-black mb-6 leading-tight">
@@ -722,7 +742,7 @@ export default function Home() {
             Join other growth-minded studio owners scaling their operations with automated multi-channel messaging and smart RAG conversions.
           </p>
           <Link href="/pricing">
-            <button className="inline-flex items-center gap-3 bg-white text-violet-950 hover:bg-violet-50 px-10 py-5 rounded-2xl text-lg font-bold transition-all shadow-2xl hover:shadow-white/10 hover:-translate-y-1 hover:scale-[1.02]">
+            <button className="inline-flex items-center gap-3 bg-white text-violet-950 hover:bg-violet-50 px-10 py-5 rounded-2xl text-lg font-bold transition-all duration-300 shadow-2xl shadow-black/30 hover:shadow-white/20 hover:-translate-y-1 hover:scale-[1.02] ring-1 ring-white/40">
               Choose Your Plan & Scale <ArrowRight className="h-5 w-5" />
             </button>
           </Link>
@@ -790,15 +810,15 @@ export default function Home() {
           {/* Right */}
           <div className="lg:col-span-8 grid grid-cols-1 sm:grid-cols-2 gap-6">
 
-            <div className="sm:col-span-2 bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-sm">
+            <div className="sm:col-span-2 bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-sm hover:shadow-md transition-shadow duration-300">
               <h3 className="text-lg font-bold text-slate-900 mb-3">Our Mission</h3>
               <p className="text-slate-600 text-sm leading-relaxed">
                 We believe every gym, yoga studio, and wellness centre deserves enterprise-grade technology without the enterprise price tag. Our platform centralises lead management, AI-powered conversations, and member billing so you can focus on what you love — coaching people to be their best.
               </p>
             </div>
 
-            <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-sm flex flex-col gap-4">
-              <div className="h-11 w-11 rounded-xl bg-violet-600/5 border border-violet-100 flex items-center justify-center">
+            <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-sm hover:shadow-lg hover:shadow-violet-600/[0.06] hover:-translate-y-0.5 transition-all duration-300 flex flex-col gap-4">
+              <div className="h-11 w-11 rounded-xl bg-gradient-to-br from-violet-600/10 to-violet-600/5 ring-1 ring-violet-600/10 flex items-center justify-center">
                 <Award className="h-5 w-5 text-violet-600" />
               </div>
               <h3 className="text-lg font-bold text-slate-900">Why Choose Us</h3>
@@ -810,8 +830,8 @@ export default function Home() {
               </ul>
             </div>
 
-            <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-sm flex flex-col gap-4">
-              <div className="h-11 w-11 rounded-xl bg-indigo-600/5 border border-indigo-100 flex items-center justify-center">
+            <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-sm hover:shadow-lg hover:shadow-indigo-600/[0.06] hover:-translate-y-0.5 transition-all duration-300 flex flex-col gap-4">
+              <div className="h-11 w-11 rounded-xl bg-gradient-to-br from-indigo-600/10 to-indigo-600/5 ring-1 ring-indigo-600/10 flex items-center justify-center">
                 <MessageSquare className="h-5 w-5 text-indigo-600" />
               </div>
               <h3 className="text-lg font-bold text-slate-900">Get In Touch</h3>
@@ -914,6 +934,13 @@ export default function Home() {
 
           <div className="border-t border-slate-200 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400">
             <p>© 2026 1herosocial.ai. All rights reserved.</p>
+            <p className="flex items-center gap-1.5">
+              <img src="/web-app-manifest-192x192.png" alt="" className="h-4 w-4 rounded-sm" />
+              Powered by{' '}
+              <a href="https://infaira.ai/" target="_blank" rel="noopener noreferrer" className="hover:underline">
+                Inf<span className="text-brand-500">AI</span>ra
+              </a>
+            </p>
             <p>Built for fitness & wellness studios worldwide</p>
           </div>
         </div>

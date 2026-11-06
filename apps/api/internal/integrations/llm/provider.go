@@ -3,9 +3,7 @@ package llm
 import (
 	"context"
 
-	"github.com/projectx/api/internal/integrations/claude"
-	"github.com/projectx/api/internal/integrations/gemini"
-	"github.com/projectx/api/internal/integrations/groq"
+	"github.com/projectx/api/internal/integrations/bifrost"
 )
 
 // Reply is the common shape every adapter normalizes its underlying
@@ -24,44 +22,35 @@ type Provider interface {
 	Analyze(ctx context.Context, systemPrompt, document string) (Reply, error)
 }
 
-type claudeAdapter struct {
-	client *claude.Client
-	model  string
+// bifrostAdapter routes a task through the Bifrost gateway
+// (internal/integrations/bifrost) instead of a provider-specific client —
+// one adapter for all three providers, since Bifrost's OpenAI-compatible
+// endpoint fronts all of them. See BIFROST_MIGRATION_PLAN.md.
+//
+// maxTokens is fixed at 4096 for every provider here, matching what the
+// Claude-only path used before this migration (internal/integrations/claude.
+// Client.Analyze) — a deliberate increase for Groq, which previously
+// hard-capped Analyze-style calls at 512 tokens (groq.Client.GenerateReply's
+// fixed setting) and Gemini, which previously had no explicit cap at all.
+// CRM-doc parsing can produce a sizeable structured JSON mapping, so 4096
+// uniformly is a correctness improvement, not just a migration side effect.
+const analyzeMaxTokens = 4096
+
+type bifrostAdapter struct {
+	client    *bifrost.Client
+	provider  bifrost.ProviderName
+	model     string
+	directKey string
 }
 
-func (a *claudeAdapter) Analyze(ctx context.Context, systemPrompt, document string) (Reply, error) {
-	r, err := a.client.Analyze(ctx, systemPrompt, document, a.model)
-	return Reply{Text: r.Text, TokensIn: r.TokensIn, TokensOut: r.TokensOut}, err
-}
-
-type geminiAdapter struct {
-	client *gemini.Client
-	apiKey string
-}
-
-func (a *geminiAdapter) Analyze(ctx context.Context, systemPrompt, document string) (Reply, error) {
-	// Gemini's client has no system-prompt param — folded into one prompt,
-	// same accommodation ai_worker.go already makes for Gemini elsewhere.
-	prompt := document
-	if systemPrompt != "" {
-		prompt = systemPrompt + "\n\n" + document
-	}
-	r, err := a.client.GenerateReply(ctx, a.apiKey, prompt)
-	return Reply{Text: r.Text, TokensIn: r.TokensIn, TokensOut: r.TokensOut}, err
-}
-
-type groqAdapter struct {
-	client *groq.Client
-	model  string
-}
-
-func (a *groqAdapter) Analyze(ctx context.Context, systemPrompt, document string) (Reply, error) {
-	// Same accommodation as Gemini — groq.Client.GenerateReply takes one
-	// flat prompt, no separate system-prompt param.
-	prompt := document
-	if systemPrompt != "" {
-		prompt = systemPrompt + "\n\n" + document
-	}
-	r, err := a.client.GenerateReply(ctx, prompt, a.model)
+func (a *bifrostAdapter) Analyze(ctx context.Context, systemPrompt, document string) (Reply, error) {
+	r, err := a.client.Complete(ctx, bifrost.Request{
+		Provider:     a.provider,
+		Model:        a.model,
+		DirectKey:    a.directKey,
+		SystemPrompt: systemPrompt,
+		Prompt:       document,
+		MaxTokens:    analyzeMaxTokens,
+	})
 	return Reply{Text: r.Text, TokensIn: r.TokensIn, TokensOut: r.TokensOut}, err
 }

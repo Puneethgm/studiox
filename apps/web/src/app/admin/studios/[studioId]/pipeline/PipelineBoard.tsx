@@ -225,7 +225,15 @@ export function PipelineBoard({
       )}
       <div className="flex-1 overflow-x-auto pb-2">
         {/* Cold always gets its own column — it used to share a slot with Paused. */}
-        <div className="grid h-full min-w-[1500px] grid-cols-7 gap-4 xl:min-w-0">
+        {/* Fluid from lg: (1024px), not xl: (1280px) — matches the sidebar's
+            own desktop breakpoint in AppShell, so there's no dead zone
+            between 1024-1279px where this grid is still pinned to 1500px
+            (forcing a horizontal scroll) while the rest of the shell has
+            already gone to its desktop layout. At 7 columns + a persistent
+            sidebar, content stays genuinely tight at 13"-width laptops
+            (~1280px) either way — that's available horizontal space, not
+            a breakpoint bug. */}
+        <div className="grid h-full min-w-[1500px] grid-cols-7 gap-4 lg:min-w-0">
           {LEAD_STATUSES.map((status) => (
             <PipelineColumn
               key={status}

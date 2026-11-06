@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { headers } from 'next/headers';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -35,11 +36,22 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // The nonce src/middleware.ts put on every request (platform-
+  // security-hardening task 8.1) — this is the one inline script in
+  // the root layout, so it needs the nonce attribute now that
+  // script-src no longer carries 'unsafe-inline' in production.
+  const nonce = (await headers()).get('x-nonce') ?? undefined;
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
         <script
+          nonce={nonce}
+          // Browsers hide a script's `nonce` attribute from DOM reads once
+          // it's inserted (CSP spec — stops XSS from reading it back out),
+          // so React's hydration check sees nonce="" and falsely reports a
+          // mismatch against the real value that was actually rendered.
+          suppressHydrationWarning
           dangerouslySetInnerHTML={{
             __html: `
               try {

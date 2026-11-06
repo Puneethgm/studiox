@@ -6,11 +6,12 @@
 // time; makeWASocket etc. just come back `undefined`, which only surfaces
 // later as "useMultiFileAuthState is not a function"). Named imports work
 // correctly on both.
-import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
+import { makeWASocket, DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
 import QRCode from 'qrcode';
 import { rmSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { useEncryptedMultiFileAuthState } from './encryptedAuthState.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const AUTH_DIR = process.env.AUTH_DIR || path.join(__dirname, '..', 'auth');
@@ -53,9 +54,12 @@ const HISTORY_SETTLE_MS = 5_000;
 const HISTORY_EXPAND_GRACE_MS = 15_000;
 
 export class SessionManager {
-  constructor({ log, projectxApiUrl }) {
+  constructor({ log, projectxApiUrl, sessionEncryptionKey }) {
     this.log = log;
     this.projectxApiUrl = projectxApiUrl;
+    // 32-byte key (as a Buffer) encrypting auth-state files at rest — see
+    // encryptedAuthState.js. Required; index.js fails startup without it.
+    this.sessionEncryptionKey = sessionEncryptionKey;
     // Map<studioId, { sock, qr, status, phone, historyBuffer: Map<jid, msg[]> }>
     this.sessions = new Map();
     // Map<studioId, Promise<void>> — an in-flight _startSession call, if any.
@@ -554,7 +558,7 @@ export class SessionManager {
 
   async _startSession(studioId, { reconnectAttempts = 0 } = {}) {
     const dataPath = path.join(AUTH_DIR, studioId);
-    const { state, saveCreds } = await useMultiFileAuthState(dataPath);
+    const { state, saveCreds } = await useEncryptedMultiFileAuthState(dataPath, this.sessionEncryptionKey);
     // The WA Web version baked into a given @whiskeysockets/baileys release
     // goes stale as WhatsApp ships updates — a stale version gets the
     // handshake rejected with a 405 "Connection Failure" right after

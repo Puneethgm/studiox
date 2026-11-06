@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/projectx/api/internal/integrations/llmgateway"
 	"github.com/projectx/api/internal/leads"
 	"github.com/projectx/api/internal/platform/httpx"
 	"github.com/projectx/api/internal/studios"
@@ -292,7 +293,7 @@ func (w *AIWorker) composeFollowUpFromHistory(ctx context.Context, studioID uuid
 	}
 	prompt := b.String()
 
-	reply, sourceRef := llmWaterfall(ctx, w.studiosRepo, w.llmRepo, w.msgRepo, w.claude, w.claudeAPIURL, w.log, studioID, studio, prompt, w.answerCache, "enable_ai_followup")
+	reply, sourceRef := llmWaterfall(ctx, w.llmGateway, studioID, studio, prompt, llmgateway.FeatureEnableAIFollowup)
 	if reply == "" {
 		w.log.Warn("enable-ai-for-leads: follow-up generation failed, falling back to greeting", "studio_id", studioID, "lead_id", lead.ID)
 		return ""

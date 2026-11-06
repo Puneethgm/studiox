@@ -96,9 +96,48 @@ func isComplaintOrNegativeFeedback(body string) bool {
 // complaintHandoffBody is sent when a complaint is escalated: acknowledge, don't defend.
 const complaintHandoffBody = "I'm really sorry to hear that, and thank you for telling us. I've asked a team member to look into this personally and they'll be in touch with you shortly."
 
+// allProvidersFailedHandoffBody is sent when every configured LLM provider
+// failed or returned an empty reply for a customer message — the "no
+// silent drops" rule: the customer always gets something, never a drop.
+const allProvidersFailedHandoffBody = "Sorry, having a bit of trouble right now — someone from the team will follow up with you shortly."
+
+// guardFailedHandoffBody is sent when a generated reply (and its one
+// repair attempt) both fail a safety guard check (ai-reply-flow-llm-design
+// task 4.5) — same "no silent drops" principle as above, for a different
+// failure cause.
+const guardFailedHandoffBody = "Sorry, having a bit of trouble right now — someone from the team will follow up with you shortly."
+
 // escalateWithHandoff marks the conversation escalated (which also turns the AI off for
 // it and emails the studio) and queues a short handoff message to the customer.
+//
+// This is the single funnel every escalation path in handleMessage goes
+// through (directly, or via escalateKnowledgeGap below) — so the
+// shadow-mode check (ai-reply-flow-llm-design task 9.2) lives here, once,
+// rather than scattered across every call site. In shadow mode, nothing
+// in this function's real side effects (marking escalated, emailing the
+// studio, queuing a message) happens; an ai_turns row records that this
+// studio's pipeline WOULD have escalated here, for review before the
+// studio goes live.
 func (w *AIWorker) escalateWithHandoff(ctx context.Context, studioID, convID uuid.UUID, reason, body, sourceRef string, delay time.Duration) {
+	if shadow, err := w.msgRepo.aiShadowMode(ctx, studioID); err == nil && shadow {
+		w.log.Info("ai worker: shadow mode — would have escalated, recording only",
+			"studio_id", studioID, "conversation_id", convID, "reason", reason, "source_ref", sourceRef)
+		if turnErr := w.msgRepo.InsertAITurn(ctx, AITurn{
+			ConversationID:  convID,
+			StudioID:        studioID,
+			PipelineVersion: aiPipelineVersion,
+			GuardOutcome:    "n/a",
+			Outcome:         "shadow",
+			StructuredOutput: map[string]any{
+				"would_have_escalated": true,
+				"reason":               reason,
+				"source_ref":           sourceRef,
+			},
+		}); turnErr != nil {
+			w.log.Warn("insert ai turn (shadow escalation) failed", "studio_id", studioID, "conversation_id", convID, "err", turnErr)
+		}
+		return
+	}
 	if err := w.msgSvc.EscalateAndNotify(ctx, studioID, convID, reason); err != nil {
 		w.log.Warn("failed to mark conversation escalated", "studio_id", studioID, "conv_id", convID, "reason", reason, "err", err)
 		return

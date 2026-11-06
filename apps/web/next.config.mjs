@@ -6,10 +6,7 @@ const configDir = path.dirname(fileURLToPath(import.meta.url));
 /** @type {import('next).NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  devIndicators: {
-    appIsrStatus: false,
-    buildActivity: false,
-  },
+  devIndicators: false,
 
   // Standalone output: Next.js writes a self-contained server + minimal
   // node_modules to .next/standalone. The Docker image ships only that,
@@ -54,7 +51,15 @@ const nextConfig = {
     ];
   },
 
-  // Security headers to prevent source map access
+  // Security headers to prevent source map access. Content-Security-
+  // Policy moved to src/middleware.ts (platform-security-hardening task
+  // 8.1) — it needs a fresh nonce per request, which this static
+  // headers() config (evaluated once at build/start, not per-request)
+  // cannot generate. Keeping it here too would just mean two
+  // Content-Security-Policy headers on the same response, which
+  // browsers handle by intersecting them — effectively applying
+  // whichever is stricter per-directive — so it's removed here instead
+  // of left to silently fight the per-request one.
   async headers() {
     return [
       {

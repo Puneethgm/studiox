@@ -41,7 +41,8 @@ x-api-env: &api_env
   META_GRAPH_API_VERSION: ${META_GRAPH_API_VERSION:-v21.0}
   WA_WEB_SERVICE_URL: http://wa-web:3100
   TG_WEB_SERVICE_URL: http://tg-web:3101
-  INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY must be set}
+  WA_WEB_INTERNAL_KEY: ${WA_WEB_INTERNAL_KEY:?WA_WEB_INTERNAL_KEY must be set}
+  TG_WEB_INTERNAL_KEY: ${TG_WEB_INTERNAL_KEY:?TG_WEB_INTERNAL_KEY must be set}
   PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:-${PUBLIC_FORM_BASE_URL}}
   STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
   CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
@@ -149,7 +150,8 @@ services:
       PORT: "3100"
       LOG_LEVEL: info
       PROJECTX_API_URL: http://api:8080
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY must be set}
+      WA_WEB_INTERNAL_KEY: ${WA_WEB_INTERNAL_KEY:?WA_WEB_INTERNAL_KEY must be set}
+      WA_WEB_SESSION_ENCRYPTION_KEY: ${WA_WEB_SESSION_ENCRYPTION_KEY:?WA_WEB_SESSION_ENCRYPTION_KEY must be set}
       AUTH_DIR: /auth
     volumes:
       - wa_auth_data:/auth
@@ -170,7 +172,7 @@ services:
       PORT: "3101"
       LOG_LEVEL: info
       PROJECTX_API_URL: http://api:8080
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY must be set}
+      TG_WEB_INTERNAL_KEY: ${TG_WEB_INTERNAL_KEY:?TG_WEB_INTERNAL_KEY must be set}
       TELEGRAM_API_ID: ${TELEGRAM_API_ID:?TELEGRAM_API_ID must be set — get one from https://my.telegram.org}
       TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:?TELEGRAM_API_HASH must be set — get one from https://my.telegram.org}
     # No volume: unlike wa-web's Baileys multi-file auth state, a GramJS

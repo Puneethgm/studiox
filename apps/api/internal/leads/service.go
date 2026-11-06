@@ -485,8 +485,13 @@ func (s *Service) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status
 	}
 
 	// Fetch the current lead before updating so we have email + phone for Glofox.
+	// Resolved once here (rather than re-deriving per-field below) so the
+	// same studio-aware client — its own connected Glofox CRM connection if
+	// it has one, else the platform-wide client — backs both the "is Glofox
+	// even usable" check and the actual CreateLead call further down.
 	var existing *Lead
-	if s.glofox != nil && (status == StatusTrialBooked || status == StatusMember) {
+	gf := glofoxClientForStudio(ctx, s.repo.crmRepo, studioID, s.glofox)
+	if gf != nil && (status == StatusTrialBooked || status == StatusMember) {
 		if l, err := s.repo.GetLead(ctx, studioID, id); err == nil {
 			existing = l
 		}
@@ -534,7 +539,7 @@ func (s *Service) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status
 		go func() {
 			gCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			out, err := s.glofox.CreateLead(gCtx, glofox.CreateLeadInput{
+			out, err := gf.CreateLead(gCtx, glofox.CreateLeadInput{
 				Email:         leadEmail,
 				FirstName:     fn,
 				LastName:      ln,
@@ -1073,6 +1078,14 @@ func (s *Service) BookTrialSlot(ctx context.Context, leadID uuid.UUID, slot stri
 
 func (s *Service) GetAnalytics(ctx context.Context, studioID uuid.UUID, durationDays int, startDate, endDate string) (*AnalyticsSummary, error) {
 	return s.repo.GetAnalytics(ctx, studioID, durationDays, startDate, endDate)
+}
+
+func (s *Service) GetConvertedLeads(ctx context.Context, studioID uuid.UUID, durationDays int, startDate, endDate string) ([]ConvertedLead, error) {
+	return s.repo.GetConvertedLeads(ctx, studioID, durationDays, startDate, endDate)
+}
+
+func (s *Service) GetStudioHeader(ctx context.Context, studioID uuid.UUID) (StudioHeader, error) {
+	return s.repo.GetStudioHeader(ctx, studioID)
 }
 
 func (s *Service) GetDailyAnalytics(ctx context.Context, studioID uuid.UUID, durationDays int, startDate, endDate string) ([]DailyAnalyticsPoint, error) {

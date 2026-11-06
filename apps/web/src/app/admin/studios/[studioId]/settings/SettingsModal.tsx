@@ -12,6 +12,7 @@ import {
   Bot,
   Lock,
   Loader2,
+  Tag,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { Studio, Campaign, Plan } from '@/lib/types';
@@ -21,17 +22,20 @@ import { PlansRows } from './PlansRows';
 import { AvailabilityRows } from './AvailabilityRows';
 import { AIProviderSettings } from './AIProviderSettings';
 import { GeneralSection, BookingSection, SecuritySection, IntegrationsSection, SheetsSection } from './SettingsSections';
+import { OffersManagement } from './offers/OffersManagement';
+import type { Offer } from './offers/page';
 
-type Section = 'general' | 'plans' | 'availability' | 'booking' | 'sheets' | 'integrations' | 'ai-assistant' | 'security' | 'billing';
+type Section = 'general' | 'plans' | 'offers' | 'availability' | 'booking' | 'sheets' | 'integrations' | 'ai-assistant' | 'security' | 'billing';
 
 const NAV: { id: Section; label: string; description: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { id: 'general', label: 'General', description: 'Name, slug, and brand identity', icon: Building },
   { id: 'plans', label: 'Plans', description: 'Membership plans and pricing', icon: DollarSign },
+  { id: 'offers', label: 'Offers', description: 'Pricing/trial facts the AI can quote', icon: Tag },
   { id: 'availability', label: 'Availability', description: 'Weekly hours and timezone', icon: Calendar },
   { id: 'booking', label: 'Trial Page', description: 'Customize and preview checkout', icon: Eye },
   { id: 'sheets', label: 'Google Sheets', description: 'Lead sync and imports', icon: Database },
   { id: 'integrations', label: 'Integrations', description: 'Meta, Google Ads, pacing', icon: Cpu },
-  { id: 'ai-assistant', label: 'AI Assistant', description: 'LLM provider and models', icon: Bot },
+  { id: 'ai-assistant', label: 'Knowledge Base OCR', description: 'Mistral API key for image OCR', icon: Bot },
   { id: 'security', label: 'Security', description: 'Password and account', icon: Lock },
   { id: 'billing', label: 'Platform Billing', description: 'Subscription and invoices', icon: DollarSign },
 ];
@@ -61,6 +65,7 @@ export function SettingsModal({ studioId, open, onClose }: { studioId: string; o
   const [studio, setStudio] = useState<Studio | null>(null);
   const [previewHref, setPreviewHref] = useState<string | null>(null);
   const [plans, setPlans] = useState<Plan[]>([]);
+  const [offers, setOffers] = useState<Offer[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -73,16 +78,18 @@ export function SettingsModal({ studioId, open, onClose }: { studioId: string; o
 
     (async () => {
       try {
-        const [studioRes, campaignsRes, plansRes] = await Promise.all([
+        const [studioRes, campaignsRes, plansRes, offersRes] = await Promise.all([
           api<Studio>(`/api/v1/me/studios/${studioId}`),
           api<{ campaigns: Campaign[] }>(`/api/v1/studios/${studioId}/campaigns`).catch(() => ({ campaigns: [] })),
           api<{ plans: Plan[] }>(`/api/v1/me/studios/${studioId}/plans`).catch(() => ({ plans: [] })),
+          api<{ offers: Offer[] }>(`/api/v1/me/studios/${studioId}/offers`).catch(() => ({ offers: [] })),
         ]);
         if (cancelled) return;
         const previewCampaign = campaignsRes.campaigns.find((c) => c.active) ?? campaignsRes.campaigns[0] ?? null;
         setStudio(studioRes);
         setPreviewHref(previewCampaign ? `/l/${studioRes.slug}/${previewCampaign.slug}` : null);
         setPlans(plansRes.plans || []);
+        setOffers(offersRes.offers || []);
       } catch (err: any) {
         if (!cancelled) setLoadError(err.message || 'Failed to load studio');
       }
@@ -155,6 +162,11 @@ export function SettingsModal({ studioId, open, onClose }: { studioId: string; o
               {visited.has('plans') && (
                 <div hidden={section !== 'plans'}>
                   <PlansRows studio={studio} initialPlans={plans} />
+                </div>
+              )}
+              {visited.has('offers') && (
+                <div hidden={section !== 'offers'}>
+                  <OffersManagement studioId={studio.id} initialOffers={offers} />
                 </div>
               )}
               {visited.has('availability') && (

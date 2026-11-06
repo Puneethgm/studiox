@@ -108,6 +108,17 @@ type Lead struct {
 	UpdatedAt    time.Time  `json:"updatedAt"`
 }
 
+// HasBeenTrialist reports whether this lead is currently trial_booked or a
+// member, or has ever taken a trial before (TrialPurchased/TrialAttended
+// survive even if Status later moved on to contacted/dropped). Used to stop
+// the AI/menu flow from offering or re-sending the trial booking link to
+// someone who's already booked one, already a member, or already used their
+// trial before, per studio policy ("not able to become a trial again if you
+// have been a trialist before").
+func (l *Lead) HasBeenTrialist() bool {
+	return l.TrialPurchased || l.TrialAttended || l.Status == StatusTrialBooked || l.Status == StatusMember
+}
+
 type StudioSheetsSettings struct {
 	ID            uuid.UUID `json:"id"`
 	StudioID      uuid.UUID `json:"studioId"`
@@ -182,6 +193,20 @@ type AnalyticsSummary struct {
 	ConversionRate             float64             `json:"conversionRate"` // % of all leads that reached trial_booked or member
 	ByCampaign                 []CampaignAnalytics `json:"byCampaign"`
 	ByPlatform                 []PlatformAnalytics `json:"byPlatform"`
+}
+
+// ConvertedLead is one row of the "Download Report" CSV on the dashboard —
+// a lead that reached trial_booked or member, for the same studio/date
+// window GetAnalytics' aggregate conversion-rate figure is computed over.
+// ConvertedAt is proxied by updated_at, the same convention
+// DailyAnalyticsPoint.ConvertedLeads already uses (leads has no dedicated
+// status-change timestamp).
+type ConvertedLead struct {
+	Name        string
+	Email       string
+	Phone       string
+	Status      LeadStatus
+	ConvertedAt time.Time
 }
 
 // DailyAnalyticsPoint is one day's bucket for the Detailed Analytics trend

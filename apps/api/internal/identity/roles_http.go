@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/projectx/api/internal/platform/httpx"
+	"github.com/projectx/api/internal/platform/secaudit"
 )
 
 // RolesRoutes mounts the studio-scoped role endpoints (identity/studio-roles).
@@ -21,8 +22,10 @@ func (h *Handler) RolesRoutes(r chi.Router) {
 	r.Get("/roles", h.listRoles)
 	r.Post("/roles", h.createRole)
 	r.Get("/roles/{roleId}", h.getRole)
-	r.Patch("/roles/{roleId}", h.updateRole)
-	r.Patch("/roles/{roleId}/active", h.setRoleActive)
+	// Role changes require a fresh code (task 2.6) — a role's
+	// permissions are a privilege-escalation surface.
+	r.With(RequireStepUp).Patch("/roles/{roleId}", h.updateRole)
+	r.With(RequireStepUp).Patch("/roles/{roleId}/active", h.setRoleActive)
 	r.Delete("/roles/{roleId}", h.deleteRole)
 }
 
@@ -249,6 +252,15 @@ func (h *Handler) updateRole(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to set role permissions")
 		return
 	}
+	// A role's permissions are baked into each assigned user's JWT at
+	// issue time — without this, a narrowed permission set would only
+	// take effect at each user's next login (platform-security-hardening
+	// task 1.4).
+	if err := h.revokeSessionsForRole(r.Context(), role.ID, "role permissions changed"); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	h.logSecurityEvent(r.Context(), r, &c.UserID, string(c.Role), &studioID, "role.permissions_changed", secaudit.OutcomeSuccess, map[string]any{"roleId": roleID})
 
 	updated, err := h.repo.GetRole(r.Context(), studioID, roleID)
 	if err != nil {
@@ -300,6 +312,17 @@ func (h *Handler) setRoleActive(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to update role")
 		return
 	}
+	// Deactivating a role now blocks every currently-assigned user's very
+	// next request, not just their next login attempt (platform-security-
+	// hardening task 1.4 — see this handler's own doc comment above,
+	// written when that gap was still open).
+	if !req.Active {
+		if err := h.revokeSessionsForRole(r.Context(), roleID, "role deactivated"); err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+			return
+		}
+	}
+	h.logSecurityEvent(r.Context(), r, &c.UserID, string(c.Role), &studioID, "role.active_changed", secaudit.OutcomeSuccess, map[string]any{"roleId": roleID, "active": req.Active})
 
 	updated, err := h.repo.GetRole(r.Context(), studioID, roleID)
 	if err != nil {

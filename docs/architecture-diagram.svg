@@ -1,0 +1,214 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1220" viewBox="0 0 1800 1220" role="img" aria-labelledby="title desc">
+  <title id="title">Project-X StudioX architecture</title>
+  <desc id="desc">Architecture diagram for the Project-X multi-tenant AI marketing and studio operations platform.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1020"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <linearGradient id="api" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#312e81"/>
+      <stop offset="1" stop-color="#4338ca"/>
+    </linearGradient>
+    <linearGradient id="data" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#064e3b"/>
+      <stop offset="1" stop-color="#047857"/>
+    </linearGradient>
+    <linearGradient id="external" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7c2d12"/>
+      <stop offset="1" stop-color="#c2410c"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000" flood-opacity=".28"/>
+    </filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <path d="M0,0 L10,3 L0,6 Z" fill="#94a3b8"/>
+    </marker>
+    <marker id="arrowAccent" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <path d="M0,0 L10,3 L0,6 Z" fill="#a78bfa"/>
+    </marker>
+    <style>
+      .title { font: 700 32px Inter, Segoe UI, sans-serif; fill: #f8fafc; }
+      .subtitle { font: 400 15px Inter, Segoe UI, sans-serif; fill: #94a3b8; }
+      .section { font: 700 14px Inter, Segoe UI, sans-serif; letter-spacing: 1.7px; fill: #cbd5e1; }
+      .box-title { font: 700 18px Inter, Segoe UI, sans-serif; fill: #f8fafc; }
+      .box-text { font: 400 13px Inter, Segoe UI, sans-serif; fill: #dbeafe; }
+      .small { font: 400 12px Inter, Segoe UI, sans-serif; fill: #cbd5e1; }
+      .small-muted { font: 400 12px Inter, Segoe UI, sans-serif; fill: #94a3b8; }
+      .label { font: 600 11px Inter, Segoe UI, sans-serif; fill: #c4b5fd; }
+      .line { stroke: #94a3b8; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+      .line-accent { stroke: #a78bfa; stroke-width: 2.5; fill: none; marker-end: url(#arrowAccent); }
+      .dashed { stroke-dasharray: 7 6; }
+    </style>
+  </defs>
+
+  <rect width="1800" height="1120" fill="url(#bg)"/>
+  <circle cx="1600" cy="120" r="260" fill="#312e81" opacity=".12"/>
+  <circle cx="280" cy="970" r="260" fill="#0f766e" opacity=".10"/>
+
+  <text x="70" y="62" class="title">Project-X / StudioX Architecture</text>
+  <text x="70" y="90" class="subtitle">L1 multi-tenant foundation — AI marketing, lead capture, messaging, and studio operations</text>
+  <text x="1730" y="62" text-anchor="end" class="label">CURRENT RUNTIME SHAPE</text>
+  <text x="1730" y="88" text-anchor="end" class="small-muted">Go modular monolith · Next.js App Router · Postgres 16</text>
+
+  <!-- Client layer -->
+  <text x="70" y="135" class="section">CLIENTS &amp; EDGE</text>
+  <rect x="70" y="155" width="350" height="190" rx="16" fill="#172554" stroke="#3b82f6" filter="url(#shadow)"/>
+  <text x="96" y="190" class="box-title">Users &amp; public visitors</text>
+  <text x="96" y="220" class="box-text">• Platform super-admin</text>
+  <text x="96" y="243" class="box-text">• Studio admin / manager</text>
+  <text x="96" y="266" class="box-text">• Customer / lead</text>
+  <text x="96" y="303" class="small">Admin dashboard + public branded lead form</text>
+  <text x="96" y="324" class="small-muted">HTTPS · HTTP-only JWT cookie</text>
+
+  <rect x="490" y="155" width="350" height="190" rx="16" fill="#172554" stroke="#60a5fa" filter="url(#shadow)"/>
+  <text x="516" y="190" class="box-title">Nginx / HTTPS edge</text>
+  <text x="516" y="220" class="box-text">• TLS termination</text>
+  <text x="516" y="243" class="box-text">• /api/* → Go API</text>
+  <text x="516" y="266" class="box-text">• /* → Next.js web</text>
+  <text x="516" y="303" class="small">Production ingress and same-origin browser API</text>
+  <text x="516" y="324" class="small-muted">Local development can use ngrok for Meta webhooks</text>
+
+  <rect x="910" y="155" width="350" height="190" rx="16" fill="#172554" stroke="#60a5fa" filter="url(#shadow)"/>
+  <text x="936" y="190" class="box-title">Next.js 15 web app</text>
+  <text x="936" y="220" class="box-text">• App Router / RSC reads</text>
+  <text x="936" y="243" class="box-text">• Admin, inbox, campaigns, leads</text>
+  <text x="936" y="266" class="box-text">• Public /l/&lt;studio&gt;/&lt;campaign&gt;</text>
+  <text x="936" y="303" class="small">Tailwind UI · relative browser API paths</text>
+  <text x="936" y="324" class="small-muted">Server-side API access via API_BASE_URL</text>
+
+  <path d="M420 250 L490 250" class="line"/>
+  <path d="M840 205 L910 205" class="line"/>
+  <path d="M840 295 L875 295 L875 390 L650 390 L650 425" class="line-accent"/>
+  <text x="855" y="193" class="label">web traffic</text>
+  <text x="700" y="382" class="label">/api/* proxy</text>
+
+  <!-- Application layer -->
+  <text x="70" y="405" class="section">APPLICATION LAYER — MODULAR GO API</text>
+  <rect x="70" y="425" width="1190" height="295" rx="18" fill="#17153c" stroke="#6366f1" stroke-width="2" filter="url(#shadow)"/>
+  <text x="100" y="462" class="box-title">Go 1.23+ API (chi router)</text>
+  <text x="100" y="487" class="small-muted">Thin HTTP handlers → application services → repositories / adapters · tenant scope is studio_id</text>
+
+  <rect x="100" y="515" width="245" height="165" rx="12" fill="url(#api)"/>
+  <text x="122" y="548" class="box-title">Identity &amp; platform</text>
+  <text x="122" y="578" class="box-text">Auth / JWT sessions</text>
+  <text x="122" y="601" class="box-text">RBAC + tenant checks</text>
+  <text x="122" y="624" class="box-text">Studios / users / roles</text>
+  <text x="122" y="655" class="small">Audit and config</text>
+
+  <rect x="370" y="515" width="245" height="165" rx="12" fill="url(#api)"/>
+  <text x="392" y="548" class="box-title">Leads &amp; CRM</text>
+  <text x="392" y="578" class="box-text">Campaigns + lead capture</text>
+  <text x="392" y="601" class="box-text">Pipeline / status workflow</text>
+  <text x="392" y="624" class="box-text">Glofox / sheet imports</text>
+  <text x="392" y="655" class="small">Outbox for Google Sheets</text>
+
+  <rect x="640" y="515" width="245" height="165" rx="12" fill="url(#api)"/>
+  <text x="662" y="548" class="box-title">Messaging</text>
+  <text x="662" y="578" class="box-text">Unified inbox / conversations</text>
+  <text x="662" y="601" class="box-text">Outbound jobs + retries</text>
+  <text x="662" y="624" class="box-text">Meta / Twilio / Telegram / X</text>
+  <text x="662" y="655" class="small">Webhook verification + status</text>
+
+  <rect x="910" y="515" width="320" height="165" rx="12" fill="url(#api)"/>
+  <text x="932" y="548" class="box-title">AI &amp; operations</text>
+  <text x="932" y="578" class="box-text">Knowledge base / decision trees</text>
+  <text x="932" y="601" class="box-text">AI auto-reply + sentiment hooks</text>
+  <text x="932" y="624" class="box-text">Payments / attendance / social</text>
+  <text x="932" y="655" class="small">Background workers share this process</text>
+
+  <path d="M1085 345 L1085 425" class="line-accent"/>
+  <text x="1098" y="390" class="label">RSC / browser mutations</text>
+
+  <!-- Worker lane -->
+  <rect x="1300" y="425" width="430" height="295" rx="18" fill="#1e293b" stroke="#818cf8" filter="url(#shadow)"/>
+  <text x="1330" y="462" class="box-title">In-process background workers</text>
+  <text x="1330" y="487" class="small-muted">Started by cmd/server/main.go</text>
+  <text x="1330" y="525" class="box-text">• Outbound messaging dispatcher</text>
+  <text x="1330" y="550" class="box-text">• AI answer / style workers</text>
+  <text x="1330" y="575" class="box-text">• Broadcast + auto-contact workers</text>
+  <text x="1330" y="600" class="box-text">• Google Sheets outbox worker</text>
+  <text x="1330" y="625" class="box-text">• Glofox attendance / first-session</text>
+  <text x="1330" y="650" class="box-text">• Social publishing worker</text>
+  <text x="1330" y="685" class="small">Shared DB + Redis state</text>
+  <path d="M1260 575 L1300 575" class="line-accent"/>
+
+  <!-- Data layer -->
+  <text x="70" y="790" class="section">DATA &amp; INTERNAL SERVICES</text>
+  <rect x="70" y="810" width="390" height="210" rx="16" fill="url(#data)" filter="url(#shadow)"/>
+  <text x="98" y="848" class="box-title">Postgres 16 + pgvector</text>
+  <text x="98" y="879" class="box-text">Studios · identity · leads · campaigns</text>
+  <text x="98" y="904" class="box-text">Conversations · messages · outbox jobs</text>
+  <text x="98" y="929" class="box-text">Channels · plans · audit records</text>
+  <text x="98" y="969" class="small">Goose migrations · pgx/sqlc · encrypted tokens</text>
+
+  <rect x="510" y="810" width="300" height="210" rx="16" fill="url(#data)" filter="url(#shadow)"/>
+  <text x="538" y="848" class="box-title">Redis 7</text>
+  <text x="538" y="879" class="box-text">Session revocation / idle timeout</text>
+  <text x="538" y="904" class="box-text">AI answer cache</text>
+  <text x="538" y="929" class="box-text">Short-lived operational state</text>
+  <text x="538" y="969" class="small">Internal-only network service</text>
+
+  <rect x="860" y="810" width="300" height="210" rx="16" fill="url(#data)" filter="url(#shadow)"/>
+  <text x="888" y="848" class="box-title">Embeddings service</text>
+  <text x="888" y="879" class="box-text">FastAPI + sentence-transformers</text>
+  <text x="888" y="904" class="box-text">Knowledge / message vectors</text>
+  <text x="888" y="929" class="box-text">Backfill and semantic retrieval</text>
+  <text x="888" y="969" class="small">Optional local service on internal port</text>
+
+  <rect x="1210" y="810" width="520" height="210" rx="16" fill="#1e293b" stroke="#34d399" filter="url(#shadow)"/>
+  <text x="1238" y="848" class="box-title">Channel bridge services</text>
+  <text x="1238" y="879" class="box-text">WhatsApp Web QR / Baileys — persistent auth volume</text>
+  <text x="1238" y="904" class="box-text">Telegram QR / GramJS — API-managed session</text>
+  <text x="1238" y="929" class="box-text">Internal API key → Go API callbacks</text>
+  <text x="1238" y="969" class="small">Cloud API channels are sent directly by the Go API</text>
+
+  <path d="M300 720 L270 810" class="line-accent"/>
+  <path d="M600 720 L650 810" class="line-accent"/>
+  <path d="M1000 720 L1010 810" class="line-accent"/>
+  <path d="M1515 720 L1470 810" class="line-accent"/>
+  <text x="285" y="778" class="label">SQL / transactions</text>
+  <text x="610" y="778" class="label">cache / sessions</text>
+  <text x="980" y="778" class="label">embeddings</text>
+  <text x="1450" y="778" class="label">internal HTTP</text>
+
+  <!-- External systems -->
+  <text x="70" y="1060" class="section">EXTERNAL SYSTEMS &amp; INTEGRATIONS</text>
+  <g transform="translate(70,1075)">
+    <rect width="220" height="0" fill="none"/>
+  </g>
+
+  <!-- External boxes placed in a bottom strip, with a callout panel to avoid clipping -->
+  <rect x="70" y="1082" width="240" height="0" fill="none"/>
+  <rect x="70" y="1080" width="0" height="0" fill="none"/>
+
+  <!-- Use a compact external row above the footer -->
+  <rect x="70" y="1080" width="250" height="62" rx="12" fill="url(#external)"/>
+  <text x="92" y="1107" class="box-title">Meta Graph API</text>
+  <text x="92" y="1128" class="small">WhatsApp / Instagram / Messenger</text>
+  <rect x="350" y="1080" width="210" height="62" rx="12" fill="url(#external)"/>
+  <text x="372" y="1107" class="box-title">Google</text>
+  <text x="372" y="1128" class="small">Sheets · Ads · SMTP</text>
+  <rect x="590" y="1080" width="210" height="62" rx="12" fill="url(#external)"/>
+  <text x="612" y="1107" class="box-title">Studio systems</text>
+  <text x="612" y="1128" class="small">Glofox · Stripe · S3</text>
+  <rect x="830" y="1080" width="250" height="62" rx="12" fill="url(#external)"/>
+  <text x="852" y="1107" class="box-title">AI providers</text>
+  <text x="852" y="1128" class="small">Claude · Groq / studio BYO keys</text>
+  <rect x="1110" y="1080" width="270" height="62" rx="12" fill="url(#external)"/>
+  <text x="1132" y="1107" class="box-title">Inbound webhooks</text>
+  <text x="1132" y="1128" class="small">ngrok locally · HTTPS in production</text>
+  <rect x="1410" y="1080" width="320" height="62" rx="12" fill="#334155" stroke="#64748b"/>
+  <text x="1432" y="1107" class="box-title">Core flows</text>
+  <text x="1432" y="1128" class="small">lead → inbox → nurture → sale</text>
+
+  <!-- Integration lines -->
+  <path d="M195 1080 L195 1040 L730 1040 L730 680" class="line dashed"/>
+  <path d="M455 1080 L455 1040" class="line dashed"/>
+  <path d="M695 1080 L695 1040" class="line dashed"/>
+  <path d="M955 1080 L955 1040" class="line dashed"/>
+  <path d="M1245 1080 L1245 1040 L1080 1040 L1080 680" class="line dashed"/>
+
+  <!-- Footer -->
+  <text x="70" y="1190" class="small-muted">Boundary legend: blue = client/edge · purple = Go application · green = stateful/internal services · orange = external systems</text>
+</svg>

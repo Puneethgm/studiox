@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { api, ApiError } from '@/lib/api';
+import { api, ApiError, readCSRFCookie } from '@/lib/api';
 import type {
   PageBlock, PageBlockType, PageBackground, PageFontFamily, PageTextAlign,
   TextBlockContent, ImageBlockContent, VideoBlockContent, FieldBlockContent, AmountBlockContent, PayButtonBlockContent,
@@ -479,7 +479,12 @@ function ImageUrlField({ studioId, label, url, onChange, kind = 'image' }: {
     try {
       const form = new FormData();
       form.append('file', file);
-      const res = await fetch(`/api/v1/studios/${studioId}/messaging/upload`, { method: 'POST', body: form });
+      const csrfToken = readCSRFCookie();
+      const res = await fetch(`/api/v1/studios/${studioId}/messaging/upload`, {
+        method: 'POST',
+        body: form,
+        headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : undefined,
+      });
       if (!res.ok) throw new Error('Upload failed');
       const data = await res.json();
       onChange(data.url);

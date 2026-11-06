@@ -92,6 +92,12 @@ interface LLMStat {
   avgLatencyMs: number;
   tokensIn: number;
   tokensOut: number;
+  // Real cost from Bifrost's own provider rate catalog (apps/api
+  // internal/integrations/bifrost — see BifrostLLMUsage.Cost.TotalCost),
+  // not an estimate. 0 for rows logged before this was added, or for a
+  // provider/model Bifrost's catalog doesn't price — rowCost() below falls
+  // back to the client-side COST_PER_1M estimate in that case.
+  costUsd: number;
   date: string;
 }
 
@@ -105,6 +111,14 @@ interface LLMStudioStat {
   avgLatencyMs: number;
   tokensIn: number;
   tokensOut: number;
+  costUsd: number;
+}
+
+// rowCost prefers the real cost Bifrost computed and the backend returned;
+// falls back to the local estimate only when the backend reports exactly 0
+// (pre-migration rows, or a model missing from Bifrost's own catalog).
+function rowCost(row: { model: string; tokensIn: number; tokensOut: number; costUsd: number }): number {
+  return row.costUsd > 0 ? row.costUsd : computeCostUSD(row.model, row.tokensIn, row.tokensOut);
 }
 
 interface AggregatedStudio {
@@ -137,7 +151,7 @@ function aggregateStudioStats(studioStats: LLMStudioStat[]): AggregatedStudio[] 
       };
     }
     const group = groups[key];
-    const cost = computeCostUSD(row.model, row.tokensIn, row.tokensOut);
+    const cost = rowCost(row);
 
     group.totalRequests += row.count;
     group.totalSuccess += row.successCount;
@@ -185,7 +199,7 @@ function computeSummary(stats: LLMStat[]): Summary {
   const topModel = Object.entries(modelCount).sort((a, b) => b[1] - a[1])[0]?.[0] ?? '—';
 
   const totalCostUSD = stats.reduce(
-    (acc, s) => acc + computeCostUSD(s.model, s.tokensIn, s.tokensOut),
+    (acc, s) => acc + rowCost(s),
     0,
   );
 
@@ -580,7 +594,7 @@ export default function LLMMonitoringPage() {
                         </thead>
                         <tbody className="divide-y divide-zinc-100/60 dark:divide-white/5">
                           {studio.breakdown.map((item, idx) => {
-                            const itemCost = computeCostUSD(item.model, item.tokensIn, item.tokensOut);
+                            const itemCost = rowCost(item);
                             return (
                               <tr key={idx} className="hover:bg-zinc-50/50 dark:hover:bg-white/5 transition-colors">
                                 <td className="px-4 py-2">
@@ -732,7 +746,7 @@ export default function LLMMonitoringPage() {
                         {row.tokensOut > 0 ? row.tokensOut.toLocaleString() : '—'}
                       </td>
                       <td className="px-6 py-3 text-right text-zinc-700 dark:text-zinc-300 tabular-nums font-mono text-xs font-medium">
-                        {fmtCost(computeCostUSD(row.model, row.tokensIn, row.tokensOut))}
+                        {fmtCost(rowCost(row))}
                       </td>
                     </tr>
                   ))}
