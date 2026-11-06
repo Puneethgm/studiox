@@ -99,7 +99,7 @@ func (s *Service) RequestAccountDeletion(ctx context.Context, studioID, actorUse
 		contactEmail := studio.ContactEmail
 		deletionRequestID := dr.ID
 		go func() {
-			bgCtx := context.Background()
+			bgCtx := context.WithoutCancel(ctx)
 			if err := s.mailer.SendAccountDeletionPending(contactEmail, studioName, confirmLink); err != nil {
 				slog.Error("account deletion pending email failed", "err", err, "studio_id", studioID)
 				return

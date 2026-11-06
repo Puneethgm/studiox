@@ -39,14 +39,14 @@ func doInternalPostWithRetry(ctx context.Context, url string, data []byte, heade
 			}
 			backoff *= 2
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data)) // #nosec G704 -- url is always waWebServiceURL() (fixed internal sidecar host, env-var controlled) + a fixed path; only studioID varies the path, never the host
 		if err != nil {
 			return nil, err
 		}
 		for k, v := range headers {
 			req.Header.Set(k, v)
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := http.DefaultClient.Do(req) // #nosec G704 -- see NewRequestWithContext above: host is always the fixed wa-web sidecar URL
 		if err == nil {
 			return resp, nil
 		}
@@ -189,14 +189,14 @@ func (h *Handler) waWebBackfillStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func proxyToWAWeb(w http.ResponseWriter, ctx context.Context, method, url string) {
-	req, err := http.NewRequestWithContext(ctx, method, url, nil)
+	req, err := http.NewRequestWithContext(ctx, method, url, nil) // #nosec G704 -- url is always built from waWebServiceURL() (fixed internal sidecar host); callers only vary the path
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
 	req.Header.Set("x-internal-key", waWebInternalKey())
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) // #nosec G704 -- see NewRequestWithContext above: host is always the fixed wa-web sidecar URL
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)

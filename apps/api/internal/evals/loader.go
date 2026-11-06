@@ -42,7 +42,7 @@ func LoadCases(dir string) ([]Case, error) {
 	cases := make([]Case, 0, len(names))
 	for _, name := range names {
 		path := filepath.Join(dir, name)
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(path) // #nosec G304 -- offline eval CLI tool; dir comes from the fixed internal/evals/cases/ layout and name from this same directory's own os.ReadDir listing, never from an HTTP request
 		if err != nil {
 			return nil, fmt.Errorf("read case file %s: %w", path, err)
 		}

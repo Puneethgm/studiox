@@ -68,7 +68,7 @@ func WriteJSON(report Report, path string) error {
 	if err != nil {
 		return fmt.Errorf("marshal report: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("write report file %s: %w", path, err)
 	}
 	return nil
@@ -83,7 +83,7 @@ func WriteJSON(report Report, path string) error {
 // should treat os.IsNotExist specially rather than surfacing it as a
 // generic error.
 func ReadJSON(path string) (Report, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- path is evalReportPath(): a fixed literal or operator-set EVAL_REPORT_PATH env var, never derived from any HTTP request
 	if err != nil {
 		return Report{}, err
 	}

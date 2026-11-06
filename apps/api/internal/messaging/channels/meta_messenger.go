@@ -50,7 +50,7 @@ func NewMetaInstagram(apiVersion string) *MetaMessenger {
 // uploadMediaToMeta reads a local file from disk, uploads it to Meta's
 // Messenger message_attachments API, and returns the attachment_id.
 func (m *MetaMessenger) uploadMediaToMeta(ctx context.Context, accessToken, pageID, localPath, mediaType string) (string, error) {
-	f, err := os.Open(localPath)
+	f, err := os.Open(localPath) // #nosec G304 -- this method is only ever called with a path safeUploadPath has already validated stays within uploads/ (see SendText)
 	if err != nil {
 		return "", fmt.Errorf("open local file %q: %w", localPath, err)
 	}
@@ -163,8 +163,14 @@ func (m *MetaMessenger) SendText(ctx context.Context, accessToken, channelExtern
 		var payload map[string]any
 
 		if strings.HasPrefix(attURL, "/uploads/") {
-			localPath := filepath.Join("uploads", strings.TrimPrefix(attURL, "/uploads/"))
-			attID, uploadErr := m.uploadMediaToMeta(ctx, accessToken, channelExternalID, localPath, mediaType)
+			localPath, pathErr := safeUploadPath(attURL)
+			var attID string
+			var uploadErr error
+			if pathErr != nil {
+				uploadErr = pathErr
+			} else {
+				attID, uploadErr = m.uploadMediaToMeta(ctx, accessToken, channelExternalID, localPath, mediaType)
+			}
 			if uploadErr != nil {
 				slog.Warn("meta messenger media upload failed, falling back to URL", "err", uploadErr)
 				payload = map[string]any{

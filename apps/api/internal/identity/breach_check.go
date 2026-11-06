@@ -3,7 +3,7 @@ package identity
 import (
 	"bufio"
 	"context"
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505 -- required by the HaveIBeenPwned Pwned Passwords k-anonymity API protocol, see IsBreached below
 	"encoding/hex"
 	"fmt"
 	"net/http"
@@ -34,7 +34,7 @@ func NewHIBPBreachChecker() *HIBPBreachChecker {
 }
 
 func (c *HIBPBreachChecker) IsBreached(ctx context.Context, password string) (bool, error) {
-	sum := sha1.Sum([]byte(password))
+	sum := sha1.Sum([]byte(password)) // #nosec G401 G505 -- HaveIBeenPwned Pwned Passwords k-anonymity API requires SHA-1 by protocol; only a 5-char hash prefix is ever sent, never the password
 	hash := strings.ToUpper(hex.EncodeToString(sum[:]))
 	prefix, suffix := hash[:5], hash[5:]
 

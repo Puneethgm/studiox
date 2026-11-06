@@ -488,7 +488,7 @@ func main() {
 
 	// Serve uploaded media files (created by the /messaging/upload endpoint)
 	uploadsDir := "./uploads"
-	if err := os.MkdirAll(uploadsDir, 0o755); err != nil {
+	if err := os.MkdirAll(uploadsDir, 0o750); err != nil {
 		log.Error("create uploads dir", "err", err)
 	}
 	r.Handle("/uploads/*", http.StripPrefix("/uploads/", http.FileServer(http.Dir(uploadsDir))))

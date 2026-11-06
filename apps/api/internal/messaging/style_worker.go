@@ -122,9 +122,9 @@ func (w *StyleWorker) ListenForNewReplies(ctx context.Context, bus Bus) {
 				if evt.MessageID == nil {
 					continue
 				}
-				go w.learnFromMessageIfStaffReply(context.Background(), evt.StudioID, *evt.MessageID)
+				go w.learnFromMessageIfStaffReply(context.WithoutCancel(ctx), evt.StudioID, *evt.MessageID)
 			case EvtWAWebBackfillDone:
-				go w.catchUpBackfilledReplies(context.Background(), evt.StudioID)
+				go w.catchUpBackfilledReplies(context.WithoutCancel(ctx), evt.StudioID)
 			}
 		}
 	}

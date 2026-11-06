@@ -43,9 +43,12 @@ func validateTOTPCode(code, secret string, now time.Time) (ok bool, step int64, 
 	// ValidateCustom doesn't return which step matched, so probe each
 	// candidate step in the allowed skew window ourselves (totpSkew is
 	// always small — at most a handful of iterations).
+	// #nosec G115 -- opts.Period/opts.Skew are the hardcoded literals 30/1
+	// set a few lines above, never derived from input; uint->int64
+	// overflow is impossible for values this small.
 	currentStep := now.Unix() / int64(opts.Period)
-	for s := currentStep - int64(opts.Skew); s <= currentStep+int64(opts.Skew); s++ {
-		candidateTime := time.Unix(s*int64(opts.Period), 0)
+	for s := currentStep - int64(opts.Skew); s <= currentStep+int64(opts.Skew); s++ { // #nosec G115 -- opts.Skew is the hardcoded literal 1, never derived from input
+		candidateTime := time.Unix(s*int64(opts.Period), 0) // #nosec G115 -- same hardcoded Period constant
 		matched, verr := totp.ValidateCustom(code, secret, candidateTime, totp.ValidateOpts{Period: opts.Period, Digits: opts.Digits, Algorithm: opts.Algorithm})
 		if verr != nil {
 			return false, 0, fmt.Errorf("validate totp code: %w", verr)

@@ -99,7 +99,7 @@ func (s *Service) SyncLeadToGlofoxByID(ctx context.Context, leadID string, statu
 	}
 
 	go func() {
-		gCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		gCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
 		out, err := s.glofox.CreateLead(gCtx, glofox.CreateLeadInput{
 			Email:         email,
@@ -198,7 +198,7 @@ func (s *Service) SyncLeadToMindbodyByID(ctx context.Context, leadID string, isT
 	}
 
 	go func() {
-		mCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		mCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
 
 		result, err := s.crmExecutor.Execute(mCtx, studioID, crm.OpCreateLead, map[string]any{
@@ -403,7 +403,7 @@ func (s *Service) CreateStudioWithAdmin(ctx context.Context, in CreateStudioInpu
 		adminEmail := in.AdminEmail
 		studioID := studio.ID
 		go func() {
-			gCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			gCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 			defer cancel()
 			_, err := s.glofox.RegisterUser(gCtx, glofox.RegisterUserInput{
 				Email:     adminEmail,
@@ -439,7 +439,7 @@ func (s *Service) CreateStudioWithAdmin(ctx context.Context, in CreateStudioInpu
 		adminEmail := in.AdminEmail
 		studioName := studio.Name
 		go func() {
-			ctx := context.Background()
+			ctx := context.WithoutCancel(ctx)
 			token, err := s.identity.CreatePasswordResetToken(ctx, adminID, time.Hour)
 			if err != nil {
 				slog.Error("studio welcome email: failed to create reset token", "err", err, "admin_id", adminID)

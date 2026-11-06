@@ -95,6 +95,12 @@ func NewStripeWebhookHandler(svc *Service, webhookSecret string) *StripeWebhookH
 //	@Router			/api/v1/webhooks/stripe [post]
 //	@Router			/api/v1/webhooks/stripe/{studioId} [post]
 func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Request) {
+	// The goroutines dispatched below use context.WithoutCancel(r.Context())
+	// rather than context.Background(): Stripe doesn't wait for this handler
+	// to finish processing, so each goroutine must survive past this
+	// request's response being written, but it should still carry whatever
+	// request-scoped values (trace ID, logger) r.Context() set up — just
+	// not its cancellation/deadline.
 	const MaxBodyBytes = int64(65536)
 	r.Body = http.MaxBytesReader(w, r.Body, MaxBodyBytes)
 	payload, err := io.ReadAll(r.Body)
@@ -184,7 +190,7 @@ func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Requ
 			rawBytes, _ = json.Marshal(event.Data.Object)
 		}
 		if err := json.Unmarshal(rawBytes, &session); err == nil {
-			go h.handleCheckoutComplete(context.Background(), &session)
+			go h.handleCheckoutComplete(context.WithoutCancel(r.Context()), &session)
 		}
 	case "payment_link.payment.completed":
 		var session stripe.CheckoutSession
@@ -193,7 +199,7 @@ func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Requ
 			rawBytes, _ = json.Marshal(event.Data.Object)
 		}
 		if err := json.Unmarshal(rawBytes, &session); err == nil {
-			go h.handleCheckoutComplete(context.Background(), &session)
+			go h.handleCheckoutComplete(context.WithoutCancel(r.Context()), &session)
 		}
 	case "payment_intent.succeeded":
 		// The embedded-Stripe-Elements trial payment flow (studios.
@@ -205,7 +211,7 @@ func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Requ
 			rawBytes, _ = json.Marshal(event.Data.Object)
 		}
 		if err := json.Unmarshal(rawBytes, &pi); err == nil {
-			go h.handlePaymentIntentSucceeded(context.Background(), &pi)
+			go h.handlePaymentIntentSucceeded(context.WithoutCancel(r.Context()), &pi)
 		}
 	case "invoice.paid":
 		// Existing invoice handling (platform billing) — plus member-subscription
@@ -219,7 +225,7 @@ func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Requ
 		}
 		if err := json.Unmarshal(rawBytes, &invoice); err == nil {
 			if subID := invoiceSubscriptionID(&invoice, rawBytes); subID != "" {
-				go h.handleMemberInvoicePaid(context.Background(), studioIDStr, subID, &invoice)
+				go h.handleMemberInvoicePaid(context.WithoutCancel(r.Context()), studioIDStr, subID, &invoice)
 			}
 		}
 	case "invoice.payment_failed":
@@ -245,7 +251,7 @@ func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Requ
 					}
 				}
 				// Member subscriptions (not studio-tier billing) also flag past_due here.
-				go h.handleMemberInvoiceFailed(context.Background(), subID, &invoice)
+				go h.handleMemberInvoiceFailed(context.WithoutCancel(r.Context()), subID, &invoice)
 			}
 		}
 	case "customer.subscription.updated", "customer.subscription.deleted":
@@ -273,7 +279,7 @@ func (h *StripeWebhookHandler) HandleInbound(w http.ResponseWriter, r *http.Requ
 			// a superseded old subscription from a plan-change is expected to
 			// cancel and must not revert a member who's now on a new plan.
 			if sub.Status == "canceled" || sub.CancelAtPeriodEnd {
-				go h.handleMemberSubscriptionCanceled(context.Background(), &sub)
+				go h.handleMemberSubscriptionCanceled(context.WithoutCancel(r.Context()), &sub)
 			}
 		}
 	default:

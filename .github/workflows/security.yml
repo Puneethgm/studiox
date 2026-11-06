@@ -48,25 +48,36 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: apps/api/go.mod
-      # -fmt sarif + exit-code 1 on anything of medium+ confidence/severity
-      # is gosec's own merge-blocking behavior (task 5.3) — no custom
-      # wrapper script needed (see task 5.4's note).
+      # -severity medium -confidence medium + exit-code 1 on anything of
+      # medium+ confidence/severity is gosec's own merge-blocking behavior
+      # (task 5.3) — no custom wrapper script needed (see task 5.4's note).
+      # Without these flags gosec blocks on every LOW finding too (e.g. an
+      # ignored os.Stderr.WriteString error return in a CLI tool), which is
+      # noise, not a real risk.
       - run: go install github.com/securego/gosec/v2/cmd/gosec@latest
-      - run: gosec -exclude-dir=node_modules ./...
+      - run: gosec -severity medium -confidence medium -exclude-dir=node_modules ./...
         working-directory: apps/api
 
   npm-audit:
-    name: npm audit (apps/web)
+    name: pnpm audit (production deps)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.10.0
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      # --audit-level=high is the merge-blocking threshold (task 5.3) —
-      # npm itself exits non-zero once any finding meets/exceeds it.
-      - run: npm audit --audit-level=high
-        working-directory: apps/web
+      # This is a pnpm workspace (root pnpm-lock.yaml, no package-lock.json
+      # anywhere) — plain `npm audit` fails immediately with ENOLOCK, it
+      # never actually scanned anything. `pnpm audit` always audits the
+      # whole workspace lockfile regardless of cwd, which is correct here —
+      # it also covers apps/wa-web and apps/tg-web, not just apps/web.
+      # --prod scopes it to what's actually shipped/deployed: dev-only
+      # tooling (eslint and its plugins) never runs against untrusted input
+      # and isn't part of any deployed artifact, so it shouldn't block merges.
+      - run: pnpm audit --audit-level=high --prod
 
   container-scan:
     name: Container image scanning (Trivy)
@@ -74,8 +85,16 @@ jobs:
     needs: []
     steps:
       - uses: actions/checkout@v4
+      # apps/api/Dockerfile and apps/web/Dockerfile are stale, unused
+      # duplicates (not touched since before the Bifrost/security-hardening
+      # work) — the real deploy (deploy/docker-compose.yml) builds from
+      # deploy/api.Dockerfile and deploy/web.Dockerfile with the repo root
+      # as context, since both COPY paths like "apps/api/go.mod" assume
+      # that root. Building apps/api/Dockerfile with context apps/api (as
+      # this job previously did) fails immediately — it was never actually
+      # exercised before this fix.
       - name: Build API image
-        run: docker build -t projectx-api:ci -f apps/api/Dockerfile apps/api
+        run: docker build -t projectx-api:ci -f deploy/api.Dockerfile .
       - name: Scan API image
         uses: aquasecurity/trivy-action@master
         with:
@@ -83,7 +102,7 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: "1"
       - name: Build web image
-        run: docker build -t projectx-web:ci -f apps/web/Dockerfile apps/web
+        run: docker build -t projectx-web:ci -f deploy/web.Dockerfile .
       - name: Scan web image
         uses: aquasecurity/trivy-action@master
         with:

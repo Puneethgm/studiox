@@ -811,7 +811,8 @@ func (h *Handler) importNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := r.ParseMultipartForm(10 << 20); err != nil { // 10MB max
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
+	if err := r.ParseMultipartForm(10 << 20); err != nil { // #nosec G120 -- r.Body is wrapped with http.MaxBytesReader just above (10MB max), which already caps total body size; this rule can't see that
 		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "failed to parse multipart form")
 		return
 	}

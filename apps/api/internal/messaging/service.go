@@ -201,7 +201,7 @@ func (s *Service) ConnectEmailSMTPChannel(ctx context.Context, studioID uuid.UUI
 		return nil, fmt.Errorf("verify smtp credentials: %w", err)
 	}
 
-	encoded, err := json.Marshal(creds)
+	encoded, err := json.Marshal(creds) // #nosec G117 -- never logged or returned; passed straight into CreateChannel as AccessToken, which r.cipher.Encrypt()s it before the DB write (see repo.go)
 	if err != nil {
 		return nil, fmt.Errorf("marshal credentials: %w", err)
 	}
@@ -301,12 +301,12 @@ func (s *Service) DisconnectChannel(ctx context.Context, studioID, id uuid.UUID)
 // disconnected in Postgres regardless of whether wa-web is reachable.
 func notifyWAWebDisconnect(ctx context.Context, studioID uuid.UUID) {
 	url := fmt.Sprintf("%s/sessions/%s/disconnect", waWebServiceURL(), studioID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil) // #nosec G704 -- url is always built from waWebServiceURL()/tgWebServiceURL() (fixed internal sidecar host); only the path varies
 	if err != nil {
 		return
 	}
 	req.Header.Set("x-internal-key", waWebInternalKey())
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) // #nosec G704 -- see NewRequestWithContext above: host is always a fixed internal sidecar URL
 	if err != nil {
 		return
 	}
@@ -723,7 +723,7 @@ func downloadWhatsAppMedia(ctx context.Context, accessToken, mediaID, mimeType, 
 		return "", "", fmt.Errorf("media download HTTP %d: %s", mediaResp.StatusCode, string(body))
 	}
 
-	if err := os.MkdirAll("uploads", 0o755); err != nil {
+	if err := os.MkdirAll("uploads", 0o750); err != nil {
 		return "", "", fmt.Errorf("create uploads dir: %w", err)
 	}
 
@@ -739,10 +739,11 @@ func downloadWhatsAppMedia(ctx context.Context, accessToken, mediaID, mimeType, 
 	if ext == "" {
 		ext = ".bin"
 	}
+	ext = sanitizeUploadExt(ext)
 
-	fileName := fmt.Sprintf("whatsapp-%s%s", messageID, ext)
+	fileName := fmt.Sprintf("whatsapp-%s%s", sanitizeUploadToken(messageID), ext)
 	outPath := filepath.Join("uploads", fileName)
-	outFile, err := os.Create(outPath)
+	outFile, err := os.Create(outPath) // #nosec G304 -- outPath built from sanitizeUploadToken(messageID)+sanitizeUploadExt(ext), both stripped of path separators/".." above
 	if err != nil {
 		return "", "", fmt.Errorf("create media file: %w", err)
 	}
@@ -762,6 +763,33 @@ func extFromMimeType(mimeType string) string {
 		return exts[0]
 	}
 	return ""
+}
+
+// sanitizeUploadExt defends the "uploads/" + generatedName + ext filename
+// construction used across the inbound-media handlers against a crafted
+// extension escaping that directory. filepath.Ext already can't return a
+// value containing "/" (it only looks within the final slash-separated
+// path element), so this is defense in depth rather than a known-exploitable
+// gap — but it makes that guarantee explicit and enforced here, rather than
+// leaving it as an unstated invariant of filepath.Ext's behavior that a
+// future change to how ext is derived could silently break.
+func sanitizeUploadExt(ext string) string {
+	if ext == "" || len(ext) > 16 || strings.ContainsAny(ext, "/\\") || strings.Contains(ext, "..") {
+		return ".bin"
+	}
+	return ext
+}
+
+// sanitizeUploadToken strips path-separator/traversal characters from an
+// externally-sourced ID (e.g. a provider's message ID) before it's
+// interpolated into a generated filename under "uploads/" — same defense-
+// in-depth rationale as sanitizeUploadExt above.
+func sanitizeUploadToken(s string) string {
+	s = strings.NewReplacer("/", "_", "\\", "_", "..", "_").Replace(s)
+	if s == "" {
+		s = "unknown"
+	}
+	return s
 }
 
 // HandleInboundMessaging processes a DM from Instagram or Facebook Messenger.
@@ -2657,7 +2685,7 @@ func (s *Service) EscalateAndNotify(ctx context.Context, studioID, convID uuid.U
 
 	if s.mailer != nil && s.mailer.Enabled() && s.studiosRepo != nil {
 		go func() {
-			tCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			tCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			defer cancel()
 			if err := s.sendEscalationEmail(tCtx, studioID, convID, reason); err != nil {
 				slog.Warn("escalation alert email failed", "component", "escalation_email",

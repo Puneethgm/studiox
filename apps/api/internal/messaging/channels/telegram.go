@@ -19,6 +19,46 @@ import (
 // it at an httptest server.
 var TelegramAPIBaseURL = "https://api.telegram.org"
 
+// sanitizeUploadExt and sanitizeUploadToken defend the "uploads/" +
+// generatedName + ext filename construction below against a crafted
+// extension/ID escaping that directory. filepath.Ext already can't return a
+// value containing "/", so this is defense in depth — it makes that
+// guarantee explicit rather than leaving it an unstated invariant.
+func sanitizeUploadExt(ext string) string {
+	if ext == "" || len(ext) > 16 || strings.ContainsAny(ext, "/\\") || strings.Contains(ext, "..") {
+		return ".bin"
+	}
+	return ext
+}
+
+func sanitizeUploadToken(s string) string {
+	s = strings.NewReplacer("/", "_", "\\", "_", "..", "_").Replace(s)
+	if s == "" {
+		s = "unknown"
+	}
+	return s
+}
+
+// safeUploadPath resolves an "/uploads/..." attachment URL to a local path
+// and rejects it if the result would escape the uploads directory (e.g. a
+// stored attachment URL containing "../"). Attachment.URL is set by
+// whatever composed the outbound message (a studio_user via the broadcast/
+// reply UI, or our own upload handlers) — it isn't anonymous-attacker input,
+// but it's still worth refusing to let a crafted value read an arbitrary
+// file off the API container's disk.
+func safeUploadPath(attURL string) (string, error) {
+	rel := strings.TrimPrefix(attURL, "/uploads/")
+	base, err := filepath.Abs("uploads")
+	if err != nil {
+		return "", fmt.Errorf("resolve uploads dir: %w", err)
+	}
+	full := filepath.Join(base, rel)
+	if full != base && !strings.HasPrefix(full, base+string(os.PathSeparator)) {
+		return "", fmt.Errorf("attachment URL escapes uploads directory: %q", attURL)
+	}
+	return full, nil
+}
+
 // TelegramSender talks to the Telegram Bot API. accessToken is the raw bot
 // token issued by @BotFather (no OAuth, no BSP).
 type TelegramSender struct {
@@ -156,8 +196,11 @@ func (s *TelegramSender) sendOneAttachment(ctx context.Context, botToken, recipi
 	}
 
 	if strings.HasPrefix(att.URL, "/uploads/") {
-		localPath := filepath.Join("uploads", strings.TrimPrefix(att.URL, "/uploads/"))
-		f, err := os.Open(localPath)
+		localPath, err := safeUploadPath(att.URL)
+		if err != nil {
+			return nil, err
+		}
+		f, err := os.Open(localPath) // #nosec G304 -- validated by safeUploadPath to stay within uploads/ above
 		if err != nil {
 			return nil, fmt.Errorf("open local attachment %q: %w", localPath, err)
 		}
@@ -366,7 +409,7 @@ func TelegramDownloadFile(ctx context.Context, httpClient *http.Client, botToken
 		return "", "", fmt.Errorf("telegram file download HTTP %d: %s", dlResp.StatusCode, errBody)
 	}
 
-	if err := os.MkdirAll("uploads", 0o755); err != nil {
+	if err := os.MkdirAll("uploads", 0o750); err != nil {
 		return "", "", fmt.Errorf("create uploads dir: %w", err)
 	}
 
@@ -377,9 +420,10 @@ func TelegramDownloadFile(ctx context.Context, httpClient *http.Client, botToken
 	if ext == "" {
 		ext = ".bin"
 	}
-	savedName = fmt.Sprintf("telegram-%s%s", messageID, ext)
+	ext = sanitizeUploadExt(ext)
+	savedName = fmt.Sprintf("telegram-%s%s", sanitizeUploadToken(messageID), ext)
 	outPath := filepath.Join("uploads", savedName)
-	outFile, err := os.Create(outPath)
+	outFile, err := os.Create(outPath) // #nosec G304 -- outPath built from sanitizeUploadToken(messageID)+sanitizeUploadExt(ext), both stripped of path separators/".." above
 	if err != nil {
 		return "", "", fmt.Errorf("create media file: %w", err)
 	}

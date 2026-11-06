@@ -537,7 +537,7 @@ func (s *Service) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status
 			leadBirthDate = existing.DateOfBirth.Format("2006-01-02")
 		}
 		go func() {
-			gCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			gCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 			defer cancel()
 			out, err := gf.CreateLead(gCtx, glofox.CreateLeadInput{
 				Email:         leadEmail,

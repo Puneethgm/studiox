@@ -2,7 +2,7 @@ package messaging
 
 import (
 	"crypto/hmac"
-	"crypto/sha1" //nolint:gosec // Twilio's signature scheme is HMAC-SHA1; not our choice
+	"crypto/sha1" // #nosec G505 -- Twilio's X-Twilio-Signature webhook verification scheme mandates HMAC-SHA1; not our choice, required by their protocol
 	"crypto/subtle"
 	"encoding/base64"
 	"log/slog"
@@ -53,7 +53,7 @@ func twilioSignatureValid(authToken, signature string, candidateURLs []string, p
 				b.WriteString(v)
 			}
 		}
-		mac := hmac.New(sha1.New, []byte(authToken))
+		mac := hmac.New(sha1.New, []byte(authToken)) // #nosec G505 -- Twilio's X-Twilio-Signature webhook verification scheme mandates HMAC-SHA1; not our choice, required by their protocol
 		mac.Write([]byte(b.String()))
 		expected := []byte(base64.StdEncoding.EncodeToString(mac.Sum(nil)))
 		if subtle.ConstantTimeCompare(provided, expected) == 1 {

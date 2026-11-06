@@ -139,7 +139,7 @@ func (w *AIWorker) syncSubscriptions(ctx context.Context) {
 		}
 		ch, unsub := w.bus.Subscribe(s.ID)
 		w.subs[s.ID] = unsub
-		go w.listenStudio(ctx, s.ID, ch)
+		go w.listenStudio(ctx, s.ID, ch) // #nosec G118 -- already passes ctx (the worker's own long-lived run context, appropriate for a listener meant to live as long as the worker does), not context.Background()
 		w.log.Info("ai worker subscribed to studio", "studio", s.ID)
 	}
 }
@@ -169,7 +169,7 @@ func (w *AIWorker) listenStudio(ctx context.Context, studioID uuid.UUID, ch <-ch
 				if evt.MessageID == nil {
 					continue
 				}
-				go w.cancelPendingReplyIfStaffSent(context.Background(), studioID, evt.ConversationID, *evt.MessageID)
+				go w.cancelPendingReplyIfStaffSent(context.WithoutCancel(ctx), studioID, evt.ConversationID, *evt.MessageID)
 			case EvtWAWebBackfillDone:
 				if evt.ChannelAccountID == nil {
 					continue
@@ -684,7 +684,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 	}
 
 	go func() { // best-effort, off the critical path
-		w.ensureRollingSummary(context.Background(), studioID, conv.ID, studio)
+		w.ensureRollingSummary(context.WithoutCancel(ctx), studioID, conv.ID, studio)
 	}()
 
 	// Send greeting on the very first inbound message of a new conversation.
@@ -822,7 +822,7 @@ func (w *AIWorker) handleMessage(ctx context.Context, studioID uuid.UUID, messag
 			// Step 1b: Persist original message embedding fully async — not needed for this response.
 			capturedIntent, capturedSentiment, capturedConf := intent, sentiment, confidence
 			go func() {
-				saveCtx := context.Background()
+				saveCtx := context.WithoutCancel(ctx)
 				// PASSAGE, not query: msg.Body is being stored here as a future
 				// search target (see SearchSemanticHistory), same as knowledge-base
 				// chunks and staff replies. On error this falls back to queryVec

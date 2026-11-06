@@ -249,6 +249,19 @@ func evalReportPath() string {
 	return "eval-report.json"
 }
 
+// sanitizeUploadExt defends the logo/social-media upload filenames (built
+// as studioID + ext under "./uploads/") against a crafted file extension
+// escaping that directory. filepath.Ext already can't return a value
+// containing "/" (it only looks within the final slash-separated path
+// element), so this is defense in depth rather than a known-exploitable
+// gap — it makes that guarantee explicit and enforced here.
+func sanitizeUploadExt(ext string) string {
+	if ext == "" || len(ext) > 16 || strings.ContainsAny(ext, "/\\") || strings.Contains(ext, "..") {
+		return ".bin"
+	}
+	return ext
+}
+
 // getEvalReport godoc
 //
 //	@Summary		Last eval-replies run (super_admin)
@@ -1037,7 +1050,8 @@ func (h *Handler) uploadLogo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 5MB max for logo image
-	if err := r.ParseMultipartForm(5 << 20); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, 5<<20)
+	if err := r.ParseMultipartForm(5 << 20); err != nil { // #nosec G120 -- r.Body is wrapped with http.MaxBytesReader just above, which already caps total body size; this rule can't see that
 		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "failed to parse multipart form")
 		return
 	}
@@ -1077,6 +1091,7 @@ func (h *Handler) uploadLogo(w http.ResponseWriter, r *http.Request) {
 			ext = ".gif"
 		}
 	}
+	ext = sanitizeUploadExt(ext)
 
 	// Read file data
 	bytes, err := io.ReadAll(file)
@@ -1099,11 +1114,11 @@ func (h *Handler) uploadLogo(w http.ResponseWriter, r *http.Request) {
 		// Fallback to disk storage if S3 not configured
 		filename := fmt.Sprintf("logo_%s%s", studioID.String(), ext)
 		filepath := filepath.Join("./uploads", filename)
-		if err := os.MkdirAll("./uploads", 0755); err != nil {
+		if err := os.MkdirAll("./uploads", 0750); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to create uploads directory")
 			return
 		}
-		if err := os.WriteFile(filepath, bytes, 0644); err != nil {
+		if err := os.WriteFile(filepath, bytes, 0600); err != nil { // #nosec G304 G703 -- filename is studioID.String() (a UUID) + sanitizeUploadExt(ext), stripped of path separators/".." above
 			httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to save file")
 			return
 		}
@@ -1153,7 +1168,8 @@ func (h *Handler) UploadSocialPostImage(w http.ResponseWriter, r *http.Request) 
 	// 100MB max — covers both images and the video/reel uploads
 	// SocialWorker.sendToInstagram supports (.mp4/.mov), which run far larger
 	// than the old 10MB image-only cap.
-	if err := r.ParseMultipartForm(100 << 20); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, 100<<20)
+	if err := r.ParseMultipartForm(100 << 20); err != nil { // #nosec G120 -- r.Body is wrapped with http.MaxBytesReader just above, which already caps total body size; this rule can't see that
 		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "failed to parse multipart form")
 		return
 	}
@@ -1200,6 +1216,7 @@ func (h *Handler) UploadSocialPostImage(w http.ResponseWriter, r *http.Request) 
 			"video/quicktime": ".mov",
 		}[contentType]
 	}
+	ext = sanitizeUploadExt(ext)
 
 	var mediaURL string
 
@@ -1222,11 +1239,11 @@ func (h *Handler) UploadSocialPostImage(w http.ResponseWriter, r *http.Request) 
 		// Fallback to disk storage if S3 not configured
 		filename := fmt.Sprintf("social_%s_%d_%s%s", studioID.String(), time.Now().Unix(), uuid.New().String()[:8], ext)
 		filepath := filepath.Join("./uploads", filename)
-		if err := os.MkdirAll("./uploads", 0755); err != nil {
+		if err := os.MkdirAll("./uploads", 0750); err != nil {
 			httpx.WriteError(w, http.StatusInternalServerError, "internal", fmt.Sprintf("failed to create uploads directory: %v", err))
 			return
 		}
-		if err := os.WriteFile(filepath, bytes, 0644); err != nil {
+		if err := os.WriteFile(filepath, bytes, 0600); err != nil { // #nosec G304 G703 -- filename is studioID.String() (a UUID) + sanitizeUploadExt(ext), stripped of path separators/".." above
 			httpx.WriteError(w, http.StatusInternalServerError, "internal", fmt.Sprintf("failed to save file: %v", err))
 			return
 		}
@@ -1672,7 +1689,8 @@ func (h *Handler) uploadGoogleCredentials(w http.ResponseWriter, r *http.Request
 	}
 
 	// 1MB max for service account JSON
-	if err := r.ParseMultipartForm(1 << 20); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := r.ParseMultipartForm(1 << 20); err != nil { // #nosec G120 -- r.Body is wrapped with http.MaxBytesReader just above, which already caps total body size; this rule can't see that
 		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "failed to parse multipart form")
 		return
 	}
@@ -1707,7 +1725,7 @@ func (h *Handler) uploadGoogleCredentials(w http.ResponseWriter, r *http.Request
 
 	// Ensure the parent directory of h.credentialsPath exists
 	dir := filepath.Dir(h.credentialsPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to create secrets directory")
 		return
 	}
@@ -3267,7 +3285,7 @@ func (h *Handler) StripeConnectRedirect(w http.ResponseWriter, r *http.Request) 
 		clientID, redirectURI, studioID,
 	)
 
-	http.Redirect(w, r, stripeOAuthURL, http.StatusTemporaryRedirect)
+	http.Redirect(w, r, stripeOAuthURL, http.StatusTemporaryRedirect) // #nosec G710 -- destination host is always the literal "connect.stripe.com"; only query params (from trusted env vars + the studioID path param, used as an opaque OAuth state value) vary, so this can't be redirected to an arbitrary attacker-chosen host
 }
 
 // StripeConnectCallback godoc
@@ -3325,7 +3343,7 @@ func (h *Handler) StripeConnectCallback(w http.ResponseWriter, r *http.Request) 
 	if frontendURL == "" {
 		frontendURL = "http://localhost:3000"
 	}
-	http.Redirect(w, r, fmt.Sprintf("%s/admin/studios/%s/settings?tab=integrations", frontendURL, studioID), http.StatusTemporaryRedirect)
+	http.Redirect(w, r, fmt.Sprintf("%s/admin/studios/%s/settings?tab=integrations", frontendURL, studioID), http.StatusTemporaryRedirect) // #nosec G710 -- frontendURL is the trusted FRONTEND_URL env var (or a fixed localhost fallback), never request-derived; only the path is built from the studioID route param
 }
 
 // listOffers godoc

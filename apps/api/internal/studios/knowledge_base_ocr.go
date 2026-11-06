@@ -41,7 +41,8 @@ func (h *Handler) OCRKnowledgeBaseImage(w http.ResponseWriter, r *http.Request) 
 	}
 
 	const maxSize = 20 << 20 // 20 MB
-	if err := r.ParseMultipartForm(maxSize); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, maxSize)
+	if err := r.ParseMultipartForm(maxSize); err != nil { // #nosec G120 -- r.Body is wrapped with http.MaxBytesReader just above, which already caps total body size; this rule can't see that
 		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "file too large or bad multipart form")
 		return
 	}

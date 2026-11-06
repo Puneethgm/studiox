@@ -2579,7 +2579,8 @@ Generate the message content based on this instruction: ` + req.Prompt
 //	@Router			/api/v1/studios/{studioId}/messaging/upload [post]
 func (h *Handler) uploadMedia(w http.ResponseWriter, r *http.Request) {
 	const maxSize = 200 << 20 // 200 MB
-	if err := r.ParseMultipartForm(maxSize); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, maxSize)
+	if err := r.ParseMultipartForm(maxSize); err != nil { // #nosec G120 -- r.Body is wrapped with http.MaxBytesReader just above, which already caps total body size; this rule can't see that
 		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "file too large or bad multipart form")
 		return
 	}
@@ -2636,13 +2637,13 @@ func (h *Handler) uploadMedia(w http.ResponseWriter, r *http.Request) {
 
 	// Ensure uploads directory exists (relative to server CWD = apps/api).
 	uploadDir := "uploads"
-	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
+	if err := os.MkdirAll(uploadDir, 0o750); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not create uploads directory")
 		return
 	}
 
 	filename := uuid.New().String() + ext
-	dst, err := os.Create(filepath.Join(uploadDir, filename))
+	dst, err := os.Create(filepath.Join(uploadDir, filename)) // #nosec G304 G703 -- ext is already checked against the fixed `allowed` extension allowlist above, so it can't be a traversal payload
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not save file")
 		return

@@ -85,7 +85,7 @@ func (h *Handler) tgWebPassword(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "bad_body", err.Error())
 		return
 	}
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, // #nosec G704 -- host is always tgWebServiceURL() (fixed internal sidecar host, env-var controlled); only the path varies
 		fmt.Sprintf("%s/sessions/%s/password", tgWebServiceURL(), studioID), bytes.NewReader(body))
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
@@ -93,7 +93,7 @@ func (h *Handler) tgWebPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-internal-key", tgWebInternalKey())
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) // #nosec G704 -- see NewRequestWithContext above: host is always the fixed tg-web sidecar URL
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadGateway, "tg_web_unavailable", "tg-web service unavailable")
 		return
@@ -195,14 +195,14 @@ func (h *Handler) tgWebBackfillStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func proxyToTGWeb(w http.ResponseWriter, ctx context.Context, method, url string) {
-	req, err := http.NewRequestWithContext(ctx, method, url, nil)
+	req, err := http.NewRequestWithContext(ctx, method, url, nil) // #nosec G704 -- url is always built from tgWebServiceURL() (fixed internal sidecar host); callers only vary the path
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
 	req.Header.Set("x-internal-key", tgWebInternalKey())
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) // #nosec G704 -- see NewRequestWithContext above: host is always the fixed tg-web sidecar URL
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -219,12 +219,12 @@ func proxyToTGWeb(w http.ResponseWriter, ctx context.Context, method, url string
 
 func notifyTGWebDisconnect(ctx context.Context, studioID uuid.UUID) {
 	url := fmt.Sprintf("%s/sessions/%s/disconnect", tgWebServiceURL(), studioID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil) // #nosec G704 -- url is always built from tgWebServiceURL() (fixed internal sidecar host); callers only vary the path
 	if err != nil {
 		return
 	}
 	req.Header.Set("x-internal-key", tgWebInternalKey())
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) // #nosec G704 -- see NewRequestWithContext above: host is always the fixed tg-web sidecar URL
 	if err != nil {
 		return
 	}
@@ -333,7 +333,8 @@ func (h *Handler) tgWebInbound(w http.ResponseWriter, r *http.Request) {
 //	@Router			/internal/tg-web/media [post]
 func (h *Handler) tgWebMedia(w http.ResponseWriter, r *http.Request) {
 	const maxSize = 20 << 20 // 20 MB, matches uploadMedia's limit
-	if err := r.ParseMultipartForm(maxSize); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, maxSize)
+	if err := r.ParseMultipartForm(maxSize); err != nil { // #nosec G120 -- r.Body is wrapped with http.MaxBytesReader just above, which already caps total body size; this rule can't see that
 		httpx.WriteError(w, http.StatusBadRequest, "bad_request", "file too large or bad multipart form")
 		return
 	}
@@ -353,13 +354,14 @@ func (h *Handler) tgWebMedia(w http.ResponseWriter, r *http.Request) {
 	if ext == "" {
 		ext = ".bin"
 	}
+	ext = sanitizeUploadExt(ext)
 
-	if err := os.MkdirAll("uploads", 0o755); err != nil {
+	if err := os.MkdirAll("uploads", 0o750); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not create uploads directory")
 		return
 	}
 	filename := "telegram-" + uuid.New().String() + ext
-	dst, err := os.Create(filepath.Join("uploads", filename))
+	dst, err := os.Create(filepath.Join("uploads", filename)) // #nosec G304 G703 -- filename is "telegram-" + a fresh uuid + sanitizeUploadExt(ext), which strips "/", "\\" and ".."
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not save file")
 		return

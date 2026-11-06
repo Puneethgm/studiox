@@ -385,6 +385,7 @@ func (h *Handler) issueSessionCookie(w http.ResponseWriter, r *http.Request, u *
 		_ = h.sessions.Revoke(r.Context(), old.ID)
 	}
 
+	// #nosec G124 -- Secure/SameSite are set via h.cookie.Secure/SameSiteStrictMode below; config.Load() refuses to start outside API_ENV=local unless COOKIE_SECURE=true (config.go), so this is not a static true/false gosec can see but is enforced at boot.
 	http.SetCookie(w, &http.Cookie{
 		Name:     h.cookie.Name,
 		Value:    token,
@@ -410,6 +411,7 @@ func (h *Handler) issueSessionCookie(w http.ResponseWriter, r *http.Request, u *
 const csrfCookieName = "px_csrf"
 
 func setCSRFCookie(w http.ResponseWriter, cookie config.CookieConfig, csrfToken string, exp time.Time) {
+	// #nosec G124 -- Secure/SameSite are set via h.cookie.Secure/SameSiteStrictMode below; config.Load() refuses to start outside API_ENV=local unless COOKIE_SECURE=true (config.go), so this is not a static true/false gosec can see but is enforced at boot.
 	http.SetCookie(w, &http.Cookie{
 		Name:     csrfCookieName,
 		Value:    csrfToken,
@@ -639,6 +641,7 @@ func (h *Handler) maybeSetRememberBrowserCookie(w http.ResponseWriter, r *http.R
 		slog.Error("create remember-browser token failed", "err", err, "user_id", u.ID)
 		return
 	}
+	// #nosec G124 -- Secure/SameSite are set via h.cookie.Secure/SameSiteStrictMode below; config.Load() refuses to start outside API_ENV=local unless COOKIE_SECURE=true (config.go), so this is not a static true/false gosec can see but is enforced at boot.
 	http.SetCookie(w, &http.Cookie{
 		Name:     rememberBrowserCookieName,
 		Value:    token,
@@ -820,6 +823,7 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// #nosec G124 -- Secure/SameSite are set via h.cookie.Secure/SameSiteStrictMode below; config.Load() refuses to start outside API_ENV=local unless COOKIE_SECURE=true (config.go), so this is not a static true/false gosec can see but is enforced at boot.
 	http.SetCookie(w, &http.Cookie{
 		Name:     h.cookie.Name,
 		Value:    "",
@@ -859,6 +863,7 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		b, err := h.studioBrand(r.Context(), *u.StudioID)
 		if err != nil || b == nil {
 			// Clear the invalid cookie
+			// #nosec G124 -- Secure/SameSite are set via h.cookie.Secure/SameSiteStrictMode below; config.Load() refuses to start outside API_ENV=local unless COOKIE_SECURE=true (config.go), so this is not a static true/false gosec can see but is enforced at boot.
 			http.SetCookie(w, &http.Cookie{
 				Name:     h.cookie.Name,
 				Value:    "",
@@ -1273,6 +1278,7 @@ func (h *Handler) RequireAuth(next http.Handler) http.Handler {
 		if claims.SessionID != uuid.Nil && h.repo != nil {
 			_ = h.repo.TouchSession(r.Context(), claims.SessionID)
 		}
+		// #nosec G124 -- Secure/SameSite are set via h.cookie.Secure/SameSiteStrictMode below; config.Load() refuses to start outside API_ENV=local unless COOKIE_SECURE=true (config.go), so this is not a static true/false gosec can see but is enforced at boot.
 		http.SetCookie(w, &http.Cookie{
 			Name:     h.cookie.Name,
 			Value:    newToken,

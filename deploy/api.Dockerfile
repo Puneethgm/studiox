@@ -23,7 +23,7 @@ ENV CGO_ENABLED=0 GOOS=linux
 RUN go build -trimpath -ldflags="-s -w" -o /out/server              ./cmd/server \
  && go build -trimpath -ldflags="-s -w" -o /out/seed                ./cmd/seed \
  && go build -trimpath -ldflags="-s -w" -o /out/backfill-embeddings ./cmd/backfill-embeddings \
- && GOBIN=/out go install github.com/pressly/goose/v3/cmd/goose@v3.22.0 \
+ && GOBIN=/out go install github.com/pressly/goose/v3/cmd/goose@v3.29.0 \
  && mkdir -p /out/uploads
 
 # ---------- runtime ----------
@@ -33,7 +33,9 @@ FROM alpine:3.19
 # also bundles time/tzdata as a Go-level fallback, but installing it here too
 # means any tool/script run inside this image resolves zones correctly, not
 # just the Go binaries.
-RUN apk add --no-cache tzdata
+# apk upgrade picks up any musl/alpine package patches released since the
+# alpine:3.19 base image tag was last rebuilt (e.g. CVE-2026-40200).
+RUN apk upgrade --no-cache && apk add --no-cache tzdata
 
 WORKDIR /app
 

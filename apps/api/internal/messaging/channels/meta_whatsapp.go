@@ -39,7 +39,7 @@ func NewMetaWhatsApp(apiVersion string) *MetaWhatsApp {
 // WhatsApp Media API, and returns the media_id.
 // https://developers.facebook.com/docs/whatsapp/cloud-api/reference/media#upload-media
 func (m *MetaWhatsApp) uploadMediaToMeta(ctx context.Context, accessToken, phoneNumberID, localPath string) (string, error) {
-	f, err := os.Open(localPath)
+	f, err := os.Open(localPath) // #nosec G304 -- this method is only ever called with a path safeUploadPath has already validated stays within uploads/ (see SendText)
 	if err != nil {
 		return "", fmt.Errorf("open local file %q: %w", localPath, err)
 	}
@@ -206,7 +206,10 @@ func (m *MetaWhatsApp) SendText(ctx context.Context, accessToken, channelExterna
 		attURL := att.URL
 		if strings.HasPrefix(attURL, "/uploads/") {
 			// Local file: upload to Meta first → use id:
-			localPath := filepath.Join("uploads", strings.TrimPrefix(attURL, "/uploads/"))
+			localPath, pathErr := safeUploadPath(attURL)
+			if pathErr != nil {
+				return nil, pathErr
+			}
 			mediaID, uploadErr := m.uploadMediaToMeta(ctx, accessToken, channelExternalID, localPath)
 			if uploadErr != nil {
 				// Non-fatal: fall back to link (only works if server is public)

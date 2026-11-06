@@ -68,7 +68,7 @@ func (h *MetaWebhookHandler) Verify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain")
-	_, _ = w.Write([]byte(challenge))
+	_, _ = w.Write([]byte(challenge)) // #nosec G705 -- Meta's webhook verification protocol requires echoing hub.challenge verbatim; Content-Type: text/plain means it's never interpreted as HTML/JS regardless of content
 }
 
 // HandleDataDeletion godoc
