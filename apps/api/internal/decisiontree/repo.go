@@ -23,25 +23,6 @@ func NewRepo(pool *pgxpool.Pool) *Repo {
 	return &Repo{pool: pool, cache: cache.New()}
 }
 
-// resolveGroqKey returns the studio's own Groq API key, falling back to the
-// platform-wide key (same studio-then-platform precedence used everywhere
-// else AI keys are resolved, e.g. messaging's ai_worker.go).
-func (r *Repo) resolveGroqKey(ctx context.Context, studioID uuid.UUID) (string, error) {
-	var key string
-	err := r.pool.QueryRow(ctx, `SELECT groq_api_key FROM studios WHERE id = $1`, studioID).Scan(&key)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return "", fmt.Errorf("resolve studio groq key: %w", err)
-	}
-	if key != "" {
-		return key, nil
-	}
-	err = r.pool.QueryRow(ctx, `SELECT value FROM platform_settings WHERE key = 'groq_api_key'`).Scan(&key)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return "", fmt.Errorf("resolve platform groq key: %w", err)
-	}
-	return key, nil
-}
-
 // InvalidateCache clears all cached trees for a studio (call after any tree/node mutation).
 func (r *Repo) InvalidateCache(studioID uuid.UUID) {
 	r.cache.ClearByPrefix("dt:" + studioID.String())

@@ -1,0 +1,7 @@
+Your previous reply failed a safety check and cannot be sent as-is. Fix ONLY the specific problem(s) below — keep everything else about the reply the same. Return the corrected reply using the same JSON format as before.
+
+Previous reply: {{.PreviousReply}}
+
+Problem(s) to fix:
+{{range .Violations}}- {{.}}
+{{end}}

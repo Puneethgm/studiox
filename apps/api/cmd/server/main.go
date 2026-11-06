@@ -26,7 +26,8 @@ import (
 
 	"github.com/projectx/api/internal/decisiontree"
 	"github.com/projectx/api/internal/identity"
-	"github.com/projectx/api/internal/integrations/claude"
+	"github.com/projectx/api/internal/integrations/bifrost"
+	"github.com/projectx/api/internal/integrations/llmgateway"
 	"github.com/projectx/api/internal/integrations/crm"
 	"github.com/projectx/api/internal/integrations/embeddings"
 	"github.com/projectx/api/internal/integrations/glofox"
@@ -40,6 +41,8 @@ import (
 	"github.com/projectx/api/internal/messaging"
 	"github.com/projectx/api/internal/messaging/channels"
 	"github.com/projectx/api/internal/platform/audit"
+	"github.com/projectx/api/internal/platform/malwarescan"
+	"github.com/projectx/api/internal/platform/secaudit"
 	"github.com/projectx/api/internal/platform/config"
 	"github.com/projectx/api/internal/platform/db"
 	"github.com/projectx/api/internal/platform/httpx"
@@ -138,6 +141,10 @@ func main() {
 	// pool; constructed early so every service that writes audit entries
 	// can share this one instance.
 	auditLogger := audit.New(pool)
+	// Separate from auditLogger above (that's add-studio-rbac-and-audit-
+	// trail's row-provenance audit_logs table) — this is platform-
+	// security-hardening's security_audit_log event log (task 3.2/3.3).
+	secAuditLogger := secaudit.New(pool)
 
 	cipher, err := secrets.New(cfg.TokenEncryptionKey)
 	if err != nil {
@@ -145,12 +152,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Shared Redis client — backs both the per-studio AI answer cache
-	// (internal/messaging.AnswerCache, degrades to "call the model
-	// directly" on any failure) and identity.SessionStore (session
+	// Shared Redis client — backs identity.SessionStore (session
 	// revocation + idle timeout, which fails CLOSED on a Redis error — see
-	// SessionStore's doc comment). The connection is lazy — go-redis dials
-	// on first command — so a Redis outage never blocks boot.
+	// SessionStore's doc comment). The AI answer cache that used to share
+	// this client (internal/messaging.AnswerCache) was removed per
+	// ai-reply-flow-llm-design task 8.1. The connection is lazy — go-redis
+	// dials on first command — so a Redis outage never blocks boot.
 	if cfg.Redis.Password == "" {
 		log.Warn("REDIS_PASSWORD is not set — connecting to Redis without auth")
 	}
@@ -161,12 +168,18 @@ func main() {
 	identityRepo := identity.NewRepo(pool)
 	leadsRepo := leads.NewRepo(pool, readPool)
 	dtRepo := decisiontree.NewRepo(pool)
-	dtSvc := decisiontree.NewService(dtRepo)
-	dtHandler := decisiontree.NewHandler(dtSvc)
 	studiosRepo := studios.NewRepo(pool, cipher)
 	reviewsRepo := reviews.NewRepo(pool)
 
-	tokens := identity.NewTokenIssuer(cfg.JWT.Secret, cfg.JWT.TTL, cfg.Session.IdleTimeout, cfg.Session.MaxAge, cipher)
+	tokens := identity.NewTokenIssuerWithSuperAdminTTLs(cfg.JWT.Secret, cfg.JWT.TTL, cfg.Session.IdleTimeout, cfg.Session.MaxAge,
+		cfg.Session.SuperAdminIdleTimeout, cfg.Session.SuperAdminMaxAge, cipher)
+	// Enables out-of-process JWT signing-key rotation (platform-security-
+	// hardening task 1.9) — a platform-wide "end all sessions" also
+	// rotates the key, so even a token whose `sessions` row was somehow
+	// missed by RevokeAllSessions stops verifying. 5s cache bounds how
+	// long a rotation can take to be picked up process-wide.
+	signingKeys := identity.NewSigningKeyStore(redisClient, cfg.JWT.Secret, 5*time.Second)
+	tokens.WithSigningKeyStore(signingKeys)
 
 	crmRepo := crm.NewRepo(pool, cipher)
 	crmExecutor := crm.NewExecutor(crmRepo)
@@ -186,12 +199,35 @@ func main() {
 	// Wire Glofox into the repo directly so automated status changes (AI
 	// worker, sheet import) sync too, not just the manual "edit lead" flow.
 	leadsRepo.SetGlofoxClient(glofoxClient)
+	// Lets lead-conversion sync prefer a studio's own connected Glofox CRM
+	// connection (crm_connections) over the platform-wide client above —
+	// see leads.glofoxClientForStudio's doc comment.
+	leadsRepo.SetCRMRepo(crmRepo)
 
 	// Local embedding service (apps/embeddings) — replaces Gemini's embedContent
 	// API for the RAG/knowledge-base and semantic-search pipelines. No API key;
 	// identified purely by base URL, matching the wa-web/tg-web sidecar pattern.
 	embeddingsClient := embeddings.New(embeddingsServiceURL())
 	log.Info("embeddings config", "enabled", embeddingsClient != nil, "url", embeddingsServiceURL())
+
+	// Bifrost LLM gateway — embedded in-process via its Go core package (see
+	// internal/integrations/bifrost), not a separate service. Every
+	// Groq/Gemini/Claude call in the app (CRM-doc parsing, the main reply
+	// waterfall, summarization, style profiling) routes through this one
+	// client. See BIFROST_MIGRATION_PLAN.md.
+	bifrostClient := bifrost.New()
+	log.Info("bifrost config", "enabled", bifrostClient != nil)
+
+	// The single entry point every AI feature calls through for a
+	// completion — owns per-feature routing (ai_feature_routes), the
+	// provider fallback loop, output cleanup, time budgets, usage/cost
+	// attribution, and failing-key detection. See
+	// internal/integrations/llmgateway and
+	// openspec/changes/llm-gateway-and-key-management.
+	llmGateway := llmgateway.New(bifrostClient, llmRepo, studiosRepo, llmgateway.NewRepo(pool), log.With("component", "llmgateway"))
+
+	dtSvc := decisiontree.NewService(dtRepo, bifrostClient, llmRepo, studiosRepo)
+	dtHandler := decisiontree.NewHandler(dtSvc)
 
 	mailer := mail.NewSender(cfg.SMTP)
 	frontendURL := os.Getenv("FRONTEND_URL")
@@ -226,7 +262,9 @@ func main() {
 	studiosSvc := studios.NewService(studiosRepo, identityRepo, glofoxClient, crmExecutor, embeddingsClient, mailer, frontendURL, s3Uploader, auditLogger)
 	reviewsHandler := reviews.NewHandler(reviewsRepo)
 
-	studiosHandler := studios.NewHandler(studiosSvc, cfg.Sheets.CredentialsPath, s3Uploader, llmRepo, cfg.Claude.APIURL)
+	studiosHandler := studios.NewHandler(studiosSvc, cfg.Sheets.CredentialsPath, s3Uploader, llmRepo, bifrostClient).
+		WithSecAudit(secAuditLogger).
+		WithRiskAlerting(mailer, os.Getenv("PLATFORM_SECURITY_ALERT_EMAIL"))
 
 	// Identity needs to enrich /me + /login responses with the user's studio
 	// brand info. Wire studios in via a callback to keep the import direction one-way.
@@ -245,7 +283,15 @@ func main() {
 			SubscriptionTier:     s.SubscriptionTier,
 		}, nil
 	})
-	identityHandler := identity.NewHandler(identityRepo, tokens, cfg.Cookie, brandLookup, sessions, mailer, frontendURL)
+	identityHandler := identity.NewHandler(identityRepo, tokens, cfg.Cookie, brandLookup, sessions, mailer, frontendURL).
+		WithSigningKeyStore(signingKeys).
+		WithCipher(cipher).
+		WithPendingAuthStore(identity.NewPendingAuthStore(redisClient)).
+		WithTwoFALockoutStore(identity.NewTwoFALockoutStore(redisClient)).
+		WithSecAudit(secAuditLogger).
+		WithPlatformAlertEmail(os.Getenv("PLATFORM_SECURITY_ALERT_EMAIL")).
+		WithBreachChecker(identity.NewHIBPBreachChecker()).
+		WithLoginLockoutStore(identity.NewLoginLockoutStore(redisClient))
 
 	leadsSvc := leads.NewService(leadsRepo, glofoxClient)
 	leadsHandler := leads.NewHandler(leadsSvc, cfg)
@@ -330,25 +376,34 @@ func main() {
 	go attendanceWorker.Run(rootCtx)
 	attendanceHandler := attendance.NewHandler(attendanceRepo)
 
-	// AI answer cache — reuses the shared redisClient constructed above.
-	answerCache := messaging.NewAnswerCache(redisClient, cfg.Redis.AnswerCacheTTL)
-
-	// Claude AI worker
-	claudeClient, err := claude.New(cfg.Claude.APIURL, cfg.Claude.APIKey)
-	if err != nil {
-		log.Error("init claude client", "err", err)
-	}
-	log.Info("claude config", "enabled", claudeClient != nil)
-	msgHandler := messaging.NewHandler(msgSvc, msgBus, studiosRepo, llmRepo, claudeClient, cfg.Claude.APIURL, answerCache)
-	aiWorker := messaging.NewAIWorker(msgBus, msgRepo, msgSvc, studiosRepo, leadsRepo, dtSvc, claudeClient, cfg.Claude.APIURL, embeddingsClient, llmRepo, log.With("component", "ai_worker"), answerCache)
+	// AI reply waterfall (Groq -> Gemini -> Claude) — every provider call
+	// goes through the embedded Bifrost client, using whichever key the
+	// superadmin has centrally configured for that provider (AI Provider
+	// Settings, /admin/settings; see studios.Repo.GetPlatformAIProviderKey
+	// and BIFROST_MIGRATION_PLAN.md Phase 4). No studio brings its own key
+	// any more.
+	//
+	// No Redis AI-answer cache here anymore (ai-reply-flow-llm-design task
+	// 8.1 — torn down per the design doc's §9 and an explicit user
+	// decision recorded in that change's proposal.md).
+	msgHandler := messaging.NewHandler(msgSvc, msgBus, studiosRepo, llmRepo, bifrostClient, llmGateway).
+		WithMalwareScanner(malwarescan.NewNoOpClamAVScanner())
+	aiWorker := messaging.NewAIWorker(msgBus, msgRepo, msgSvc, studiosRepo, leadsRepo, dtSvc, bifrostClient, embeddingsClient, llmRepo, llmGateway, log.With("component", "ai_worker")).
+		WithGlofoxClient(glofoxClient)
 	go aiWorker.Run(rootCtx)
+	// Durable debounce poll loop (ai-reply-flow-llm-design task 5.2) —
+	// fires any pending_ai_replies row whose debounce window has elapsed,
+	// including one left behind by a previous process that restarted
+	// mid-window.
+	go aiWorker.RunDebouncePoll(rootCtx)
 
 	// llm.Resolver: which LLM handles which AI-driven admin task (starting
-	// with CRM-doc parsing) — reuses the platform Claude client above; no
-	// platform-wide Groq client exists (Groq is always a studio's own BYO
-	// key elsewhere in this codebase), so Groq here only works via an
-	// ai_task_configs override key.
-	llmResolver := llm.NewResolver(llmRepo, claudeClient, cfg.Claude.APIURL, nil, studiosRepo)
+	// with CRM-doc parsing) — routed through the Bifrost gateway, direct-key
+	// per request (see internal/integrations/llm/resolve.go). Falls back to
+	// the same centrally-configured platform key as the main reply
+	// waterfall for any of the three providers when ai_task_configs has no
+	// override key of its own.
+	llmResolver := llm.NewResolver(llmRepo, bifrostClient, studiosRepo)
 	crmHandler := crm.NewHandler(crmRepo, crmExecutor, llmRepo, llmResolver)
 
 	// As soon as a studio connects any CRM provider, give Glofox connections
@@ -367,7 +422,7 @@ func main() {
 	// Style worker: periodically distills each studio's own staff-authored
 	// replies into a short "communication style" writeup, shown/editable on
 	// the Knowledge Base page and injected into the AI prompt.
-	styleWorker := messaging.NewStyleWorker(studiosRepo, msgRepo, claudeClient, cfg.Claude.APIURL, embeddingsClient, llmRepo, log.With("component", "style_worker"), answerCache)
+	styleWorker := messaging.NewStyleWorker(studiosRepo, msgRepo, bifrostClient, embeddingsClient, llmRepo, llmGateway, log.With("component", "style_worker"))
 	go styleWorker.Run(rootCtx)
 	go styleWorker.ListenForNewReplies(rootCtx, msgBus)
 
@@ -379,6 +434,12 @@ func main() {
 	// window on audit_logs (init.md §4.5) — runs once/day.
 	auditRetentionWorker := audit.NewRetentionWorker(pool, log.With("component", "audit_retention"))
 	go auditRetentionWorker.Run(rootCtx)
+
+	// Follow-up reminder digest: emails each studio once/day with the leads
+	// whose manual follow-up reminder is now due (same list the Dashboard's
+	// Reminders card and the Leads tab's reminderDue filter show in-app).
+	followupDigestWorker := leads.NewFollowupDigestWorker(leadsRepo, studiosRepo, mailer, frontendURL, log.With("component", "followup_digest"))
+	go followupDigestWorker.Run(rootCtx)
 
 	metaWebhook := messaging.NewMetaWebhookHandler(msgSvc,
 		cfg.Meta.WebhookVerifyToken, cfg.Meta.AppSecret,
@@ -489,6 +550,12 @@ func main() {
 			// are structurally unreachable through this chain, so no carve-out
 			// list is needed here (see RequirePasswordSet's doc comment).
 			r.Use(identity.RequirePasswordSet)
+			// Blocks everything below for an unenrolled super_admin/
+			// studio_admin, or a studio_staff member past their grace
+			// period (platform-security-hardening task 2.9) — same
+			// carve-out reasoning as RequirePasswordSet just above:
+			// login/me/2fa endpoints are registered before this group.
+			r.Use(identityHandler.RequireTOTPEnrollment)
 
 			// Super-admin only: studio CRUD + create-with-admin
 			r.Route("/admin", func(r chi.Router) {
@@ -497,6 +564,7 @@ func main() {
 				leadsHandler.AdminRoutes(r)
 				msgHandler.SuperAdminRoutes(r)
 				crmHandler.AdminRoutes(r)
+				identityHandler.AdminSessionRoutes(r)
 			})
 
 			// Any authenticated user: read/update OWN studio (studio_admin) or
@@ -535,18 +603,18 @@ func main() {
 				r.Put("/initial-contact-delay", studiosHandler.PutInitialContactDelay)
 				r.Get("/ai-reply-delay", studiosHandler.GetAIReplyDelay)
 				r.Put("/ai-reply-delay", studiosHandler.PutAIReplyDelay)
+				r.Get("/staff-active-window", studiosHandler.GetStaffActiveWindow)
+				r.Put("/staff-active-window", studiosHandler.PutStaffActiveWindow)
 				r.Put("/communication-style", studiosHandler.PutCommunicationStyle)
+				r.Put("/reply-tone", studiosHandler.PutReplyTone)
 				r.Put("/style-refresh-interval", studiosHandler.PutStyleRefreshInterval)
 				r.Put("/program-start-date", studiosHandler.PutProgramStartDate)
-				r.Route("/ai-models", func(r chi.Router) {
-					r.Get("/", studiosHandler.GetAIModels)
-					r.Put("/{provider}/key", studiosHandler.PutAIProviderKey)
-					r.Post("/{provider}/test-key", studiosHandler.PostAITestKey)
-					r.Post("/{provider}/models", studiosHandler.PostAIModel)
-					r.Patch("/{provider}/order", studiosHandler.PatchAIModelOrder)
-					r.Patch("/{provider}/models/{modelId}", studiosHandler.PatchAIModel)
-					r.Delete("/{provider}/models/{modelId}", studiosHandler.DeleteAIModel)
-				})
+				// Groq/Gemini/Claude keys and models are centralized now — see
+				// studiosHandler.AdminRoutes' /admin/ai-providers routes. Mistral
+				// (Knowledge Base OCR) is the one AI provider still per-studio.
+				r.Get("/mistral-key", studiosHandler.GetStudioMistralKey)
+				r.Put("/mistral-key", studiosHandler.PutStudioMistralKey)
+				r.Post("/mistral-key/test", studiosHandler.PostStudioMistralTestKey)
 				leadsHandler.AdminRoutes(r)
 				r.Post("/leads/enable-ai-for-selected", aiWorker.EnableAIForLeadsHandler)
 				r.Get("/social-posts", studiosHandler.ListSocialPosts)

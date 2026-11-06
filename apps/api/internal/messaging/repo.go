@@ -1731,7 +1731,15 @@ func (r *Repo) ClaimOutboundBatch(ctx context.Context, perStudio int, exclude []
 	return out, rows.Err()
 }
 
-func (r *Repo) MarkOutboundSent(ctx context.Context, id int64, messageID uuid.UUID) error {
+// MarkOutboundSent marks a job as sent. messageID is the real messages.id
+// row this job produced, if any — outbound_jobs.message_id is a foreign key
+// into messages(id), so this must be nil (not some other table's ID, e.g. a
+// conversation ID) whenever there's no real message row to point at, such
+// as the "already sent, deduped on external_id" case in processJob, which
+// never gets its own row. Passing a non-matching, non-nil UUID here fails
+// the FK constraint and silently leaves the job stuck in 'pending' forever
+// (see the 2026-10 BFT Malaysia duplicate-send investigation).
+func (r *Repo) MarkOutboundSent(ctx context.Context, id int64, messageID *uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE outbound_jobs
 		SET status = 'sent', sent_at = now(), message_id = $2, last_error = ''
@@ -2659,6 +2667,24 @@ func (r *Repo) SetJobScheduledForNow(ctx context.Context, studioID uuid.UUID, id
 	return nil
 }
 
+// RetryAllBlockedJobs re-queues every currently-blocked ('dead') job for a
+// studio in one statement — the bulk form of SetJobScheduledForNow, for the
+// Inbox's "Retry All" action. Scoped to studio_id like every other job
+// mutation here. Returns how many jobs were re-queued; a job that's still
+// over the studio's WhatsApp daily cap will simply go 'dead' again on its
+// next attempt, same as a single manual retry would.
+func (r *Repo) RetryAllBlockedJobs(ctx context.Context, studioID uuid.UUID) (int, error) {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE outbound_jobs
+		SET scheduled_for = now(), next_attempt_at = now(), status = 'pending', last_error = ''
+		WHERE studio_id = $1 AND status = 'dead'
+	`, studioID)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 func (r *Repo) GetStudioMetaAppSecret(ctx context.Context, studioID uuid.UUID) (string, error) {
 	var secret string
 	err := r.pool.QueryRow(ctx, `
@@ -2901,6 +2927,10 @@ type Plan struct {
 	BillingInterval      string
 	BillingIntervalCount int
 	Features             []string
+	// PaymentLink is handed directly to the AI reply prompt
+	// (ai-reply-flow-llm-design doc §4.4) so the model never has to
+	// construct or guess a payment URL.
+	PaymentLink string
 }
 
 func (r *Repo) ListActivePlans(ctx context.Context, studioID uuid.UUID) ([]Plan, error) {
@@ -2912,7 +2942,7 @@ func (r *Repo) ListActivePlans(ctx context.Context, studioID uuid.UUID) ([]Plan,
 	}
 
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, studio_id, plan_name, price_sgd, billing_cycle, billing_interval, billing_interval_count, features
+		SELECT id, studio_id, plan_name, price_sgd, billing_cycle, billing_interval, billing_interval_count, features, payment_link
 		FROM plans
 		WHERE studio_id = $1 AND is_active = true AND plan_name NOT ILIKE '%trial%'
 		ORDER BY price_sgd ASC
@@ -2925,7 +2955,7 @@ func (r *Repo) ListActivePlans(ctx context.Context, studioID uuid.UUID) ([]Plan,
 	var out []Plan
 	for rows.Next() {
 		var p Plan
-		if err := rows.Scan(&p.ID, &p.StudioID, &p.PlanName, &p.PriceSGD, &p.BillingCycle, &p.BillingInterval, &p.BillingIntervalCount, &p.Features); err != nil {
+		if err := rows.Scan(&p.ID, &p.StudioID, &p.PlanName, &p.PriceSGD, &p.BillingCycle, &p.BillingInterval, &p.BillingIntervalCount, &p.Features, &p.PaymentLink); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -2937,11 +2967,63 @@ func (r *Repo) ListActivePlans(ctx context.Context, studioID uuid.UUID) ([]Plan,
 	return out, nil
 }
 
-// LogLLMUsage inserts a fire-and-forget LLM usage record. Errors are silently
-// dropped because logging must never block the AI response path.
-func (r *Repo) LogLLMUsage(ctx context.Context, studioID uuid.UUID, provider, model string, latencyMs int, success bool, errMsg string, tokensIn, tokensOut int) {
-	_, _ = r.pool.Exec(ctx, `
-		INSERT INTO llm_usage_logs (studio_id, provider, model, latency_ms, success, error_msg, tokens_in, tokens_out)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, studioID, provider, model, latencyMs, success, errMsg, tokensIn, tokensOut)
+// Offer mirrors studios.Offer — the AI reply prompt's offers section
+// (ai-reply-flow-llm-design doc §4.4), fed as a structured fact instead
+// of the model inferring or retrieving one.
+type Offer struct {
+	ID          uuid.UUID
+	StudioID    uuid.UUID
+	Name        string
+	Description string
+	Terms       string
+	PriceSGD    int
 }
+
+// ListActiveOffers returns a studio's currently active offers, for the
+// AI reply prompt — an inactive offer must never be mentioned to a
+// customer, so this (not ListOffers) is what buildPrompt uses.
+func (r *Repo) ListActiveOffers(ctx context.Context, studioID uuid.UUID) ([]Offer, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, studio_id, name, description, terms, price_sgd
+		FROM offers
+		WHERE studio_id = $1 AND is_active = true
+		ORDER BY created_at DESC
+	`, studioID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Offer
+	for rows.Next() {
+		var o Offer
+		if err := rows.Scan(&o.ID, &o.StudioID, &o.Name, &o.Description, &o.Terms, &o.PriceSGD); err != nil {
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// RecordAlert inserts a platform_alerts row for a condition a superadmin
+// should see (e.g. every provider failed for a customer reply, a provider
+// key started failing). studioID may be the zero UUID for a platform-wide
+// condition not tied to one studio. Fire-and-forget, same as LogLLMUsage —
+// an alerting failure must never block the path that triggered the alert.
+func (r *Repo) RecordAlert(ctx context.Context, kind string, detail map[string]any, studioID uuid.UUID) {
+	detailJSON, err := json.Marshal(detail)
+	if err != nil {
+		detailJSON = []byte(`{}`)
+	}
+	var studioIDArg any
+	if studioID != uuid.Nil {
+		studioIDArg = studioID
+	}
+	// string, not []byte — see internal/integrations/llmgateway.Repo.RecordAlert's
+	// comment on this exact pgx/jsonb gotcha, found live in this same change.
+	_, _ = r.pool.Exec(ctx, `
+		INSERT INTO platform_alerts (kind, detail, studio_id)
+		VALUES ($1, $2, $3)
+	`, kind, string(detailJSON), studioIDArg)
+}
+

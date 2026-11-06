@@ -10,6 +10,13 @@ import (
 
 const bcryptCost = 12
 
+// MinPasswordLength is platform-security-hardening task 4.1's new
+// minimum — 12 characters, no complexity rule (length alone is the
+// stronger, more usable control per the design doc). Shared constant so
+// changePassword/resetPassword/studio-admin-creation enforce the exact
+// same boundary rather than three independently-maintained literals.
+const MinPasswordLength = 12
+
 func HashPassword(plain string) (string, error) {
 	h, err := bcrypt.GenerateFromPassword([]byte(plain), bcryptCost)
 	if err != nil {

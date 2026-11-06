@@ -51,6 +51,15 @@ echo "==> Creating deploy/secrets and deploy/backups dirs"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 mkdir -p "${SCRIPT_DIR}/secrets" "${SCRIPT_DIR}/backups"
 
+echo "==> Installing nightly backup cron job (idempotent)"
+CRON_CMD="0 3 * * * ${SCRIPT_DIR}/backup.sh >> /var/log/projectx-backup.log 2>&1"
+if crontab -l 2>/dev/null | grep -F 'backup.sh' >/dev/null; then
+  echo "    a backup.sh entry already exists in this user's crontab — leaving it as-is"
+else
+  (crontab -l 2>/dev/null; echo "${CRON_CMD}") | crontab -
+  echo "    installed: ${CRON_CMD}"
+fi
+
 cat <<EOF
 
 ✓ EC2 setup complete.

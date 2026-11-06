@@ -2408,6 +2408,14 @@ func (s *Service) SetColdLeadThresholds(ctx context.Context, studioID uuid.UUID,
 	return s.repo.SetColdLeadThresholds(ctx, studioID, neverRepliedDays, stalledDays)
 }
 
+func (s *Service) GetAIActiveHours(ctx context.Context, studioID uuid.UUID) (AIActiveHoursConfig, error) {
+	return s.repo.GetAIActiveHours(ctx, studioID)
+}
+
+func (s *Service) SetAIActiveHours(ctx context.Context, studioID uuid.UUID, enabled bool, start, end, timezone string) error {
+	return s.repo.SetAIActiveHours(ctx, studioID, enabled, start, end, timezone)
+}
+
 func (s *Service) CreateTriggerLink(ctx context.Context, studioID uuid.UUID, name, url string) (*TriggerLink, error) {
 	name = strings.TrimSpace(name)
 	url = strings.TrimSpace(url)
@@ -2475,6 +2483,12 @@ func (s *Service) DeleteJob(ctx context.Context, studioID uuid.UUID, id int64) e
 
 func (s *Service) TriggerJobNow(ctx context.Context, studioID uuid.UUID, id int64) error {
 	return s.repo.SetJobScheduledForNow(ctx, studioID, id)
+}
+
+// RetryAllBlockedJobs re-queues every blocked job for a studio at once. See
+// Repo.RetryAllBlockedJobs.
+func (s *Service) RetryAllBlockedJobs(ctx context.Context, studioID uuid.UUID) (int, error) {
+	return s.repo.RetryAllBlockedJobs(ctx, studioID)
 }
 
 func (s *Service) CreateJob(ctx context.Context, studioID uuid.UUID, conversationID uuid.UUID, body string, scheduledFor time.Time, attachments []Attachment) (int64, error) {
@@ -2600,6 +2614,14 @@ func alreadyPaidBody(ctx context.Context, repo *Repo, leadID uuid.UUID, firstNam
 		"Hi %s! You're all set — you already paid %s for the %s plan on %s. No need to pay again! Let us know if something looks off and we'll sort it out.",
 		firstName, formatMoneyCents(sub.AmountPaid, sub.Currency), sub.PlanName, sub.PaidAt.Format("2 Jan 2006"),
 	)
+}
+
+// trialIneligibleBody tells a lead who has ever been a trialist (see
+// leads.Lead.HasBeenTrialist) that they can't book another trial, and
+// points them at membership instead — studio policy, not a bug: one trial
+// per lead, lifetime, regardless of what their status moved on to since.
+func trialIneligibleBody(firstName string) string {
+	return fmt.Sprintf("Hi %s! So sorry, you're not able to book another trial once you've already been a trialist with us before — but we'd love to have you as a member! Want me to send over our membership rates?", firstName)
 }
 
 // escalateForManualMembership flags the lead and puts the conversation in
@@ -2798,14 +2820,14 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 	var leadName, leadStatus, leadNotes, autoContactStage, studioSlug, campaignSlug string
 	var slotsJSON []byte
 	var timezone string
-	var leadDND bool
+	var leadDND, leadTrialPurchased, leadTrialAttended bool
 	err := tx.QueryRow(ctx, `
-		SELECT l.name, l.status, l.notes, l.auto_contact_stage, s.slug, COALESCE(c.slug, ''), s.availability_slots, s.availability_timezone, l.dnd_enabled
+		SELECT l.name, l.status, l.notes, l.auto_contact_stage, s.slug, COALESCE(c.slug, ''), s.availability_slots, s.availability_timezone, l.dnd_enabled, l.trial_purchased, l.trial_attended
 		FROM leads l
 		JOIN studios s ON s.id = l.studio_id
 		LEFT JOIN campaigns c ON c.id = l.campaign_id
 		WHERE l.studio_id = $1 AND l.id = $2
-	`, studioID, *conv.LeadID).Scan(&leadName, &leadStatus, &leadNotes, &autoContactStage, &studioSlug, &campaignSlug, &slotsJSON, &timezone, &leadDND)
+	`, studioID, *conv.LeadID).Scan(&leadName, &leadStatus, &leadNotes, &autoContactStage, &studioSlug, &campaignSlug, &slotsJSON, &timezone, &leadDND, &leadTrialPurchased, &leadTrialAttended)
 
 	if err != nil {
 		slog.Warn("auto-contact: lead query failed, skipping", "err", err, "lead_id", conv.LeadID)
@@ -2948,8 +2970,16 @@ func (s *Service) processInboundLeadAutomation(ctx context.Context, tx pgx.Tx, s
 		(isShortChoice && (strings.Contains(text, "become a member") || strings.Contains(text, "become member") ||
 			strings.Contains(text, "member")))
 
+	everTrialed := leadTrialPurchased || leadTrialAttended || leads.LeadStatus(leadStatus) == leads.StatusTrialBooked || leads.LeadStatus(leadStatus) == leads.StatusMember
+
 	if autoContactStage == "awaiting_interest" {
-		if isInterested && !isNotInterested {
+		if isInterested && !isNotInterested && everTrialed {
+			// Lifetime rule (see leads.Lead.HasBeenTrialist) — don't even
+			// offer the "1. Book a Trial" menu to someone who's already
+			// been a trialist before.
+			targetStage = "completed"
+			outboundBody = trialIneligibleBody(firstName)
+		} else if isInterested && !isNotInterested {
 			targetStage = "awaiting_options"
 			targetStatus = "contacted"
 			outboundBody = fmt.Sprintf("Hi %s! Great to hear from you. Please select an option:\n1. Book a Trial\n2. Become a Member", firstName)
@@ -3518,11 +3548,19 @@ func (s *Service) SendTrialPaymentLink(ctx context.Context, studioID, convID uui
 	var body string
 
 	if leadID != nil {
-		var trialPurchased bool
-		_ = s.repo.pool.QueryRow(ctx, "SELECT trial_purchased FROM leads WHERE id = $1", *leadID).Scan(&trialPurchased)
+		var trialPurchased, trialAttended bool
+		var leadStatus string
+		_ = s.repo.pool.QueryRow(ctx, "SELECT trial_purchased, trial_attended, status FROM leads WHERE id = $1", *leadID).Scan(&trialPurchased, &trialAttended, &leadStatus)
 		trialPlanActive, errActive := s.repo.IsTrialPlanActive(ctx, studioID)
+		everTrialed := trialPurchased || trialAttended || leads.LeadStatus(leadStatus) == leads.StatusTrialBooked || leads.LeadStatus(leadStatus) == leads.StatusMember
 		if trialPurchased {
 			body = alreadyPaidBody(ctx, s.repo, *leadID, firstName, "trial")
+		} else if everTrialed {
+			// Lifetime rule, not tied to the *current* status — once a lead
+			// has ever been a trialist (status moved on since, or they
+			// attended without the trial_purchased flag being set), never
+			// offer another trial. Mirrors leads.Lead.HasBeenTrialist.
+			body = trialIneligibleBody(firstName)
 		} else if errActive == nil && !trialPlanActive {
 			// The Trial plan itself is switched off (Settings → Plans →
 			// its Active/Inactive toggle) — skip Stripe entirely and send

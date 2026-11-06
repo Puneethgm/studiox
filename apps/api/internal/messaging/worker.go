@@ -391,7 +391,11 @@ func (w *OutboundWorker) dispatch(ctx context.Context, j OutboundJob) {
 	case KindTelegram:
 		sender = w.telegram
 	case KindWhatsAppWeb:
-		sender = &waWebSender{studioID: j.StudioID}
+		// jobID doubles as an idempotency key — see waWebSender.SendText. The
+		// same job retries with the same ID, so wa-web can recognize "this
+		// exact send already went out" even when *this* attempt's HTTP
+		// response is what timed out, not the underlying WhatsApp send.
+		sender = &waWebSender{studioID: j.StudioID, jobID: j.ID}
 	case KindTelegramMTProto:
 		sender = &tgWebSender{studioID: j.StudioID}
 	case KindEmailSMTP:
@@ -457,9 +461,15 @@ func (w *OutboundWorker) dispatch(ctx context.Context, j OutboundJob) {
 		return
 	}
 	if msg == nil {
-		// Already sent (deduped on external_id) — treat as success.
+		// Already sent (deduped on external_id) — treat as success. No
+		// message row of ours exists to point at (message_id is nullable
+		// and FK'd to messages(id) — anything else here, e.g. the
+		// conversation's own ID, fails that constraint and silently
+		// re-queues this job forever).
 		_ = tx.Commit(ctx)
-		_ = w.repo.MarkOutboundSent(ctx, j.ID, j.ConversationID) // benign — message_id won't be ours
+		if err := w.repo.MarkOutboundSent(ctx, j.ID, nil); err != nil {
+			w.log.Error("mark outbound sent (deduped)", "job_id", j.ID, "err", err)
+		}
 		return
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -467,7 +477,7 @@ func (w *OutboundWorker) dispatch(ctx context.Context, j OutboundJob) {
 		return
 	}
 
-	if err := w.repo.MarkOutboundSent(ctx, j.ID, msg.ID); err != nil {
+	if err := w.repo.MarkOutboundSent(ctx, j.ID, &msg.ID); err != nil {
 		w.log.Error("mark outbound sent", "job_id", j.ID, "err", err)
 	}
 

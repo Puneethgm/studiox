@@ -8,7 +8,7 @@
 # invokes the right entrypoint per service.
 
 # ---------- build ----------
-FROM golang:1.24-alpine AS build
+FROM golang:1.27-alpine AS build
 WORKDIR /src
 
 # Cache deps separately from source.

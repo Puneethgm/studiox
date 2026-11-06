@@ -307,6 +307,13 @@ export default function PricingPage() {
 
           <div className="border-t border-slate-200 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400">
             <p>© 2026 1herosocial.ai. All rights reserved.</p>
+            <p className="flex items-center gap-1.5">
+              <img src="/web-app-manifest-192x192.png" alt="" className="h-4 w-4 rounded-sm" />
+              Powered by{' '}
+              <a href="https://infaira.ai/" target="_blank" rel="noopener noreferrer" className="hover:underline">
+                Inf<span className="text-brand-500">AI</span>ra
+              </a>
+            </p>
             <p>Built for fitness & wellness studios worldwide 🌏</p>
           </div>
         </div>

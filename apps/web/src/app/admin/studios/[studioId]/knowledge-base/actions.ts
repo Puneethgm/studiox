@@ -175,6 +175,36 @@ export async function updateCommunicationStyle(studioId: string, communicationSt
   return { ok: true };
 }
 
+export async function updateReplyTone(studioId: string, replyTone: string) {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore
+    .getAll()
+    .map((c) => `${c.name}=${c.value}`)
+    .join('; ');
+
+  const res = await fetch(`${API_BASE}/api/v1/studios/${studioId}/reply-tone`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      ...(await csrfHeader()),
+    },
+    body: JSON.stringify({ replyTone }),
+    cache: 'no-store',
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    return {
+      ok: false,
+      error: body?.error ?? `HTTP ${res.status}`,
+    };
+  }
+
+  revalidatePath(`/admin/studios/${studioId}/knowledge-base`);
+  return { ok: true };
+}
+
 export async function updateStyleRefreshInterval(studioId: string, styleRefreshIntervalMinutes: number) {
   const cookieStore = await cookies();
   const cookieHeader = cookieStore

@@ -5,44 +5,51 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/projectx/api/internal/integrations/claude"
-	"github.com/projectx/api/internal/integrations/gemini"
-	"github.com/projectx/api/internal/integrations/groq"
+	"github.com/projectx/api/internal/integrations/bifrost"
 )
 
-// PlatformSettings is the one studios.Repo/studios.Service method Resolver
-// needs (Gemini's platform-level API key, which — unlike Claude/Groq — has
-// no fixed .env var). Declared as an interface here, not imported from
-// internal/studios directly, because internal/studios depends on this
-// package's sibling internal/integrations/crm (for crm.Executor) — importing
-// the concrete *studios.Repo type here would create an import cycle
-// (llm -> studios -> crm -> llm).
+// PlatformSettings is the studios.Repo method Resolver needs to read the
+// centrally-configured, superadmin-managed Groq/Gemini/Claude keys (see
+// studios.Repo.GetPlatformAIProviderKey). Declared as an interface here, not
+// imported from internal/studios directly, because internal/studios depends
+// on this package's sibling internal/integrations/crm (for crm.Executor) —
+// importing the concrete *studios.Repo type here would create an import
+// cycle (llm -> studios -> crm -> llm).
 type PlatformSettings interface {
-	GetPlatformSetting(ctx context.Context, key string) (string, error)
+	GetPlatformAIProviderKey(ctx context.Context, provider string) (string, error)
+}
+
+// providerBifrostName maps this package's own ProviderName (which matches
+// ai_task_configs.provider / studio_ai_models.provider values, "claude")
+// to Bifrost's provider id for the same service, which is "anthropic" —
+// confirmed against a real running Bifrost instance (see
+// BIFROST_MIGRATION_PLAN.md Phase 0). Nothing in ai_task_configs or
+// studio_ai_models needs to change; this mapping is purely an
+// implementation detail of talking to Bifrost.
+var providerBifrostName = map[ProviderName]bifrost.ProviderName{
+	ProviderClaude: bifrost.ProviderAnthropic,
+	ProviderGemini: bifrost.ProviderGemini,
+	ProviderGroq:   bifrost.ProviderGroq,
+	ProviderOpenAI: bifrost.ProviderOpenAI,
 }
 
 // Resolver turns "which LLM handles purpose X" into a callable Provider. It
-// holds the platform's already-constructed Claude/Groq clients (so the
-// common case — no per-task key override — reuses the exact same client
-// instance the rest of the app uses, no re-reading env vars) plus enough to
-// build a one-off client when a task's ai_task_configs row overrides the key.
+// holds the platform's Bifrost client (shared, one instance for the whole
+// app) plus PlatformSettings to resolve the right direct key per request —
+// the same centrally-configured, superadmin-managed Groq/Gemini/Claude key
+// every other AI call site in the app now uses (see
+// BIFROST_MIGRATION_PLAN.md and studios.Repo.GetPlatformAIProviderKey).
 type Resolver struct {
 	repo *Repo
 
-	claudeClient     *claude.Client
-	claudeAPIURL     string
-	groqClient       *groq.Client
-	geminiClient     *gemini.Client
+	bifrostClient    *bifrost.Client
 	platformSettings PlatformSettings
 }
 
-func NewResolver(repo *Repo, claudeClient *claude.Client, claudeAPIURL string, groqClient *groq.Client, platformSettings PlatformSettings) *Resolver {
+func NewResolver(repo *Repo, bifrostClient *bifrost.Client, platformSettings PlatformSettings) *Resolver {
 	return &Resolver{
 		repo:             repo,
-		claudeClient:     claudeClient,
-		claudeAPIURL:     claudeAPIURL,
-		groqClient:       groqClient,
-		geminiClient:     gemini.New(),
+		bifrostClient:    bifrostClient,
 		platformSettings: platformSettings,
 	}
 }
@@ -64,41 +71,30 @@ func (r *Resolver) ResolveProvider(ctx context.Context, purpose string) (Provide
 		return nil, fmt.Errorf("decrypt api key override: %w", err)
 	}
 
-	switch cfg.Provider {
-	case ProviderClaude:
-		client := r.claudeClient
-		if overrideKey != "" {
-			client, err = claude.New(r.claudeAPIURL, overrideKey)
-			if err != nil {
-				return nil, fmt.Errorf("build claude client: %w", err)
-			}
-		}
-		if client == nil {
-			return nil, fmt.Errorf("claude not configured (no platform key and no override for %q)", purpose)
-		}
-		return &claudeAdapter{client: client, model: cfg.Model}, nil
-
-	case ProviderGemini:
-		key := overrideKey
-		if key == "" {
-			key, _ = r.platformSettings.GetPlatformSetting(ctx, "gemini_api_key")
-		}
-		if key == "" {
-			return nil, fmt.Errorf("gemini not configured (no platform key and no override for %q)", purpose)
-		}
-		return &geminiAdapter{client: r.geminiClient, apiKey: key}, nil
-
-	case ProviderGroq:
-		client := r.groqClient
-		if overrideKey != "" {
-			client = groq.New(overrideKey)
-		}
-		if client == nil {
-			return nil, fmt.Errorf("groq not configured (no platform key and no override for %q)", purpose)
-		}
-		return &groqAdapter{client: client, model: cfg.Model}, nil
-
-	default:
+	bifrostProvider, ok := providerBifrostName[cfg.Provider]
+	if !ok {
 		return nil, fmt.Errorf("unsupported provider %q for %q", cfg.Provider, purpose)
 	}
+
+	directKey := overrideKey
+	switch cfg.Provider {
+	case ProviderClaude, ProviderGemini, ProviderGroq, ProviderOpenAI:
+		if directKey == "" {
+			directKey, _ = r.platformSettings.GetPlatformAIProviderKey(ctx, string(cfg.Provider))
+		}
+		if directKey == "" {
+			return nil, fmt.Errorf("%s not configured (no platform key and no override for %q)", cfg.Provider, purpose)
+		}
+	}
+
+	if r.bifrostClient == nil {
+		return nil, fmt.Errorf("bifrost gateway not configured")
+	}
+
+	return &bifrostAdapter{
+		client:    r.bifrostClient,
+		provider:  bifrostProvider,
+		model:     cfg.Model,
+		directKey: directKey,
+	}, nil
 }

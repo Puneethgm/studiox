@@ -55,23 +55,26 @@ type AIFeedbackCorrection struct {
 }
 
 type Studio struct {
-	ID                   uuid.UUID           `json:"id"`
-	Slug                 string              `json:"slug"`
-	Name                 string              `json:"name"`
-	BrandColor           string              `json:"brandColor"`
-	LogoURL              string              `json:"logoUrl"`
-	ContactEmail         string              `json:"contactEmail"`
-	ContactPhone         string              `json:"contactPhone"`
-	Active               bool                `json:"active"`
-	ManagedBy1Hero       bool                `json:"managedBy1Hero"`
-	CreatedAt            time.Time           `json:"createdAt"`
-	UpdatedAt            time.Time           `json:"updatedAt"`
-	AvailabilitySlots    []AvailabilitySlot  `json:"availabilitySlots"`
-	AvailabilityTimezone string              `json:"availabilityTimezone"`
-	GeminiAPIKey         string              `json:"geminiApiKey"`
-	GroqAPIKey           string              `json:"groqApiKey"`
-	ClaudeAPIKey         string              `json:"claudeApiKey"`
-	MistralAPIKey        string              `json:"mistralApiKey"`
+	ID                       uuid.UUID          `json:"id"`
+	Slug                     string             `json:"slug"`
+	Name                     string             `json:"name"`
+	BrandColor               string             `json:"brandColor"`
+	LogoURL                  string             `json:"logoUrl"`
+	ContactEmail             string             `json:"contactEmail"`
+	ContactPhone             string             `json:"contactPhone"`
+	Active                   bool               `json:"active"`
+	ManagedBy1Hero           bool               `json:"managedBy1Hero"`
+	CreatedAt                time.Time          `json:"createdAt"`
+	UpdatedAt                time.Time          `json:"updatedAt"`
+	AvailabilitySlots        []AvailabilitySlot `json:"availabilitySlots"`
+	AvailabilityTimezone     string             `json:"availabilityTimezone"`
+	MistralAPIKey            string             `json:"mistralApiKey"`
+	MistralAPIKeyFingerprint string             `json:"-"`
+	// AIAccessEnabled is a superadmin-only master switch for whether this
+	// studio gets AI replies at all — distinct from a conversation's own
+	// ai_enabled (per-conversation, staff-togglable; see internal/messaging).
+	// Defaults true; a superadmin opts a studio OUT, not back in.
+	AIAccessEnabled      bool                `json:"aiAccessEnabled"`
 	MetaAppID            string              `json:"metaAppId"`
 	MetaAppSecret        string              `json:"metaAppSecret"`
 	GoogleClientID       string              `json:"googleClientId"`
@@ -90,7 +93,7 @@ type Studio struct {
 	// TrialAmountSGD, when 0, falls back to the active "Trial" plan's own
 	// price (see ResolveTrialAmountSGD) — there's no separate trial-price
 	// override needed for most studios.
-	TrialAmountSGD                int    `json:"trialAmountSgd"`
+	TrialAmountSGD int `json:"trialAmountSgd"`
 	// Currency this studio charges in (ISO 4217, e.g. "SGD", "MYR") —
 	// applies to both TrialAmountSGD and membership plans' PriceSGD, which
 	// despite their field names hold an amount in whatever currency this
@@ -115,6 +118,13 @@ type Studio struct {
 	// by the studio admin, same as the rest of the Knowledge Base page.
 	CommunicationStyleProfile string     `json:"communicationStyleProfile"`
 	StyleProfileUpdatedAt     *time.Time `json:"styleProfileUpdatedAt,omitempty"`
+	// ReplyTone is a coarse, studio-admin-settable tone for AI replies —
+	// "professional" (default, matches the previously hardcoded base
+	// prompt wording exactly), "casual", or "friendly". Maps to a preset
+	// instruction snippet in system_rules.tmpl (see
+	// internal/messaging/prompts). Distinct from CommunicationStyleProfile
+	// above, which is fine-grained free text.
+	ReplyTone string `json:"replyTone"`
 	// StyleRefreshIntervalMinutes is how often (at minimum) the style worker
 	// re-learns this studio's profile, editable on the Knowledge Base page —
 	// see studios.Repo.ListStudiosNeedingStyleRefresh for how it combines

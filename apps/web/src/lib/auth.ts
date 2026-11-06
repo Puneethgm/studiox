@@ -56,6 +56,17 @@ export async function serverFetch<T>(path: string, init: RequestInit = {}): Prom
     if (body?.code === 'unauthorized') redirect(await loginRedirectPath());
     throw new Error(`API ${path}: ${res.status}`);
   }
+  if (res.status === 403) {
+    const body = await res.json().catch(() => null) as { code?: string } | null;
+    // RequireTOTPEnrollment (platform-security-hardening task 2.9) blocks
+    // every admin data call until the account enrolls — send them to the
+    // enrollment screen instead of a generic error boundary, same pattern
+    // as the 401/unauthorized case above.
+    if (body?.code === 'totp_enrollment_required') {
+      redirect('/admin/2fa-setup');
+    }
+    throw new Error(`API ${path}: ${res.status}`);
+  }
   if (!res.ok) {
     throw new Error(`API ${path}: ${res.status}`);
   }

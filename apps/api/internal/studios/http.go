@@ -1,6 +1,7 @@
 package studios
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,11 +17,15 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/projectx/api/internal/evals"
 	"github.com/projectx/api/internal/identity"
+	"github.com/projectx/api/internal/integrations/bifrost"
 	"github.com/projectx/api/internal/integrations/llm"
 	"github.com/projectx/api/internal/platform/billing"
 	"github.com/projectx/api/internal/platform/httpx"
+	"github.com/projectx/api/internal/platform/mail"
 	"github.com/projectx/api/internal/platform/s3"
+	"github.com/projectx/api/internal/platform/secaudit"
 
 	"github.com/stripe/stripe-go/v78"
 	"github.com/stripe/stripe-go/v78/client"
@@ -32,11 +37,61 @@ type Handler struct {
 	credentialsPath string
 	s3Uploader      *s3.Uploader
 	llmRepo         *llm.Repo
-	claudeAPIURL    string
+	bifrostClient   *bifrost.Client
+	// secAudit is platform-security-hardening task 3.3's event log for
+	// this package's sensitive actions (secret/integration changes,
+	// payment-link changes, exports). nil is safe — see secaudit.Logger's
+	// own nil-safety doc comment.
+	secAudit *secaudit.Logger
+	// mailer/platformAlertEmail back task 3.7's risk alerts for this
+	// package's secret-change/export actions — mirrors identity.Handler's
+	// fields of the same purpose/name.
+	mailer             *mail.Sender
+	platformAlertEmail string
 }
 
-func NewHandler(svc *Service, credentialsPath string, s3Uploader *s3.Uploader, llmRepo *llm.Repo, claudeAPIURL string) *Handler {
-	return &Handler{svc: svc, credentialsPath: credentialsPath, s3Uploader: s3Uploader, llmRepo: llmRepo, claudeAPIURL: claudeAPIURL}
+// WithRiskAlerting wires task 3.7's alert sender + recipient into h.
+func (h *Handler) WithRiskAlerting(mailer *mail.Sender, platformAlertEmail string) *Handler {
+	h.mailer = mailer
+	h.platformAlertEmail = platformAlertEmail
+	return h
+}
+
+func (h *Handler) sendRiskAlert(title, detail string) {
+	if h.platformAlertEmail == "" || h.mailer == nil || !h.mailer.Enabled() {
+		return
+	}
+	if err := h.mailer.SendSecurityAlert(h.platformAlertEmail, title, detail); err != nil {
+		slog.Error("send risk alert failed", "err", err, "title", title)
+	}
+}
+
+func NewHandler(svc *Service, credentialsPath string, s3Uploader *s3.Uploader, llmRepo *llm.Repo, bifrostClient *bifrost.Client) *Handler {
+	return &Handler{svc: svc, credentialsPath: credentialsPath, s3Uploader: s3Uploader, llmRepo: llmRepo, bifrostClient: bifrostClient}
+}
+
+// WithSecAudit wires the security-audit-log writer into h (task 3.3).
+func (h *Handler) WithSecAudit(l *secaudit.Logger) *Handler {
+	h.secAudit = l
+	return h
+}
+
+// logSecurityEvent mirrors identity.Handler's helper of the same name —
+// duplicated rather than shared to avoid a new cross-package dependency
+// just for this, matching how this codebase already keeps
+// studios/identity loosely coupled elsewhere.
+func (h *Handler) logSecurityEvent(ctx context.Context, r *http.Request, actorUserID *uuid.UUID, actorRole string, studioID *uuid.UUID, action, outcome string, metadata map[string]any) {
+	if h.secAudit == nil {
+		return
+	}
+	var ip, ua string
+	if r != nil {
+		ip, ua = r.RemoteAddr, r.UserAgent()
+	}
+	_ = h.secAudit.Log(ctx, secaudit.Entry{
+		ActorUserID: actorUserID, ActorRole: actorRole, StudioID: studioID,
+		Action: action, Metadata: metadata, IP: ip, UserAgent: ua, Outcome: outcome,
+	})
 }
 
 // studioResponse is the safe API shape for Studio — never returns raw secret values.
@@ -79,9 +134,13 @@ type studioResponse struct {
 	ProgramStartDate              *time.Time          `json:"programStartDate,omitempty"`
 	CampaignCount                 int                 `json:"campaignCount,omitempty"`
 	LeadCount                     int                 `json:"leadCount,omitempty"`
+	// AIAccessEnabled is read-only here — only a superadmin can change it,
+	// via PATCH /admin/studios/{id}/ai-access, never through this
+	// response's own update path.
+	AIAccessEnabled bool `json:"aiAccessEnabled"`
 	// Presence indicators — actual secret values are never returned.
-	HasGeminiApiKey         bool `json:"hasGeminiApiKey"`
-	HasGroqApiKey           bool `json:"hasGroqApiKey"`
+	// Groq/Gemini/Claude keys are centralized now (/admin/ai-providers),
+	// not per-studio, so there's no per-studio flag for them any more.
 	HasMetaAppSecret        bool `json:"hasMetaAppSecret"`
 	HasGoogleClientSecret   bool `json:"hasGoogleClientSecret"`
 	HasGoogleDeveloperToken bool `json:"hasGoogleDeveloperToken"`
@@ -129,8 +188,7 @@ func toStudioResponse(s *Studio) studioResponse {
 		ProgramStartDate:              s.ProgramStartDate,
 		CampaignCount:                 s.CampaignCount,
 		LeadCount:                     s.LeadCount,
-		HasGeminiApiKey:               s.GeminiAPIKey != "",
-		HasGroqApiKey:                 s.GroqAPIKey != "",
+		AIAccessEnabled:               s.AIAccessEnabled,
 		HasMetaAppSecret:              s.MetaAppSecret != "",
 		HasGoogleClientSecret:         s.GoogleClientSecret != "",
 		HasGoogleDeveloperToken:       s.GoogleDeveloperToken != "",
@@ -146,19 +204,83 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Post("/studios", h.create)
 	r.Get("/studios/{id}", h.get)
 	r.Patch("/studios/{id}", h.update)
+	r.Patch("/studios/{id}/ai-access", h.PatchAIAccessEnabled)
 
 	r.Get("/google-credentials", h.getGoogleCredentials)
 	r.Post("/google-credentials", h.uploadGoogleCredentials)
 
 	r.Post("/encrypt-legacy-ai-keys", h.encryptLegacyAIKeys)
+
+	// Centralized Groq/Gemini/Claude key + model management — superadmin
+	// only (see ai_models_http.go). Mistral (OCR) stays per-studio, under
+	// /me/studios/{id}/mistral-key.
+	r.Route("/ai-providers", func(r chi.Router) {
+		r.Get("/", h.GetPlatformAIModels)
+		r.Put("/{provider}/key", h.PutPlatformAIProviderKey)
+		r.Post("/{provider}/key/rotate", h.PostPlatformAIProviderKeyRotate)
+		r.Patch("/{provider}/key/status", h.PatchPlatformAIProviderKeyStatus)
+		r.Post("/{provider}/test-key", h.PostPlatformAITestKey)
+		r.Post("/{provider}/models", h.PostPlatformAIModel)
+		r.Patch("/{provider}/order", h.PatchPlatformAIModelOrder)
+		r.Patch("/models/{modelId}", h.PatchPlatformAIModel)
+		r.Delete("/models/{modelId}", h.DeletePlatformAIModel)
+		r.Get("/alert-thresholds", h.GetAIAlertThresholds)
+		r.Put("/alert-thresholds", h.PutAIAlertThresholds)
+		r.Get("/alerts", h.GetAIAlerts)
+	})
+
+	r.Get("/eval-report", h.getEvalReport)
+}
+
+// evalReportPath is where `go run ./cmd/eval-replies` writes its report
+// by default (its own `-out` flag's default, "eval-report.json",
+// relative to apps/api — the same working directory `make api`/air runs
+// this server from) — overridable via EVAL_REPORT_PATH if a run used a
+// different `-out` path. This page is deliberately read-only: it shows
+// whatever the CLI already wrote rather than spawning the CLI itself
+// from an HTTP handler (see design note in
+// openspec/changes/ai-reply-flow-llm-design's admin-UI follow-up —
+// running an eval takes real LLM calls and real time, not something to
+// fire-and-forget from a request handler).
+func evalReportPath() string {
+	if p := os.Getenv("EVAL_REPORT_PATH"); p != "" {
+		return p
+	}
+	return "eval-report.json"
+}
+
+// getEvalReport godoc
+//
+//	@Summary		Last eval-replies run (super_admin)
+//	@Description	Reads back whatever report `go run ./cmd/eval-replies` most recently wrote on this host — this endpoint never runs an eval itself, only reads the last result.
+//	@Tags			AI
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Success		200	{object}	evals.Report
+//	@Failure		404	{object}	httpx.ErrorResponse	"no eval report found on this host yet"
+//	@Router			/api/v1/admin/eval-report [get]
+func (h *Handler) getEvalReport(w http.ResponseWriter, r *http.Request) {
+	report, err := evals.ReadJSON(evalReportPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found",
+				"no eval report found yet — run `go run ./cmd/eval-replies` on the API host first")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to read eval report")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, report)
 }
 
 // encryptLegacyAIKeys is a one-time, idempotent maintenance action: any
-// per-studio Gemini/Groq/Claude/Mistral API key saved before encryption was
-// added to UpdateAIProviderKey/Update/Create is still sitting as plaintext
-// in the DB and won't self-heal until that studio happens to re-save a key.
-// This re-encrypts every such row in place. Safe to call more than once —
-// already-encrypted values are left untouched.
+// per-studio Mistral API key (the one remaining per-studio AI provider —
+// Gemini/Groq/Claude are centralized now, see GetPlatformAIProviderKey)
+// saved before encryption was added to UpdateAIProviderKey/Update/Create is
+// still sitting as plaintext in the DB and won't self-heal until that
+// studio happens to re-save a key. This re-encrypts every such row in
+// place. Safe to call more than once — already-encrypted values are left
+// untouched.
 func (h *Handler) encryptLegacyAIKeys(w http.ResponseWriter, r *http.Request) {
 	fixed, err := h.svc.repo.EncryptLegacyAIProviderKeys(r.Context())
 	if err != nil {
@@ -172,6 +294,12 @@ func (h *Handler) SelfRoutes(r chi.Router) {
 	r.Get("/studios/{id}", h.getScoped)
 	r.Patch("/studios/{id}", h.updateScoped)
 	r.Post("/studios/{id}/logo", h.uploadLogo)
+
+	// Offers routes (ai-reply-flow-llm-design task 2.3)
+	r.Get("/studios/{id}/offers", h.listOffers)
+	r.Post("/studios/{id}/offers", h.createOffer)
+	r.Put("/studios/{id}/offers/{offerId}", h.updateOffer)
+	r.Delete("/studios/{id}/offers/{offerId}", h.deleteOffer)
 
 	// Plans routes
 	r.Get("/studios/{id}/plans", h.listPlans)
@@ -394,6 +522,46 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, toStudioResponse(s))
 }
 
+type patchAIAccessEnabledReq struct {
+	Enabled bool `json:"enabled"`
+}
+
+// PatchAIAccessEnabled godoc
+//
+//	@Summary		Enable or disable AI replies for a studio (superadmin only)
+//	@Description	Master switch, separate from a conversation's own ai_enabled — a studio with this off never gets AI-generated replies, test-chat responses, or follow-ups, regardless of what keys/models are centrally configured. Defaults true for every studio.
+//	@Tags			Studios (Admin)
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id		path	string						true	"Studio ID"
+//	@Param			body	body	patchAIAccessEnabledReq	true	"Enabled state"
+//	@Success		200		{object}	map[string]any
+//	@Failure		400		{object}	httpx.ErrorResponse
+//	@Failure		404		{object}	httpx.ErrorResponse
+//	@Router			/admin/studios/{id}/ai-access [patch]
+func (h *Handler) PatchAIAccessEnabled(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	var req patchAIAccessEnabledReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	c := identity.MustClaims(r.Context())
+	if err := h.svc.repo.SetAIAccessEnabled(r.Context(), id, req.Enabled, &c.UserID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "studio not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 type updateReq struct {
 	Name                          *string              `json:"name"`
 	BrandColor                    *string              `json:"brandColor"`
@@ -404,8 +572,6 @@ type updateReq struct {
 	ManagedBy1Hero                *bool                `json:"managedBy1Hero"`
 	AvailabilitySlots             *[]AvailabilitySlot  `json:"availabilitySlots"`
 	AvailabilityTimezone          *string              `json:"availabilityTimezone"`
-	GeminiAPIKey                  *string              `json:"geminiApiKey"`
-	GroqAPIKey                    *string              `json:"groqApiKey"`
 	MetaAppID                     *string              `json:"metaAppId"`
 	MetaAppSecret                 *string              `json:"metaAppSecret"`
 	GoogleClientID                *string              `json:"googleClientId"`
@@ -473,8 +639,6 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		ManagedBy1Hero:                existing.ManagedBy1Hero,
 		AvailabilitySlots:             existing.AvailabilitySlots,
 		AvailabilityTimezone:          existing.AvailabilityTimezone,
-		GeminiAPIKey:                  existing.GeminiAPIKey,
-		GroqAPIKey:                    existing.GroqAPIKey,
 		MetaAppID:                     existing.MetaAppID,
 		MetaAppSecret:                 existing.MetaAppSecret,
 		GoogleClientID:                existing.GoogleClientID,
@@ -523,12 +687,6 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		input.AvailabilityTimezone = *req.AvailabilityTimezone
 	}
 	// Only overwrite secrets when a non-empty value is provided; empty means "keep existing".
-	if req.GeminiAPIKey != nil && *req.GeminiAPIKey != "" {
-		input.GeminiAPIKey = *req.GeminiAPIKey
-	}
-	if req.GroqAPIKey != nil && *req.GroqAPIKey != "" {
-		input.GroqAPIKey = *req.GroqAPIKey
-	}
 	if req.MetaAppID != nil {
 		input.MetaAppID = *req.MetaAppID
 	}
@@ -716,8 +874,6 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 		ManagedBy1Hero:                existing.ManagedBy1Hero,
 		AvailabilitySlots:             existing.AvailabilitySlots,
 		AvailabilityTimezone:          existing.AvailabilityTimezone,
-		GeminiAPIKey:                  existing.GeminiAPIKey,
-		GroqAPIKey:                    existing.GroqAPIKey,
 		MetaAppID:                     existing.MetaAppID,
 		MetaAppSecret:                 existing.MetaAppSecret,
 		GoogleClientID:                existing.GoogleClientID,
@@ -766,12 +922,6 @@ func (h *Handler) updateScoped(w http.ResponseWriter, r *http.Request) {
 		input.AvailabilityTimezone = *req.AvailabilityTimezone
 	}
 	// Only overwrite secrets when a non-empty value is provided; empty means "keep existing".
-	if req.GeminiAPIKey != nil && *req.GeminiAPIKey != "" {
-		input.GeminiAPIKey = *req.GeminiAPIKey
-	}
-	if req.GroqAPIKey != nil && *req.GroqAPIKey != "" {
-		input.GroqAPIKey = *req.GroqAPIKey
-	}
 	if req.MetaAppID != nil {
 		input.MetaAppID = *req.MetaAppID
 	}
@@ -2131,6 +2281,79 @@ func (h *Handler) PutAIReplyDelay(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"aiReplyDelaySeconds": seconds})
 }
 
+// GetStaffActiveWindow / PutStaffActiveWindow control how long (in minutes)
+// the AI worker stays silent in a conversation after a staff member sends a
+// message there — the "staff active" reply gate (messaging.checkReplyGates).
+// Previously a hardcoded 10-minute constant shared by every studio.
+//
+// GetStaffActiveWindow godoc
+//
+//	@Summary		Get staff-active window
+//	@Description	Returns how many minutes after a staff reply the AI worker stays silent in that conversation for this studio.
+//	@Tags			Messaging Settings
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		400			{object}	httpx.ErrorResponse	"invalid id"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/staff-active-window [get]
+func (h *Handler) GetStaffActiveWindow(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "studioId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	minutes, err := h.svc.repo.GetStaffActiveWindowMinutes(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"staffActiveWindowMinutes": minutes})
+}
+
+type putStaffActiveWindowReq struct {
+	StaffActiveWindowMinutes int `json:"staffActiveWindowMinutes"`
+}
+
+// PutStaffActiveWindow godoc
+//
+//	@Summary		Set staff-active window
+//	@Description	Sets how many minutes after a staff reply the AI worker stays silent in that conversation for this studio. Value is clamped between 0 (gate disabled) and 60 minutes.
+//	@Tags			Messaging Settings
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			studioId	path		string					true	"Studio ID"
+//	@Param			body		body		putStaffActiveWindowReq	true	"Window in minutes"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		400			{object}	httpx.ErrorResponse	"invalid id"
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/staff-active-window [put]
+func (h *Handler) PutStaffActiveWindow(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "studioId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	var req putStaffActiveWindowReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	minutes := req.StaffActiveWindowMinutes
+	if minutes < 0 {
+		minutes = 0
+	}
+	if minutes > 60 {
+		minutes = 60
+	}
+	if err := h.svc.repo.SetStaffActiveWindowMinutes(r.Context(), id, minutes); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"staffActiveWindowMinutes": minutes})
+}
+
 type putCommunicationStyleReq struct {
 	CommunicationStyleProfile string `json:"communicationStyleProfile"`
 }
@@ -2159,6 +2382,40 @@ func (h *Handler) PutCommunicationStyle(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"communicationStyleProfile": req.CommunicationStyleProfile})
+}
+
+type putReplyToneReq struct {
+	ReplyTone string `json:"replyTone"`
+}
+
+// PutReplyTone lets a studio admin pick a coarse AI-reply tone
+// ("professional" | "casual" | "friendly"), mapped to a preset
+// instruction snippet in system_rules.tmpl (see internal/messaging/
+// prompts and ai_worker.go's buildPrompt). Distinct from
+// PutCommunicationStyle's free-text field above.
+func (h *Handler) PutReplyTone(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "studioId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	var req putReplyToneReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if !ValidReplyTones[req.ReplyTone] {
+		httpx.WriteValidationError(w, map[string]string{"replyTone": "must be one of: professional, casual, friendly"})
+		return
+	}
+	if err := h.svc.repo.SetReplyTone(r.Context(), id, req.ReplyTone); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "studio not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"replyTone": req.ReplyTone})
 }
 
 type putStyleRefreshIntervalReq struct {
@@ -3071,6 +3328,175 @@ func (h *Handler) StripeConnectCallback(w http.ResponseWriter, r *http.Request) 
 	http.Redirect(w, r, fmt.Sprintf("%s/admin/studios/%s/settings?tab=integrations", frontendURL, studioID), http.StatusTemporaryRedirect)
 }
 
+// listOffers godoc
+//
+//	@Summary		List a studio's offers
+//	@Description	Returns all offers (active and inactive) configured for the studio — the structured facts handed to the AI reply prompt (ai-reply-flow-llm-design).
+//	@Tags			Billing
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id	path		string	true	"Studio ID"
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		400	{object}	httpx.ErrorResponse	"invalid studio id"
+//	@Failure		500	{object}	httpx.ErrorResponse
+//	@Router			/api/v1/me/studios/{id}/offers [get]
+func (h *Handler) listOffers(w http.ResponseWriter, r *http.Request) {
+	studioID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid studio id")
+		return
+	}
+	offers, err := h.svc.ListOffers(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to list offers")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"offers": offers})
+}
+
+type createOfferReq struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Terms       string `json:"terms"`
+	PriceSGD    int    `json:"priceSgd"`
+	IsActive    bool   `json:"isActive"`
+}
+
+// createOffer godoc
+//
+//	@Summary		Create an offer
+//	@Description	Creates a new offer for the studio.
+//	@Tags			Billing
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id		path		string			true	"Studio ID"
+//	@Param			body	body		createOfferReq	true	"Offer details"
+//	@Success		201		{object}	map[string]interface{}
+//	@Failure		400		{object}	httpx.ErrorResponse	"invalid studio id or missing name"
+//	@Failure		500		{object}	httpx.ErrorResponse
+//	@Router			/api/v1/me/studios/{id}/offers [post]
+func (h *Handler) createOffer(w http.ResponseWriter, r *http.Request) {
+	studioID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid studio id")
+		return
+	}
+	var req createOfferReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if req.Name == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "validation", "name is required")
+		return
+	}
+	offer, err := h.svc.CreateOffer(r.Context(), studioID, CreateOfferInput{
+		Name:        req.Name,
+		Description: req.Description,
+		Terms:       req.Terms,
+		PriceSGD:    req.PriceSGD,
+		IsActive:    req.IsActive,
+	})
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to create offer")
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, map[string]any{"offer": offer})
+}
+
+type updateOfferReq struct {
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
+	Terms       *string `json:"terms"`
+	PriceSGD    *int    `json:"priceSgd"`
+	IsActive    *bool   `json:"isActive"`
+}
+
+// updateOffer godoc
+//
+//	@Summary		Update an offer
+//	@Description	Partially updates an existing offer for the studio.
+//	@Tags			Billing
+//	@Accept			json
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id		path		string			true	"Studio ID"
+//	@Param			offerId	path		string			true	"Offer ID"
+//	@Param			body	body		updateOfferReq	true	"Fields to update"
+//	@Success		200		{object}	map[string]interface{}
+//	@Failure		400		{object}	httpx.ErrorResponse	"invalid studio or offer id"
+//	@Failure		404		{object}	httpx.ErrorResponse	"offer not found"
+//	@Failure		500		{object}	httpx.ErrorResponse
+//	@Router			/api/v1/me/studios/{id}/offers/{offerId} [put]
+func (h *Handler) updateOffer(w http.ResponseWriter, r *http.Request) {
+	studioID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid studio id")
+		return
+	}
+	offerID, err := uuid.Parse(chi.URLParam(r, "offerId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_offer_id", "invalid offer id")
+		return
+	}
+	var req updateOfferReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	err = h.svc.UpdateOffer(r.Context(), studioID, offerID, UpdateOfferInput{
+		Name:        req.Name,
+		Description: req.Description,
+		Terms:       req.Terms,
+		PriceSGD:    req.PriceSGD,
+		IsActive:    req.IsActive,
+	})
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "offer not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to update offer")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]string{"status": "success"})
+}
+
+// deleteOffer godoc
+//
+//	@Summary		Delete an offer
+//	@Description	Permanently deletes an offer from the studio.
+//	@Tags			Billing
+//	@Produce		json
+//	@Security		CookieAuth
+//	@Param			id		path		string	true	"Studio ID"
+//	@Param			offerId	path		string	true	"Offer ID"
+//	@Success		200		{object}	map[string]interface{}
+//	@Failure		400		{object}	httpx.ErrorResponse	"invalid studio or offer id"
+//	@Failure		404		{object}	httpx.ErrorResponse	"offer not found"
+//	@Failure		500		{object}	httpx.ErrorResponse
+//	@Router			/api/v1/me/studios/{id}/offers/{offerId} [delete]
+func (h *Handler) deleteOffer(w http.ResponseWriter, r *http.Request) {
+	studioID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_id", "invalid studio id")
+		return
+	}
+	offerID, err := uuid.Parse(chi.URLParam(r, "offerId"))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "bad_offer_id", "invalid offer id")
+		return
+	}
+	if err := h.svc.DeleteOffer(r.Context(), studioID, offerID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "not_found", "offer not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "failed to delete offer")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
 // listPlans godoc
 //
 //	@Summary		List a studio's membership plans
@@ -3393,6 +3819,7 @@ func (h *Handler) requestAccountDeletion(w http.ResponseWriter, r *http.Request)
 		}
 		return
 	}
+	h.logSecurityEvent(r.Context(), r, &claims.UserID, string(claims.Role), &studioID, "studio.deletion_requested", secaudit.OutcomeSuccess, nil)
 
 	httpx.JSON(w, http.StatusOK, map[string]string{"status": "pending_confirmation"})
 }

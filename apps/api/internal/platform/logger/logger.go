@@ -40,8 +40,12 @@ func New(level string) *slog.Logger {
 		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
 			if a.Key == slog.TimeKey {
 				a.Value = slog.StringValue(a.Value.Time().In(sgt).Format("2006-01-02 15:04:05 SGT"))
+				return a
 			}
-			return a
+			// Secret-shaped keys/values are redacted before they ever reach
+			// stdout/Loki — see redact.go (platform-security-hardening
+			// task 0.7).
+			return redactAttr(a)
 		},
 	})
 	return slog.New(h)

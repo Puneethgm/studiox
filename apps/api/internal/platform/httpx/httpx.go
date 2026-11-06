@@ -7,7 +7,9 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -171,21 +173,48 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	return true
 }
 
-// ClientIP extracts the best-effort client IP from common proxy headers.
+// ClientIP extracts the best-effort client IP from common proxy headers,
+// normalized to a clean address — strips a ":port" suffix (present on
+// r.RemoteAddr) and collapses an IPv4-mapped IPv6 form like
+// "::ffff:100.122.229.3" down to "100.122.229.3", instead of showing that
+// raw, confusing form on a sessions list (platform-security-hardening
+// task 1.5's sessionRes.IP).
 func ClientIP(r *http.Request) string {
+	return normalizeIP(rawClientIP(r))
+}
+
+func rawClientIP(r *http.Request) string {
 	if v := r.Header.Get("X-Forwarded-For"); v != "" {
 		// First IP in the list is the original client.
 		for i := 0; i < len(v); i++ {
 			if v[i] == ',' {
-				return v[:i]
+				return strings.TrimSpace(v[:i])
 			}
 		}
-		return v
+		return strings.TrimSpace(v)
 	}
 	if v := r.Header.Get("X-Real-IP"); v != "" {
-		return v
+		return strings.TrimSpace(v)
 	}
 	return r.RemoteAddr
+}
+
+func normalizeIP(raw string) string {
+	// r.RemoteAddr (and occasionally a proxy header) is "host:port" —
+	// strip the port if present. A bare IPv6 address without brackets
+	// makes SplitHostPort fail (ambiguous), which is fine: raw is left
+	// untouched and ParseIP below handles it directly.
+	if host, _, err := net.SplitHostPort(raw); err == nil {
+		raw = host
+	}
+	ip := net.ParseIP(raw)
+	if ip == nil {
+		return raw
+	}
+	if v4 := ip.To4(); v4 != nil {
+		return v4.String()
+	}
+	return ip.String()
 }
 
 // ContextWithTimeout returns a derived context capped at 30s for handlers.

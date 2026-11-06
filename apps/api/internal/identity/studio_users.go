@@ -84,12 +84,29 @@ func (r *Repo) ListStudioUsers(ctx context.Context, studioID uuid.UUID) ([]Studi
 	return out, rows.Err()
 }
 
+// UserBelongsToStudio reports whether userID is an active (not soft-
+// deleted) member of studioID — the scoping check behind the studio-scoped
+// force-logout endpoint (platform-security-hardening task 1.6), same
+// pattern as SetUserActive's own WHERE clause.
+func (r *Repo) UserBelongsToStudio(ctx context.Context, studioID, userID uuid.UUID) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND studio_id = $2 AND deleted_at IS NULL)`,
+		userID, studioID,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check user belongs to studio: %w", err)
+	}
+	return exists, nil
+}
+
 // SetUserActive toggles userID's reversible login gate — distinct from
 // DeactivateStudioUser's permanent soft-delete. Scoped to studioID so a
-// studio_admin can't touch another studio's user by guessing an id. Setting
-// active=false doesn't kill that user's already-issued session (same
-// staleness trade-off as everything else gated by Claims — see jwt.go); it
-// takes effect on their next login attempt.
+// studio_admin can't touch another studio's user by guessing an id.
+// Setting active=false alone only blocks their next login attempt — the
+// caller (setStudioUserActive) also calls RevokeSessionsForUser so an
+// already-issued session stops working immediately too (platform-
+// security-hardening task 1.4).
 func (r *Repo) SetUserActive(ctx context.Context, studioID, userID uuid.UUID, active bool, actorID *uuid.UUID) error {
 	cmd, err := r.pool.Exec(ctx, `
 		UPDATE users

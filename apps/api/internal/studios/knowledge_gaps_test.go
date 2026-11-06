@@ -179,7 +179,7 @@ func TestKnowledgeGap_ScopedToStudio(t *testing.T) {
 // second resolve must append alongside the first, not overwrite it.
 func TestResolveKnowledgeGap_AppendsToLearnedAnswersFile(t *testing.T) {
 	repo, studioID := setupKnowledgeGapsTestEnv(t)
-	svc := NewService(repo, nil, nil, nil, nil, nil, "")
+	svc := NewService(repo, nil, nil, nil, nil, nil, "", nil, nil)
 	ctx := context.Background()
 
 	if err := repo.CreateKnowledgeGap(ctx, studioID, nil, nil, "What's your cancellation policy?"); err != nil {

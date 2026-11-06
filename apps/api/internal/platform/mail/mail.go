@@ -365,6 +365,225 @@ func (s *Sender) SendAccountDeletedConfirmation(toEmail, studioName, recoveryLin
 	return s.send(toEmail, fmt.Sprintf("%s's account has been deleted", studioName), html)
 }
 
+// SendNewDeviceLogin alerts a user that their account just signed in
+// from a device/browser not seen before for that account — platform-
+// security-hardening task 1.7. device/location are best-effort,
+// human-readable strings (e.g. a parsed User-Agent, an IP or city); pass
+// "" for either when unknown and the copy adapts.
+func (s *Sender) SendNewDeviceLogin(toEmail, userName, device, location, when string) error {
+	greeting := "Hi there,"
+	if userName != "" {
+		greeting = fmt.Sprintf("Hi %s,", userName)
+	}
+	deviceLine := "a new device"
+	if device != "" {
+		deviceLine = htmlpkg.EscapeString(device)
+	}
+	locationLine := ""
+	if location != "" {
+		locationLine = fmt.Sprintf(" from %s", htmlpkg.EscapeString(location))
+	}
+
+	html := fmt.Sprintf(`<!doctype html>
+<html>
+<body style="margin:0;padding:0;background:#f4f4f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%%" cellpadding="0" cellspacing="0" style="padding:32px 0;">
+    <tr><td align="center">
+      <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;padding:40px;">
+        <tr><td>
+          <h1 style="margin:0 0 16px;font-size:20px;font-weight:800;color:#18181b;">New sign-in to your account</h1>
+          <p style="margin:0 0 8px;font-size:14px;line-height:1.6;color:#52525b;">%s</p>
+          <p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:#52525b;">
+            Your account was just signed into from %s%s at %s. If this was you, no action is needed.
+          </p>
+          <p style="margin:0 0 24px;font-size:12px;line-height:1.6;color:#a1a1aa;">
+            If you don't recognize this, change your password immediately and end your other sessions from Settings.
+          </p>
+          %s
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`, greeting, deviceLine, locationLine, htmlpkg.EscapeString(when), signatureHTML())
+
+	return s.send(toEmail, "New sign-in to your account", html)
+}
+
+// SendSessionsEnded tells a user every one of their sessions was just
+// ended — by an admin's force-logout, or a platform-wide "end all
+// sessions" (task 1.7). reason is a short, human-readable cause (e.g.
+// "your password was changed" or "an administrator ended your sessions").
+func (s *Sender) SendSessionsEnded(toEmail, userName, reason string) error {
+	greeting := "Hi there,"
+	if userName != "" {
+		greeting = fmt.Sprintf("Hi %s,", userName)
+	}
+
+	html := fmt.Sprintf(`<!doctype html>
+<html>
+<body style="margin:0;padding:0;background:#f4f4f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%%" cellpadding="0" cellspacing="0" style="padding:32px 0;">
+    <tr><td align="center">
+      <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;padding:40px;">
+        <tr><td>
+          <h1 style="margin:0 0 16px;font-size:20px;font-weight:800;color:#18181b;">You've been signed out everywhere</h1>
+          <p style="margin:0 0 8px;font-size:14px;line-height:1.6;color:#52525b;">%s</p>
+          <p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:#52525b;">
+            All of your active sessions were just ended (%s). You'll need to sign in again on each device.
+          </p>
+          <p style="margin:0 0 24px;font-size:12px;line-height:1.6;color:#a1a1aa;">
+            If you didn't expect this, contact your administrator.
+          </p>
+          %s
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`, greeting, htmlpkg.EscapeString(reason), signatureHTML())
+
+	return s.send(toEmail, "You've been signed out everywhere", html)
+}
+
+// SendTwoFactorLockout alerts a user that their account's code step was
+// just locked for 15 minutes after 5 consecutive wrong authenticator
+// codes — platform-security-hardening task 2.4. This is a real signal
+// someone else may be trying to get in (they already had the correct
+// password), so the copy is a notice, not a password-reset nag.
+func (s *Sender) SendTwoFactorLockout(toEmail, userName string) error {
+	greeting := "Hi there,"
+	if userName != "" {
+		greeting = fmt.Sprintf("Hi %s,", userName)
+	}
+
+	html := fmt.Sprintf(`<!doctype html>
+<html>
+<body style="margin:0;padding:0;background:#f4f4f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%%" cellpadding="0" cellspacing="0" style="padding:32px 0;">
+    <tr><td align="center">
+      <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;padding:40px;">
+        <tr><td>
+          <h1 style="margin:0 0 16px;font-size:20px;font-weight:800;color:#18181b;">Too many wrong codes</h1>
+          <p style="margin:0 0 8px;font-size:14px;line-height:1.6;color:#52525b;">%s</p>
+          <p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:#52525b;">
+            Someone entered 5 wrong authenticator codes in a row for your account (the password was correct). Sign-in with a code is locked for 15 minutes.
+          </p>
+          <p style="margin:0 0 24px;font-size:12px;line-height:1.6;color:#a1a1aa;">
+            If this wasn't you, consider changing your password — whoever tried already had it right.
+          </p>
+          %s
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`, greeting, signatureHTML())
+
+	return s.send(toEmail, "Too many wrong codes on your account", html)
+}
+
+// SendSecurityAlert is the generic platform-team notification behind
+// platform-security-hardening task 3.7's risk alerts (new-country admin
+// login, 2FA disabled, secret changed, data exported, admin role
+// granted, 5+ failed logins, admin action outside studio hours) — one
+// template rather than seven, since every one of these is "here is what
+// happened, to whom, when" with no further structure worth a dedicated
+// layout. detail is a short plain-text line describing the specific
+// trigger.
+func (s *Sender) SendSecurityAlert(toEmail, title, detail string) error {
+	html := fmt.Sprintf(`<!doctype html>
+<html>
+<body style="margin:0;padding:0;background:#f4f4f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%%" cellpadding="0" cellspacing="0" style="padding:32px 0;">
+    <tr><td align="center">
+      <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;padding:40px;">
+        <tr><td>
+          <h1 style="margin:0 0 16px;font-size:20px;font-weight:800;color:#18181b;">%s</h1>
+          <p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:#52525b;">%s</p>
+          %s
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`, title, detail, signatureHTML())
+
+	return s.send(toEmail, "Security alert: "+title, html)
+}
+
+// FollowupDigestItem is one due reminder shown in SendFollowupDigest.
+type FollowupDigestItem struct {
+	LeadName string
+	Note     string // reminder_note, may be empty
+	LeadLink string // deep link to open this lead in the dashboard
+}
+
+// SendFollowupDigest emails a studio a once-daily list of leads whose
+// manual follow-up reminder (see leads.reminder_at/reminder_note) is now
+// due — see FollowupDigestWorker, the only caller. Never sent with an
+// empty items list (the worker skips studios with nothing due that day).
+func (s *Sender) SendFollowupDigest(toEmail, studioName string, items []FollowupDigestItem, leadsLink string) error {
+	var rows strings.Builder
+	for _, it := range items {
+		note := `<span style="color:#a1a1aa;">(no note)</span>`
+		if it.Note != "" {
+			note = htmlpkg.EscapeString(it.Note)
+		}
+		rows.WriteString(fmt.Sprintf(`
+            <tr>
+              <td style="padding:10px 0;border-top:1px solid #e4e4e7;">
+                <a href="%s" style="color:#18181b;font-weight:700;font-size:14px;text-decoration:none;">%s</a>
+                <p style="margin:4px 0 0;font-size:13px;color:#52525b;">%s</p>
+              </td>
+            </tr>`, it.LeadLink, htmlpkg.EscapeString(it.LeadName), note))
+	}
+
+	html := fmt.Sprintf(`<!doctype html>
+<html>
+<body style="margin:0;padding:0;background:#f4f4f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%%" cellpadding="0" cellspacing="0" style="padding:32px 0;">
+    <tr><td align="center">
+      <table role="presentation" width="520" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;padding:40px;">
+        <tr><td>
+          <h1 style="margin:0 0 8px;font-size:20px;font-weight:800;color:#18181b;">📋 Today's follow-ups</h1>
+          <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#52525b;">
+            <strong>%d</strong> lead%s at <strong>%s</strong> %s due for a follow-up.
+          </p>
+
+          <table role="presentation" width="100%%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;">%s</table>
+
+          <p style="margin:0 0 24px;">
+            <a href="%s" style="display:inline-block;background:#7c3aed;color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 24px;border-radius:12px;">
+              Open Leads
+            </a>
+          </p>
+          %s
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`, len(items), pluralSuffix(len(items)), htmlpkg.EscapeString(studioName), isAreSuffix(len(items)), rows.String(), leadsLink, signatureHTML())
+
+	subject := fmt.Sprintf("📋 %d follow-up%s due today — %s", len(items), pluralSuffix(len(items)), studioName)
+	return s.send(toEmail, subject, html)
+}
+
+func pluralSuffix(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
+func isAreSuffix(n int) string {
+	if n == 1 {
+		return "is"
+	}
+	return "are"
+}
+
 func (s *Sender) send(toEmail, subject, html string) error {
 	if !s.cfg.Enabled() {
 		return fmt.Errorf("smtp not configured")

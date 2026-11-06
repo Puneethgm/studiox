@@ -102,7 +102,7 @@ func setupDNDTestEnv(t *testing.T) *dndTestEnv {
 	studiosRepo := studios.NewRepo(pool, cipher)
 	llmRepo := llm.NewRepo(pool, cipher)
 
-	worker := NewAIWorker(msgBus, msgRepo, msgSvc, studiosRepo, leadsRepo, nil, nil, "", nil, llmRepo, slog.Default(), nil)
+	worker := NewAIWorker(msgBus, msgRepo, msgSvc, studiosRepo, leadsRepo, nil, nil, nil, llmRepo, nil, slog.Default())
 
 	return &dndTestEnv{
 		pool:      pool,

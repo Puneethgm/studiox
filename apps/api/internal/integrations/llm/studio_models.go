@@ -6,20 +6,32 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/projectx/api/internal/integrations/claude"
-	"github.com/projectx/api/internal/integrations/gemini"
-	"github.com/projectx/api/internal/integrations/groq"
 )
 
-// StudioAIModel is one row of studio_ai_models — a model a studio has
-// enabled (or previously tested and disabled) for a provider. Distinct from
-// TaskConfig/ai_task_configs, which is platform-scoped and one-model-per-
-// named-task; this is per-studio and a provider can have several enabled
-// models (e.g. Groq's small-then-large fallback order).
-type StudioAIModel struct {
+// Default model names for each provider's fallback list below — these were
+// previously imported from the old standalone groq/claude/gemini HTTP
+// client packages (internal/integrations/{groq,claude,gemini}), which
+// Phase 3 of the LLM gateway migration removed (every real call now goes
+// through internal/integrations/bifrost). Only the model-name constants
+// those packages defined were still in use; moved here rather than lost.
+const (
+	groqModel8B       = "qwen/qwen3.8-27b"
+	groqModel70B      = "openai/gpt-oss-120b"
+	claudeDefaultModel = "claude-haiku-4-5-20251001"
+)
+
+var geminiDefaultModels = []string{"gemini-flash-latest", "gemini-flash-lite-latest"}
+
+// PlatformAIModel is one row of platform_ai_models — a model a superadmin
+// has enabled (or previously tested and disabled) for a provider,
+// platform-wide. Model selection used to be per-studio (studio_ai_models);
+// it's centralized now, same as the provider keys themselves (see
+// studios.Repo.GetPlatformAIProviderKey), so every studio gets the same,
+// superadmin-vetted model list instead of quality varying by what each
+// studio happened to configure. Distinct from TaskConfig/ai_task_configs,
+// which is one-model-per-named-task, not a provider-wide ordered list.
+type PlatformAIModel struct {
 	ID            uuid.UUID
-	StudioID      uuid.UUID
 	Provider      ProviderName
 	ModelName     string
 	Enabled       bool
@@ -30,38 +42,39 @@ type StudioAIModel struct {
 	CreatedAt     time.Time
 }
 
-// DefaultModels is the implicit fallback used for a provider when a studio
-// has configured zero *enabled* models for it — preserves today's
-// hardcoded behavior for every studio that never opens the AI Assistant
-// settings page, and for a studio that has disabled every model it added.
+// DefaultModels is the implicit fallback used for a provider when the
+// superadmin has configured zero *enabled* models for it — preserves the
+// original hardcoded behavior until the AI Provider Settings page
+// (superadmin, /admin/settings) has been used at least once.
 var DefaultModels = map[ProviderName][]string{
-	ProviderGroq:   {groq.Model8B, groq.Model70B},
-	ProviderGemini: gemini.Models,
-	ProviderClaude: {claude.DefaultModel},
+	ProviderGroq:   {groqModel8B, groqModel70B},
+	ProviderGemini: geminiDefaultModels,
+	ProviderClaude: {claudeDefaultModel},
+	ProviderOpenAI: {"gpt-4o-mini"},
 }
 
-// ListStudioModels returns every model a studio has ever added for
-// provider (enabled or not), ordered for waterfall use.
-func (r *Repo) ListStudioModels(ctx context.Context, studioID uuid.UUID, provider ProviderName) ([]StudioAIModel, error) {
+// ListModels returns every model a superadmin has ever added for provider
+// (enabled or not), ordered for waterfall use.
+func (r *Repo) ListModels(ctx context.Context, provider ProviderName) ([]PlatformAIModel, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, studio_id, provider, model_name, enabled, sort_order,
+		SELECT id, provider, model_name, enabled, sort_order,
 		       last_tested_at, last_test_ok, last_test_error, created_at
-		FROM studio_ai_models
-		WHERE studio_id = $1 AND provider = $2
+		FROM platform_ai_models
+		WHERE provider = $1
 		ORDER BY sort_order, created_at
-	`, studioID, provider)
+	`, provider)
 	if err != nil {
-		return nil, fmt.Errorf("list studio ai models: %w", err)
+		return nil, fmt.Errorf("list platform ai models: %w", err)
 	}
 	defer rows.Close()
 
-	var out []StudioAIModel
+	var out []PlatformAIModel
 	for rows.Next() {
-		var m StudioAIModel
+		var m PlatformAIModel
 		var lastTestError *string
-		if err := rows.Scan(&m.ID, &m.StudioID, &m.Provider, &m.ModelName, &m.Enabled, &m.SortOrder,
+		if err := rows.Scan(&m.ID, &m.Provider, &m.ModelName, &m.Enabled, &m.SortOrder,
 			&m.LastTestedAt, &m.LastTestOK, &lastTestError, &m.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan studio ai model: %w", err)
+			return nil, fmt.Errorf("scan platform ai model: %w", err)
 		}
 		if lastTestError != nil {
 			m.LastTestError = *lastTestError
@@ -71,32 +84,32 @@ func (r *Repo) ListStudioModels(ctx context.Context, studioID uuid.UUID, provide
 	return out, rows.Err()
 }
 
-// UpsertStudioModelResult persists a live test's outcome for
-// (studioID, provider, modelName), enabling the model on success. Called
-// only after a successful test — a failed test never writes a row (the
-// caller returns the error to the admin instead).
-func (r *Repo) UpsertStudioModelResult(ctx context.Context, studioID uuid.UUID, provider ProviderName, modelName string, ok bool, testErr string) (*StudioAIModel, error) {
+// UpsertModelResult persists a live test's outcome for (provider,
+// modelName), enabling the model on success. Called only after a successful
+// test — a failed test never writes a row (the caller returns the error to
+// the superadmin instead).
+func (r *Repo) UpsertModelResult(ctx context.Context, provider ProviderName, modelName string, ok bool, testErr string) (*PlatformAIModel, error) {
 	var errPtr *string
 	if testErr != "" {
 		errPtr = &testErr
 	}
-	var m StudioAIModel
+	var m PlatformAIModel
 	var lastTestError *string
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO studio_ai_models (studio_id, provider, model_name, enabled, last_tested_at, last_test_ok, last_test_error)
-		VALUES ($1, $2, $3, true, now(), $4, $5)
-		ON CONFLICT (studio_id, provider, model_name) DO UPDATE
+		INSERT INTO platform_ai_models (provider, model_name, enabled, last_tested_at, last_test_ok, last_test_error)
+		VALUES ($1, $2, true, now(), $3, $4)
+		ON CONFLICT (provider, model_name) DO UPDATE
 		SET enabled = true,
 		    last_tested_at = now(),
 		    last_test_ok = EXCLUDED.last_test_ok,
 		    last_test_error = EXCLUDED.last_test_error
-		RETURNING id, studio_id, provider, model_name, enabled, sort_order,
+		RETURNING id, provider, model_name, enabled, sort_order,
 		          last_tested_at, last_test_ok, last_test_error, created_at
-	`, studioID, provider, modelName, ok, errPtr).Scan(
-		&m.ID, &m.StudioID, &m.Provider, &m.ModelName, &m.Enabled, &m.SortOrder,
+	`, provider, modelName, ok, errPtr).Scan(
+		&m.ID, &m.Provider, &m.ModelName, &m.Enabled, &m.SortOrder,
 		&m.LastTestedAt, &m.LastTestOK, &lastTestError, &m.CreatedAt)
 	if err != nil {
-		return nil, fmt.Errorf("upsert studio ai model: %w", err)
+		return nil, fmt.Errorf("upsert platform ai model: %w", err)
 	}
 	if lastTestError != nil {
 		m.LastTestError = *lastTestError
@@ -104,15 +117,15 @@ func (r *Repo) UpsertStudioModelResult(ctx context.Context, studioID uuid.UUID, 
 	return &m, nil
 }
 
-// SetStudioModelEnabled toggles an already-persisted model without a live
-// call — used to disable a model, or re-enable one that was already tested
+// SetModelEnabled toggles an already-persisted model without a live call —
+// used to disable a model, or re-enable one that was already tested
 // successfully before.
-func (r *Repo) SetStudioModelEnabled(ctx context.Context, studioID, modelID uuid.UUID, enabled bool) error {
+func (r *Repo) SetModelEnabled(ctx context.Context, modelID uuid.UUID, enabled bool) error {
 	tag, err := r.pool.Exec(ctx, `
-		UPDATE studio_ai_models SET enabled = $3 WHERE id = $1 AND studio_id = $2
-	`, modelID, studioID, enabled)
+		UPDATE platform_ai_models SET enabled = $2 WHERE id = $1
+	`, modelID, enabled)
 	if err != nil {
-		return fmt.Errorf("set studio ai model enabled: %w", err)
+		return fmt.Errorf("set platform ai model enabled: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -120,12 +133,10 @@ func (r *Repo) SetStudioModelEnabled(ctx context.Context, studioID, modelID uuid
 	return nil
 }
 
-// SetStudioModelOrder persists a new try-order for provider's models —
+// SetModelOrder persists a new try-order for provider's models —
 // orderedIDs[0] becomes the first one the waterfall tries, orderedIDs[1]
-// the fallback, and so on. Lets a studio admin pick which model is
-// "primary" vs "fallback" for a provider from the AI Assistant page,
-// instead of it being fixed at whatever order models were added in.
-func (r *Repo) SetStudioModelOrder(ctx context.Context, studioID uuid.UUID, provider ProviderName, orderedIDs []uuid.UUID) error {
+// the fallback, and so on.
+func (r *Repo) SetModelOrder(ctx context.Context, provider ProviderName, orderedIDs []uuid.UUID) error {
 	if len(orderedIDs) == 0 {
 		return nil
 	}
@@ -136,22 +147,22 @@ func (r *Repo) SetStudioModelOrder(ctx context.Context, studioID uuid.UUID, prov
 	defer tx.Rollback(ctx)
 	for i, id := range orderedIDs {
 		if _, err := tx.Exec(ctx, `
-			UPDATE studio_ai_models SET sort_order = $1
-			WHERE id = $2 AND studio_id = $3 AND provider = $4
-		`, i, id, studioID, provider); err != nil {
-			return fmt.Errorf("set studio ai model order: %w", err)
+			UPDATE platform_ai_models SET sort_order = $1
+			WHERE id = $2 AND provider = $3
+		`, i, id, provider); err != nil {
+			return fmt.Errorf("set platform ai model order: %w", err)
 		}
 	}
 	return tx.Commit(ctx)
 }
 
-// DeleteStudioModel removes a custom model a studio added.
-func (r *Repo) DeleteStudioModel(ctx context.Context, studioID, modelID uuid.UUID) error {
+// DeleteModel removes a model a superadmin added.
+func (r *Repo) DeleteModel(ctx context.Context, modelID uuid.UUID) error {
 	tag, err := r.pool.Exec(ctx, `
-		DELETE FROM studio_ai_models WHERE id = $1 AND studio_id = $2
-	`, modelID, studioID)
+		DELETE FROM platform_ai_models WHERE id = $1
+	`, modelID)
 	if err != nil {
-		return fmt.Errorf("delete studio ai model: %w", err)
+		return fmt.Errorf("delete platform ai model: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -159,14 +170,14 @@ func (r *Repo) DeleteStudioModel(ctx context.Context, studioID, modelID uuid.UUI
 	return nil
 }
 
-// EnabledModelsForStudio returns the ordered list of model names a studio
-// may use for provider — the single call site every reply/summary code
-// path should use instead of a hardcoded model constant. Falls back to
-// DefaultModels when the studio has zero *enabled* models for provider
-// (never configured it, or disabled everything it added), so a provider
-// never goes fully dark because of this feature.
-func (r *Repo) EnabledModelsForStudio(ctx context.Context, studioID uuid.UUID, provider ProviderName) ([]string, error) {
-	rows, err := r.ListStudioModels(ctx, studioID, provider)
+// EnabledModels returns the ordered list of model names every studio may
+// use for provider — the single call site every reply/summary code path
+// should use instead of a hardcoded model constant. Falls back to
+// DefaultModels when the superadmin has configured zero *enabled* models
+// for provider, so a provider never goes fully dark because of this
+// feature.
+func (r *Repo) EnabledModels(ctx context.Context, provider ProviderName) ([]string, error) {
+	rows, err := r.ListModels(ctx, provider)
 	if err != nil {
 		return nil, err
 	}

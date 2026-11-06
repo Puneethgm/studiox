@@ -16,6 +16,7 @@ const (
 	ProviderClaude ProviderName = "claude"
 	ProviderGemini ProviderName = "gemini"
 	ProviderGroq   ProviderName = "groq"
+	ProviderOpenAI ProviderName = "openai"
 )
 
 // TaskConfig is one row of ai_task_configs — which provider/model handles

@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import {
   Building2, Plus, Megaphone,
-  Users, Activity, CheckCircle2, Layers
+  Users, Activity, CheckCircle2, Layers, Bot
 } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -12,6 +12,7 @@ import type { Studio } from '@/lib/types';
 import { Pagination } from '@/components/ui/Pagination';
 import { StudioFilters } from './StudioFilters';
 import { StudioStatusToggle } from './StudioStatusToggle';
+import { StudioAIAccessToggle } from './StudioAIAccessToggle';
 
 interface ListResp {
   studios: Studio[];
@@ -298,6 +299,9 @@ function StudioCard({ studio: s, idx }: { studio: Studio; idx: number }) {
         <div className="absolute right-4 top-4 flex items-center gap-2 rounded-xl bg-white/20 backdrop-blur-md p-1.5 border border-white/10 pointer-events-auto">
           <Badge tone={s.active ? 'success' : 'neutral'} className="text-[10px] font-black uppercase tracking-wider shadow-sm select-none pointer-events-none">{s.active ? 'Active' : 'Inactive'}</Badge>
           <StudioStatusToggle studioId={s.id} initialActive={s.active} studioName={s.name} />
+          <div title={s.aiAccessEnabled !== false ? 'AI replies enabled' : 'AI replies disabled'}>
+            <StudioAIAccessToggle studioId={s.id} initialEnabled={s.aiAccessEnabled !== false} studioName={s.name} />
+          </div>
         </div>
       </div>
 
@@ -334,6 +338,12 @@ function StudioCard({ studio: s, idx }: { studio: Studio; idx: number }) {
           <div className="flex items-center gap-2 flex-1">
             <div className="grid h-8 w-8 place-items-center rounded-xl bg-emerald-50/80 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400"><Activity className="h-3.5 w-3.5" /></div>
             <div><div className="text-[9px] font-black uppercase tracking-widest text-zinc-400 mt-0.5">Status</div><div className="text-[10px] font-black mt-0.5" style={{ color: s.active ? '#10b981' : '#94a3b8' }}>{s.active ? 'Live' : 'Paused'}</div></div>
+          </div>
+          <div className="mt-2 flex items-center gap-1.5 text-[10px] font-bold">
+            <Bot className="h-3 w-3" style={{ color: s.aiAccessEnabled !== false ? '#7c3aed' : '#94a3b8' }} />
+            <span style={{ color: s.aiAccessEnabled !== false ? '#7c3aed' : '#94a3b8' }}>
+              AI replies {s.aiAccessEnabled !== false ? 'on' : 'off'}
+            </span>
           </div>
         </div>
       </div>

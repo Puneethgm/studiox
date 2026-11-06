@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/projectx/api/internal/integrations/crm"
 	"github.com/projectx/api/internal/integrations/glofox"
 )
 
@@ -28,6 +29,7 @@ type Repo struct {
 	// so every other method keeps using pool and never has to nil-check.
 	readPool *pgxpool.Pool
 	glofox   *glofox.Client
+	crmRepo  *crm.Repo
 }
 
 // NewRepo wires the primary pool and, optionally, a read-replica pool.
@@ -47,13 +49,59 @@ func NewRepo(pool *pgxpool.Pool, readPool *pgxpool.Pool) *Repo {
 // tests, or when Glofox isn't configured).
 func (r *Repo) SetGlofoxClient(gf *glofox.Client) { r.glofox = gf }
 
+// SetCRMRepo wires the generic CRM connector (crm_connections/crm_providers
+// — the same store studios use to connect Mindbody, and that the
+// Attendance worker already reads from) so lead-conversion sync can prefer
+// a studio's OWN connected Glofox account over the platform-wide
+// GLOFOX_API_KEY/API_TOKEN/BRANCH_ID client. Nil-safe: leaving this unset
+// keeps the old single-studio/env-configured behavior exactly as it was.
+func (r *Repo) SetCRMRepo(cr *crm.Repo) { r.crmRepo = cr }
+
+// glofoxClientForStudio resolves which Glofox client a given studio's lead
+// sync should use: that studio's own connected Glofox CRM connection if it
+// has one, falling back to fallback (the platform-wide client) otherwise.
+// Any lookup/decrypt/build failure along the way just falls back too —
+// this must never block or fail a lead write over a CRM-connection
+// problem.
+func glofoxClientForStudio(ctx context.Context, crmRepo *crm.Repo, studioID uuid.UUID, fallback *glofox.Client) *glofox.Client {
+	if crmRepo == nil {
+		return fallback
+	}
+	provider, err := crmRepo.GetProviderByName(ctx, "Glofox")
+	if err != nil {
+		return fallback
+	}
+	conn, err := crmRepo.GetActiveConnection(ctx, studioID, provider.ID)
+	if err != nil {
+		return fallback
+	}
+	creds, err := crmRepo.DecryptCredentials(conn)
+	if err != nil {
+		slog.Warn("Glofox | failed to decrypt studio's CRM connection, falling back to platform-wide Glofox client",
+			"component", "glofox", "studio_id", studioID, "error", err.Error())
+		return fallback
+	}
+	// Field keys match crm_providers.auth_field_defs for Glofox — the same
+	// header names glofox.Client.addAuth sets on every request (see
+	// attendance.Worker.tickStudio, the existing per-studio Glofox client
+	// built this exact way).
+	if gf := glofox.New(creds["x-api-key"], creds["x-glofox-api-token"], creds["x-glofox-branch-id"]); gf != nil {
+		return gf
+	}
+	return fallback
+}
+
 // syncLeadToGlofoxAsync fires the Glofox CRM sync in the background and never
 // blocks or fails the caller — mirrors the fire-and-forget sync used by the
 // manual lead-edit flow (Service.UpdateLead), but shared here so the
 // automated paths (sheet import, AI/automation status changes) get the same
 // behavior instead of silently skipping Glofox entirely.
-func (r *Repo) syncLeadToGlofoxAsync(l *Lead, status LeadStatus) {
-	if r.glofox == nil || l == nil {
+func (r *Repo) syncLeadToGlofoxAsync(ctx context.Context, l *Lead, status LeadStatus) {
+	if l == nil {
+		return
+	}
+	gf := glofoxClientForStudio(ctx, r.crmRepo, l.StudioID, r.glofox)
+	if gf == nil {
 		return
 	}
 	if status != StatusTrialBooked && status != StatusMember {
@@ -85,7 +133,7 @@ func (r *Repo) syncLeadToGlofoxAsync(l *Lead, status LeadStatus) {
 	go func() {
 		gCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		out, err := r.glofox.CreateLead(gCtx, glofox.CreateLeadInput{
+		out, err := gf.CreateLead(gCtx, glofox.CreateLeadInput{
 			Email:         leadEmail,
 			FirstName:     firstName,
 			LastName:      lastName,
@@ -363,7 +411,7 @@ func (r *Repo) CreateLeadWithOutbox(ctx context.Context, l *Lead, destination st
 	// status (e.g. a sheet-imported lead with Trial Purchased = YES) — this
 	// path skips the AI worker's status-change flow entirely, so without
 	// this it would never reach Glofox.
-	r.syncLeadToGlofoxAsync(l, l.Status)
+	r.syncLeadToGlofoxAsync(ctx, l, l.Status)
 
 	return nil
 }
@@ -484,6 +532,62 @@ type ListLeadsFilter struct {
 	Limit          int
 	Offset         int
 	Search         string
+}
+
+// ReminderUpcoming is the minimal shape FollowupDigestWorker needs for a
+// lead whose reminder is about to fire — not the full Lead type, since this
+// is a tight poll query, not a user-facing list.
+type ReminderUpcoming struct {
+	ID           uuid.UUID
+	Name         string
+	Phone        string
+	ReminderNote string
+}
+
+// ListRemindersDueWithin returns every lead in studioID whose reminder_at
+// falls within [now, now+window] and hasn't been notified yet for the
+// current reminder_at value (reminder_notified_at IS NULL) — the "warn N
+// minutes before" counterpart to ReminderDue above ("already overdue").
+// Deliberately separate from ListLeads/ListLeadsFilter: that method backs
+// the in-app Dashboard/Leads "due now" views and must keep returning every
+// still-due reminder on every call, whereas this one is consumed exactly
+// once per reminder (see MarkReminderNotified) by FollowupDigestWorker's
+// poll loop.
+func (r *Repo) ListRemindersDueWithin(ctx context.Context, studioID uuid.UUID, window time.Duration) ([]ReminderUpcoming, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, COALESCE(name, ''), COALESCE(phone, ''), COALESCE(reminder_note, '')
+		FROM leads
+		WHERE studio_id = $1
+		  AND reminder_at IS NOT NULL
+		  AND reminder_notified_at IS NULL
+		  AND reminder_at BETWEEN now() AND now() + make_interval(secs => $2)
+	`, studioID, int(window.Seconds()))
+	if err != nil {
+		return nil, fmt.Errorf("list reminders due within: %w", err)
+	}
+	defer rows.Close()
+
+	out := []ReminderUpcoming{}
+	for rows.Next() {
+		var l ReminderUpcoming
+		if err := rows.Scan(&l.ID, &l.Name, &l.Phone, &l.ReminderNote); err != nil {
+			return nil, fmt.Errorf("scan reminder: %w", err)
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+// MarkReminderNotified records that the 10-minutes-before email has gone
+// out for leadID's current reminder — so ListRemindersDueWithin won't
+// return it again on the next poll. UpdateLead resets this back to NULL
+// whenever reminder_at is changed to a new value, so an edited/rescheduled
+// reminder always gets notified again.
+func (r *Repo) MarkReminderNotified(ctx context.Context, studioID, leadID uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE leads SET reminder_notified_at = now() WHERE studio_id = $1 AND id = $2
+	`, studioID, leadID)
+	return err
 }
 
 func (r *Repo) ListLeads(ctx context.Context, studioID uuid.UUID, f ListLeadsFilter) ([]Lead, int, error) {
@@ -808,16 +912,25 @@ func (r *Repo) UpdateLead(ctx context.Context, studioID, id uuid.UUID, status Le
 	}
 
 	name := strings.TrimSpace(firstName + " " + lastName)
+	// Computed before the UPDATE so the same statement can reset
+	// reminder_notified_at in one trip whenever reminder_at is actually
+	// changing to a new value — otherwise FollowupDigestWorker's "warn 10
+	// minutes before" poll would skip a rescheduled reminder, thinking it
+	// already notified for the (stale) old time.
+	reminderAtChangedForReset := (reminderAt == nil) != (oldReminderAt == nil) ||
+		(reminderAt != nil && oldReminderAt != nil && !reminderAt.Equal(*oldReminderAt))
 	tag, err := tx.Exec(ctx, `
 		UPDATE leads
 		SET status = $3, notes = $4, contact_made = $5, hot_lead = $6, trial_purchased = $7,
 		    first_name = $8, last_name = $9, fitness_plan = $10, name = $11,
 		    assigned_to = $12, trial_attended = $13, member_sold = $14, monthly_fee = $15,
 		    currency = $16, offer = $17, further_notes = $18, tags = $19,
-		    reminder_at = $20, reminder_note = $21, phone = $22, email = $23, updated_at = now()
+		    reminder_at = $20, reminder_note = $21, phone = $22, email = $23, updated_at = now(),
+		    reminder_notified_at = CASE WHEN $24 THEN NULL ELSE reminder_notified_at END
 		WHERE studio_id = $1 AND id = $2
 	`, studioID, id, string(status), notes, contactMade, hotLead, trialPurchased, firstName, lastName, fitnessPlan, name,
-		assignedTo, trialAttended, memberSold, monthlyFee, currency, offer, furtherNotes, tags, reminderAt, reminderNote, phone, email)
+		assignedTo, trialAttended, memberSold, monthlyFee, currency, offer, furtherNotes, tags, reminderAt, reminderNote, phone, email,
+		reminderAtChangedForReset)
 	if err != nil {
 		return fmt.Errorf("update lead: %w", err)
 	}
@@ -953,7 +1066,7 @@ func (r *Repo) UpdateStatus(ctx context.Context, studioID, id uuid.UUID, status 
 	// covers status changes made by the AI worker or automation, which
 	// (unlike the manual "edit lead" HTTP flow) don't otherwise sync.
 	if string(status) != oldStatus {
-		r.syncLeadToGlofoxAsync(updatedLead, status)
+		r.syncLeadToGlofoxAsync(ctx, updatedLead, status)
 	}
 
 	return nil
@@ -1699,6 +1812,74 @@ func (r *Repo) GetAnalytics(ctx context.Context, studioID uuid.UUID, durationDay
 		ByCampaign:                 byCampaign,
 		ByPlatform:                 byPlatform,
 	}, nil
+}
+
+// GetConvertedLeads returns the row-level list behind GetAnalytics'
+// ConversionRate figure — every lead created in the same duration/startDate/
+// endDate window (same date-filter semantics as GetAnalytics' own queries,
+// filtered on created_at) that reached trial_booked or member — for the
+// dashboard's "Download Report" CSV export.
+func (r *Repo) GetConvertedLeads(ctx context.Context, studioID uuid.UUID, durationDays int, startDate, endDate string) ([]ConvertedLead, error) {
+	var dateFilter string
+	if startDate != "" && endDate != "" {
+		dateFilter = fmt.Sprintf("AND created_at >= '%s'::timestamp AND created_at <= '%s 23:59:59'::timestamp", sanitizeDate(startDate), sanitizeDate(endDate))
+	} else if durationDays > 0 {
+		if durationDays == 1 {
+			dateFilter = "AND created_at >= CURRENT_DATE - INTERVAL '1 day'"
+		} else {
+			dateFilter = fmt.Sprintf("AND created_at >= CURRENT_DATE - INTERVAL '%d days'", durationDays)
+		}
+	}
+
+	var args []any
+	var cond string
+	if studioID != uuid.Nil {
+		cond = "WHERE studio_id = $1"
+		args = append(args, studioID)
+	} else {
+		cond = "WHERE 1=1"
+	}
+
+	q := fmt.Sprintf(`
+		SELECT name, email, phone, status, updated_at
+		FROM leads
+		%s AND status IN ('trial_booked', 'member') %s
+		ORDER BY updated_at DESC`, cond, dateFilter)
+	rows, err := r.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("converted leads: %w", err)
+	}
+	defer rows.Close()
+
+	out := []ConvertedLead{}
+	for rows.Next() {
+		var cl ConvertedLead
+		if err := rows.Scan(&cl.Name, &cl.Email, &cl.Phone, &cl.Status, &cl.ConvertedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, cl)
+	}
+	return out, rows.Err()
+}
+
+// StudioHeader is the minimal studio identity the converted-leads PDF report
+// needs for its header — a lean direct-SQL read rather than pulling in the
+// whole studios package as a dependency of this one, same pattern as this
+// repo's other narrow cross-concern reads.
+type StudioHeader struct {
+	Name         string
+	ContactEmail string
+}
+
+// GetStudioHeader fetches the studio's name/contact email for the
+// converted-leads PDF report's header.
+func (r *Repo) GetStudioHeader(ctx context.Context, studioID uuid.UUID) (StudioHeader, error) {
+	var h StudioHeader
+	err := r.pool.QueryRow(ctx, `SELECT name, contact_email FROM studios WHERE id = $1`, studioID).Scan(&h.Name, &h.ContactEmail)
+	if err != nil {
+		return StudioHeader{}, fmt.Errorf("get studio header: %w", err)
+	}
+	return h, nil
 }
 
 // GetDailyAnalytics buckets outbound messages / new connections / conversions

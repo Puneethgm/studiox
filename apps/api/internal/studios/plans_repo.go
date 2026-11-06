@@ -18,13 +18,17 @@ type Plan struct {
 	BillingIntervalCount int       `json:"billingIntervalCount"`
 	Features             []string  `json:"features"`
 	IsActive             bool      `json:"isActive"`
-	CreatedAt            time.Time `json:"createdAt"`
-	UpdatedAt            time.Time `json:"updatedAt"`
+	// PaymentLink is handed directly to the AI reply prompt
+	// (ai-reply-flow-llm-design doc §4.4) so the model never has to
+	// construct or guess a payment URL.
+	PaymentLink string    `json:"paymentLink"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 func (r *Repo) ListPlans(ctx context.Context, studioID uuid.UUID) ([]Plan, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, studio_id, plan_name, price_sgd, billing_cycle, billing_interval, billing_interval_count, features, is_active, created_at, updated_at
+		SELECT id, studio_id, plan_name, price_sgd, billing_cycle, billing_interval, billing_interval_count, features, is_active, payment_link, created_at, updated_at
 		FROM plans
 		WHERE studio_id = $1
 		ORDER BY price_sgd ASC
@@ -37,7 +41,7 @@ func (r *Repo) ListPlans(ctx context.Context, studioID uuid.UUID) ([]Plan, error
 	var out []Plan
 	for rows.Next() {
 		var p Plan
-		if err := rows.Scan(&p.ID, &p.StudioID, &p.PlanName, &p.PriceSGD, &p.BillingCycle, &p.BillingInterval, &p.BillingIntervalCount, &p.Features, &p.IsActive, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.StudioID, &p.PlanName, &p.PriceSGD, &p.BillingCycle, &p.BillingInterval, &p.BillingIntervalCount, &p.Features, &p.IsActive, &p.PaymentLink, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("list plans scan: %w", err)
 		}
 		out = append(out, p)
@@ -53,6 +57,7 @@ type CreatePlanInput struct {
 	BillingIntervalCount int      `json:"billingIntervalCount"`
 	Features             []string `json:"features"`
 	IsActive             bool     `json:"isActive"`
+	PaymentLink          string   `json:"paymentLink"`
 }
 
 func (r *Repo) CreatePlan(ctx context.Context, studioID uuid.UUID, in CreatePlanInput) (Plan, error) {
@@ -67,11 +72,11 @@ func (r *Repo) CreatePlan(ctx context.Context, studioID uuid.UUID, in CreatePlan
 	}
 	var p Plan
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO plans (studio_id, plan_name, price_sgd, billing_cycle, billing_interval, billing_interval_count, features, is_active)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING id, studio_id, plan_name, price_sgd, billing_cycle, billing_interval, billing_interval_count, features, is_active, created_at, updated_at
-	`, studioID, in.PlanName, in.PriceSGD, in.BillingCycle, in.BillingInterval, in.BillingIntervalCount, in.Features, in.IsActive).Scan(
-		&p.ID, &p.StudioID, &p.PlanName, &p.PriceSGD, &p.BillingCycle, &p.BillingInterval, &p.BillingIntervalCount, &p.Features, &p.IsActive, &p.CreatedAt, &p.UpdatedAt,
+		INSERT INTO plans (studio_id, plan_name, price_sgd, billing_cycle, billing_interval, billing_interval_count, features, is_active, payment_link)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING id, studio_id, plan_name, price_sgd, billing_cycle, billing_interval, billing_interval_count, features, is_active, payment_link, created_at, updated_at
+	`, studioID, in.PlanName, in.PriceSGD, in.BillingCycle, in.BillingInterval, in.BillingIntervalCount, in.Features, in.IsActive, in.PaymentLink).Scan(
+		&p.ID, &p.StudioID, &p.PlanName, &p.PriceSGD, &p.BillingCycle, &p.BillingInterval, &p.BillingIntervalCount, &p.Features, &p.IsActive, &p.PaymentLink, &p.CreatedAt, &p.UpdatedAt,
 	)
 	if err != nil {
 		return Plan{}, fmt.Errorf("create plan: %w", err)
@@ -98,6 +103,7 @@ type UpdatePlanInput struct {
 	BillingIntervalCount *int      `json:"billingIntervalCount"`
 	Features             *[]string `json:"features"`
 	IsActive             *bool     `json:"isActive"`
+	PaymentLink          *string   `json:"paymentLink"`
 }
 
 func (r *Repo) UpdatePlan(ctx context.Context, studioID, planID uuid.UUID, in UpdatePlanInput) error {
@@ -131,6 +137,10 @@ func (r *Repo) UpdatePlan(ctx context.Context, studioID, planID uuid.UUID, in Up
 	if in.IsActive != nil {
 		args = append(args, *in.IsActive)
 		q += fmt.Sprintf(", is_active = $%d", len(args))
+	}
+	if in.PaymentLink != nil {
+		args = append(args, *in.PaymentLink)
+		q += fmt.Sprintf(", payment_link = $%d", len(args))
 	}
 
 	q += " WHERE studio_id = $1 AND id = $2"

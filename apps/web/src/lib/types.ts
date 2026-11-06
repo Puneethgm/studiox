@@ -65,6 +65,10 @@ export interface Studio {
   contactPhone?: string;
   active: boolean;
   managedBy1Hero?: boolean;
+  // Superadmin-only master switch for whether this studio gets AI replies
+  // at all — separate from a conversation's own per-conversation toggle.
+  // Defaults true.
+  aiAccessEnabled?: boolean;
   createdAt: string;
   updatedAt: string;
   availabilitySlots?: { day: string; times: string[] }[];
@@ -84,6 +88,7 @@ export interface Studio {
   communicationStyleProfile?: string;
   styleProfileUpdatedAt?: string;
   styleRefreshIntervalMinutes?: number;
+  replyTone?: 'professional' | 'casual' | 'friendly';
   // "YYYY-MM-DD" — Week 1's first day of a parsed week-by-week program
   // document, so the AI can compute exactly which week/day today falls on.
   programStartDate?: string;

@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { LayoutTemplate, ExternalLink } from 'lucide-react';
+import { LayoutTemplate, ExternalLink, Tag } from 'lucide-react';
 import { requireSession, serverFetch } from '@/lib/auth';
 import type { Campaign, Studio, Plan } from '@/lib/types';
 import { SettingsForm } from './SettingsForm';
@@ -55,6 +55,13 @@ export default async function SettingsPage({
           >
             <LayoutTemplate className="h-3.5 w-3.5" />
             Customize Trial Payment Page
+          </Link>
+          <Link
+            href={`/admin/studios/${studioId}/settings/offers`}
+            className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3.5 py-2 text-xs font-bold text-zinc-600 transition-colors hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-900"
+          >
+            <Tag className="h-3.5 w-3.5" />
+            Offers
           </Link>
         </div>
       </div>

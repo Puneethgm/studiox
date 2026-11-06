@@ -36,7 +36,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { brandInitials } from '@/lib/color';
-import { ApiError, api } from '@/lib/api';
+import { ApiError, api, readCSRFCookie } from '@/lib/api';
 import { formatTime, relativeTime, formatChatListTimestamp, formatDayDivider, dayKey } from '@/lib/datetime';
 import type {
   ChannelKind,
@@ -351,6 +351,7 @@ export function InboxLive({
   const [triggerLinks, setTriggerLinks] = useState<TriggerLink[]>([]);
   const [loadingLinks, setLoadingLinks] = useState(false);
   const [jobs, setJobs] = useState<PendingJob[]>([]);
+  const [retryingAllBlocked, setRetryingAllBlocked] = useState(false);
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [tabVisibleJobsCount, setTabVisibleJobsCount] = useState(5);
   const [tabVisibleTemplatesCount, setTabVisibleTemplatesCount] = useState(5);
@@ -798,9 +799,10 @@ export function InboxLive({
     try {
       const form = new FormData();
       form.append('file', file);
+      const csrfToken = readCSRFCookie();
       const res = await fetch(
         `/api/v1/studios/${studioId}/messaging/upload`,
-        { method: 'POST', body: form, credentials: 'include' }
+        { method: 'POST', body: form, credentials: 'include', headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : undefined }
       );
       if (!res.ok) throw new Error('upload failed');
       const data = await res.json() as { url: string; filename: string };
@@ -825,9 +827,10 @@ export function InboxLive({
     try {
       const form = new FormData();
       form.append('file', file);
+      const csrfToken = readCSRFCookie();
       const res = await fetch(
         `/api/v1/studios/${studioId}/messaging/upload`,
-        { method: 'POST', body: form, credentials: 'include' }
+        { method: 'POST', body: form, credentials: 'include', headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : undefined }
       );
       if (!res.ok) throw new Error('upload failed');
       const data = await res.json() as { url: string; filename: string };
@@ -852,9 +855,10 @@ export function InboxLive({
     try {
       const form = new FormData();
       form.append('file', file);
+      const csrfToken = readCSRFCookie();
       const res = await fetch(
         `/api/v1/studios/${studioId}/messaging/upload`,
-        { method: 'POST', body: form, credentials: 'include' }
+        { method: 'POST', body: form, credentials: 'include', headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : undefined }
       );
       if (!res.ok) throw new Error('upload failed');
       const data = await res.json() as { url: string; filename: string };
@@ -1217,6 +1221,37 @@ export function InboxLive({
     }
   }
 
+  async function handleRetryAllBlocked() {
+    setRetryingAllBlocked(true);
+    try {
+      const res = await api<{ retried: number }>(
+        `/api/v1/studios/${studioId}/messaging/jobs/retry-blocked`,
+        { method: 'POST' }
+      );
+      sessionStorage.setItem(
+        'studiox_toast',
+        JSON.stringify({
+          message: `Retried ${res.retried} blocked message${res.retried === 1 ? '' : 's'}. Any still over the WhatsApp daily limit will go blocked again until it resets.`,
+          type: 'success',
+        })
+      );
+      window.dispatchEvent(new Event('studiox_toast_update'));
+      setTimeout(fetchJobs, 300);
+    } catch (err: any) {
+      console.error('Failed to retry all blocked jobs:', err);
+      sessionStorage.setItem(
+        'studiox_toast',
+        JSON.stringify({
+          message: err?.message || 'Failed to retry blocked messages.',
+          type: 'error',
+        })
+      );
+      window.dispatchEvent(new Event('studiox_toast_update'));
+    } finally {
+      setRetryingAllBlocked(false);
+    }
+  }
+
   async function handleCancelJob(id: number) {
     if (!confirm('Are you sure you want to cancel this scheduled message?')) return;
     try {
@@ -1235,7 +1270,7 @@ export function InboxLive({
 
   return (
     <div
-      className="flex flex-col h-[calc(100vh-3.5rem)] overflow-hidden bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-950"
+      className="flex h-full flex-col overflow-hidden bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-950"
     >
       {mounted && (
         <HeaderActions>
@@ -2259,12 +2294,25 @@ export function InboxLive({
             <h3 className="text-lg font-black text-zinc-900 dark:text-white">Scheduled &amp; Automated Messages</h3>
             <p className="text-xs font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest mt-1">Scheduled follow-up contact pipeline</p>
           </div>
-          <button
-            onClick={fetchJobs}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white/30 text-xs font-bold text-violet-600 border border-violet-200/30 hover:bg-white/50 transition-all dark:bg-white/5 dark:text-violet-400 dark:border-violet-500/10"
-          >
-            <RotateCw className="h-3.5 w-3.5" /> Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            {jobs.some((j) => j.status === 'dead') && (
+              <button
+                onClick={handleRetryAllBlocked}
+                disabled={retryingAllBlocked}
+                title="Retries every blocked message now. A message still over today's WhatsApp daily limit will go blocked again until the limit resets or is raised."
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-red-500/10 text-xs font-bold text-red-600 border border-red-300/30 hover:bg-red-500/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed dark:text-red-400 dark:border-red-500/20"
+              >
+                <RotateCw className={cn('h-3.5 w-3.5', retryingAllBlocked && 'animate-spin')} />
+                {retryingAllBlocked ? 'Retrying…' : `Retry All Blocked (${jobs.filter((j) => j.status === 'dead').length})`}
+              </button>
+            )}
+            <button
+              onClick={fetchJobs}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white/30 text-xs font-bold text-violet-600 border border-violet-200/30 hover:bg-white/50 transition-all dark:bg-white/5 dark:text-violet-400 dark:border-violet-500/10"
+            >
+              <RotateCw className="h-3.5 w-3.5" /> Refresh
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0">

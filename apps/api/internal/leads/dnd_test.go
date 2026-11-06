@@ -62,7 +62,7 @@ func seedTestLead(t *testing.T, ctx context.Context, pool *pgxpool.Pool, email s
 func TestSetDNDEnabled(t *testing.T) {
 	pool := testDB(t)
 	ctx := context.Background()
-	repo := NewRepo(pool)
+	repo := NewRepo(pool, pool)
 
 	studioID, leadID := seedTestLead(t, ctx, pool, "dnd-repo-test@example.com")
 
@@ -112,7 +112,7 @@ func TestSetDNDEnabled(t *testing.T) {
 func TestService_SetDND_CancelsPendingMessages(t *testing.T) {
 	pool := testDB(t)
 	ctx := context.Background()
-	repo := NewRepo(pool)
+	repo := NewRepo(pool, pool)
 	svc := NewService(repo, nil)
 
 	studioID, leadID := seedTestLead(t, ctx, pool, "dnd-service-test@example.com")

@@ -9,9 +9,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/projectx/api/internal/integrations/claude"
+	"github.com/projectx/api/internal/integrations/bifrost"
 	"github.com/projectx/api/internal/integrations/embeddings"
 	"github.com/projectx/api/internal/integrations/llm"
+	"github.com/projectx/api/internal/integrations/llmgateway"
 	"github.com/projectx/api/internal/studios"
 )
 
@@ -52,18 +53,17 @@ const (
 // per-reply few-shot retrieval: a stable style anchor injected into every AI
 // prompt, distilled once per refresh instead of retrieved fresh each time.
 type StyleWorker struct {
-	studiosRepo  *studios.Repo
-	msgRepo      *Repo
-	claude       *claude.Client
-	claudeAPIURL string
-	embeddings   *embeddings.Client
-	llmRepo      *llm.Repo
-	log          *slog.Logger
-	answerCache  *AnswerCache
+	studiosRepo   *studios.Repo
+	msgRepo       *Repo
+	bifrostClient *bifrost.Client
+	embeddings    *embeddings.Client
+	llmRepo       *llm.Repo
+	llmGateway    *llmgateway.Client
+	log           *slog.Logger
 }
 
-func NewStyleWorker(studiosRepo *studios.Repo, msgRepo *Repo, claudeClient *claude.Client, claudeAPIURL string, embClient *embeddings.Client, llmRepo *llm.Repo, logger *slog.Logger, answerCache *AnswerCache) *StyleWorker {
-	return &StyleWorker{studiosRepo: studiosRepo, msgRepo: msgRepo, claude: claudeClient, claudeAPIURL: claudeAPIURL, embeddings: embClient, llmRepo: llmRepo, log: logger, answerCache: answerCache}
+func NewStyleWorker(studiosRepo *studios.Repo, msgRepo *Repo, bifrostClient *bifrost.Client, embClient *embeddings.Client, llmRepo *llm.Repo, llmGateway *llmgateway.Client, logger *slog.Logger) *StyleWorker {
+	return &StyleWorker{studiosRepo: studiosRepo, msgRepo: msgRepo, bifrostClient: bifrostClient, embeddings: embClient, llmRepo: llmRepo, llmGateway: llmGateway, log: logger}
 }
 
 func (w *StyleWorker) Run(ctx context.Context) {
@@ -235,19 +235,11 @@ func (w *StyleWorker) embedUnembeddedStaffReplies(ctx context.Context, studioID 
 	}
 }
 
-// resolveGeminiAPIKey returns a studio's own Gemini key, falling back to the
-// platform-wide one (Superadmin → Platform Settings) if the studio hasn't
-// set its own — same fallback order used everywhere else in this file.
+// resolveGeminiAPIKey returns the superadmin's centrally-configured Gemini
+// key (AI Provider Settings) — every studio shares the same one now, so
+// studioID is unused; kept so call sites don't need to change.
 func (w *StyleWorker) resolveGeminiAPIKey(ctx context.Context, studioID uuid.UUID) (string, error) {
-	studio, err := w.studiosRepo.GetByID(ctx, studioID)
-	if err != nil {
-		return "", err
-	}
-	if studio.GeminiAPIKey != "" {
-		return studio.GeminiAPIKey, nil
-	}
-	pk, _ := w.studiosRepo.GetPlatformSetting(ctx, "gemini_api_key")
-	return pk, nil
+	return w.studiosRepo.GetPlatformAIProviderKey(ctx, "gemini")
 }
 
 // embedStaffReply resolves a Gemini API key and saves an embedding for a
@@ -289,6 +281,13 @@ func (w *StyleWorker) reconcileAllStudios(ctx context.Context) {
 }
 
 func (w *StyleWorker) tick(ctx context.Context) {
+	// Piggybacks on this worker's existing 5-minute ticker rather than a
+	// dedicated loop of its own — see studios.Repo.CheckAIAlertThresholds
+	// and task 3.8.
+	if err := w.studiosRepo.CheckAIAlertThresholds(ctx); err != nil {
+		w.log.Warn("check ai alert thresholds failed", "err", err)
+	}
+
 	w.retryUnembeddedStaffReplies(ctx)
 
 	studioIDs, err := w.studiosRepo.ListStudiosNeedingStyleRefresh(ctx, styleRefreshThreshold)
@@ -334,10 +333,10 @@ func (w *StyleWorker) rebuildProfile(ctx context.Context, studioID uuid.UUID) er
 		"\"The studio is short and upbeat\"). Output only the profile text, no preamble.\n\n" +
 		"TRANSCRIPTS:\n" + doc.String()
 
-	// Same Groq → Gemini → Claude waterfall the AI reply pipeline uses — this
+	// Same Groq → Gemini → Claude → OpenAI waterfall the AI reply pipeline uses — this
 	// worker can't assume Claude is configured, since it's a single
 	// platform-wide key while Groq/Gemini keys are set per studio.
-	replyText, sourceRef := llmWaterfall(ctx, w.studiosRepo, w.llmRepo, w.msgRepo, w.claude, w.claudeAPIURL, w.log, studioID, studio, prompt, w.answerCache, "style_profile")
+	replyText, sourceRef := llmWaterfall(ctx, w.llmGateway, studioID, studio, prompt, llmgateway.FeatureStyleProfile)
 	profile := strings.TrimSpace(replyText)
 	if profile == "" {
 		return fmt.Errorf("no LLM provider configured or all providers failed")

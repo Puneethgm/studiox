@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
@@ -12,6 +13,15 @@ import (
 
 	"github.com/projectx/api/internal/platform/secrets"
 )
+
+// numericDateOrNil converts a *time.Time to a *jwt.NumericDate,
+// preserving nil — jwt.NewNumericDate(*t) would panic on a nil pointer.
+func numericDateOrNil(t *time.Time) *jwt.NumericDate {
+	if t == nil {
+		return nil
+	}
+	return jwt.NewNumericDate(*t)
+}
 
 // generateCSRFToken returns a random, URL-safe 32-byte token — same
 // strength as the session's own encryption key (see secrets.RequiredKeyBytes),
@@ -71,6 +81,27 @@ type Claims struct {
 	// can't read — it's sealed inside the encrypted px_session cookie, not
 	// just protected by SameSite). See RequireAuth's checkCSRF call.
 	CSRFToken string `json:"csrf"`
+	// SessionID is the durable identity of this login session — generated
+	// once at Issue and, like CSRFToken/SessionMaxExpiresAt, carried
+	// forward unchanged by every Refresh even though the token's own jti
+	// rotates on every request. It's what the sessions table (platform-
+	// security-hardening task 1.1) is keyed on, and what
+	// SessionStore.IsRevoked checks on every request — jti alone can't be
+	// the revocation key here, since a stolen/old jti is simply left to
+	// expire rather than revoked on rotation (see RequireAuth's doc
+	// comment), which would make a per-jti revocation list useless for
+	// "end this session right now" semantics.
+	SessionID uuid.UUID `json:"session_id"`
+	// TwoFAVerifiedAt is when a TOTP/recovery code was last actually
+	// checked for this session — set only by a real code verification
+	// (login's code step, or the dedicated step-up endpoint), never
+	// slid forward by an ordinary Refresh the way IdleExpiresAt is.
+	// RequireStepUp (platform-security-hardening task 2.6) requires this
+	// to be within the last 10 minutes for sensitive actions. nil means
+	// no code has ever been verified this session (no 2FA enrolled, or
+	// a remember-browser login that skipped the code step entirely —
+	// deliberately NOT treated as a fresh verification for step-up).
+	TwoFAVerifiedAt *jwt.NumericDate `json:"totp_verified_at,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -126,17 +157,108 @@ func (c *Claims) EffectiveStudioID(requested *uuid.UUID) (uuid.UUID, bool) {
 // that was asked for: the cookie value on the wire/in the browser can't be
 // base64-decoded to read uid/role/perms the way a bare JWT can.
 type TokenIssuer struct {
+	// secret is the static fallback signing key, used only when keys is
+	// nil — every test and any deployment that hasn't wired a
+	// SigningKeyStore. It signs/verifies under the fixed kid envKeyID,
+	// the same kid a SigningKeyStore bootstraps from the identical env
+	// secret, so a token survives a later switch from static to rotatable
+	// signing without needing to be reissued.
 	secret  []byte
+	keys    *SigningKeyStore
 	ttl     time.Duration
 	idleTTL time.Duration
 	// maxAge is the hard backstop (see Claims.SessionMaxExpiresAt) — set
 	// once at Issue time, never extended by Refresh.
 	maxAge time.Duration
-	cipher *secrets.Cipher
+	// superAdminIdleTTL/superAdminMaxAge are the same two concepts, but
+	// tighter — super_admin can reach every studio's data, so its session
+	// gets a shorter leash (platform-security-hardening task 1.8). Every
+	// other role uses idleTTL/maxAge above.
+	superAdminIdleTTL time.Duration
+	superAdminMaxAge  time.Duration
+	cipher            *secrets.Cipher
+}
+
+// WithSigningKeyStore wires a SigningKeyStore into t, enabling
+// out-of-process signing-key rotation (platform-security-hardening task
+// 1.9). Call once at startup, right after NewTokenIssuer(WithSuperAdminTTLs).
+func (t *TokenIssuer) WithSigningKeyStore(keys *SigningKeyStore) *TokenIssuer {
+	t.keys = keys
+	return t
+}
+
+// signingSecret returns the kid/secret newly-issued tokens should be
+// signed with.
+func (t *TokenIssuer) signingSecret(ctx context.Context) (kid string, secret []byte, err error) {
+	if t.keys != nil {
+		return t.keys.Current(ctx)
+	}
+	return envKeyID, t.secret, nil
+}
+
+// verifyingSecret returns the secret for kid, used to verify an existing
+// token's signature. An empty kid (every token issued before this field
+// existed) is treated as envKeyID — both the static-secret fallback and
+// a SigningKeyStore bootstrap from the very same env-sourced secret
+// under that kid, so old tokens keep verifying either way.
+func (t *TokenIssuer) verifyingSecret(ctx context.Context, kid string) ([]byte, error) {
+	if kid == "" {
+		kid = envKeyID
+	}
+	if t.keys != nil {
+		secret, ok, err := t.keys.Lookup(ctx, kid)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, errors.New("unknown signing key id")
+		}
+		return secret, nil
+	}
+	if kid != envKeyID {
+		return nil, errors.New("unknown signing key id")
+	}
+	return t.secret, nil
+}
+
+// ttlsFor returns the idle timeout and hard max-age that apply to role —
+// tighter for super_admin than every other role (task 1.8).
+func (t *TokenIssuer) ttlsFor(role Role) (idleTTL, maxAge time.Duration) {
+	if role == RoleSuperAdmin {
+		return t.superAdminIdleTTL, t.superAdminMaxAge
+	}
+	return t.idleTTL, t.maxAge
 }
 
 func NewTokenIssuer(secret string, ttl, idleTTL, maxAge time.Duration, cipher *secrets.Cipher) *TokenIssuer {
-	return &TokenIssuer{secret: []byte(secret), ttl: ttl, idleTTL: idleTTL, maxAge: maxAge, cipher: cipher}
+	return NewTokenIssuerWithSuperAdminTTLs(secret, ttl, idleTTL, maxAge, idleTTL, maxAge, cipher)
+}
+
+// NewTokenIssuerWithSuperAdminTTLs is NewTokenIssuer plus the tighter
+// super_admin idle/max-age pair (task 1.8). NewTokenIssuer itself stays
+// as the common-case constructor (used by every test that doesn't care
+// about the super_admin/other-roles distinction) by delegating here with
+// the super_admin values equal to the regular ones.
+func NewTokenIssuerWithSuperAdminTTLs(secret string, ttl, idleTTL, maxAge, superAdminIdleTTL, superAdminMaxAge time.Duration, cipher *secrets.Cipher) *TokenIssuer {
+	return &TokenIssuer{
+		secret: []byte(secret), ttl: ttl, idleTTL: idleTTL, maxAge: maxAge,
+		superAdminIdleTTL: superAdminIdleTTL, superAdminMaxAge: superAdminMaxAge,
+		cipher: cipher,
+	}
+}
+
+// MaxAge returns the longer of the two possible hard session-lifetime
+// backstops (super_admin vs. every other role) — the longest a token
+// issued right now could possibly still verify, regardless of whose.
+// Used as the Redis TTL for SessionStore.MarkRevoked, so a revocation
+// record never expires before every token it must block could have
+// expired on its own anyway; over-provisioning this TTL for a
+// super_admin's (shorter) session is always safe.
+func (t *TokenIssuer) MaxAge() time.Duration {
+	if t.superAdminMaxAge > t.maxAge {
+		return t.superAdminMaxAge
+	}
+	return t.maxAge
 }
 
 // Issue signs and encrypts a brand-new session for u — a fresh absolute
@@ -145,16 +267,22 @@ func NewTokenIssuer(secret string, ttl, idleTTL, maxAge time.Duration, cipher *s
 // (real re-authentication events); every other authenticated request
 // rotates the existing session via Refresh instead. permissions is ignored
 // (and should be nil) for anything other than RoleStudioStaff — see
-// Claims.Permissions.
-func (t *TokenIssuer) Issue(u *User, permissions []string) (token string, exp time.Time, jti string, csrfToken string, err error) {
+// Claims.Permissions. The returned sessionID is this login's durable
+// identity (Claims.SessionID) — callers create the matching `sessions`
+// row with it.
+// twoFAVerifiedAt is nil unless the caller just checked a real code
+// (login's code step) — see Claims.TwoFAVerifiedAt's doc comment.
+func (t *TokenIssuer) Issue(ctx context.Context, u *User, permissions []string, twoFAVerifiedAt *time.Time) (token string, exp time.Time, jti string, csrfToken string, sessionID uuid.UUID, err error) {
 	now := time.Now()
-	sessionMaxExp := now.Add(t.maxAge)
+	_, maxAge := t.ttlsFor(u.Role)
+	sessionMaxExp := now.Add(maxAge)
 	csrfToken, err = generateCSRFToken()
 	if err != nil {
-		return "", time.Time{}, "", "", fmt.Errorf("generate csrf token: %w", err)
+		return "", time.Time{}, "", "", uuid.Nil, fmt.Errorf("generate csrf token: %w", err)
 	}
-	token, exp, jti, err = t.issue(u, permissions, now.Add(t.ttl), sessionMaxExp, csrfToken)
-	return token, exp, jti, csrfToken, err
+	sessionID = uuid.New()
+	token, exp, jti, err = t.issue(ctx, u, permissions, now.Add(t.ttl), sessionMaxExp, csrfToken, sessionID, twoFAVerifiedAt)
+	return token, exp, jti, csrfToken, sessionID, err
 }
 
 // Refresh re-issues claims for the same session, sliding BOTH the absolute
@@ -166,18 +294,24 @@ func (t *TokenIssuer) Issue(u *User, permissions []string) (token string, exp ti
 // keeps arriving within the idle window, the session never hits a fixed
 // ceiling from the original login except that one outer backstop — only
 // idleTTL of genuine inactivity (no requests at all), or sessionMaxExp
-// itself passing, ever ends it.
-func (t *TokenIssuer) Refresh(u *User, permissions []string, sessionMaxExp time.Time, csrfToken string) (token string, exp time.Time, jti string, err error) {
+// itself passing, ever ends it. sessionID must be the existing token's
+// Claims.SessionID — carried forward unchanged, same as csrfToken.
+// twoFAVerifiedAt must be the existing token's Claims.TwoFAVerifiedAt
+// to leave it unchanged (ordinary request rotation), or a fresh
+// &time.Now() to refresh it (the step-up endpoint re-issuing after a
+// just-checked code).
+func (t *TokenIssuer) Refresh(ctx context.Context, u *User, permissions []string, sessionMaxExp time.Time, csrfToken string, sessionID uuid.UUID, twoFAVerifiedAt *time.Time) (token string, exp time.Time, jti string, err error) {
 	exp = time.Now().Add(t.ttl)
 	if exp.After(sessionMaxExp) {
 		exp = sessionMaxExp // sliding never reaches past the hard backstop
 	}
-	return t.issue(u, permissions, exp, sessionMaxExp, csrfToken)
+	return t.issue(ctx, u, permissions, exp, sessionMaxExp, csrfToken, sessionID, twoFAVerifiedAt)
 }
 
-func (t *TokenIssuer) issue(u *User, permissions []string, exp, sessionMaxExp time.Time, csrfToken string) (token string, retExp time.Time, jti string, err error) {
+func (t *TokenIssuer) issue(ctx context.Context, u *User, permissions []string, exp, sessionMaxExp time.Time, csrfToken string, sessionID uuid.UUID, twoFAVerifiedAt *time.Time) (token string, retExp time.Time, jti string, err error) {
 	now := time.Now()
-	idleExp := now.Add(t.idleTTL)
+	idleTTL, _ := t.ttlsFor(u.Role)
+	idleExp := now.Add(idleTTL)
 	if idleExp.After(exp) {
 		idleExp = exp // the idle window never reaches past the absolute cap
 	}
@@ -191,6 +325,8 @@ func (t *TokenIssuer) issue(u *User, permissions []string, exp, sessionMaxExp ti
 		IdleExpiresAt:       jwt.NewNumericDate(idleExp),
 		SessionMaxExpiresAt: jwt.NewNumericDate(sessionMaxExp),
 		CSRFToken:           csrfToken,
+		SessionID:           sessionID,
+		TwoFAVerifiedAt:     numericDateOrNil(twoFAVerifiedAt),
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        jti,
 			Subject:   u.ID.String(),
@@ -199,8 +335,13 @@ func (t *TokenIssuer) issue(u *User, permissions []string, exp, sessionMaxExp ti
 			Issuer:    "projectx-api",
 		},
 	}
+	kid, signingSecret, err := t.signingSecret(ctx)
+	if err != nil {
+		return "", time.Time{}, "", fmt.Errorf("resolve signing key: %w", err)
+	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, c)
-	signed, err := tok.SignedString(t.secret)
+	tok.Header["kid"] = kid
+	signed, err := tok.SignedString(signingSecret)
 	if err != nil {
 		return "", time.Time{}, "", fmt.Errorf("sign jwt: %w", err)
 	}
@@ -217,7 +358,7 @@ func (t *TokenIssuer) issue(u *User, permissions []string, exp, sessionMaxExp ti
 // identity.SessionStore (revocation — see SessionStore.Exists) themselves —
 // a token that decrypts and verifies cleanly can still belong to an
 // idle-timed-out or revoked session.
-func (t *TokenIssuer) Parse(raw string) (*Claims, error) {
+func (t *TokenIssuer) Parse(ctx context.Context, raw string) (*Claims, error) {
 	signed, err := t.cipher.Decrypt(raw)
 	if err != nil {
 		return nil, errors.New("invalid token")
@@ -226,7 +367,8 @@ func (t *TokenIssuer) Parse(raw string) (*Claims, error) {
 		if _, ok := tok.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, errors.New("unexpected signing method")
 		}
-		return t.secret, nil
+		kid, _ := tok.Header["kid"].(string)
+		return t.verifyingSecret(ctx, kid)
 	})
 	if err != nil {
 		return nil, err

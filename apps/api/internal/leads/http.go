@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-pdf/fpdf"
 	"github.com/google/uuid"
 	"github.com/xuri/excelize/v2"
 
@@ -44,6 +45,7 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Get("/leads/stats", h.leadStats)
 	r.Get("/analytics", h.getAnalytics)
 	r.Get("/analytics/daily", h.getDailyAnalytics)
+	r.Get("/analytics/converted-leads", h.exportConvertedLeads)
 	r.Get("/leads/sheets-settings", h.getSheetsSettings)
 	r.Post("/leads/sheets-settings", h.saveSheetsSettings)
 	r.Get("/leads/external-sheet-settings", h.getExternalLeadsSheetSettings)
@@ -611,6 +613,213 @@ func (h *Handler) getAnalytics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, summary)
+}
+
+// exportConvertedLeads godoc
+//
+//	@Summary		Download converted-leads report
+//	@Description	Streams every lead that reached trial_booked or member within the same duration/startDate/endDate window getAnalytics accepts, as a .pdf file — the row-level breakdown behind the dashboard's Conversion Rate figure.
+//	@Tags			Leads
+//	@Security		CookieAuth
+//	@Param			studioId	path	string	true	"Studio ID"
+//	@Param			duration	query	string	false	"Time window, e.g. '30d' (default: all-time)"
+//	@Param			startDate	query	string	false	"Explicit range start date"
+//	@Param			endDate		query	string	false	"Explicit range end date"
+//	@Success		200	{file}	binary
+//	@Failure		400	{object}	httpx.ErrorResponse	"missing/invalid studioId"
+//	@Failure		500	{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/analytics/converted-leads [get]
+func (h *Handler) exportConvertedLeads(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := h.resolveStudioID(w, r)
+	if !ok {
+		return
+	}
+
+	durationStr := r.URL.Query().Get("duration")
+	startDate := r.URL.Query().Get("startDate")
+	endDate := r.URL.Query().Get("endDate")
+
+	var durationDays int
+	if strings.HasSuffix(durationStr, "d") {
+		days, err := strconv.Atoi(strings.TrimSuffix(durationStr, "d"))
+		if err == nil && days > 0 {
+			durationDays = days
+		}
+	} else {
+		switch durationStr {
+		case "15d":
+			durationDays = 15
+		case "30d":
+			durationDays = 30
+		case "90d":
+			durationDays = 90
+		case "365d":
+			durationDays = 365
+		default:
+			durationDays = 0 // all-time
+		}
+	}
+
+	converted, err := h.svc.GetConvertedLeads(r.Context(), studioID, durationDays, startDate, endDate)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+
+	// Studio name/contact email for the report header — best-effort: a
+	// lookup failure shouldn't block the report, it just falls back to
+	// showing the raw ID (still fully traceable).
+	studioHeader, err := h.svc.GetStudioHeader(r.Context(), studioID)
+	if err != nil {
+		slog.Warn("export converted leads: studio header lookup failed, falling back to ID only", "studio_id", studioID, "err", err)
+	}
+
+	// Same aggregate figures the dashboard's Detailed Analytics section
+	// shows, over the same window — best-effort for the same reason as
+	// the studio header above.
+	summary, summaryErr := h.svc.GetAnalytics(r.Context(), studioID, durationDays, startDate, endDate)
+	if summaryErr != nil {
+		slog.Warn("export converted leads: analytics summary fetch failed, report will omit it", "studio_id", studioID, "err", summaryErr)
+	}
+
+	rangeLabel := "All time"
+	switch {
+	case startDate != "" || endDate != "":
+		rangeLabel = fmt.Sprintf("%s to %s", orDash(startDate), orDash(endDate))
+	case durationDays > 0:
+		rangeLabel = fmt.Sprintf("Last %d days", durationDays)
+	}
+
+	pdf := fpdf.New("P", "mm", "A4", "")
+	pdf.SetTitle("Converted Leads Report", false)
+	pdf.AddPage()
+
+	pdf.SetFont("Helvetica", "B", 16)
+	pdf.CellFormat(0, 10, "Converted Leads Report", "", 1, "L", false, 0, "")
+	pdf.SetFont("Helvetica", "B", 12)
+	if studioHeader.Name != "" {
+		pdf.CellFormat(0, 7, studioHeader.Name, "", 1, "L", false, 0, "")
+	}
+	pdf.SetFont("Helvetica", "", 10)
+	if studioHeader.ContactEmail != "" {
+		pdf.CellFormat(0, 6, studioHeader.ContactEmail, "", 1, "L", false, 0, "")
+	}
+	pdf.SetFont("Helvetica", "", 9)
+	pdf.SetTextColor(120, 120, 120)
+	pdf.CellFormat(0, 5, fmt.Sprintf("Studio ID: %s", studioID), "", 1, "L", false, 0, "")
+	pdf.SetTextColor(0, 0, 0)
+	pdf.SetFont("Helvetica", "", 10)
+	pdf.CellFormat(0, 6, fmt.Sprintf("Date range: %s", rangeLabel), "", 1, "L", false, 0, "")
+	pdf.CellFormat(0, 6, fmt.Sprintf("Generated: %s", time.Now().Format("2006-01-02 15:04")), "", 1, "L", false, 0, "")
+	pdf.Ln(4)
+
+	if summary != nil {
+		pdf.SetFont("Helvetica", "B", 13)
+		pdf.CellFormat(0, 8, "Analytics Summary", "", 1, "L", false, 0, "")
+		pdf.Ln(1)
+
+		statLabels := []string{"Total Leads", "Conversion Rate", "Connection Rate", "Dropped Rate", "Paused Rate"}
+		statValues := []string{
+			strconv.Itoa(summary.TotalLeads),
+			fmt.Sprintf("%.1f%%", summary.ConversionRate),
+			fmt.Sprintf("%.1f%%", summary.ConnectionRate),
+			fmt.Sprintf("%.1f%%", summary.DroppedRate),
+			fmt.Sprintf("%.1f%%", summary.PausedRate),
+		}
+		statColWidth := 38.0
+		pdf.SetFont("Helvetica", "B", 9)
+		pdf.SetFillColor(230, 230, 230)
+		for _, lbl := range statLabels {
+			pdf.CellFormat(statColWidth, 7, lbl, "1", 0, "C", true, 0, "")
+		}
+		pdf.Ln(-1)
+		pdf.SetFont("Helvetica", "", 10)
+		for _, v := range statValues {
+			pdf.CellFormat(statColWidth, 7, v, "1", 0, "C", false, 0, "")
+		}
+		pdf.Ln(-1)
+		pdf.Ln(5)
+
+		renderBreakdownTable(pdf, "Campaign Conversions", []string{"Campaign", "Total Leads", "Conversions", "Conv. Rate"},
+			len(summary.ByCampaign), func(i int) []string {
+				c := summary.ByCampaign[i]
+				return []string{c.Name, strconv.Itoa(c.TotalLeads), strconv.Itoa(c.ConvertedLeads), fmt.Sprintf("%.1f%%", c.ConversionRate)}
+			})
+		pdf.Ln(5)
+
+		renderBreakdownTable(pdf, "Acquisition Channels", []string{"Platform", "Total Leads", "Conversions", "Conv. Rate"},
+			len(summary.ByPlatform), func(i int) []string {
+				p := summary.ByPlatform[i]
+				return []string{p.Platform, strconv.Itoa(p.TotalLeads), strconv.Itoa(p.ConvertedLeads), fmt.Sprintf("%.1f%%", p.ConversionRate)}
+			})
+		pdf.Ln(5)
+	}
+
+	pdf.SetFont("Helvetica", "B", 13)
+	pdf.CellFormat(0, 8, fmt.Sprintf("Converted Leads (%d)", len(converted)), "", 1, "L", false, 0, "")
+	pdf.Ln(1)
+
+	colWidths := []float64{45, 55, 30, 25, 35}
+	headers := []string{"Name", "Email", "Phone", "Status", "Converted At"}
+	pdf.SetFont("Helvetica", "B", 10)
+	pdf.SetFillColor(230, 230, 230)
+	for i, hdr := range headers {
+		pdf.CellFormat(colWidths[i], 8, hdr, "1", 0, "L", true, 0, "")
+	}
+	pdf.Ln(-1)
+
+	const dateLayout = "2006-01-02 15:04"
+	pdf.SetFont("Helvetica", "", 9)
+	for _, cl := range converted {
+		row := []string{cl.Name, cl.Email, cl.Phone, string(cl.Status), cl.ConvertedAt.Format(dateLayout)}
+		for i, v := range row {
+			pdf.CellFormat(colWidths[i], 7, v, "1", 0, "L", false, 0, "")
+		}
+		pdf.Ln(-1)
+	}
+
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="converted-leads-%s.pdf"`, time.Now().Format("2006-01-02")))
+	if err := pdf.Output(w); err != nil {
+		slog.Error("export converted leads: failed to write pdf", "studio_id", studioID, "err", err)
+	}
+}
+
+// renderBreakdownTable renders one of the Analytics Summary's by-campaign/
+// by-platform tables — same column shape, just a different row source, so
+// exportConvertedLeads doesn't repeat this cell-layout code twice.
+func renderBreakdownTable(pdf *fpdf.Fpdf, title string, headers []string, rowCount int, row func(i int) []string) {
+	pdf.SetFont("Helvetica", "B", 11)
+	pdf.CellFormat(0, 7, title, "", 1, "L", false, 0, "")
+
+	colWidths := []float64{70, 35, 35, 35}
+	pdf.SetFont("Helvetica", "B", 9)
+	pdf.SetFillColor(230, 230, 230)
+	for i, hdr := range headers {
+		pdf.CellFormat(colWidths[i], 7, hdr, "1", 0, "L", true, 0, "")
+	}
+	pdf.Ln(-1)
+
+	pdf.SetFont("Helvetica", "", 9)
+	if rowCount == 0 {
+		pdf.CellFormat(175, 7, "No data for this period", "1", 1, "L", false, 0, "")
+		return
+	}
+	for i := 0; i < rowCount; i++ {
+		for j, v := range row(i) {
+			pdf.CellFormat(colWidths[j], 7, v, "1", 0, "L", false, 0, "")
+		}
+		pdf.Ln(-1)
+	}
+}
+
+// orDash returns "—" for an empty date-range boundary so the PDF's header
+// line reads cleanly when only one of startDate/endDate was supplied.
+func orDash(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
 }
 
 // getDailyAnalytics godoc

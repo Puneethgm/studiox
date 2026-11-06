@@ -1,12 +1,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Plug, CheckCircle2 } from 'lucide-react';
+import { Settings as SettingsIcon, Plug, CheckCircle2, Bot } from 'lucide-react';
 import { CredentialsManager } from './CredentialsManager';
+import { AIProviderPlatformSettings } from './AIProviderPlatformSettings';
 import { Button } from '@/components/ui/Button';
 
 export function SettingsTabs() {
-  const [activeTab, setActiveTab] = useState<'credentials' | 'plans'>('credentials');
+  const [activeTab, setActiveTab] = useState<'credentials' | 'plans' | 'ai-providers'>('credentials');
   const [saving, setSaving] = useState(false);
   
   const [plans, setPlans] = useState<any[]>([]);
@@ -73,11 +74,24 @@ export function SettingsTabs() {
           <SettingsIcon className="h-4 w-4" />
           Plans Configuration
         </button>
+        <button
+          onClick={() => setActiveTab('ai-providers')}
+          className={`flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-bold transition-colors ${
+            activeTab === 'ai-providers'
+              ? 'border-brand-500 text-brand-600 dark:text-brand-400'
+              : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700 dark:text-slate-400 dark:hover:border-slate-700 dark:hover:text-slate-300'
+          }`}
+        >
+          <Bot className="h-4 w-4" />
+          AI Providers
+        </button>
       </div>
 
       {/* ── Tabs Content ───────────────────────── */}
       <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
         {activeTab === 'credentials' && <CredentialsManager />}
+
+        {activeTab === 'ai-providers' && <AIProviderPlatformSettings />}
 
         {activeTab === 'plans' && (
           <div className="rounded-3xl border border-white/20 bg-white/10 p-6 backdrop-blur-xl dark:border-white/5 dark:bg-neutral-900/30">

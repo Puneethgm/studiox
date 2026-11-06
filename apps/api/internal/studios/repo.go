@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -74,28 +75,16 @@ func (r *Repo) Create(ctx context.Context, tx pgx.Tx, s *Studio, actorID *uuid.U
 			return fmt.Errorf("encrypt stripe webhook secret: %w", err)
 		}
 	}
-	encGeminiKey, err := r.encryptOrPlain(s.GeminiAPIKey)
-	if err != nil {
-		return fmt.Errorf("encrypt gemini api key: %w", err)
-	}
-	encGroqKey, err := r.encryptOrPlain(s.GroqAPIKey)
-	if err != nil {
-		return fmt.Errorf("encrypt groq api key: %w", err)
-	}
-	encClaudeKey, err := r.encryptOrPlain(s.ClaudeAPIKey)
-	if err != nil {
-		return fmt.Errorf("encrypt claude api key: %w", err)
-	}
 	kbFilesJSON, _ := json.Marshal(s.KnowledgeBaseFiles)
 	currency := s.Currency
 	if currency == "" {
 		currency = "SGD"
 	}
 	row := tx.QueryRow(ctx, `
-		INSERT INTO studios (slug, name, brand_color, logo_url, contact_email, contact_phone, active, gemini_api_key, groq_api_key, claude_api_key, meta_app_id, meta_app_secret, google_client_id, google_client_secret, google_developer_token, stripe_account_id, stripe_secret_key, stripe_publishable_key, stripe_webhook_secret, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files, trial_amount_sgd, managed_by_1hero, currency, created_by, updated_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$27)
+		INSERT INTO studios (slug, name, brand_color, logo_url, contact_email, contact_phone, active, meta_app_id, meta_app_secret, google_client_id, google_client_secret, google_developer_token, stripe_account_id, stripe_secret_key, stripe_publishable_key, stripe_webhook_secret, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files, trial_amount_sgd, managed_by_1hero, currency, created_by, updated_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$24)
 		RETURNING id, created_at, updated_at
-	`, s.Slug, s.Name, s.BrandColor, s.LogoURL, s.ContactEmail, s.ContactPhone, s.Active, encGeminiKey, encGroqKey, encClaudeKey, s.MetaAppID, s.MetaAppSecret, s.GoogleClientID, s.GoogleClientSecret, s.GoogleDeveloperToken, s.StripeAccountID, s.StripeSecretKey, s.StripePublishableKey, encWebhookSecret, s.SubscriptionTier, s.SocialPlannerEnabled, s.KnowledgeBase, string(kbFilesJSON), s.TrialAmountSGD, s.ManagedBy1Hero, currency, actorID)
+	`, s.Slug, s.Name, s.BrandColor, s.LogoURL, s.ContactEmail, s.ContactPhone, s.Active, s.MetaAppID, s.MetaAppSecret, s.GoogleClientID, s.GoogleClientSecret, s.GoogleDeveloperToken, s.StripeAccountID, s.StripeSecretKey, s.StripePublishableKey, encWebhookSecret, s.SubscriptionTier, s.SocialPlannerEnabled, s.KnowledgeBase, string(kbFilesJSON), s.TrialAmountSGD, s.ManagedBy1Hero, currency, actorID)
 	if err := row.Scan(&s.ID, &s.CreatedAt, &s.UpdatedAt); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -109,10 +98,10 @@ func (r *Repo) Create(ctx context.Context, tx pgx.Tx, s *Studio, actorID *uuid.U
 func (r *Repo) List(ctx context.Context) ([]Studio, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT s.id, s.slug, s.name, s.brand_color, s.logo_url, s.contact_email, s.contact_phone,
-		       s.active, s.created_at, s.updated_at, s.availability_slots, s.availability_timezone, s.gemini_api_key, s.meta_app_id, s.meta_app_secret,
+		       s.active, s.created_at, s.updated_at, s.availability_slots, s.availability_timezone, s.meta_app_id, s.meta_app_secret,
 		       s.google_client_id, s.google_client_secret, s.google_developer_token,
 		       s.stripe_account_id, s.stripe_secret_key, s.stripe_publishable_key, s.stripe_webhook_secret, s.subscription_tier, s.social_planner_enabled, s.knowledge_base, s.knowledge_base_files,
-		       s.trial_amount_sgd, s.managed_by_1hero,
+		       s.trial_amount_sgd, s.managed_by_1hero, s.ai_access_enabled,
 		       COALESCE(c.cnt, 0), COALESCE(l.cnt, 0)
 		FROM studios s
 		LEFT JOIN (SELECT studio_id, COUNT(*) AS cnt FROM campaigns GROUP BY studio_id) c
@@ -129,13 +118,12 @@ func (r *Repo) List(ctx context.Context) ([]Studio, error) {
 	for rows.Next() {
 		var s Studio
 		if err := rows.Scan(&s.ID, &s.Slug, &s.Name, &s.BrandColor, &s.LogoURL, &s.ContactEmail, &s.ContactPhone,
-			&s.Active, &s.CreatedAt, &s.UpdatedAt, &s.AvailabilitySlots, &s.AvailabilityTimezone, &s.GeminiAPIKey, &s.MetaAppID, &s.MetaAppSecret,
+			&s.Active, &s.CreatedAt, &s.UpdatedAt, &s.AvailabilitySlots, &s.AvailabilityTimezone, &s.MetaAppID, &s.MetaAppSecret,
 			&s.GoogleClientID, &s.GoogleClientSecret, &s.GoogleDeveloperToken,
 			&s.StripeAccountID, &s.StripeSecretKey, &s.StripePublishableKey, &s.StripeWebhookSecret, &s.SubscriptionTier, &s.SocialPlannerEnabled, &s.KnowledgeBase, &s.KnowledgeBaseFiles,
-			&s.TrialAmountSGD, &s.ManagedBy1Hero, &s.CampaignCount, &s.LeadCount); err != nil {
+			&s.TrialAmountSGD, &s.ManagedBy1Hero, &s.AIAccessEnabled, &s.CampaignCount, &s.LeadCount); err != nil {
 			return nil, fmt.Errorf("scan studio: %w", err)
 		}
-		s.GeminiAPIKey = decryptOrPlain(r.cipher, s.GeminiAPIKey)
 		if s.StripeSecretKey != "" && r.cipher != nil {
 			dec, err := r.cipher.Decrypt(s.StripeSecretKey)
 			if err == nil {
@@ -163,13 +151,13 @@ func (r *Repo) GetByID(ctx context.Context, id uuid.UUID) (*Studio, error) {
 
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, slug, name, brand_color, logo_url, contact_email, contact_phone, active, created_at, updated_at,
-		       availability_slots, availability_timezone, gemini_api_key, groq_api_key, claude_api_key, mistral_api_key, meta_app_id, meta_app_secret,
+		       availability_slots, availability_timezone, mistral_api_key, meta_app_id, meta_app_secret,
 		       google_client_id, google_client_secret, google_developer_token,
 		       stripe_account_id, stripe_secret_key, stripe_publishable_key, stripe_webhook_secret, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files,
 		       greeting_message, trial_amount_sgd, managed_by_1hero, booking_hero_image_url, booking_hero_video_url,
 		       trial_confirmation_message, membership_confirmation_message,
 		       trial_glofox_membership_id, trial_glofox_plan_code, membership_glofox_membership_id, membership_glofox_plan_code,
-		       communication_style_profile, style_profile_updated_at, style_refresh_interval_minutes, program_start_date, currency
+		       communication_style_profile, style_profile_updated_at, style_refresh_interval_minutes, program_start_date, currency, ai_access_enabled, mistral_api_key_fingerprint, reply_tone
 		FROM studios WHERE id = $1
 	`, id)
 	s, err := scanStudio(row, r.cipher)
@@ -190,13 +178,13 @@ func (r *Repo) GetBySlug(ctx context.Context, slug string) (*Studio, error) {
 
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, slug, name, brand_color, logo_url, contact_email, contact_phone, active, created_at, updated_at,
-		       availability_slots, availability_timezone, gemini_api_key, groq_api_key, claude_api_key, mistral_api_key, meta_app_id, meta_app_secret,
+		       availability_slots, availability_timezone, mistral_api_key, meta_app_id, meta_app_secret,
 		       google_client_id, google_client_secret, google_developer_token,
 		       stripe_account_id, stripe_secret_key, stripe_publishable_key, stripe_webhook_secret, subscription_tier, social_planner_enabled, knowledge_base, knowledge_base_files,
 		       greeting_message, trial_amount_sgd, managed_by_1hero, booking_hero_image_url, booking_hero_video_url,
 		       trial_confirmation_message, membership_confirmation_message,
 		       trial_glofox_membership_id, trial_glofox_plan_code, membership_glofox_membership_id, membership_glofox_plan_code,
-		       communication_style_profile, style_profile_updated_at, style_refresh_interval_minutes, program_start_date, currency
+		       communication_style_profile, style_profile_updated_at, style_refresh_interval_minutes, program_start_date, currency, ai_access_enabled, mistral_api_key_fingerprint, reply_tone
 		FROM studios WHERE slug = $1
 	`, slug)
 	s, err := scanStudio(row, r.cipher)
@@ -210,33 +198,25 @@ func (r *Repo) GetBySlug(ctx context.Context, slug string) (*Studio, error) {
 // Update writes the editable fields. Slug is intentionally NOT updatable here
 // (changing a slug breaks every shared public link). Add a deliberate "rename
 // slug" flow when needed.
-func (r *Repo) Update(ctx context.Context, id uuid.UUID, name, brandColor, logoURL, contactEmail, contactPhone string, active bool, managedBy1Hero bool, availabilitySlots []AvailabilitySlot, availabilityTimezone string, geminiAPIKey, groqAPIKey, metaAppID, metaAppSecret, googleClientID, googleClientSecret, googleDeveloperToken string, socialPlannerEnabled bool, knowledgeBase string, knowledgeBaseFiles []KnowledgeBaseFile, greetingMessage string, trialAmountSGD int, bookingHeroImageURL, bookingHeroVideoURL string, trialConfirmationMessage, membershipConfirmationMessage string, trialGlofoxMembershipID, trialGlofoxPlanCode, membershipGlofoxMembershipID, membershipGlofoxPlanCode string, currency string, actorID *uuid.UUID) error {
+func (r *Repo) Update(ctx context.Context, id uuid.UUID, name, brandColor, logoURL, contactEmail, contactPhone string, active bool, managedBy1Hero bool, availabilitySlots []AvailabilitySlot, availabilityTimezone string, metaAppID, metaAppSecret, googleClientID, googleClientSecret, googleDeveloperToken string, socialPlannerEnabled bool, knowledgeBase string, knowledgeBaseFiles []KnowledgeBaseFile, greetingMessage string, trialAmountSGD int, bookingHeroImageURL, bookingHeroVideoURL string, trialConfirmationMessage, membershipConfirmationMessage string, trialGlofoxMembershipID, trialGlofoxPlanCode, membershipGlofoxMembershipID, membershipGlofoxPlanCode string, currency string, actorID *uuid.UUID) error {
 	slotsJSON, _ := json.Marshal(availabilitySlots)
 	filesJSON, _ := json.Marshal(knowledgeBaseFiles)
 	if currency == "" {
 		currency = "SGD"
 	}
-	encGeminiKey, err := r.encryptOrPlain(geminiAPIKey)
-	if err != nil {
-		return fmt.Errorf("encrypt gemini api key: %w", err)
-	}
-	encGroqKey, err := r.encryptOrPlain(groqAPIKey)
-	if err != nil {
-		return fmt.Errorf("encrypt groq api key: %w", err)
-	}
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE studios
 		SET name = $2, brand_color = $3, logo_url = $4, contact_email = $5, contact_phone = $6, active = $7,
-		    availability_slots = $8, availability_timezone = $9, gemini_api_key = $10, groq_api_key = $11,
-		    meta_app_id = $12, meta_app_secret = $13, google_client_id = $14, google_client_secret = $15, google_developer_token = $16,
-		    social_planner_enabled = $17, knowledge_base = $18, knowledge_base_files = $19,
-		    greeting_message = $20, trial_amount_sgd = $21, managed_by_1hero = $22, booking_hero_image_url = $23, booking_hero_video_url = $24,
-		    trial_confirmation_message = $25, membership_confirmation_message = $26,
-		    trial_glofox_membership_id = $27, trial_glofox_plan_code = $28, membership_glofox_membership_id = $29, membership_glofox_plan_code = $30,
-		    currency = $31,
-		    updated_by = $32, updated_at = now()
+		    availability_slots = $8, availability_timezone = $9,
+		    meta_app_id = $10, meta_app_secret = $11, google_client_id = $12, google_client_secret = $13, google_developer_token = $14,
+		    social_planner_enabled = $15, knowledge_base = $16, knowledge_base_files = $17,
+		    greeting_message = $18, trial_amount_sgd = $19, managed_by_1hero = $20, booking_hero_image_url = $21, booking_hero_video_url = $22,
+		    trial_confirmation_message = $23, membership_confirmation_message = $24,
+		    trial_glofox_membership_id = $25, trial_glofox_plan_code = $26, membership_glofox_membership_id = $27, membership_glofox_plan_code = $28,
+		    currency = $29,
+		    updated_by = $30, updated_at = now()
 		WHERE id = $1`,
-		id, name, brandColor, logoURL, contactEmail, contactPhone, active, string(slotsJSON), availabilityTimezone, encGeminiKey, encGroqKey, metaAppID, metaAppSecret, googleClientID, googleClientSecret, googleDeveloperToken, socialPlannerEnabled, knowledgeBase, string(filesJSON), greetingMessage, trialAmountSGD, managedBy1Hero, bookingHeroImageURL, bookingHeroVideoURL, trialConfirmationMessage, membershipConfirmationMessage, trialGlofoxMembershipID, trialGlofoxPlanCode, membershipGlofoxMembershipID, membershipGlofoxPlanCode, currency, actorID)
+		id, name, brandColor, logoURL, contactEmail, contactPhone, active, string(slotsJSON), availabilityTimezone, metaAppID, metaAppSecret, googleClientID, googleClientSecret, googleDeveloperToken, socialPlannerEnabled, knowledgeBase, string(filesJSON), greetingMessage, trialAmountSGD, managedBy1Hero, bookingHeroImageURL, bookingHeroVideoURL, trialConfirmationMessage, membershipConfirmationMessage, trialGlofoxMembershipID, trialGlofoxPlanCode, membershipGlofoxMembershipID, membershipGlofoxPlanCode, currency, actorID)
 	if err != nil {
 		return fmt.Errorf("update studio: %w", err)
 	}
@@ -326,6 +306,30 @@ func (r *Repo) SetAIReplyDelaySeconds(ctx context.Context, studioID uuid.UUID, s
 	`, studioID, seconds)
 	return err
 }
+
+// GetStaffActiveWindowMinutes returns how recently a staff-authored message
+// in a conversation counts as "staff is actively handling this" for the AI
+// worker's staff-active reply gate (messaging.checkReplyGates) — the AI
+// stays silent for this long after any staff message in that conversation.
+// Previously a hardcoded 10-minute constant; now per-studio.
+func (r *Repo) GetStaffActiveWindowMinutes(ctx context.Context, studioID uuid.UUID) (int, error) {
+	var minutes int
+	err := r.pool.QueryRow(ctx, `
+		SELECT staff_active_window_minutes FROM studios WHERE id = $1
+	`, studioID).Scan(&minutes)
+	if err != nil {
+		return 0, err
+	}
+	return minutes, nil
+}
+
+func (r *Repo) SetStaffActiveWindowMinutes(ctx context.Context, studioID uuid.UUID, minutes int) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE studios SET staff_active_window_minutes = $2, updated_at = now() WHERE id = $1
+	`, studioID, minutes)
+	return err
+}
+
 
 // IncrementStaffReplyCount bumps the running counter of staff-authored
 // (source_kind='studio_user') outbound messages sent for a studio. Called
@@ -503,42 +507,75 @@ func (r *Repo) SetCommunicationStyleProfile(ctx context.Context, studioID uuid.U
 	return nil
 }
 
+// ValidReplyTones is the allowed set for SetReplyTone and the HTTP
+// handler's validation — mirrors the DB CHECK constraint added by
+// migrations/20261102010001_reply_tone.sql (defense in depth: reject
+// before the query, not just rely on the constraint erroring).
+var ValidReplyTones = map[string]bool{
+	"professional": true,
+	"casual":       true,
+	"friendly":     true,
+}
+
+// SetReplyTone persists a studio's chosen AI-reply tone. Returns
+// ErrValidation if tone isn't one of ValidReplyTones.
+func (r *Repo) SetReplyTone(ctx context.Context, studioID uuid.UUID, tone string) error {
+	if !ValidReplyTones[tone] {
+		return ErrValidation
+	}
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE studios SET reply_tone = $2, updated_at = now() WHERE id = $1
+	`, studioID, tone)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	r.evict(studioID)
+	return nil
+}
+
 // aiProviderKeyColumns whitelists which column UpdateAIProviderKey may write
 // to — provider comes from a URL path segment, so it's validated against
-// this map rather than interpolated into SQL directly.
+// this map rather than interpolated into SQL directly. Only mistral (OCR,
+// internal/studios/knowledge_base_ocr.go) stays per-studio BYOK — groq/
+// gemini/claude moved to a single centralized, superadmin-managed key (see
+// GetPlatformAIProviderKey/SetPlatformAIProviderKey) so AI reply quality is
+// consistent across studios instead of depending on each studio bringing
+// its own key.
 var aiProviderKeyColumns = map[string]string{
-	"gemini":  "gemini_api_key",
-	"groq":    "groq_api_key",
-	"claude":  "claude_api_key",
 	"mistral": "mistral_api_key",
 }
 
 // EncryptLegacyAIProviderKeys is a one-time (idempotent, safe to re-run)
 // backfill for rows written before UpdateAIProviderKey/Update/Create started
-// encrypting these 4 columns — those rows are still sitting as plaintext in
-// the DB and won't self-heal until that studio happens to re-save a key.
-// For each studio and each provider column: if the stored value fails to
-// decrypt (i.e. it's plaintext, not already ciphertext from this cipher) and
-// isn't empty, re-save it through the now-encrypting write path. Returns how
-// many (studio, provider) values were actually re-encrypted.
+// encrypting this column — those rows are still sitting as plaintext in the
+// DB and won't self-heal until that studio happens to re-save a key. Only
+// mistral remains a per-studio key; groq/gemini/claude moved to centralized
+// platform keys (see aiProviderKeyColumns' doc comment).
+// For each studio: if the stored mistral key fails to decrypt (i.e. it's
+// plaintext, not already ciphertext from this cipher) and isn't empty,
+// re-save it through the now-encrypting write path. Returns how many rows
+// were actually re-encrypted.
 func (r *Repo) EncryptLegacyAIProviderKeys(ctx context.Context) (int, error) {
 	if r.cipher == nil {
 		return 0, errors.New("TOKEN_ENCRYPTION_KEY not configured — cannot encrypt")
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, gemini_api_key, groq_api_key, claude_api_key, mistral_api_key FROM studios
+		SELECT id, mistral_api_key FROM studios
 	`)
 	if err != nil {
 		return 0, fmt.Errorf("list studios for key backfill: %w", err)
 	}
 	type row struct {
-		id                            uuid.UUID
-		gemini, groq, claude, mistral string
+		id      uuid.UUID
+		mistral string
 	}
 	var toFix []row
 	for rows.Next() {
 		var rr row
-		if err := rows.Scan(&rr.id, &rr.gemini, &rr.groq, &rr.claude, &rr.mistral); err != nil {
+		if err := rows.Scan(&rr.id, &rr.mistral); err != nil {
 			rows.Close()
 			return 0, fmt.Errorf("scan studio for key backfill: %w", err)
 		}
@@ -561,25 +598,21 @@ func (r *Repo) EncryptLegacyAIProviderKeys(ctx context.Context) (int, error) {
 
 	fixed := 0
 	for _, rr := range toFix {
-		for provider, value := range map[string]string{
-			"gemini": rr.gemini, "groq": rr.groq, "claude": rr.claude, "mistral": rr.mistral,
-		} {
-			if !isPlaintext(value) {
-				continue
-			}
-			if err := r.UpdateAIProviderKey(ctx, rr.id, provider, value, nil); err != nil {
-				return fixed, fmt.Errorf("re-encrypt %s key for studio %s: %w", provider, rr.id, err)
-			}
-			fixed++
+		if !isPlaintext(rr.mistral) {
+			continue
 		}
+		if err := r.UpdateAIProviderKey(ctx, rr.id, "mistral", rr.mistral, nil); err != nil {
+			return fixed, fmt.Errorf("re-encrypt mistral key for studio %s: %w", rr.id, err)
+		}
+		fixed++
 	}
 	return fixed, nil
 }
 
-// UpdateAIProviderKey saves a studio's API key for one AI provider. A small
-// dedicated setter (like SetCommunicationStyleProfile/SetTrialPageLayout
-// above) rather than another parameter on the already-large Update, since
-// the AI Assistant settings page saves one provider's key at a time.
+// UpdateAIProviderKey saves a studio's API key for the one remaining
+// per-studio AI provider (mistral/OCR). A small dedicated setter (like
+// SetCommunicationStyleProfile/SetTrialPageLayout above) rather than another
+// parameter on the already-large Update.
 func (r *Repo) UpdateAIProviderKey(ctx context.Context, studioID uuid.UUID, provider, key string, actorID *uuid.UUID) error {
 	col, ok := aiProviderKeyColumns[provider]
 	if !ok {
@@ -588,6 +621,23 @@ func (r *Repo) UpdateAIProviderKey(ctx context.Context, studioID uuid.UUID, prov
 	encKey, err := r.encryptOrPlain(key)
 	if err != nil {
 		return fmt.Errorf("encrypt ai provider key: %w", err)
+	}
+	// mistral is the only per-studio BYOK key left (see aiProviderKeyColumns'
+	// doc comment) and the only one with a fingerprint column today — a
+	// non-reversible stand-in for keySuffix()'s removed last-4-chars reveal
+	// (platform-security-hardening task 0.2).
+	if provider == "mistral" {
+		tag, err := r.pool.Exec(ctx, `
+			UPDATE studios SET mistral_api_key = $2, mistral_api_key_fingerprint = $3, updated_by = $4, updated_at = now() WHERE id = $1
+		`, studioID, encKey, fingerprintSecret(key), actorID)
+		if err != nil {
+			return fmt.Errorf("update ai provider key: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		r.evict(studioID)
+		return nil
 	}
 	tag, err := r.pool.Exec(ctx, fmt.Sprintf(`UPDATE studios SET %s = $2, updated_by = $3, updated_at = now() WHERE id = $1`, col), studioID, encKey, actorID)
 	if err != nil {
@@ -600,25 +650,41 @@ func (r *Repo) UpdateAIProviderKey(ctx context.Context, studioID uuid.UUID, prov
 	return nil
 }
 
+// SetAIAccessEnabled toggles the superadmin-only master switch for whether
+// this studio gets AI replies at all (see Studio.AIAccessEnabled's doc
+// comment). A small dedicated setter, same convention as
+// UpdateAIProviderKey/SetCommunicationStyleProfile above, rather than
+// another parameter on the already-large Update — and deliberately NOT
+// exposed through the studio-self-service update path, since only a
+// superadmin may call this.
+func (r *Repo) SetAIAccessEnabled(ctx context.Context, studioID uuid.UUID, enabled bool, actorID *uuid.UUID) error {
+	tag, err := r.pool.Exec(ctx, `UPDATE studios SET ai_access_enabled = $2, updated_by = $3, updated_at = now() WHERE id = $1`, studioID, enabled, actorID)
+	if err != nil {
+		return fmt.Errorf("set ai access enabled: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	r.evict(studioID)
+	return nil
+}
+
 func scanStudio(row pgx.Row, cipher *secrets.Cipher) (*Studio, error) {
 	var s Studio
 	if err := row.Scan(&s.ID, &s.Slug, &s.Name, &s.BrandColor, &s.LogoURL, &s.ContactEmail, &s.ContactPhone,
-		&s.Active, &s.CreatedAt, &s.UpdatedAt, &s.AvailabilitySlots, &s.AvailabilityTimezone, &s.GeminiAPIKey, &s.GroqAPIKey, &s.ClaudeAPIKey, &s.MistralAPIKey, &s.MetaAppID, &s.MetaAppSecret,
+		&s.Active, &s.CreatedAt, &s.UpdatedAt, &s.AvailabilitySlots, &s.AvailabilityTimezone, &s.MistralAPIKey, &s.MetaAppID, &s.MetaAppSecret,
 		&s.GoogleClientID, &s.GoogleClientSecret, &s.GoogleDeveloperToken,
 		&s.StripeAccountID, &s.StripeSecretKey, &s.StripePublishableKey, &s.StripeWebhookSecret, &s.SubscriptionTier, &s.SocialPlannerEnabled, &s.KnowledgeBase, &s.KnowledgeBaseFiles,
 		&s.GreetingMessage, &s.TrialAmountSGD, &s.ManagedBy1Hero, &s.BookingHeroImageURL, &s.BookingHeroVideoURL,
 		&s.TrialConfirmationMessage, &s.MembershipConfirmationMessage,
 		&s.TrialGlofoxMembershipID, &s.TrialGlofoxPlanCode, &s.MembershipGlofoxMembershipID, &s.MembershipGlofoxPlanCode,
-		&s.CommunicationStyleProfile, &s.StyleProfileUpdatedAt, &s.StyleRefreshIntervalMinutes, &s.ProgramStartDate, &s.Currency); err != nil {
+		&s.CommunicationStyleProfile, &s.StyleProfileUpdatedAt, &s.StyleRefreshIntervalMinutes, &s.ProgramStartDate, &s.Currency, &s.AIAccessEnabled, &s.MistralAPIKeyFingerprint, &s.ReplyTone); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("scan studio: %w", err)
 	}
 
-	s.GeminiAPIKey = decryptOrPlain(cipher, s.GeminiAPIKey)
-	s.GroqAPIKey = decryptOrPlain(cipher, s.GroqAPIKey)
-	s.ClaudeAPIKey = decryptOrPlain(cipher, s.ClaudeAPIKey)
 	s.MistralAPIKey = decryptOrPlain(cipher, s.MistralAPIKey)
 
 	if s.StripeSecretKey != "" && cipher != nil {
@@ -709,6 +775,542 @@ func (r *Repo) GetPlatformSetting(ctx context.Context, key string) (string, erro
 	}
 	r.cache.Set(cacheKey, value, 10*time.Minute)
 	return value, nil
+}
+
+// platformAIProviderKeyNames whitelists which platform_settings row each
+// centralized AI provider key lives at — provider comes from a URL path
+// segment in the superadmin AI Provider Settings page, so it's validated
+// against this map rather than interpolated into a key name directly.
+var platformAIProviderKeyNames = map[string]string{
+	"groq":   "groq_api_key",
+	"gemini": "gemini_api_key",
+	"claude": "claude_api_key",
+	"openai": "openai_api_key",
+}
+
+// AI provider key audit actions recorded in platform_ai_key_audit.
+const (
+	AIKeyAuditSaved    = "saved"
+	AIKeyAuditRotated  = "rotated"
+	AIKeyAuditDisabled = "disabled"
+	AIKeyAuditEnabled  = "enabled"
+)
+
+// PlatformAIKeyStatus is a provider key's lifecycle status as stored in
+// platform_ai_keys.status.
+const (
+	AIKeyStatusActive   = "active"
+	AIKeyStatusDisabled = "disabled"
+	AIKeyStatusFailing  = "failing"
+)
+
+// GetPlatformAIProviderKey returns the centrally-configured, decrypted key
+// for provider (groq/gemini/claude/openai) from the envelope-encrypted
+// platform_ai_keys store: the key is decrypted with its own per-row data
+// key, which is itself decrypted with the app's master cipher
+// (TOKEN_ENCRYPTION_KEY) — see
+// openspec/changes/llm-gateway-and-key-management/design.md Decision 4. A
+// missing or disabled key returns ("", nil), not an error, so callers
+// treat it the same as "provider not configured" — same contract as
+// before this table existed.
+func (r *Repo) GetPlatformAIProviderKey(ctx context.Context, provider string) (string, error) {
+	if _, ok := platformAIProviderKeyNames[provider]; !ok {
+		return "", fmt.Errorf("unsupported ai provider %q", provider)
+	}
+	var keyCiphertext, dataKeyCiphertext, status string
+	err := r.pool.QueryRow(ctx, `
+		SELECT key_ciphertext, data_key_ciphertext, status FROM platform_ai_keys WHERE provider = $1
+	`, provider).Scan(&keyCiphertext, &dataKeyCiphertext, &status)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("get platform ai provider key: %w", err)
+	}
+	if status == AIKeyStatusDisabled {
+		return "", nil
+	}
+	if r.cipher == nil {
+		return "", errors.New("TOKEN_ENCRYPTION_KEY not configured — cannot decrypt platform AI provider keys")
+	}
+	dataKey, err := r.cipher.Decrypt(dataKeyCiphertext)
+	if err != nil {
+		return "", fmt.Errorf("decrypt data key: %w", err)
+	}
+	key, err := secrets.DecryptWithDataKey(dataKey, keyCiphertext)
+	if err != nil {
+		return "", fmt.Errorf("decrypt provider key: %w", err)
+	}
+	return key, nil
+}
+
+// GetPlatformAIProviderKeyFingerprint reports whether provider has a
+// usable (non-disabled) key configured and, if so, its fingerprint —
+// without ever decrypting the key itself. Used by the AI Provider
+// Settings list, which previously decrypted the real key just to show
+// its last 4 characters (platform-security-hardening task 0.2).
+func (r *Repo) GetPlatformAIProviderKeyFingerprint(ctx context.Context, provider string) (hasKey bool, fingerprint string, err error) {
+	if _, ok := platformAIProviderKeyNames[provider]; !ok {
+		return false, "", fmt.Errorf("unsupported ai provider %q", provider)
+	}
+	var fp, status string
+	err = r.pool.QueryRow(ctx, `
+		SELECT key_fingerprint, status FROM platform_ai_keys WHERE provider = $1
+	`, provider).Scan(&fp, &status)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, "", nil
+		}
+		return false, "", fmt.Errorf("get platform ai provider key fingerprint: %w", err)
+	}
+	if status == AIKeyStatusDisabled {
+		return false, "", nil
+	}
+	return true, fp, nil
+}
+
+// SetPlatformAIProviderKey envelope-encrypts and saves the centrally-
+// configured key for provider: a freshly generated data key encrypts the
+// key itself, and the master cipher encrypts that data key (which is the
+// only thing ever persisted for it — the raw data key never touches the
+// database). The key is (re)activated (status=active) and the save is
+// audited. See GetPlatformAIProviderKey and design.md Decision 4.
+func (r *Repo) SetPlatformAIProviderKey(ctx context.Context, provider, key string, actorID *uuid.UUID) error {
+	return r.setPlatformAIProviderKey(ctx, provider, key, actorID, AIKeyAuditSaved)
+}
+
+// RotatePlatformAIProviderKey replaces provider's key with a freshly
+// generated envelope (new data key, new ciphertexts) the same way
+// SetPlatformAIProviderKey does, but records the audit action as
+// "rotated" rather than "saved" — the superadmin-facing lifecycle action
+// distinct from a first-time save (task 2.6).
+func (r *Repo) RotatePlatformAIProviderKey(ctx context.Context, provider, key string, actorID *uuid.UUID) error {
+	return r.setPlatformAIProviderKey(ctx, provider, key, actorID, AIKeyAuditRotated)
+}
+
+func (r *Repo) setPlatformAIProviderKey(ctx context.Context, provider, key string, actorID *uuid.UUID, auditAction string) error {
+	if _, ok := platformAIProviderKeyNames[provider]; !ok {
+		return fmt.Errorf("unsupported ai provider %q", provider)
+	}
+	if r.cipher == nil {
+		return errors.New("TOKEN_ENCRYPTION_KEY not configured — cannot store platform AI provider keys")
+	}
+	dataKey, err := secrets.GenerateDataKey()
+	if err != nil {
+		return fmt.Errorf("generate data key: %w", err)
+	}
+	keyCiphertext, err := secrets.EncryptWithDataKey(dataKey, key)
+	if err != nil {
+		return fmt.Errorf("encrypt provider key: %w", err)
+	}
+	dataKeyCiphertext, err := r.cipher.Encrypt(dataKey)
+	if err != nil {
+		return fmt.Errorf("encrypt data key: %w", err)
+	}
+
+	var actorArg any
+	if actorID != nil {
+		actorArg = *actorID
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO platform_ai_keys (provider, key_ciphertext, data_key_ciphertext, key_fingerprint, status, updated_at, updated_by)
+		VALUES ($1, $2, $3, $4, $5, now(), $6)
+		ON CONFLICT (provider) DO UPDATE SET
+			key_ciphertext = EXCLUDED.key_ciphertext,
+			data_key_ciphertext = EXCLUDED.data_key_ciphertext,
+			key_fingerprint = EXCLUDED.key_fingerprint,
+			status = EXCLUDED.status,
+			updated_at = now(),
+			updated_by = EXCLUDED.updated_by
+	`, provider, keyCiphertext, dataKeyCiphertext, fingerprintSecret(key), AIKeyStatusActive, actorArg)
+	if err != nil {
+		return fmt.Errorf("upsert platform ai key: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO platform_ai_key_audit (provider, action, actor_id) VALUES ($1, $2, $3)
+	`, provider, auditAction, actorArg); err != nil {
+		return fmt.Errorf("audit platform ai key %s: %w", auditAction, err)
+	}
+	return tx.Commit(ctx)
+}
+
+// GetPlatformAIProviderKeyStatus returns provider's key lifecycle status
+// ("" if no key has ever been saved), without decrypting anything — used
+// by the AI Provider Settings page to show active/disabled/failing
+// without paying a decrypt on every page load.
+func (r *Repo) GetPlatformAIProviderKeyStatus(ctx context.Context, provider string) (string, error) {
+	if _, ok := platformAIProviderKeyNames[provider]; !ok {
+		return "", fmt.Errorf("unsupported ai provider %q", provider)
+	}
+	var status string
+	err := r.pool.QueryRow(ctx, `SELECT status FROM platform_ai_keys WHERE provider = $1`, provider).Scan(&status)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("get platform ai key status: %w", err)
+	}
+	return status, nil
+}
+
+// MarkPlatformAIProviderKeyFailing flips provider's key status to
+// "failing" — a system-detected state (repeated authentication-type
+// errors from the provider, not a user action), distinct from the
+// user-driven active/disabled toggle. A no-op if there's no saved key for
+// the provider (nothing to flag) or it's already failing (avoids a flood
+// of duplicate audit rows while the key stays broken).
+func (r *Repo) MarkPlatformAIProviderKeyFailing(ctx context.Context, provider string) error {
+	if _, ok := platformAIProviderKeyNames[provider]; !ok {
+		return fmt.Errorf("unsupported ai provider %q", provider)
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	tag, err := tx.Exec(ctx, `
+		UPDATE platform_ai_keys SET status = $2, updated_at = now()
+		WHERE provider = $1 AND status != $2
+	`, provider, AIKeyStatusFailing)
+	if err != nil {
+		return fmt.Errorf("mark platform ai key failing: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO platform_ai_key_audit (provider, action) VALUES ($1, 'flagged_failing')
+	`, provider); err != nil {
+		return fmt.Errorf("audit platform ai key failing: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
+// SetPlatformAIProviderKeyStatus disables or re-enables provider's key
+// without touching its ciphertext — a disabled key makes
+// GetPlatformAIProviderKey return "" (same as "not configured") until
+// re-enabled, and the change is audited. status must be
+// AIKeyStatusActive or AIKeyStatusDisabled.
+func (r *Repo) SetPlatformAIProviderKeyStatus(ctx context.Context, provider, status string, actorID *uuid.UUID) error {
+	if _, ok := platformAIProviderKeyNames[provider]; !ok {
+		return fmt.Errorf("unsupported ai provider %q", provider)
+	}
+	if status != AIKeyStatusActive && status != AIKeyStatusDisabled {
+		return fmt.Errorf("invalid status %q", status)
+	}
+	var actorArg any
+	if actorID != nil {
+		actorArg = *actorID
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	tag, err := tx.Exec(ctx, `
+		UPDATE platform_ai_keys SET status = $2, updated_at = now(), updated_by = $3 WHERE provider = $1
+	`, provider, status, actorArg)
+	if err != nil {
+		return fmt.Errorf("update platform ai key status: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("no key saved for provider %q", provider)
+	}
+	action := AIKeyAuditEnabled
+	if status == AIKeyStatusDisabled {
+		action = AIKeyAuditDisabled
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO platform_ai_key_audit (provider, action, actor_id) VALUES ($1, $2, $3)
+	`, provider, action, actorArg); err != nil {
+		return fmt.Errorf("audit platform ai key status change: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
+// MigrateLegacyAIProviderKeys moves any provider key still sitting in the
+// old platform_settings storage (groq_api_key/gemini_api_key/
+// claude_api_key/openai_api_key, single-static-key AES, pre-envelope
+// encryption) into the new envelope-encrypted platform_ai_keys table, via
+// the same SetPlatformAIProviderKey path every other save goes through.
+// Idempotent and safe to re-run: a provider already present in
+// platform_ai_keys is left untouched (its row always wins over the legacy
+// value), and a provider with no legacy value is skipped. Returns the list
+// of providers actually migrated this run. See task 2.5 — one-off
+// operator-run step, invoked via cmd/backfill-ai-keys.
+func (r *Repo) MigrateLegacyAIProviderKeys(ctx context.Context) ([]string, error) {
+	var migrated []string
+	for provider, settingKey := range platformAIProviderKeyNames {
+		var exists bool
+		if err := r.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM platform_ai_keys WHERE provider = $1)`, provider).Scan(&exists); err != nil {
+			return migrated, fmt.Errorf("check existing platform_ai_keys row for %s: %w", provider, err)
+		}
+		if exists {
+			continue
+		}
+		legacyValue, err := r.GetPlatformSetting(ctx, settingKey)
+		if err != nil {
+			return migrated, fmt.Errorf("read legacy setting %s: %w", settingKey, err)
+		}
+		if legacyValue == "" {
+			continue
+		}
+		legacyKey := decryptOrPlain(r.cipher, legacyValue)
+		if legacyKey == "" {
+			continue
+		}
+		if err := r.SetPlatformAIProviderKey(ctx, provider, legacyKey, nil); err != nil {
+			return migrated, fmt.Errorf("migrate %s key: %w", provider, err)
+		}
+		migrated = append(migrated, provider)
+	}
+	return migrated, nil
+}
+
+// AIAlertThresholds are the superadmin-editable trigger points for the two
+// threshold-based AI alerts (provider failure-rate spike, daily spend over
+// budget) — the two alert conditions that aren't fired on a single event
+// (unlike "all providers failed" or "a key started failing"), so they need
+// a periodic check against a configured bar. Stored as plain
+// platform_settings rows (same pattern as platformAIProviderKeyNames'
+// settings, just unencrypted — these aren't secrets), not a dedicated
+// table, since it's three scalar values with no lifecycle of their own.
+// Defaults are conservative starting points the design doc flagged as
+// "not specified in the source doc" — a superadmin should tune them once
+// real spend/failure-rate data is visible on the AI Providers page.
+type AIAlertThresholds struct {
+	FailureRatePct       float64 `json:"failureRatePct"`
+	FailureRateWindowMin int     `json:"failureRateWindowMinutes"`
+	DailySpendBudgetUSD  float64 `json:"dailySpendBudgetUsd"`
+}
+
+const (
+	aiAlertFailureRatePctSetting       = "ai_alert_failure_rate_pct"
+	aiAlertFailureRateWindowMinSetting = "ai_alert_failure_rate_window_minutes"
+	aiAlertDailySpendBudgetUSDSetting  = "ai_alert_daily_spend_budget_usd"
+
+	defaultAIAlertFailureRatePct       = 50.0
+	defaultAIAlertFailureRateWindowMin = 15
+	defaultAIAlertDailySpendBudgetUSD  = 50.0
+)
+
+// GetAIAlertThresholds returns the current thresholds, falling back to
+// defaults for any setting never saved (first run).
+func (r *Repo) GetAIAlertThresholds(ctx context.Context) (AIAlertThresholds, error) {
+	out := AIAlertThresholds{
+		FailureRatePct:       defaultAIAlertFailureRatePct,
+		FailureRateWindowMin: defaultAIAlertFailureRateWindowMin,
+		DailySpendBudgetUSD:  defaultAIAlertDailySpendBudgetUSD,
+	}
+	if v, err := r.GetPlatformSetting(ctx, aiAlertFailureRatePctSetting); err != nil {
+		return out, fmt.Errorf("get %s: %w", aiAlertFailureRatePctSetting, err)
+	} else if v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			out.FailureRatePct = f
+		}
+	}
+	if v, err := r.GetPlatformSetting(ctx, aiAlertFailureRateWindowMinSetting); err != nil {
+		return out, fmt.Errorf("get %s: %w", aiAlertFailureRateWindowMinSetting, err)
+	} else if v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			out.FailureRateWindowMin = n
+		}
+	}
+	if v, err := r.GetPlatformSetting(ctx, aiAlertDailySpendBudgetUSDSetting); err != nil {
+		return out, fmt.Errorf("get %s: %w", aiAlertDailySpendBudgetUSDSetting, err)
+	} else if v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			out.DailySpendBudgetUSD = f
+		}
+	}
+	return out, nil
+}
+
+// SetAIAlertThresholds validates and saves all three thresholds in one
+// call — a superadmin edits them together on the settings page, so a
+// partial save (two valid, one rejected) would leave a confusing
+// half-applied state.
+func (r *Repo) SetAIAlertThresholds(ctx context.Context, t AIAlertThresholds, actorID *uuid.UUID) error {
+	if t.FailureRatePct < 0 || t.FailureRatePct > 100 {
+		return fmt.Errorf("failureRatePct must be between 0 and 100")
+	}
+	if t.FailureRateWindowMin <= 0 {
+		return fmt.Errorf("failureRateWindowMinutes must be positive")
+	}
+	if t.DailySpendBudgetUSD < 0 {
+		return fmt.Errorf("dailySpendBudgetUsd must not be negative")
+	}
+	if err := r.UpdatePlatformSetting(ctx, aiAlertFailureRatePctSetting, strconv.FormatFloat(t.FailureRatePct, 'f', -1, 64), actorID); err != nil {
+		return fmt.Errorf("save %s: %w", aiAlertFailureRatePctSetting, err)
+	}
+	if err := r.UpdatePlatformSetting(ctx, aiAlertFailureRateWindowMinSetting, strconv.Itoa(t.FailureRateWindowMin), actorID); err != nil {
+		return fmt.Errorf("save %s: %w", aiAlertFailureRateWindowMinSetting, err)
+	}
+	if err := r.UpdatePlatformSetting(ctx, aiAlertDailySpendBudgetUSDSetting, strconv.FormatFloat(t.DailySpendBudgetUSD, 'f', -1, 64), actorID); err != nil {
+		return fmt.Errorf("save %s: %w", aiAlertDailySpendBudgetUSDSetting, err)
+	}
+	return nil
+}
+
+// PlatformAlert is one platform_alerts row — see
+// internal/messaging.Repo.RecordAlert and
+// internal/integrations/llmgateway.Repo.RecordAlert, the two writers of
+// this table.
+type PlatformAlert struct {
+	ID         uuid.UUID      `json:"id"`
+	Kind       string         `json:"kind"`
+	Detail     map[string]any `json:"detail"`
+	StudioID   *uuid.UUID     `json:"studioId,omitempty"`
+	CreatedAt  time.Time      `json:"createdAt"`
+	ResolvedAt *time.Time     `json:"resolvedAt,omitempty"`
+}
+
+// aiAlertMinSampleSize is the minimum number of calls a provider must have
+// logged within the rolling window before a failure rate is judged against
+// the threshold — otherwise one failed call out of one total would always
+// read as a 100% failure rate and fire immediately on near-zero traffic.
+const aiAlertMinSampleSize = 5
+
+// CheckAIAlertThresholds is the periodic (piggybacked on an existing
+// worker ticker — see style_worker.go's tick, task 3.8) check for the two
+// threshold-based AI alerts that aren't fired on a single event:
+//   - a provider's failure rate over the configured rolling window
+//     exceeds the configured percentage
+//   - today's total AI spend exceeds the configured daily budget
+//
+// Each check is idempotent per window: it skips firing again if an
+// unresolved alert of the same kind (and, for failure rate, the same
+// provider) was already recorded within the current window/day.
+func (r *Repo) CheckAIAlertThresholds(ctx context.Context) error {
+	thresholds, err := r.GetAIAlertThresholds(ctx)
+	if err != nil {
+		return fmt.Errorf("get ai alert thresholds: %w", err)
+	}
+
+	window := time.Duration(thresholds.FailureRateWindowMin) * time.Minute
+	for provider := range platformAIProviderKeyNames {
+		var total, failed int
+		if err := r.pool.QueryRow(ctx, `
+			SELECT count(*), count(*) FILTER (WHERE NOT success)
+			FROM llm_usage_logs
+			WHERE provider = $1 AND created_at >= now() - $2::interval
+		`, provider, window.String()).Scan(&total, &failed); err != nil {
+			return fmt.Errorf("check failure rate for %s: %w", provider, err)
+		}
+		if total < aiAlertMinSampleSize {
+			continue
+		}
+		failureRatePct := float64(failed) / float64(total) * 100
+		if failureRatePct < thresholds.FailureRatePct {
+			continue
+		}
+		var alreadyAlerted bool
+		if err := r.pool.QueryRow(ctx, `
+			SELECT EXISTS(
+				SELECT 1 FROM platform_alerts
+				WHERE kind = 'provider_failure_rate_spike'
+				AND detail->>'provider' = $1
+				AND resolved_at IS NULL
+				AND created_at >= now() - $2::interval
+			)
+		`, provider, window.String()).Scan(&alreadyAlerted); err != nil {
+			return fmt.Errorf("check existing failure-rate alert for %s: %w", provider, err)
+		}
+		if alreadyAlerted {
+			continue
+		}
+		detail, _ := json.Marshal(map[string]any{
+			"provider":         provider,
+			"failure_rate_pct": failureRatePct,
+			"total_calls":      total,
+			"failed_calls":     failed,
+			"window_minutes":   thresholds.FailureRateWindowMin,
+		})
+		// string(detail), not the raw []byte from json.Marshal — see
+		// internal/integrations/llmgateway.Repo.RecordAlert's comment on
+		// the pgx/jsonb []byte gotcha this avoids.
+		if _, err := r.pool.Exec(ctx, `
+			INSERT INTO platform_alerts (kind, detail) VALUES ('provider_failure_rate_spike', $1)
+		`, string(detail)); err != nil {
+			return fmt.Errorf("record failure-rate alert for %s: %w", provider, err)
+		}
+	}
+
+	var todaySpendUSD float64
+	if err := r.pool.QueryRow(ctx, `
+		SELECT COALESCE(sum(cost_usd), 0) FROM llm_usage_logs
+		WHERE created_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Singapore') AT TIME ZONE 'Asia/Singapore'
+	`).Scan(&todaySpendUSD); err != nil {
+		return fmt.Errorf("sum today's ai spend: %w", err)
+	}
+	if todaySpendUSD >= thresholds.DailySpendBudgetUSD {
+		var alreadyAlerted bool
+		if err := r.pool.QueryRow(ctx, `
+			SELECT EXISTS(
+				SELECT 1 FROM platform_alerts
+				WHERE kind = 'daily_spend_over_budget'
+				AND resolved_at IS NULL
+				AND created_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Singapore') AT TIME ZONE 'Asia/Singapore'
+			)
+		`).Scan(&alreadyAlerted); err != nil {
+			return fmt.Errorf("check existing daily-spend alert: %w", err)
+		}
+		if !alreadyAlerted {
+			detail, _ := json.Marshal(map[string]any{
+				"spend_usd":  todaySpendUSD,
+				"budget_usd": thresholds.DailySpendBudgetUSD,
+			})
+			if _, err := r.pool.Exec(ctx, `
+				INSERT INTO platform_alerts (kind, detail) VALUES ('daily_spend_over_budget', $1)
+			`, string(detail)); err != nil {
+				return fmt.Errorf("record daily-spend alert: %w", err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// ListRecentPlatformAlerts returns the most recent platform_alerts rows,
+// newest first, for the AI Providers settings page's alerts panel.
+func (r *Repo) ListRecentPlatformAlerts(ctx context.Context, limit int) ([]PlatformAlert, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, kind, detail, studio_id, created_at, resolved_at
+		FROM platform_alerts
+		ORDER BY created_at DESC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list platform alerts: %w", err)
+	}
+	defer rows.Close()
+
+	var out []PlatformAlert
+	for rows.Next() {
+		var a PlatformAlert
+		var detailJSON []byte
+		if err := rows.Scan(&a.ID, &a.Kind, &detailJSON, &a.StudioID, &a.CreatedAt, &a.ResolvedAt); err != nil {
+			return nil, fmt.Errorf("scan platform alert: %w", err)
+		}
+		if len(detailJSON) > 0 {
+			_ = json.Unmarshal(detailJSON, &a.Detail)
+		}
+		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // ── RAG / Knowledge Chunks ──────────────────────────────────

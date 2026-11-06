@@ -26,7 +26,7 @@ func TestRequireAuth_RotatesAndEnforcesIdleTimeout(t *testing.T) {
 	h := &Handler{tokens: tokens, cookie: config.CookieConfig{Name: "px_session"}, sessions: sessions}
 
 	u := &User{ID: uuid.New(), Role: RoleSuperAdmin}
-	token, _, jti, _, err := tokens.Issue(u, nil)
+	token, _, jti, _, _, err := tokens.Issue(context.Background(), u, nil, nil)
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestRequireAuth_EnforcesHardBackstopDespiteContinuousActivity(t *testing.T)
 	h := &Handler{tokens: tokens, cookie: config.CookieConfig{Name: "px_session"}, sessions: sessions}
 
 	u := &User{ID: uuid.New(), Role: RoleSuperAdmin}
-	token, _, jti, _, err := tokens.Issue(u, nil)
+	token, _, jti, _, _, err := tokens.Issue(context.Background(), u, nil, nil)
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestRequireAuth_RejectsRevokedSession(t *testing.T) {
 	h := &Handler{tokens: tokens, cookie: config.CookieConfig{Name: "px_session"}, sessions: sessions}
 
 	u := &User{ID: uuid.New(), Role: RoleSuperAdmin}
-	token, _, jti, _, err := tokens.Issue(u, nil)
+	token, _, jti, _, _, err := tokens.Issue(context.Background(), u, nil, nil)
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestRequireAuth_CSRF(t *testing.T) {
 	h := &Handler{tokens: tokens, cookie: config.CookieConfig{Name: "px_session"}, sessions: sessions}
 
 	u := &User{ID: uuid.New(), Role: RoleSuperAdmin}
-	token, _, jti, csrfToken, err := tokens.Issue(u, nil)
+	token, _, jti, csrfToken, _, err := tokens.Issue(context.Background(), u, nil, nil)
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -244,9 +244,9 @@ func TestRequireAuth_CSRF(t *testing.T) {
 	t.Run("rollout grace: a pre-existing session with no CSRFToken claim at all self-heals instead of locking the admin out", func(t *testing.T) {
 		legacyUser := &User{ID: uuid.New(), Role: RoleSuperAdmin}
 		// Bypasses Issue (which always sets a real token now) to simulate a
-		// session minted by the pre-CSRF code — the only way claims.CSRFToken
-		// is ever "".
-		legacyToken, _, legacyJTI, err := tokens.issue(legacyUser, nil, time.Now().Add(time.Hour), time.Now().Add(24*time.Hour), "")
+		// session minted by the pre-CSRF/pre-SessionID code — the only way
+		// claims.CSRFToken is "" and claims.SessionID is uuid.Nil.
+		legacyToken, _, legacyJTI, err := tokens.issue(context.Background(), legacyUser, nil, time.Now().Add(time.Hour), time.Now().Add(24*time.Hour), "", uuid.Nil, nil)
 		if err != nil {
 			t.Fatalf("issue legacy token: %v", err)
 		}

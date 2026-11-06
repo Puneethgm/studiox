@@ -57,7 +57,7 @@ func TestResolveTrialAmountSGD_IgnoresCheapMembershipPlan(t *testing.T) {
 		t.Fatalf("init cipher: %v", err)
 	}
 	repo := NewRepo(pool, cipher)
-	svc := NewService(repo, nil, nil, nil, nil, nil, "")
+	svc := NewService(repo, nil, nil, nil, nil, nil, "", nil, nil)
 
 	// A cheap, active MONTHLY membership plan, priced below the real Trial
 	// plan — this must never be mistaken for the trial price.

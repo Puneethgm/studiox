@@ -14,7 +14,11 @@ name: projectx
 # need it because the DSN is on the goose command line.
 x-api-env: &api_env
   API_HTTP_ADDR: ":8080"
-  API_ENV: production
+  # Was hardcoded "production" — made overridable so this same stack can be
+  # run locally without Secure cookies (which browsers silently drop over
+  # plain HTTP). Default is unchanged, so the real EC2 deploy (no API_ENV
+  # override there) still gets production exactly as before.
+  API_ENV: ${API_ENV:-production}
   API_LOG_LEVEL: info
   # Comma-separated (config.go splits on it). Defaults to just the public
   # site, same as before — set API_CORS_ORIGINS explicitly in .env to add
@@ -51,7 +55,8 @@ x-api-env: &api_env
   WA_WEB_SERVICE_URL: http://wa-web:3100
   TG_WEB_SERVICE_URL: http://tg-web:3101
   EMBEDDINGS_SERVICE_URL: http://embeddings:8001
-  INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY must be set}
+  WA_WEB_INTERNAL_KEY: ${WA_WEB_INTERNAL_KEY:?WA_WEB_INTERNAL_KEY must be set}
+  TG_WEB_INTERNAL_KEY: ${TG_WEB_INTERNAL_KEY:?TG_WEB_INTERNAL_KEY must be set}
   PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:-${PUBLIC_FORM_BASE_URL}}
   STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
   CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
@@ -259,7 +264,8 @@ services:
       PORT: "3100"
       LOG_LEVEL: info
       PROJECTX_API_URL: http://api:8080
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY must be set}
+      WA_WEB_INTERNAL_KEY: ${WA_WEB_INTERNAL_KEY:?WA_WEB_INTERNAL_KEY must be set}
+      WA_WEB_SESSION_ENCRYPTION_KEY: ${WA_WEB_SESSION_ENCRYPTION_KEY:?WA_WEB_SESSION_ENCRYPTION_KEY must be set}
       AUTH_DIR: /auth
       # OTLP/HTTP form (Node's exporter, unlike the Go API's OTLP/gRPC) —
       # see src/tracing.js. Empty disables tracing, same no-op contract.
@@ -282,7 +288,7 @@ services:
       PORT: "3101"
       LOG_LEVEL: info
       PROJECTX_API_URL: http://api:8080
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY must be set}
+      TG_WEB_INTERNAL_KEY: ${TG_WEB_INTERNAL_KEY:?TG_WEB_INTERNAL_KEY must be set}
       TELEGRAM_API_ID: ${TELEGRAM_API_ID:?TELEGRAM_API_ID must be set — get one from https://my.telegram.org}
       TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:?TELEGRAM_API_HASH must be set — get one from https://my.telegram.org}
       # OTLP/HTTP form, same as wa-web — see src/tracing.js. Empty disables

@@ -5,6 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { SessionManager } from './sessions.js';
 import { initTracing, tracingMiddleware, traceLogMixin, accessLogMiddleware } from './tracing.js';
+import { keyFromBase64 } from './encryptedAuthState.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -39,11 +40,78 @@ app.use(accessLogMiddleware(log));
 app.use(express.json());
 
 const PORT = process.env.PORT || 3100;
-const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY;
-if (!INTERNAL_API_KEY) { console.error('INTERNAL_API_KEY is not set'); process.exit(1); }
+// Own secret, not the old shared INTERNAL_API_KEY — see
+// platform-security-hardening task 0.4. Must match the Go API's
+// WA_WEB_INTERNAL_KEY (apps/api/internal/messaging/webhook_wa_web.go).
+const INTERNAL_API_KEY = process.env.WA_WEB_INTERNAL_KEY;
+if (!INTERNAL_API_KEY) { console.error('WA_WEB_INTERNAL_KEY is not set'); process.exit(1); }
 const PROJECTX_API_URL = process.env.PROJECTX_API_URL || 'http://api:8080';
 
-const sessions = new SessionManager({ log, projectxApiUrl: PROJECTX_API_URL });
+// Encrypts Baileys' auth-state files at rest (creds, pre-keys, identity
+// keys, session keys) — previously written as plaintext JSON. Required;
+// no fallback (platform-security-hardening task 0.5). 32 bytes,
+// base64-encoded — generate with: openssl rand -base64 32
+if (!process.env.WA_WEB_SESSION_ENCRYPTION_KEY) {
+  console.error('WA_WEB_SESSION_ENCRYPTION_KEY is not set');
+  process.exit(1);
+}
+const SESSION_ENCRYPTION_KEY = keyFromBase64(process.env.WA_WEB_SESSION_ENCRYPTION_KEY);
+
+const sessions = new SessionManager({ log, projectxApiUrl: PROJECTX_API_URL, sessionEncryptionKey: SESSION_ENCRYPTION_KEY });
+
+// Idempotency cache for /send — the Go API retries a send job whenever *its*
+// HTTP call to us times out or drops, which can happen after we've already
+// dispatched the message to WhatsApp (sending here can take a while; the
+// caller's wait doesn't). Without this, a retry would re-send the same
+// message to the customer a second time. Keyed by the caller-supplied
+// idempotencyKey (one per outbound job + attachment index — see
+// waWebSender.SendText on the Go side), value is either a Promise (send in
+// flight — a genuinely concurrent retry awaits the same send instead of
+// starting a second one) or a {messageId, expiresAt} record once it
+// resolves. A failed send is removed, not cached, so it can be retried for
+// real. The normal job-level backoff in worker.go only spends ~1.5h total
+// retrying a single job — but a 2026-10 bug on the Go side (a foreign-key
+// violation on the "already sent, deduped" path — see MarkOutboundSent's
+// doc comment) kept jobs stuck in 'pending' and retrying indefinitely,
+// well past that budget, which once silently exceeded this cache's old 2h
+// TTL and let a real duplicate through. That Go-side bug is now fixed, but
+// 24h is kept as a deliberately generous safety margin regardless, since a
+// cache miss here has real customer-facing consequences.
+const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+const idempotencyCache = new Map();
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of idempotencyCache) {
+    if (entry.expiresAt && entry.expiresAt < now) idempotencyCache.delete(key);
+  }
+}, 10 * 60 * 1000).unref();
+
+// Runs `send()` for this idempotencyKey at most once; a concurrent or later
+// call with the same key gets the same result instead of triggering another
+// real WhatsApp send. Falls back to always sending when no key is given.
+async function sendIdempotent(idempotencyKey, send) {
+  if (!idempotencyKey) return send();
+
+  const existing = idempotencyCache.get(idempotencyKey);
+  if (existing) {
+    if (existing.messageId !== undefined) return { key: { id: existing.messageId } };
+    return existing.promise; // already in flight — await the same send
+  }
+
+  const promise = send();
+  idempotencyCache.set(idempotencyKey, { promise });
+  try {
+    const result = await promise;
+    idempotencyCache.set(idempotencyKey, {
+      messageId: result?.key?.id ?? null,
+      expiresAt: Date.now() + IDEMPOTENCY_TTL_MS,
+    });
+    return result;
+  } catch (err) {
+    idempotencyCache.delete(idempotencyKey); // let a real failure be retried
+    throw err;
+  }
+}
 
 // Auth middleware — all routes require the internal API key
 app.use((req, res, next) => {
@@ -106,17 +174,20 @@ app.get('/sessions/:studioId/check/:number', async (req, res) => {
 // POST /sessions/:studioId/send
 app.post('/sessions/:studioId/send', async (req, res) => {
   const { studioId } = req.params;
-  const { to, text, mediaUrl, mediaType, caption } = req.body;
+  const { to, text, mediaUrl, mediaType, caption, idempotencyKey } = req.body;
   if (!to) return res.status(400).json({ error: 'to required' });
-  log.info({ studioId, to, hasMedia: !!mediaUrl, textLen: text?.length }, 'wa-web: sending message');
+  if (!mediaUrl && !text) return res.status(400).json({ error: 'text required when no media' });
+  if (idempotencyKey && idempotencyCache.has(idempotencyKey) && idempotencyCache.get(idempotencyKey).messageId !== undefined) {
+    log.info({ studioId, to, idempotencyKey }, 'wa-web: send already completed for this job — returning cached result, not re-sending');
+  } else {
+    log.info({ studioId, to, hasMedia: !!mediaUrl, textLen: text?.length, idempotencyKey }, 'wa-web: sending message');
+  }
   try {
-    let result;
-    if (mediaUrl) {
-      result = await sessions.sendMedia(studioId, to, mediaUrl, mediaType, caption || '');
-    } else {
-      if (!text) return res.status(400).json({ error: 'text required when no media' });
-      result = await sessions.sendMessage(studioId, to, text);
-    }
+    const result = await sendIdempotent(idempotencyKey, () =>
+      mediaUrl
+        ? sessions.sendMedia(studioId, to, mediaUrl, mediaType, caption || '')
+        : sessions.sendMessage(studioId, to, text)
+    );
     log.info({ studioId, to }, 'wa-web: message sent ok');
     res.json({ ok: true, messageId: result?.key?.id });
   } catch (err) {

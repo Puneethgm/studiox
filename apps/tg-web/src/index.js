@@ -19,8 +19,11 @@ app.use(accessLogMiddleware(log));
 app.use(express.json());
 
 const PORT = process.env.PORT || 3101;
-const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY;
-if (!INTERNAL_API_KEY) { console.error('INTERNAL_API_KEY is not set'); process.exit(1); }
+// Own secret, not the old shared INTERNAL_API_KEY — see
+// platform-security-hardening task 0.4. Must match the Go API's
+// TG_WEB_INTERNAL_KEY (apps/api/internal/messaging/webhook_tg_web.go).
+const INTERNAL_API_KEY = process.env.TG_WEB_INTERNAL_KEY;
+if (!INTERNAL_API_KEY) { console.error('TG_WEB_INTERNAL_KEY is not set'); process.exit(1); }
 const PROJECTX_API_URL = process.env.PROJECTX_API_URL || 'http://api:8080';
 
 const apiId = Number(process.env.TELEGRAM_API_ID);

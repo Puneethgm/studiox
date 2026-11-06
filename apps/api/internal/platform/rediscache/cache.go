@@ -1,7 +1,6 @@
 // Package rediscache is a thin wrapper around go-redis for byte-blob caching
 // with a TTL. It carries no domain knowledge (cache keys, value encoding) —
-// that lives with each caller (see internal/messaging.AnswerCache for the
-// AI-answer use case).
+// that lives with each caller.
 package rediscache
 
 import (
@@ -13,7 +12,7 @@ import (
 
 // Client wraps a go-redis client. The connection is lazy (go-redis dials on
 // first command), so New never fails just because Redis isn't reachable yet
-// — callers degrade per-call instead (see AnswerCache).
+// — callers degrade per-call instead.
 type Client struct {
 	rdb *redis.Client
 }
@@ -54,6 +53,24 @@ func (c *Client) Set(ctx context.Context, key string, value []byte, ttl time.Dur
 // Del removes key. Deleting an absent key is a no-op, not an error.
 func (c *Client) Del(ctx context.Context, key string) error {
 	return c.rdb.Del(ctx, key).Err()
+}
+
+// IncrWithTTL atomically increments key (starting from 0 if absent) and
+// returns the new value. ttl is applied only the first time key is
+// created (ExpireNX — "set expiry only if none exists"), so repeated
+// calls within the same window extend the counter's value but not its
+// expiry — the window is anchored to the first increment, not sliding.
+// Used for counters like a lockout's failed-attempt tally (platform-
+// security-hardening task 2.4/4.3).
+func (c *Client) IncrWithTTL(ctx context.Context, key string, ttl time.Duration) (int64, error) {
+	n, err := c.rdb.Incr(ctx, key).Result()
+	if err != nil {
+		return 0, err
+	}
+	if err := c.rdb.ExpireNX(ctx, key, ttl).Err(); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // Close releases the underlying connection pool.

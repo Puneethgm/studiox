@@ -19,10 +19,12 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/projectx/api/internal/identity"
-	"github.com/projectx/api/internal/integrations/claude"
+	"github.com/projectx/api/internal/integrations/bifrost"
 	"github.com/projectx/api/internal/integrations/llm"
+	"github.com/projectx/api/internal/integrations/llmgateway"
 	"github.com/projectx/api/internal/leads"
 	"github.com/projectx/api/internal/platform/httpx"
+	"github.com/projectx/api/internal/platform/malwarescan"
 	"github.com/projectx/api/internal/studios"
 )
 
@@ -33,22 +35,30 @@ type Handler struct {
 	// Only used by aiGenerateTemplate (Social Planner / message-template AI
 	// copy), to run the same Groq->Gemini->Claude waterfall the chat AI
 	// worker uses instead of being hardcoded to one provider.
-	studiosRepo  *studios.Repo
-	llmRepo      *llm.Repo
-	claudeClient *claude.Client
-	claudeAPIURL string
-	answerCache  *AnswerCache
+	studiosRepo   *studios.Repo
+	llmRepo       *llm.Repo
+	bifrostClient *bifrost.Client
+	llmGateway    *llmgateway.Client
+	// malwareScanner backs task 8.4's upload scanning for uploadMedia.
+	// nil skips the scan entirely (uploads behave exactly as before),
+	// same nil-is-safe convention used throughout this change.
+	malwareScanner malwarescan.Scanner
 }
 
-func NewHandler(svc *Service, bus Bus, studiosRepo *studios.Repo, llmRepo *llm.Repo, claudeClient *claude.Client, claudeAPIURL string, answerCache *AnswerCache) *Handler {
+// WithMalwareScanner wires task 8.4's upload scanner into h.
+func (h *Handler) WithMalwareScanner(s malwarescan.Scanner) *Handler {
+	h.malwareScanner = s
+	return h
+}
+
+func NewHandler(svc *Service, bus Bus, studiosRepo *studios.Repo, llmRepo *llm.Repo, bifrostClient *bifrost.Client, llmGateway *llmgateway.Client) *Handler {
 	return &Handler{
-		svc:          svc,
-		bus:          bus,
-		studiosRepo:  studiosRepo,
-		llmRepo:      llmRepo,
-		claudeClient: claudeClient,
-		claudeAPIURL: claudeAPIURL,
-		answerCache:  answerCache,
+		svc:           svc,
+		bus:           bus,
+		studiosRepo:   studiosRepo,
+		llmRepo:       llmRepo,
+		bifrostClient: bifrostClient,
+		llmGateway:    llmGateway,
 	}
 }
 
@@ -153,6 +163,8 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Put("/settings/glofox-first-session", h.setGlofoxFirstSession)
 	r.Get("/settings/cold-lead-thresholds", h.getColdLeadThresholds)
 	r.Put("/settings/cold-lead-thresholds", h.setColdLeadThresholds)
+	r.Get("/settings/ai-active-hours", h.getAIActiveHours)
+	r.Put("/settings/ai-active-hours", h.setAIActiveHours)
 	r.Get("/leads/cold", h.listColdLeads)
 	r.Get("/leads/cold/reengage-prefs", h.getReengagePrefs)
 	r.Post("/leads/cold/re-engage", h.reEngageColdLeads)
@@ -198,6 +210,7 @@ func (h *Handler) AdminRoutes(r chi.Router) {
 	r.Get("/jobs", h.listPendingJobs)
 	r.Post("/jobs", h.createJob)
 	r.Put("/jobs/{id}", h.updateJob)
+	r.Post("/jobs/retry-blocked", h.retryAllBlockedJobs)
 	r.Post("/jobs/{id}/trigger", h.triggerJobNow)
 	r.Delete("/jobs/{id}", h.deleteJob)
 
@@ -394,6 +407,89 @@ func (h *Handler) setDailyMessageLimit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"whatsappDailyMessageLimit": req.WhatsAppDailyMessageLimit})
+}
+
+// getAIActiveHours godoc
+//
+//	@Summary		Get AI Active Hours
+//	@Description	Returns the daily window (in the studio's chosen IANA timezone) during which the AI is allowed to auto-reply. Disabled by default (enabled=false), in which case the window is ignored and AI replies aren't time-restricted. A separate setting from the business-hours availability gate.
+//	@Tags			Messaging - Channels
+//	@Security		CookieAuth
+//	@Produce		json
+//	@Param			studioId	path		string	true	"Studio ID"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/settings/ai-active-hours [get]
+func (h *Handler) getAIActiveHours(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	cfg, err := h.svc.GetAIActiveHours(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"aiActiveHoursEnabled":  cfg.Enabled,
+		"aiActiveHoursStart":    cfg.Start,
+		"aiActiveHoursEnd":      cfg.End,
+		"aiActiveHoursTimezone": cfg.Timezone,
+	})
+}
+
+type setAIActiveHoursReq struct {
+	AIActiveHoursEnabled  bool   `json:"aiActiveHoursEnabled"`
+	AIActiveHoursStart    string `json:"aiActiveHoursStart"`
+	AIActiveHoursEnd      string `json:"aiActiveHoursEnd"`
+	AIActiveHoursTimezone string `json:"aiActiveHoursTimezone"`
+}
+
+// setAIActiveHours godoc
+//
+//	@Summary		Set AI Active Hours
+//	@Description	Updates the daily window during which the AI is allowed to auto-reply, and the IANA timezone it's interpreted in. An end time earlier than start is treated as an overnight window (e.g. 22:00-02:00).
+//	@Tags			Messaging - Channels
+//	@Security		CookieAuth
+//	@Accept			json
+//	@Produce		json
+//	@Param			studioId	path		string				true	"Studio ID"
+//	@Param			body		body		setAIActiveHoursReq	true	"AI active hours"
+//	@Success		200			{object}	map[string]interface{}
+//	@Failure		400			{object}	httpx.ErrorResponse
+//	@Failure		500			{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/settings/ai-active-hours [put]
+func (h *Handler) setAIActiveHours(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	var req setAIActiveHoursReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if _, err := time.Parse("15:04", req.AIActiveHoursStart); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_time", "start time must be HH:MM")
+		return
+	}
+	if _, err := time.Parse("15:04", req.AIActiveHoursEnd); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_time", "end time must be HH:MM")
+		return
+	}
+	if _, err := time.LoadLocation(req.AIActiveHoursTimezone); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_timezone", "timezone must be a valid IANA zone name")
+		return
+	}
+	if err := h.svc.SetAIActiveHours(r.Context(), studioID, req.AIActiveHoursEnabled, req.AIActiveHoursStart, req.AIActiveHoursEnd, req.AIActiveHoursTimezone); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"aiActiveHoursEnabled":  req.AIActiveHoursEnabled,
+		"aiActiveHoursStart":    req.AIActiveHoursStart,
+		"aiActiveHoursEnd":      req.AIActiveHoursEnd,
+		"aiActiveHoursTimezone": req.AIActiveHoursTimezone,
+	})
 }
 
 // getGlofoxFirstSession godoc
@@ -2153,6 +2249,29 @@ func (h *Handler) triggerJobNow(w http.ResponseWriter, r *http.Request) {
 	httpx.NoContent(w)
 }
 
+// retryAllBlockedJobs godoc
+//
+//	@Summary		Retry every blocked job for a studio
+//	@Description	Re-queues every job currently blocked (status='dead', e.g. by the WhatsApp daily message limit) so it's attempted again. A job still over the studio's daily cap will simply go blocked again on its next attempt.
+//	@Tags			Messaging - Automation Jobs
+//	@Security		CookieAuth
+//	@Param			studioId	path	string	true	"Studio ID"
+//	@Success		200	{object}	map[string]int	"retried count"
+//	@Failure		500	{object}	httpx.ErrorResponse
+//	@Router			/api/v1/studios/{studioId}/messaging/jobs/retry-blocked [post]
+func (h *Handler) retryAllBlockedJobs(w http.ResponseWriter, r *http.Request) {
+	studioID, ok := studioIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	n, err := h.svc.RetryAllBlockedJobs(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"retried": n})
+}
+
 // deleteJob godoc
 //
 //	@Summary		Delete a pending job
@@ -2420,7 +2539,7 @@ Important:
 Generate the message content based on this instruction: ` + req.Prompt
 	}
 
-	generatedText, source := llmWaterfall(r.Context(), h.studiosRepo, h.llmRepo, h.svc.repo, h.claudeClient, h.claudeAPIURL, slog.Default(), studioID, studio, systemInstruction, h.answerCache, "template_gen")
+	generatedText, source := llmWaterfall(r.Context(), h.llmGateway, studioID, studio, systemInstruction, llmgateway.FeatureTemplateGen)
 	if generatedText == "" {
 		httpx.WriteError(w, http.StatusBadRequest, "no_provider", "No AI provider is configured for this studio — set up Groq, Gemini, or Claude in Settings → AI Assistant.")
 		return
@@ -2494,6 +2613,27 @@ func (h *Handler) uploadMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Read fully into memory before writing anything to disk, so a
+	// malware scan (task 8.4) can run against the complete content —
+	// matches this handler's existing 200MB cap, so this isn't a new
+	// memory-usage concern.
+	data, err := io.ReadAll(file)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not read uploaded file")
+		return
+	}
+	if h.malwareScanner != nil {
+		clean, err := h.malwareScanner.Scan(r.Context(), data)
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+			return
+		}
+		if !clean {
+			httpx.WriteError(w, http.StatusBadRequest, "malware_detected", "this file was rejected by malware scanning")
+			return
+		}
+	}
+
 	// Ensure uploads directory exists (relative to server CWD = apps/api).
 	uploadDir := "uploads"
 	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
@@ -2509,7 +2649,7 @@ func (h *Handler) uploadMedia(w http.ResponseWriter, r *http.Request) {
 	}
 	defer dst.Close()
 
-	if _, err := io.Copy(dst, file); err != nil {
+	if _, err := dst.Write(data); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "could not write file")
 		return
 	}

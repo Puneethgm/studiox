@@ -90,7 +90,7 @@ func TestMapHeaders_StillHandlesThePlatformsOwnExportFormat(t *testing.T) {
 func TestImportLeads_GlofoxExportFormat(t *testing.T) {
 	pool := testDB(t)
 	ctx := context.Background()
-	repo := NewRepo(pool)
+	repo := NewRepo(pool, pool)
 	svc := NewService(repo, nil)
 
 	studioID := uuid.New()
@@ -223,7 +223,7 @@ func TestMapHeaders_GlofoxMemberExportFormat_DoesNotLetMembershipNameOrEmailCons
 func TestImportLeads_GlofoxMemberExportFormat_NameAndContactSurviveMembershipColumns(t *testing.T) {
 	pool := testDB(t)
 	ctx := context.Background()
-	repo := NewRepo(pool)
+	repo := NewRepo(pool, pool)
 	svc := NewService(repo, nil)
 
 	studioID := uuid.New()
@@ -327,7 +327,7 @@ func TestParseGlofoxExpiryDate(t *testing.T) {
 func TestImportLeads_GlofoxMemberExportFormat_InfersStatusFromMembershipExpiry(t *testing.T) {
 	pool := testDB(t)
 	ctx := context.Background()
-	repo := NewRepo(pool)
+	repo := NewRepo(pool, pool)
 	svc := NewService(repo, nil)
 
 	studioID := uuid.New()
@@ -411,7 +411,7 @@ func TestImportLeads_GlofoxMemberExportFormat_InfersStatusFromMembershipExpiry(t
 func TestImportLeads_NeverAutoContacts(t *testing.T) {
 	pool := testDB(t)
 	ctx := context.Background()
-	repo := NewRepo(pool)
+	repo := NewRepo(pool, pool)
 	svc := NewService(repo, nil)
 
 	studioID := uuid.New()
@@ -465,7 +465,7 @@ func TestImportLeads_NeverAutoContacts(t *testing.T) {
 func TestEnableAutoContactForLeadsByStatus(t *testing.T) {
 	pool := testDB(t)
 	ctx := context.Background()
-	repo := NewRepo(pool)
+	repo := NewRepo(pool, pool)
 	svc := NewService(repo, nil)
 
 	studioID := uuid.New()
@@ -553,7 +553,7 @@ func TestEnableAutoContactForLeadsByStatus(t *testing.T) {
 func TestEnableAutoContactForLeadsByStatuses_Multiple(t *testing.T) {
 	pool := testDB(t)
 	ctx := context.Background()
-	repo := NewRepo(pool)
+	repo := NewRepo(pool, pool)
 	svc := NewService(repo, nil)
 
 	studioID := uuid.New()

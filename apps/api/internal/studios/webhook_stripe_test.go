@@ -65,7 +65,7 @@ func setupEscalationTestConversation(t *testing.T) (pool *pgxpool.Pool, studio *
 func TestEscalateConversationForPurchase_MarksConversationEscalated(t *testing.T) {
 	pool, studio, convID := setupEscalationTestConversation(t)
 	ctx := context.Background()
-	h := NewStripeWebhookHandler(NewService(&Repo{pool: pool}, nil, nil, nil, nil, nil, ""), "")
+	h := NewStripeWebhookHandler(NewService(&Repo{pool: pool}, nil, nil, nil, nil, nil, "", nil, nil), "")
 
 	h.escalateConversationForPurchase(ctx, studio, convID, "Puneeth G M", "917483974512", "Customer purchased a Trial — Plan: Trial")
 
@@ -92,7 +92,7 @@ func TestEscalateConversationForPurchase_MarksConversationEscalated(t *testing.T
 func TestEscalateConversationForPurchase_DoesNotReescalate(t *testing.T) {
 	pool, studio, convID := setupEscalationTestConversation(t)
 	ctx := context.Background()
-	h := NewStripeWebhookHandler(NewService(&Repo{pool: pool}, nil, nil, nil, nil, nil, ""), "")
+	h := NewStripeWebhookHandler(NewService(&Repo{pool: pool}, nil, nil, nil, nil, nil, "", nil, nil), "")
 
 	h.escalateConversationForPurchase(ctx, studio, convID, "A", "1", "first reason")
 	var firstAt interface{}
@@ -118,6 +118,6 @@ func TestEscalateConversationForPurchase_DoesNotReescalate(t *testing.T) {
 func TestEscalateConversationForPurchase_EmptyConvIDNoop(t *testing.T) {
 	pool, studio, _ := setupEscalationTestConversation(t)
 	ctx := context.Background()
-	h := NewStripeWebhookHandler(NewService(&Repo{pool: pool}, nil, nil, nil, nil, nil, ""), "")
+	h := NewStripeWebhookHandler(NewService(&Repo{pool: pool}, nil, nil, nil, nil, nil, "", nil, nil), "")
 	h.escalateConversationForPurchase(ctx, studio, "", "A", "1", "reason") // must not panic
 }
