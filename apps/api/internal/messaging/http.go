@@ -355,7 +355,7 @@ func (h *Handler) setSendSpacing(w http.ResponseWriter, r *http.Request) {
 // getDailyMessageLimit godoc
 //
 //	@Summary		Get WhatsApp daily automated message limit
-//	@Description	Returns the max number of automation/AI/Manual-Actions-sourced WhatsApp messages this studio may send per Singapore-time day. 0 means unlimited. A live reply typed directly in a conversation never counts against this.
+//	@Description	Returns the max number of automation/AI/Manual-Actions-sourced WhatsApp messages this studio may send per Singapore-time day (0 means unlimited), plus how many it has already sent today. A live reply typed directly in a conversation never counts against either number.
 //	@Tags			Messaging - Channels
 //	@Security		CookieAuth
 //	@Produce		json
@@ -373,7 +373,12 @@ func (h *Handler) getDailyMessageLimit(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"whatsappDailyMessageLimit": limit})
+	sentToday, err := h.svc.CountAutomatedWhatsAppSentToday(r.Context(), studioID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal server error")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"whatsappDailyMessageLimit": limit, "whatsappSentToday": sentToday})
 }
 
 type setDailyMessageLimitReq struct {

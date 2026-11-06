@@ -104,6 +104,7 @@ export default function DashboardClient({
   const [dailyAnalytics, setDailyAnalytics] = useState<DailyAnalyticsPoint[]>([]);
   const [logoError, setLogoError] = useState(false);
   const [escalationStats, setEscalationStats] = useState<{ escalated: number; resolved: number } | null>(null);
+  const [whatsappUsage, setWhatsappUsage] = useState<{ sentToday: number; limit: number } | null>(null);
 
   useEffect(() => {
     setLogoError(false);
@@ -118,6 +119,19 @@ export default function DashboardClient({
     api<{ escalated: number; resolved: number }>(`/api/v1/studios/${studio.id}/messaging/escalations/stats`)
       .then(setEscalationStats)
       .catch(() => setEscalationStats(null));
+  }, [studio.id]);
+
+  // Same "no cross-studio aggregate yet" caveat as escalationStats above.
+  useEffect(() => {
+    if (studio.id === 'global') {
+      setWhatsappUsage(null);
+      return;
+    }
+    api<{ whatsappDailyMessageLimit: number; whatsappSentToday: number }>(
+      `/api/v1/studios/${studio.id}/messaging/settings/daily-message-limit`
+    )
+      .then((res) => setWhatsappUsage({ sentToday: res.whatsappSentToday, limit: res.whatsappDailyMessageLimit }))
+      .catch(() => setWhatsappUsage(null));
   }, [studio.id]);
 
   // ROI Calculator inputs
@@ -346,6 +360,27 @@ export default function DashboardClient({
                 href={`/admin/studios/${studio.id}/inbox?tab=escalation`}
                 hint="Needs a human right now, vs. already resolved"
                 color="rose"
+              />
+            )}
+            {whatsappUsage && (
+              <StatCard
+                label="WhatsApp Usage Today"
+                value={
+                  <span className="flex items-baseline gap-2">
+                    {whatsappUsage.sentToday}
+                    <span className="text-sm font-bold text-zinc-400 dark:text-zinc-500">
+                      {whatsappUsage.limit > 0 ? `/ ${whatsappUsage.limit} limit` : '/ unlimited'}
+                    </span>
+                  </span>
+                }
+                icon={<Send className="h-5 w-5" />}
+                href={`/admin/studios/${studio.id}/settings`}
+                hint={
+                  whatsappUsage.limit > 0 && whatsappUsage.sentToday >= whatsappUsage.limit
+                    ? 'Daily limit reached — sends pause until tomorrow'
+                    : 'Automation/AI-sourced sends, Singapore day'
+                }
+                color={whatsappUsage.limit > 0 && whatsappUsage.sentToday >= whatsappUsage.limit ? 'rose' : 'emerald'}
               />
             )}
           </div>

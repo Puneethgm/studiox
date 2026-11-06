@@ -253,6 +253,13 @@ func (s *Service) GetWhatsAppDailyMessageLimit(ctx context.Context, studioID uui
 	return s.repo.GetWhatsAppDailyMessageLimit(ctx, studioID)
 }
 
+// CountAutomatedWhatsAppSentToday counts automation/AI-sourced WhatsApp
+// sends so far today (Singapore time) — the usage side of
+// GetWhatsAppDailyMessageLimit's limit, surfaced on the dashboard.
+func (s *Service) CountAutomatedWhatsAppSentToday(ctx context.Context, studioID uuid.UUID) (int, error) {
+	return s.repo.CountAutomatedWhatsAppSentToday(ctx, studioID)
+}
+
 // SetWhatsAppDailyMessageLimit sets the max automated/AI WhatsApp sends
 // allowed per Singapore-time day. 0 means unlimited.
 func (s *Service) SetWhatsAppDailyMessageLimit(ctx context.Context, studioID uuid.UUID, limit int) error {

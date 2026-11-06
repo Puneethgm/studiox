@@ -463,6 +463,7 @@ function ColdColumn({
               <ColdLeadCard
                 key={lead.conversationId}
                 lead={lead}
+                studioId={studioId}
                 checked={selected.has(lead.conversationId)}
                 onToggle={() => toggleOne(lead.conversationId)}
               />
@@ -494,9 +495,10 @@ function ColdColumn({
 // PointerSensor requires a few pixels of movement before a drag activates
 // (see activationConstraint above), so a plain click passes through.
 function ColdLeadCard({
-  lead, checked, onToggle,
+  lead, studioId, checked, onToggle,
 }: {
   lead: ColdLead;
+  studioId: string;
   checked: boolean;
   onToggle: () => void;
 }) {
@@ -507,34 +509,45 @@ function ColdLeadCard({
 
   return (
     <div ref={setNodeRef} {...listeners} {...attributes} className={cn('touch-none', isDragging && 'opacity-40')}>
-      <ColdLeadCardVisual lead={lead} checked={checked} onToggle={onToggle} />
+      <ColdLeadCardVisual lead={lead} studioId={studioId} checked={checked} onToggle={onToggle} />
     </div>
   );
 }
 
 function ColdLeadCardVisual({
-  lead, checked, onToggle, dragging,
+  lead, studioId, checked, onToggle, dragging,
 }: {
   lead: ColdLead;
+  studioId?: string;
   checked?: boolean;
   onToggle?: () => void;
   dragging?: boolean;
 }) {
+  // Imported contacts with no lead row (lead.leadId null) have nothing to
+  // open on the Leads page — fall back to their Inbox conversation instead.
+  const detailsHref = !studioId
+    ? undefined
+    : lead.leadId
+      ? `/admin/studios/${studioId}/leads/${lead.leadId}`
+      : `/admin/studios/${studioId}/inbox?conversationId=${lead.conversationId}`;
+
   return (
-    <label
+    <div
       className={cn(
         'flex items-start gap-2 rounded-[14px] border border-amber-500/15 bg-white/60 p-2.5 backdrop-blur-xl dark:bg-neutral-900/30',
-        dragging ? 'shadow-xl rotate-2' : 'cursor-pointer hover:bg-white/80 dark:hover:bg-neutral-900/50',
+        dragging ? 'shadow-xl rotate-2' : 'hover:bg-white/80 dark:hover:bg-neutral-900/50',
       )}
     >
-      <input
-        type="checkbox"
-        checked={checked ?? false}
-        onChange={onToggle}
-        disabled={dragging}
-        className="mt-0.5 shrink-0 rounded"
-      />
-      <div className="min-w-0 flex-1">
+      <label className="mt-0.5 shrink-0 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={checked ?? false}
+          onChange={onToggle}
+          disabled={dragging}
+          className="rounded"
+        />
+      </label>
+      <Link href={detailsHref ?? '#'} className={cn('min-w-0 flex-1', detailsHref ? 'cursor-pointer' : 'cursor-default')}>
         <div className="truncate text-[12px] font-bold text-zinc-900 dark:text-zinc-100">
           {lead.name || lead.phone || 'Unknown contact'}
         </div>
@@ -572,8 +585,8 @@ function ColdLeadCardVisual({
             {relativeTime(lead.lastMessageAt)}
           </div>
         )}
-      </div>
-    </label>
+      </Link>
+    </div>
   );
 }
 
